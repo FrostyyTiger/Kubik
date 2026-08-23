@@ -9,8 +9,17 @@ class_name ChunkMesher
 ##
 ## Greedy meshing (merging adjacent identical faces into big quads) is the next
 ## optimisation, but only once we can measure that this is the bottleneck.
-
-const BLOCK_TEXTURE := preload("res://assets/textures/block_placeholder.png")
+##
+## COLOUR COMES FROM THE VERTICES, NOT A TEXTURE. The world is read at a
+## distance - the whole design is sold on being able to tell a meadow from a
+## forest from a snowfield across a valley - and flat saturated colour reads
+## further and more clearly than any 16x16 texture would. It is also free:
+## the colours are already in the vertex stream for the mesher to batch by.
+##
+## assets/textures/block_placeholder.png and its committed .import settings are
+## therefore unused as of this stage. They are left in the repo rather than
+## deleted, because a texture atlas with per-face UVs is still on the roadmap
+## and the import settings are the part that was fiddly to get right.
 
 ## Face order used by every table below: +Y, -Y, +X, -X, +Z, -Z.
 const FACE_NORMALS := [
@@ -41,8 +50,6 @@ const FACE_CORNERS := [
 	[Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(0, 1, 0)], # -Z north
 ]
 
-const FACE_UVS := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
-
 static var _material: StandardMaterial3D = null
 
 
@@ -52,12 +59,16 @@ static var _material: StandardMaterial3D = null
 ## used for neighbours OUTSIDE this chunk. We cannot answer those ourselves,
 ## and answering "air" would draw a wall of faces at every chunk seam.
 ##
+## `block_size` is metres per block. The mesh is built in metres rather than in
+## block units so that the node holding it needs no scale: a scaled node scales
+## its collision shape too, and scaled physics shapes are a class of bug nobody
+## should have to debug at 1 a.m.
+##
 ## Returns null for a chunk with nothing to draw - Godot refuses a surface with
 ## zero vertices, and a null mesh is the cheapest possible "nothing here".
-static func build(chunk: Chunk, world_solid: Callable) -> ArrayMesh:
+static func build(chunk: Chunk, world_solid: Callable, block_size: float) -> ArrayMesh:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
-	var uvs := PackedVector2Array()
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
 
@@ -96,9 +107,8 @@ static func build(chunk: Chunk, world_solid: Callable) -> ArrayMesh:
 					var first := verts.size()
 
 					for c in 4:
-						verts.push_back(base + corners[c])
+						verts.push_back((base + corners[c]) * block_size)
 						normals.push_back(face_normal)
-						uvs.push_back(FACE_UVS[c])
 						colors.push_back(color)
 
 					# Quad as two triangles, preserving the corner order.
@@ -116,7 +126,6 @@ static func build(chunk: Chunk, world_solid: Callable) -> ArrayMesh:
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
 
@@ -131,12 +140,13 @@ static func build(chunk: Chunk, world_solid: Callable) -> ArrayMesh:
 static func get_material() -> StandardMaterial3D:
 	if _material == null:
 		var m := StandardMaterial3D.new()
-		m.albedo_texture = BLOCK_TEXTURE
-		# Nearest keeps the pixels crisp instead of blurring them; mipmaps stop
-		# distant blocks from shimmering as the camera moves.
-		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST_WITH_MIPMAPS
-		# This is what lets one greyscale texture serve every block type: the
-		# per-block colour we baked into the vertices multiplies the albedo.
+		# The entire surface appearance: the per-block colour baked into the
+		# vertices IS the albedo. No texture, no UVs in the vertex stream.
 		m.vertex_color_use_as_albedo = true
+		# Terrain is soil, grass, rock and snow. None of them are shiny, and a
+		# specular highlight sliding across a hillside as you walk is the
+		# fastest way to make a matte world look like wet plastic.
+		m.roughness = 1.0
+		m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 		_material = m
 	return _material

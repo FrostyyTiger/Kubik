@@ -191,6 +191,32 @@ func surface_at(bx: float, bz: float) -> float:
 	return heightmap.height_at(bx, bz) + detail_at(bx, bz)
 
 
+## Lowest and highest surface altitude over one chunk column's 16x16 footprint.
+##
+## Used to decide which chunks of a column are worth building at all. Sampling
+## the coarse heightmap's cells rather than all 256 block columns is the whole
+## point: a chunk is 16 blocks and a cell is 4, so five samples per axis cover
+## the footprint exactly, and the answer costs 25 array reads instead of 256
+## interpolations plus 256 noise calls.
+##
+## detail_amp is added as a margin on both ends because detail is applied per
+## block AFTER this, and a range that did not allow for it would clip the tops
+## off hills by up to three blocks.
+func column_surface_range(chunk_x: int, chunk_z: int) -> Vector2:
+	var bx0 := chunk_x * Chunk.SIZE
+	var bz0 := chunk_z * Chunk.SIZE
+	var lo := INF
+	var hi := -INF
+	# 0, 4, 8, 12, 16 - inclusive of the far edge, so a chunk's last block is
+	# covered by the same sample its neighbour's first block uses.
+	for dz in range(0, Chunk.SIZE + 1, heightmap.step):
+		for dx in range(0, Chunk.SIZE + 1, heightmap.step):
+			var h := heightmap.height_at(float(bx0 + dx), float(bz0 + dz))
+			lo = minf(lo, h)
+			hi = maxf(hi, h)
+	return Vector2(lo - config.detail_amp, hi + config.detail_amp)
+
+
 func is_solid_at(bx: int, by: int, bz: int) -> bool:
 	if by < 0:
 		return true   # bedrock, so you cannot fall out of the world

@@ -6,12 +6,13 @@ extends Node3D
 ## both machines - which is what makes @rpc work: Godot addresses RPCs by node
 ## path, and a mismatch means the call silently lands nowhere.
 
-## Scaffolding: a fixed spot well above the terrain band, so the debug slab is
-## guaranteed to land in open air and be visible from anywhere.
-const DEBUG_SLAB_Y := 47
+## Scaffolding: how far above the ground at spawn the debug slab is placed, in
+## blocks. Relative rather than a fixed altitude, because the terrain at spawn
+## is now anywhere between 25 and 250 blocks up depending on the seed.
+const DEBUG_SLAB_CLEARANCE := 6
 
-## How far above the ground to drop the camera once the world exists.
-const SPAWN_CLEARANCE := 6.0
+## How far above the ground to drop the camera once the world exists, in metres.
+const SPAWN_CLEARANCE := 3.0
 
 ## Position updates per second. 20 is plenty for two players; the smoothing on
 ## the receiving end hides the gaps.
@@ -83,6 +84,11 @@ func _process(delta: float) -> void:
 		if _join_retry <= 0.0:
 			_request_join_state()
 
+	# Voxels exist only near whoever is looking. Until Stage 4 the debug camera
+	# is the stand-in for the player; after it, this line moves to the player.
+	if _world.has_seed():
+		_world.set_center_from_position(_camera.position)
+
 	# A session we are no longer part of has nothing to sync, and calling rpc()
 	# without a live peer is an engine error, not a no-op.
 	if not Net.is_online():
@@ -106,9 +112,9 @@ func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	_chunk_count = chunk_count
 	_build_ms = elapsed_ms
 	# The camera starts above everything so it is never buried mid-generation;
-	# once the terrain exists we drop it to just above the ground.
-	var surface := _world.find_surface_y(0, 0)
-	_camera.position = Vector3(0.5, surface + SPAWN_CLEARANCE, 0.5)
+	# once the terrain exists we drop it to just above the ground. In METRES -
+	# find_surface_y answers in blocks and the scene graph is in metres.
+	_camera.position = Vector3(0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
 	_update_status()
 
 
@@ -284,10 +290,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _toggle_debug_slab() -> void:
 	_slab_present = not _slab_present
 	var id := Block.SNOW if _slab_present else Block.AIR
+	var y := _world.find_surface_y(0, 0) + DEBUG_SLAB_CLEARANCE
 	for x in range(-1, 2):
 		for z in range(-1, 2):
 			# Note: a request, not a write. Even the host goes through this.
-			_world.request_set_block(Vector3i(x, DEBUG_SLAB_Y, z), id)
+			_world.request_set_block(Vector3i(x, y, z), id)
 
 
 func _role_name() -> String:

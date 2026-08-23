@@ -3,17 +3,26 @@ extends Node3D
 
 ## Owns every loaded chunk and is the only place voxels are allowed to change.
 ##
-## Layout for v1: a fixed 5x5 column of chunks around the origin, CHUNKS_Y tall.
-## Streaming chunks in and out as players move is a later problem.
+## Real editable voxels exist only near the player - a disc of chunk columns
+## whose radius is config.voxel_radius_chunks. Everything beyond is the
+## far-field heightmap mesh (Stage 7), which is the only reason a 200 m view
+## distance is affordable at all: 200 m of voxels is roughly 30,000 chunks.
+##
+## Within a column we build only the chunks that terrain actually passes
+## through - the surface, plus voxel_depth_chunks of rock beneath it. The world
+## is 320 blocks tall and nobody can see the bottom 250 of it, so building full
+## vertical columns would be about four times the chunks for no visible
+## difference whatsoever.
 
 signal generation_finished(chunk_count: int, elapsed_ms: int)
 
-## 2 -> chunks -2..2 on each horizontal axis, so 5x5.
-const RADIUS_XZ := 2
-
-## 3 chunks = 48 blocks tall, which comfortably contains the terrain band
-## (SURFACE_Y 32 +/- TRANSITION 14).
-const CHUNKS_Y := 3
+## Chunks are kept this much beyond the load radius before being freed.
+##
+## Without hysteresis, a player standing exactly on a chunk boundary and
+## shuffling sideways would free and rebuild the same ring of chunks every
+## frame - the single most expensive thing the world can do, triggered by
+## standing still.
+const UNLOAD_MARGIN_CHUNKS := 2
 
 ## Milliseconds of chunk building allowed per frame. At 60 fps a frame is
 ## 16.6 ms, so 8 leaves room for everything else and the window stays alive.
@@ -29,6 +38,15 @@ var config: WorldgenConfig = null
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
 var _build_queue: Array[Vector3i] = []
+
+## Chunk-space column the loaded region is centred on. Stage 4's player drives
+## it; until then it stays at the spawn column.
+var _center := Vector2i.ZERO
+
+## Emitted once, for the first full load. With streaming the queue empties
+## every time the player stops walking, and a signal that fired then would have
+## Game re-running its spawn logic for the rest of the session.
+var _initial_load_reported := false
 
 var _total_ms := 0
 var _built := 0
@@ -57,16 +75,10 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 		generator.heightmap.cols, generator.heightmap.cols,
 		_heightmap_ms, generator.heightmap.hash_key()])
 
-	_build_queue.clear()
-	for cy in CHUNKS_Y:
-		for cz in range(-RADIUS_XZ, RADIUS_XZ + 1):
-			for cx in range(-RADIUS_XZ, RADIUS_XZ + 1):
-				_build_queue.append(Vector3i(cx, cy, cz))
-
-	# Nearest-first, so the world grows outward from where the player spawns
-	# instead of popping in in some arbitrary order.
-	_build_queue.sort_custom(Callable(self, "_nearer_to_centre"))
-	print("[World] seed %d, %d chunks queued" % [p_seed, _build_queue.size()])
+	_initial_load_reported = false
+	refresh_region()
+	print("[World] seed %d, %d chunks queued around %s" % [
+		p_seed, _build_queue.size(), _center])
 
 
 func _process(_delta: float) -> void:
@@ -80,8 +92,12 @@ func _process(_delta: float) -> void:
 		_build_chunk(_build_queue.pop_front())
 	_total_ms += Time.get_ticks_msec() - started
 
-	if _build_queue.is_empty():
-		print("[World] %d chunks generated and meshed in %d ms" % [_built, _total_ms])
+	if _build_queue.is_empty() and not _initial_load_reported:
+		_initial_load_reported = true
+		print("[World] %d chunks generated and meshed in %d ms (%.1f ms/chunk: %.1f gen, %.1f mesh)" % [
+			_built, _total_ms, float(_total_ms) / float(maxi(_built, 1)),
+			float(_gen_ms) / 1000.0 / float(maxi(_built, 1)),
+			float(_mesh_ms) / 1000.0 / float(maxi(_built, 1))])
 		generation_finished.emit(_built, _total_ms)
 
 
@@ -171,7 +187,7 @@ func _build_chunk(chunk_pos: Vector3i) -> void:
 	_replay_edits_for(chunk)
 
 	var node := ChunkNode.new()
-	node.setup(chunk)
+	node.setup(chunk, config.block_size)
 	add_child(node)
 	_chunk_nodes[chunk_pos] = node
 
@@ -186,9 +202,108 @@ func _build_chunk(chunk_pos: Vector3i) -> void:
 
 func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
 	# Horizontal distance only - vertical order does not change how it looks.
-	var da := a.x * a.x + a.z * a.z
-	var db := b.x * b.x + b.z * b.z
+	var da := (a.x - _center.x) * (a.x - _center.x) + (a.z - _center.y) * (a.z - _center.y)
+	var db := (b.x - _center.x) * (b.x - _center.x) + (b.z - _center.y) * (b.z - _center.y)
 	return da < db
+
+
+# --- The loaded region ------------------------------------------------------
+
+## Move the loaded region. Takes a position in METRES, because that is what
+## everything outside worldgen speaks; the conversion to chunk space happens
+## here, once.
+##
+## Returns true if the region actually moved, so callers can skip the rebuild
+## work that follows a move (the far-field mesh, in Stage 7).
+func set_center_from_position(pos_m: Vector3) -> bool:
+	var bx := int(floor(pos_m.x / config.block_size))
+	var bz := int(floor(pos_m.z / config.block_size))
+	var c := Vector2i(Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE))
+	if c == _center:
+		return false
+	_center = c
+	refresh_region()
+	return true
+
+
+## Bring the loaded set in line with where the centre now is: queue what is
+## missing inside the radius, free what has fallen well outside it.
+func refresh_region() -> void:
+	var radius: int = config.voxel_radius_chunks
+	var radius_sq := radius * radius
+	var lo := _world_chunk_min()
+	var hi := _world_chunk_max()
+
+	var wanted := {}
+	for dz in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			# A disc, not a square. The corners of a square are 1.41x the
+			# radius away, so a square loads twice the chunks to show the
+			# player terrain they cannot see any better than the rest.
+			if dx * dx + dz * dz > radius_sq:
+				continue
+			var cx := _center.x + dx
+			var cz := _center.y + dz
+			if cx < lo or cx > hi or cz < lo or cz > hi:
+				continue  # outside the bounded world
+			for cy in _column_chunk_range(cx, cz):
+				wanted[Vector3i(cx, cy, cz)] = true
+
+	for pos in wanted:
+		if not _chunks.has(pos) and not _build_queue.has(pos):
+			_build_queue.append(pos)
+
+	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
+
+	# Nearest-first, so the world grows outward from the player rather than
+	# popping in in some arbitrary order.
+	_build_queue.sort_custom(Callable(self, "_nearer_to_centre"))
+
+
+## Which chunks of one column terrain actually passes through.
+func _column_chunk_range(cx: int, cz: int) -> Array:
+	var span := generator.column_surface_range(cx, cz)
+	var top := Chunk.floor_div(int(floor(span.y)), Chunk.SIZE)
+	var bottom := Chunk.floor_div(
+		int(floor(span.x)) - config.voxel_depth_chunks * Chunk.SIZE, Chunk.SIZE)
+	var max_cy := int(config.world_height_blocks / Chunk.SIZE) - 1
+	return range(maxi(bottom, 0), mini(top, max_cy) + 1)
+
+
+func _free_distant_chunks(keep_radius: int) -> void:
+	var keep_sq := keep_radius * keep_radius
+	var doomed: Array[Vector3i] = []
+	for pos in _chunks:
+		var dx: int = pos.x - _center.x
+		var dz: int = pos.z - _center.y
+		if dx * dx + dz * dz > keep_sq:
+			doomed.append(pos)
+	for pos in doomed:
+		_chunks.erase(pos)
+		var node: ChunkNode = _chunk_nodes.get(pos)
+		if node != null:
+			node.queue_free()
+			_chunk_nodes.erase(pos)
+	# Edits are NOT dropped with the chunk. _edits is the authoritative
+	# difference between the seed and the world, and _replay_edits_for() puts
+	# them back when the chunk is regenerated - which is what lets a player
+	# walk away from a hole they dug and find it still there.
+	if not _build_queue.is_empty():
+		var still: Array[Vector3i] = []
+		for pos in _build_queue:
+			var dx: int = pos.x - _center.x
+			var dz: int = pos.z - _center.y
+			if dx * dx + dz * dz <= keep_sq:
+				still.append(pos)
+		_build_queue = still
+
+
+func _world_chunk_min() -> int:
+	return Chunk.floor_div(-int(config.world_blocks_xz / 2), Chunk.SIZE)
+
+
+func _world_chunk_max() -> int:
+	return Chunk.floor_div(int(config.world_blocks_xz / 2) - 1, Chunk.SIZE)
 
 
 # --- The one and only voxel mutation path -----------------------------------
@@ -328,13 +443,19 @@ func _remesh(cpos: Vector3i) -> void:
 		node.rebuild(Callable(self, "is_solid_world"))
 
 
-## Y of the highest solid block in this column, or -1 if the column is empty.
-## Used for spawning things on the ground instead of inside it.
+## Y of the highest solid block in this column, in BLOCKS. Used for putting
+## things on the ground instead of inside it.
+##
+## Asks the generator rather than scanning voxels downward: the generator knows
+## the answer directly, and it is right even for a column whose chunks are not
+## loaded yet - which is exactly the case at spawn.
 func find_surface_y(wx: int, wz: int) -> int:
-	for y in range(CHUNKS_Y * Chunk.SIZE - 1, -1, -1):
-		if is_solid_world(wx, y, wz):
-			return y
-	return -1
+	return int(floor(generator.surface_at(float(wx), float(wz))))
+
+
+## Same thing in metres, which is what anything outside worldgen wants.
+func surface_height_m(wx: int, wz: int) -> float:
+	return generator.surface_at(float(wx), float(wz)) * config.block_size
 
 
 func _replay_edits_for(chunk: Chunk) -> void:
