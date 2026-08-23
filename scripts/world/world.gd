@@ -68,6 +68,10 @@ var _in_flight := {}
 ## but not touch.
 var _far_field: FarField = null
 
+## Every basin in the world, and the water sitting in it.
+var lakes: Lakes = null
+var _water: MeshInstance3D = null
+
 ## Wall clock, as distinct from _total_ms which counts main-thread time only.
 ## With threading those two stop being the same number, and the gap between
 ## them is precisely what the threading bought.
@@ -100,6 +104,11 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	print("[World] coarse heightmap %dx%d in %d ms, hash %s" % [
 		generator.heightmap.cols, generator.heightmap.cols,
 		_heightmap_ms, generator.heightmap.hash_key()])
+
+	# Lakes are found in the coarse heightmap, before any voxel exists and
+	# before the detail layer is applied - a 3-block bump must never be able to
+	# invent or drain one.
+	_build_lakes()
 
 	_initial_load_reported = false
 	_wall_start_ms = Time.get_ticks_msec()
@@ -295,6 +304,36 @@ func _collect_finished(started: int) -> void:
 ## The six chunks sharing a face with this one, for the mesher to ask about
 ## neighbours it cannot see itself. Missing ones are simply absent, and the job
 ## falls back to the generator for them.
+## Find the basins and put water in them.
+func _build_lakes() -> void:
+	lakes = Lakes.new()
+	lakes.compute(generator.heightmap, config)
+
+	if _water == null:
+		_water = MeshInstance3D.new()
+		_water.name = "Water"
+		_water.material_override = Lakes.make_material()
+		# Non-interactive, per the design: no physics, no swimming, no
+		# collision shape. It is a surface to look at and stand beside.
+		add_child(_water)
+	_water.mesh = ChunkMesher.arrays_to_mesh(lakes.build_water_arrays(
+		generator.heightmap, config))
+
+	var flooded := 0
+	var area := 0.0
+	for lake in lakes.lakes:
+		flooded += lake["cells"]
+		area += lake["area_m2"]
+	print("[World] %d lakes, %.0f m2 (%.1f%% of the map) in %d ms" % [
+		lakes.lake_count(), area,
+		float(flooded) / float(generator.heightmap.cols * generator.heightmap.cols) * 100.0,
+		lakes.elapsed_ms()])
+
+
+func lake_count() -> int:
+	return lakes.lake_count() if lakes != null else 0
+
+
 func _on_far_field_rebuilt(vertex_count: int) -> void:
 	_far_vertices = vertex_count
 

@@ -124,6 +124,8 @@ func _compose_readout() -> String:
 			lines.append("worldgen  %d ms heightmap" % t.get("heightmap_ms", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
+		if world.has_method("lake_count"):
+			lines.append("lakes     %d" % world.lake_count())
 
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")

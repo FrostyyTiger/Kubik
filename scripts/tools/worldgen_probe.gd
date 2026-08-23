@@ -46,6 +46,7 @@ func _init() -> void:
 		st["mean"] * config.block_size])
 
 	_print_zones(gen, hm, config)
+	_print_lakes(gen, hm, config)
 	quit()
 
 
@@ -86,3 +87,32 @@ func _parse_args() -> Dictionary:
 					i += 1
 		i += 1
 	return out
+
+
+## Lakes are the loudest determinism test we have: they are large, they are
+## obviously in a place, and two players seeing different ones would notice
+## immediately. Count, total area and the biggest few must match run to run.
+func _print_lakes(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
+	var lakes := Lakes.new()
+	lakes.compute(hm, config)
+	var total_area := 0.0
+	var flooded := 0
+	for lake in lakes.lakes:
+		total_area += lake["area_m2"]
+		flooded += lake["cells"]
+	print("lakes         %d, %d cells flooded (%.1f%% of map), %.0f m2, %d ms" % [
+		lakes.lake_count(), flooded,
+		float(flooded) / float(hm.cols * hm.cols) * 100.0,
+		total_area, lakes.elapsed_ms()])
+	var deep := 0
+	for lake in lakes.lakes:
+		if lake["max_depth"] >= 2.0:
+			deep += 1
+	print("              %d of them at least 2 blocks (1 m) deep somewhere" % deep)
+
+	var sorted := lakes.lakes.duplicate()
+	sorted.sort_custom(func(a, b): return a["cells"] > b["cells"])
+	for i in mini(5, sorted.size()):
+		print("  lake %-2d      %6d cells  %9.0f m2  level %6.2f  depth mean %.2f max %.2f blocks" % [
+			i, sorted[i]["cells"], sorted[i]["area_m2"], sorted[i]["level"],
+			sorted[i]["mean_depth"], sorted[i]["max_depth"]])

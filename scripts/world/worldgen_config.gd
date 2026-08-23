@@ -170,6 +170,19 @@ const USER_PATH := "user://worldgen.tres"
 ## sits exactly at the lip and leaks visually over the edge.
 @export var lake_level_offset := 1.0
 
+## Deepest a lake is allowed to be, in blocks, measured from the basin floor.
+##
+## NOT in the plan, and needed. Filling every basin to its spill point puts a
+## quarter of the map under water - not shallow swamp either, but genuine
+## 28 m deep basins. Real terrain has very few closed basins because rivers
+## carve outlets through the rims; noise terrain has thousands, and we do not
+## model erosion.
+##
+## Capping the depth puts water in the BOTTOM of a valley instead of filling
+## the valley up to its lip, which is both what the design asks for and what
+## Switzerland looks like. Turn it up to see the drowned version.
+@export var lake_max_depth := 10.0
+
 
 # --- Atmosphere -------------------------------------------------------------
 
