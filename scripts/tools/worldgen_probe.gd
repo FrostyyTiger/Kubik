@@ -47,6 +47,7 @@ func _init() -> void:
 
 	_print_zones(gen, hm, config)
 	_print_lakes(gen, hm, config)
+	_print_trees(gen, hm, config)
 	quit()
 
 
@@ -116,3 +117,29 @@ func _print_lakes(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) 
 		print("  lake %-2d      %6d cells  %9.0f m2  level %6.2f  depth mean %.2f max %.2f blocks" % [
 			i, sorted[i]["cells"], sorted[i]["area_m2"], sorted[i]["level"],
 			sorted[i]["mean_depth"], sorted[i]["max_depth"]])
+
+
+## Every candidate cell in the world, counted. Slower than sampling but it is
+## the number that has to match between two machines, so it is the number worth
+## printing.
+func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
+	var started := Time.get_ticks_msec()
+	var trees := 0
+	var step: int = config.tree_cell_blocks
+	var lo := -int(config.world_blocks_xz / 2)
+	var hi := int(config.world_blocks_xz / 2)
+	var cell_lo := lo / step
+	var cell_hi := hi / step
+	for cz in range(cell_lo, cell_hi):
+		for cx in range(cell_lo, cell_hi):
+			var bx := cx * step
+			var bz := cz * step
+			var surface := gen.surface_at(float(bx), float(bz))
+			var chance := gen.tree_probability_at(
+				surface, gen.zone_jitter_at(float(bx), float(bz)))
+			if chance <= 0.0:
+				continue
+			if WorldHash.hash01(cx, cz, gen.world_seed, TerrainGenerator.SALT_TREE) < chance:
+				trees += 1
+	print("trees         %d in the whole world (%d ms)" % [
+		trees, Time.get_ticks_msec() - started])
