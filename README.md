@@ -1,10 +1,30 @@
 # Kubik
 
-A two-player co-op voxel exploration game. Godot 4, GDScript, MIT licensed.
-Open source hobby project and a learning exercise.
+## What is this
 
-Think Cube World's readability with Minecraft's building blocks: a chunked
-voxel world you and one friend explore together, one hosting and one joining.
+Kubik is a strictly two-player co-op voxel exploration game with a fantasy
+setting and a cozy-but-adventurous tone. Open source (MIT), built in Godot 4,
+developed by two friends as a learning project.
+
+**Core loop:** we roam a procedurally generated world together, fight what
+lives in it, and grow stronger from what it drops, which lets us push into
+stranger, more dangerous territory further from the safety of firelight.
+
+### Design pillars
+
+Every feature must serve at least one, and contradict none.
+
+- **BETTER TOGETHER.** Designed for exactly 2 players, always. Encounters
+  assume two bodies: flanking, saves, complementary roles. Max players is
+  hardcoded at 2. No solo balancing, no 3-4 player scaling, ever.
+- **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance from spawn and
+  with darkness. Campfires (and daylight) are the safe, warm register: light,
+  regen, respawn point. Death costs time, not progress. No base building.
+- **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
+  not from menus or crafting trees. Distance is the difficulty and content axis.
+
+Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
+what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 
 > **Status: early.** Right now you get generated terrain, a fly camera, and two
 > instances that see each other. There is no player character, no collision, and
