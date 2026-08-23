@@ -72,7 +72,10 @@ func _process(delta: float) -> void:
 	_publish_local_state()
 	if Net.is_host():
 		# The host is the only one that assembles and distributes the table.
-		_cl_sync_players.rpc(_states)
+		# Skip the broadcast when hosting alone - single player is just a host
+		# with no clients, and there is nobody to send to.
+		if not Net.other_peer_ids().is_empty():
+			_cl_sync_players.rpc(_states)
 		_apply_states(_states)
 
 
@@ -196,7 +199,7 @@ func _on_peer_left(peer_id: int) -> void:
 # --- HUD and debug ----------------------------------------------------------
 
 func _update_status() -> void:
-	if not _world.is_ready():
+	if not _world.is_world_ready():
 		return
 	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space/Ctrl, [G] slab, Esc" % [
 		_role_name(), Net.local_peer_id(), _players.size(),

@@ -89,7 +89,7 @@ func has_chunk(chunk_pos: Vector3i) -> bool:
 	return _chunks.has(chunk_pos)
 
 
-func is_ready() -> bool:
+func is_world_ready() -> bool:
 	return generator != null and _build_queue.is_empty()
 
 

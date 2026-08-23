@@ -11,6 +11,10 @@ extends Control
 
 
 func _ready() -> void:
+	# FlyCamera releases the cursor when it leaves the tree, but the menu is
+	# completely unusable if that ever fails, so assert it here too.
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+
 	# Coming back to the menu from a game means the old session must go, or the
 	# next Host will fail with "port already in use".
 	if Net.is_online():
