@@ -43,6 +43,12 @@ var _build_ms := 0
 func _ready() -> void:
 	_world.generation_finished.connect(_on_world_ready)
 	Net.peer_left.connect(_on_peer_left)
+	Net.host_disconnected.connect(_on_host_disconnected)
+
+	if not Net.is_online():
+		# Reached by pressing F6 on this scene, and by single player. Host with
+		# zero clients rather than a separate offline mode.
+		Net.host_offline()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -64,6 +70,11 @@ func _process(delta: float) -> void:
 		_join_retry -= delta
 		if _join_retry <= 0.0:
 			_request_join_state()
+
+	# A session we are no longer part of has nothing to sync, and calling rpc()
+	# without a live peer is an engine error, not a no-op.
+	if not Net.is_online():
+		return
 
 	_sync_accum += delta
 	if _sync_accum < 1.0 / SYNC_HZ:
@@ -186,6 +197,12 @@ func _remove_player(peer_id: int) -> void:
 		return
 	_players[peer_id].queue_free()
 	_players.erase(peer_id)
+
+
+## The host quit or crashed. The world was theirs, so there is nothing sensible
+## to keep playing - back to the menu, which explains why.
+func _on_host_disconnected() -> void:
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
 func _on_peer_left(peer_id: int) -> void:

@@ -201,7 +201,9 @@ func _host_apply_edit(sender_id: int, world_block_pos: Vector3i, block_id: int) 
 		# Nothing changed (already that block), so nothing to tell anyone.
 		return
 	_edits[world_block_pos] = block_id
-	_cl_apply_block.rpc(world_block_pos, block_id)
+	# Nobody to tell when hosting alone, and rpc() without a peer is an error.
+	if not Net.other_peer_ids().is_empty():
+		_cl_apply_block.rpc(world_block_pos, block_id)
 
 
 ## The host says yes or no. Today the rules are minimal; reach distance,

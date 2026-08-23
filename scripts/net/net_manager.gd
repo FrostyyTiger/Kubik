@@ -34,6 +34,9 @@ enum Role { OFFLINE, HOST, CLIENT }
 var role: Role = Role.OFFLINE
 var transport: NetTransport = null
 
+## Why the last session ended, shown once by the menu. Empty means "no news".
+var last_status := ""
+
 
 func _ready() -> void:
 	# These five signals are the entire connection lifecycle.
@@ -81,6 +84,19 @@ func join_game(address: String = "127.0.0.1", port: int = DEFAULT_PORT) -> bool:
 	return true
 
 
+## Single player, or running the game scene directly from the editor (F6).
+##
+## Host with zero clients, taken literally: we take the HOST role without
+## opening a socket at all. Every is_host() check, every validation rule and
+## the whole mutation path behave exactly as they do online - which is the
+## point of not having a separate single-player mode.
+func host_offline() -> void:
+	_teardown_peer()
+	role = Role.HOST
+	_log("offline session, no socket")
+	hosting_started.emit()
+
+
 func leave() -> void:
 	if role == Role.OFFLINE:
 		return
@@ -101,15 +117,28 @@ func is_online() -> bool:
 	return role != Role.OFFLINE
 
 
-## Our own peer id. Falls back to 1 when offline so that code written as
-## "authority is 1" still behaves sensibly before a session exists.
+## Our own peer id. Falls back to 1 when there is no live connection, so that
+## code written as "authority is 1" behaves sensibly before a session exists,
+## in an offline session, and during teardown.
+##
+## Checking the peer is not enough: after the host vanishes the peer object is
+## still assigned but dead, and get_unique_id() on it is an engine error.
 func local_peer_id() -> int:
-	return multiplayer.get_unique_id() if is_online() else 1
+	if not _peer_connected():
+		return 1
+	return multiplayer.get_unique_id()
 
 
 ## Everyone else currently in the session.
 func other_peer_ids() -> PackedInt32Array:
-	return multiplayer.get_peers() if is_online() else PackedInt32Array()
+	if not _peer_connected():
+		return PackedInt32Array()
+	return multiplayer.get_peers()
+
+
+func _peer_connected() -> bool:
+	var peer := multiplayer.multiplayer_peer
+	return peer != null and peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
 
 # --- Signal handlers --------------------------------------------------------
@@ -140,6 +169,7 @@ func _on_server_disconnected() -> void:
 	_log("host went away")
 	_teardown_peer()
 	role = Role.OFFLINE
+	last_status = "The host closed the session."
 	host_disconnected.emit()
 
 
@@ -167,5 +197,5 @@ func _log(msg: String) -> void:
 		Role.HOST:
 			who = "host"
 		Role.CLIENT:
-			who = "client:%d" % multiplayer.get_unique_id()
+			who = "client:%d" % local_peer_id()
 	print("[Net/%s] %s" % [who, msg])
