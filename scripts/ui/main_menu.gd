@@ -9,6 +9,8 @@ extends Control
 @onready var _address_edit: LineEdit = $Center/VBox/AddressEdit
 @onready var _status: Label = $Center/VBox/Status
 
+static var _launch_handled := false
+
 
 func _ready() -> void:
 	# FlyCamera releases the cursor when it leaves the tree, but the menu is
@@ -29,7 +31,37 @@ func _ready() -> void:
 	Net.host_failed.connect(_on_failed)
 	Net.join_failed.connect(_on_failed)
 
-	_status.text = ""
+	# Explains a bounce back from a session that ended without us asking.
+	_status.text = Net.last_status
+	Net.last_status = ""
+	# Deferred: acting on these immediately would call change_scene_to_file()
+	# while the SceneTree is still busy attaching this very node, which Godot
+	# refuses ("Parent node is busy adding/removing children"). One frame later
+	# the tree is settled.
+	_apply_launch_args.call_deferred()
+
+
+## Skip the menu from the command line, so testing two instances does not mean
+## clicking through it twice every run. Anything after a bare `--` is passed to
+## the game rather than the engine:
+##
+##     Godot_v4.exe --path . -- --host
+##     Godot_v4.exe --path . -- --join 127.0.0.1
+func _apply_launch_args() -> void:
+	# Once per process. `static` survives the menu being freed and rebuilt, so
+	# bouncing back here after a session ends does not silently reconnect you.
+	if _launch_handled:
+		return
+	_launch_handled = true
+
+	var args := OS.get_cmdline_user_args()
+	if args.has("--host"):
+		_on_host_pressed()
+	elif args.has("--join"):
+		var i := args.find("--join")
+		if i + 1 < args.size():
+			_address_edit.text = args[i + 1]
+		_on_join_pressed()
 
 
 func _on_host_pressed() -> void:
