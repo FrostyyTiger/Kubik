@@ -52,6 +52,10 @@ func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	# A client retuning its own terrain has silently left the host's world, so
+	# the panel is read-only there. Read-only rather than synced-from-host
+	# because it is the safer of the two and this is a debug tool.
+	_debug.set_tuning_editable(Net.is_host())
 	_debug.reroll_requested.connect(_on_reroll_requested)
 	_debug.config_changed.connect(_on_config_changed)
 	_debug.config_reload_requested.connect(_on_config_reload_requested)
@@ -70,6 +74,8 @@ func _ready() -> void:
 		# so this differs every session.
 		_status.text = "host - generating world..."
 		_world.setup(randi(), config)
+		print("[Game] hosting world: seed %d, config %s" % [
+			_world.world_seed, _world.config.hash_key()])
 		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
@@ -165,19 +171,26 @@ func _srv_request_join_state() -> void:
 	if not Net.is_host():
 		return
 	var who := multiplayer.get_remote_sender_id()
-	print("[Game] sending world state to peer %d" % who)
-	_cl_receive_join_state.rpc_id(who, _world.world_seed, _world.get_edits())
+	print("[Game] sending world state to peer %d (config %s)" % [
+		who, _world.config.hash_key()])
+	# The config travels WITH the seed, and it is the world's snapshot rather
+	# than the live tuning object - the client has to generate against exactly
+	# what the host generated against, not against whatever the host has since
+	# dragged a slider to.
+	_cl_receive_join_state.rpc_id(
+		who, _world.world_seed, _world.config.to_dict(), _world.get_edits())
 
 
 ## Sent by the host, executed on the joining client.
 @rpc("authority", "call_remote", "reliable")
-func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
+func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
+		edits: Dictionary) -> void:
 	if _world.has_seed():
 		return  # A retry crossed with the reply. Ignore the duplicate.
-	# Stage 11 sends the host's config alongside the seed. Until then both
-	# machines use their own defaults, which is only safe because neither has
-	# tuned anything - the handshake is where that assumption gets closed.
+	_adopt_host_config(config_data)
 	_world.setup(seed_value, config)
+	print("[Game] joined world: seed %d, config %s" % [
+		seed_value, _world.config.hash_key()])
 	_spawn_player()
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
@@ -276,12 +289,38 @@ func _on_peer_left(peer_id: int) -> void:
 # client rerolling alone is exactly the silent desync the README warns about.
 
 func _on_reroll_requested(new_seed: int) -> void:
+	# HOST ONLY. A client rerolling on its own would silently walk off into a
+	# different world - no error on either machine, just a friend swimming
+	# through solid rock. Same rule as every other world change: one authority.
+	if not Net.is_host():
+		_status.text = "only the host can reroll the world"
+		return
+	_apply_reroll(new_seed, config.to_dict())
+	if not Net.other_peer_ids().is_empty():
+		_cl_reroll.rpc(new_seed, config.to_dict())
+
+
+## Sent by the host, executed on every client.
+@rpc("authority", "call_remote", "reliable")
+func _cl_reroll(new_seed: int, config_data: Dictionary) -> void:
+	_apply_reroll(new_seed, config_data)
+
+
+func _apply_reroll(new_seed: int, config_data: Dictionary) -> void:
+	_adopt_host_config(config_data)
 	print("[Game] reroll -> seed %d, config %s" % [new_seed, config.hash_key()])
 	_slab_present = false
 	_world.reset()
 	_world.setup(new_seed, config)
 	_spawn_player()
 	_status.text = "regenerating world..."
+
+
+## Take the host's numbers as our own, and tell everything that reads them.
+func _adopt_host_config(config_data: Dictionary) -> void:
+	config.from_dict(config_data)
+	_debug.rebind(config)
+	_sky.rebind(config)
 
 
 ## A knob moved in the tuning panel. The config object is shared, so World

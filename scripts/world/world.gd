@@ -93,7 +93,13 @@ var _far_vertices := 0
 ## Start building. Called once per session.
 func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	world_seed = p_seed
-	config = p_config if p_config != null else WorldgenConfig.new()
+	# A SNAPSHOT, not the live tuning object. The panel writes into the config
+	# Game holds, and if the world read from that too, then moving a slider
+	# would change the terrain of chunks not yet streamed in while leaving the
+	# ones already around the player alone - a world that disagrees with itself
+	# along a line you cannot see. Terrain changes on reroll and at no other
+	# time, which is exactly what the panel says it does.
+	config = (p_config if p_config != null else WorldgenConfig.new()).clone()
 	generator = TerrainGenerator.new(p_seed, config)
 
 	# The whole world's surface, once, before any chunk exists. Everything

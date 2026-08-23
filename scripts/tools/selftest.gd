@@ -14,6 +14,7 @@ func _init() -> void:
 	failures += _test_tree_borders()
 	failures += _test_chunk_determinism()
 	failures += _test_day_cycle()
+	failures += _test_config_contract()
 	print("")
 	print("SELFTEST: %s" % ("all passed" if failures == 0 else "%d FAILED" % failures))
 	quit(1 if failures > 0 else 0)
@@ -212,3 +213,59 @@ func _test_day_cycle() -> int:
 	print("day cycle: 1441 steps, elevation %.3f to %.3f, %d horizon crossings, %d bad" % [
 		lowest, highest, crossings, bad])
 	return 1 if bad > 0 else 0
+
+
+## THE JOIN HANDSHAKE'S HALF OF THE DETERMINISM CONTRACT.
+##
+## Terrain is never sent, only a seed - which is only true if both machines
+## also agree on every tuning number. The config therefore travels with the
+## seed, and this checks the three things that has to mean:
+##
+##   1. two different configs must not fingerprint the same, or the guard is
+##      blind to exactly what it exists to catch;
+##   2. a config must survive to_dict/from_dict unchanged, because that is the
+##      form it crosses the network in;
+##   3. and a config that made the round trip must generate the SAME WORLD,
+##      byte for byte, as the one it was copied from. That is the property a
+##      joining client depends on and the other two only imply.
+func _test_config_contract() -> int:
+	var bad := 0
+
+	var host_config := WorldgenConfig.new()
+	host_config.mountain_amp += 37.0
+	host_config.forest_max -= 11.0
+	host_config.tree_probability = 0.21
+
+	var defaults := WorldgenConfig.new()
+	if host_config.hash_key() == defaults.hash_key():
+		print("  a retuned config fingerprints the same as the defaults")
+		bad += 1
+
+	# What a joining client does with what arrives on the wire.
+	var client_config := WorldgenConfig.new()
+	client_config.from_dict(host_config.to_dict())
+	if client_config.hash_key() != host_config.hash_key():
+		print("  config did not survive to_dict/from_dict")
+		bad += 1
+
+	var host_world := _heightmap_hash(7777, host_config)
+	var client_world := _heightmap_hash(7777, client_config)
+	var default_world := _heightmap_hash(7777, defaults)
+
+	if host_world != client_world:
+		print("  client generated a DIFFERENT world from the host's config")
+		bad += 1
+	if host_world == default_world:
+		print("  the config made no difference to the world at all")
+		bad += 1
+
+	print("config contract: host %s, client %s, untuned %s -> %s" % [
+		host_world, client_world, default_world,
+		"ok" if bad == 0 else "FAILED"])
+	return 1 if bad > 0 else 0
+
+
+func _heightmap_hash(world_seed: int, cfg: WorldgenConfig) -> String:
+	var gen := TerrainGenerator.new(world_seed, cfg)
+	gen.build_heightmap()
+	return gen.heightmap.hash_key()
