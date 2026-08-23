@@ -54,6 +54,7 @@ var config: WorldgenConfig = null
 ## anything, which is what keeps a debug tool from quietly becoming a system.
 var world: Node = null
 var player: Node3D = null
+var sky: SkyCycle = null
 
 ## Set false on clients in Stage 11 - a client that retunes its own terrain has
 ## silently left the host's world.
@@ -73,10 +74,12 @@ func _ready() -> void:
 	set_process(true)
 
 
-func setup(p_config: WorldgenConfig, p_world: Node, p_player: Node3D) -> void:
+func setup(p_config: WorldgenConfig, p_world: Node, p_player: Node3D,
+		p_sky: SkyCycle = null) -> void:
 	config = p_config
 	world = p_world
 	player = p_player
+	sky = p_sky
 	_refresh_panel()
 
 
@@ -111,6 +114,11 @@ func _compose_readout() -> String:
 		lines.append("zone      %s" % _zone_name(alt_blocks))
 
 	lines.append("fps       %d" % Engine.get_frames_per_second())
+	if sky != null:
+		# Shown as a clock because "0.63" tells you nothing about whether the
+		# sun should be up.
+		var minutes := int(sky.time_of_day * 24.0 * 60.0)
+		lines.append("time      %02d:%02d" % [minutes / 60, minutes % 60])
 
 	if world != null:
 		if world.has_method("loaded_chunk_count"):

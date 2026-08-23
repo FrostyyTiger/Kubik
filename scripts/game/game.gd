@@ -28,6 +28,7 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
 @onready var _debug: DebugHUD = $DebugHUD
+@onready var _sky: SkyCycle = $SkyCycle
 
 ## Every tunable number. Loaded once here and handed to World, so there is
 ## exactly one instance per session and no chance of two halves of the game
@@ -49,7 +50,8 @@ var _build_ms := 0
 
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
-	_debug.setup(config, _world, _player)
+	_sky.setup(config, $Sun, $WorldEnvironment)
+	_debug.setup(config, _world, _player, _sky)
 	_debug.reroll_requested.connect(_on_reroll_requested)
 	_debug.config_changed.connect(_on_config_changed)
 	_debug.config_reload_requested.connect(_on_config_reload_requested)
@@ -285,12 +287,17 @@ func _on_reroll_requested(new_seed: int) -> void:
 ## A knob moved in the tuning panel. The config object is shared, so World
 ## already sees the new value; what it does NOT have is terrain built with it.
 func _on_config_changed() -> void:
-	_status.text = "config changed - press F7 to rebuild"
+	# Fog and day length take effect immediately - they cost nothing to change
+	# and are much easier to tune when you can see the result at once. Terrain
+	# shape needs a rebuild, which is what the message is about.
+	_sky.rebind(config)
+	_status.text = "config changed - press F7 to rebuild terrain"
 
 
 func _on_config_reload_requested() -> void:
 	config = WorldgenConfig.load_or_default()
 	_debug.rebind(config)
+	_sky.rebind(config)
 	_on_reroll_requested(_world.world_seed)
 
 

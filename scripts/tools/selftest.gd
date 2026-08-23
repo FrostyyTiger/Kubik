@@ -13,6 +13,7 @@ func _init() -> void:
 	failures += _test_winding()
 	failures += _test_tree_borders()
 	failures += _test_chunk_determinism()
+	failures += _test_day_cycle()
 	print("")
 	print("SELFTEST: %s" % ("all passed" if failures == 0 else "%d FAILED" % failures))
 	quit(1 if failures > 0 else 0)
@@ -155,3 +156,59 @@ func _test_chunk_determinism() -> int:
 	print("chunk determinism: %s vs %s -> %s" % [
 		hashes[0], hashes[1], "same" if ok else "DIFFERENT"])
 	return 0 if ok else 1
+
+
+## A full day is eight minutes of real time, so nobody is going to watch a
+## headless run through one. The colour and sun-angle work is pure functions of
+## the sun's elevation precisely so it can be stepped through here instead.
+##
+## What would actually break: a NaN from normalising a zero vector, the sun
+## never rising, or fog and sky disagreeing at the horizon, which reads as a
+## grey wall standing in front of the view.
+func _test_day_cycle() -> int:
+	var bad := 0
+	var highest := -2.0
+	var lowest := 2.0
+	var crossings := 0
+	# The last NON-ZERO sign. At sunrise the elevation is exactly zero, and
+	# signf(0.0) is 0, so comparing raw signs counts one sunrise as two
+	# crossings - a test artefact, not a sun that rises twice.
+	var previous_sign := signf(SkyCycle.sun_position(0.0).y)
+
+	for step in 1441:
+		var t := float(step) / 1440.0
+		var pos := SkyCycle.sun_position(t)
+		if is_nan(pos.x) or is_nan(pos.y) or is_nan(pos.z):
+			bad += 1
+			continue
+		if absf(pos.length() - 1.0) > 0.001:
+			bad += 1
+		var elevation := pos.y
+		highest = maxf(highest, elevation)
+		lowest = minf(lowest, elevation)
+		var current_sign := signf(elevation)
+		if current_sign != 0.0:
+			if current_sign != previous_sign:
+				crossings += 1
+			previous_sign = current_sign
+
+		var sun := SkyCycle.sun_color(elevation)
+		var fog := SkyCycle.fog_color(elevation)
+		if is_nan(sun.r) or is_nan(fog.r):
+			bad += 1
+		if SkyCycle.sun_energy(elevation) <= 0.0:
+			bad += 1  # a pitch black night is a black screen, not atmosphere
+
+		# The basis the sun light actually uses must stay well formed all the way
+		# round, including straight overhead.
+		var basis := Basis.looking_at(-pos, Vector3.UP)
+		if is_nan(basis.x.x) or absf(basis.determinant() - 1.0) > 0.01:
+			bad += 1
+
+	if crossings != 2:
+		print("  the sun crossed the horizon %d times in a day, expected 2" % crossings)
+		bad += 1
+
+	print("day cycle: 1441 steps, elevation %.3f to %.3f, %d horizon crossings, %d bad" % [
+		lowest, highest, crossings, bad])
+	return 1 if bad > 0 else 0

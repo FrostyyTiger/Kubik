@@ -1,9 +1,10 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="3_player"]
 [ext_resource type="Script" path="res://scripts/ui/debug_hud.gd" id="4_hud"]
+[ext_resource type="Script" path="res://scripts/world/sky_cycle.gd" id="5_sky"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -45,3 +46,6 @@ text = "..."
 
 [node name="DebugHUD" type="CanvasLayer" parent="."]
 script = ExtResource("4_hud")
+
+[node name="SkyCycle" type="Node" parent="."]
+script = ExtResource("5_sky")
