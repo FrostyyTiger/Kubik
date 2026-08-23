@@ -38,14 +38,28 @@ func setup(p_chunk: Chunk, block_size: float) -> void:
 	position = Vector3(p_chunk.origin()) * block_size
 
 
+## Install a mesh built on a worker thread. This half of meshing has to happen
+## on the main thread because ArrayMesh and the physics shape both talk to
+## servers that are not safe to call from anywhere else - which is exactly why
+## MeshJob hands back arrays rather than a mesh.
+func apply_arrays(arrays: Array) -> void:
+	mesh = ChunkMesher.arrays_to_mesh(arrays)
+	_apply_collision()
+	chunk.dirty = false
+
+
 func rebuild(world_solid: Callable) -> void:
 	# build() returns null for a chunk with no visible faces. Assigning null
 	# clears the mesh, which is exactly what we want.
 	mesh = ChunkMesher.build(chunk, world_solid, _block_size)
-	# The collision shape is generated FROM the visible mesh, so the two can
-	# never disagree - you cannot end up standing on a face that is not drawn,
-	# or walking through one that is. A chunk with no faces gets no shape at
-	# all rather than an empty one, which is one less thing for the physics
-	# server to consider.
-	_collider.shape = mesh.create_trimesh_shape() if mesh != null else null
+	_apply_collision()
 	chunk.dirty = false
+
+
+## The collision shape is generated FROM the visible mesh, so the two can never
+## disagree - you cannot end up standing on a face that is not drawn, or
+## walking through one that is. A chunk with no faces gets no shape at all
+## rather than an empty one, which is one less thing for the physics server to
+## keep track of.
+func _apply_collision() -> void:
+	_collider.shape = mesh.create_trimesh_shape() if mesh != null else null

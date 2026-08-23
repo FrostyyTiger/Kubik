@@ -397,6 +397,8 @@ func _flatten_valleys(h: float) -> float:
 ## one per voxel. At 16 blocks tall that is a 16x saving on the hot path.
 func generate_into(chunk: Chunk) -> void:
 	var origin := chunk.origin()
+	var has_air := false
+	var has_solid := false
 
 	for lz in Chunk.SIZE:
 		for lx in Chunk.SIZE:
@@ -417,8 +419,13 @@ func generate_into(chunk: Chunk) -> void:
 				var id := Block.AIR
 				if by <= top:
 					id = block_for(top - by, zone)
+					has_solid = true
+				else:
+					has_air = true
 				chunk.voxels[Chunk.index(lx, ly, lz)] = id
 
+	chunk.has_air = has_air
+	chunk.has_solid = has_solid
 	chunk.dirty = true
 
 

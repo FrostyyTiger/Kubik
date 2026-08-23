@@ -24,9 +24,21 @@ signal generation_finished(chunk_count: int, elapsed_ms: int)
 ## standing still.
 const UNLOAD_MARGIN_CHUNKS := 2
 
-## Milliseconds of chunk building allowed per frame. At 60 fps a frame is
-## 16.6 ms, so 8 leaves room for everything else and the window stays alive.
+## Milliseconds of MAIN THREAD chunk work allowed per frame. At 60 fps a frame
+## is 16.6 ms, so 8 leaves room for everything else and the window stays alive.
+##
+## Since Stage 6 the expensive half - meshing - happens on worker threads, and
+## this budget covers only what has to be here: generating voxels, and handing
+## finished arrays to the rendering and physics servers.
 const BUILD_BUDGET_MS := 8
+
+## How many chunks may be out at the worker pool at once.
+##
+## Not unbounded: each job holds its chunk and six neighbours alive, and a
+## queue of a thousand of them would pin the whole loaded region in memory
+## while the pool worked through it. Deep enough to keep every core fed, which
+## is all a queue has to do.
+const MAX_JOBS_IN_FLIGHT := 12
 
 var world_seed := 0
 var generator: TerrainGenerator = null
@@ -47,6 +59,15 @@ var _center := Vector2i.ZERO
 ## every time the player stops walking, and a signal that fired then would have
 ## Game re-running its spawn logic for the rest of the session.
 var _initial_load_reported := false
+
+## chunk position -> {"task": int, "job": MeshJob}. Chunks whose voxels exist
+## and whose mesh is being built by the worker pool.
+var _in_flight := {}
+
+## Wall clock, as distinct from _total_ms which counts main-thread time only.
+## With threading those two stop being the same number, and the gap between
+## them is precisely what the threading bought.
+var _wall_start_ms := 0
 
 var _total_ms := 0
 var _built := 0
@@ -76,29 +97,34 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 		_heightmap_ms, generator.heightmap.hash_key()])
 
 	_initial_load_reported = false
+	_wall_start_ms = Time.get_ticks_msec()
 	refresh_region()
 	print("[World] seed %d, %d chunks queued around %s" % [
 		p_seed, _build_queue.size(), _center])
 
 
 func _process(_delta: float) -> void:
-	if _build_queue.is_empty():
+	if _build_queue.is_empty() and _in_flight.is_empty():
 		return
 
-	# Spend a bounded slice of this frame on chunk building. Doing all 75 in
-	# _ready() would freeze the window for seconds with no sign of life.
+	# Spend a bounded slice of this frame on chunk work. Doing it all at once
+	# would freeze the window for seconds with no sign of life.
 	var started := Time.get_ticks_msec()
-	while not _build_queue.is_empty() and Time.get_ticks_msec() - started < BUILD_BUDGET_MS:
-		_build_chunk(_build_queue.pop_front())
+	# Collect first, then submit: finished work is what the player can actually
+	# see, and a frame that spends its whole budget starting new jobs shows
+	# nothing for it.
+	_collect_finished(started)
+	_submit_jobs(started)
 	_total_ms += Time.get_ticks_msec() - started
 
-	if _build_queue.is_empty() and not _initial_load_reported:
+	if _build_queue.is_empty() and _in_flight.is_empty() and not _initial_load_reported:
 		_initial_load_reported = true
-		print("[World] %d chunks generated and meshed in %d ms (%.1f ms/chunk: %.1f gen, %.1f mesh)" % [
-			_built, _total_ms, float(_total_ms) / float(maxi(_built, 1)),
-			float(_gen_ms) / 1000.0 / float(maxi(_built, 1)),
-			float(_mesh_ms) / 1000.0 / float(maxi(_built, 1))])
-		generation_finished.emit(_built, _total_ms)
+		var wall := Time.get_ticks_msec() - _wall_start_ms
+		var n := float(maxi(_built, 1))
+		print("[World] %d chunks in %d ms wall (%d ms main thread: %.2f gen, %.2f upload per chunk)" % [
+			_built, wall, _total_ms, float(_gen_ms) / 1000.0 / n,
+			float(_mesh_ms) / 1000.0 / n])
+		generation_finished.emit(_built, wall)
 
 
 ## Is there a solid block at this WORLD block position?
@@ -138,6 +164,7 @@ func is_world_ready() -> bool:
 ## everything else - edits are positions in a world that no longer exists, and
 ## replaying them into the new one would drop blocks in mid-air.
 func reset() -> void:
+	_drain_jobs()
 	for pos in _chunk_nodes:
 		_chunk_nodes[pos].queue_free()
 	_chunk_nodes.clear()
@@ -149,6 +176,7 @@ func reset() -> void:
 	_gen_ms = 0
 	_mesh_ms = 0
 	_heightmap_ms = 0
+	_wall_start_ms = Time.get_ticks_msec()
 
 
 func loaded_chunk_count() -> int:
@@ -173,7 +201,19 @@ func last_timings() -> Dictionary:
 
 # --- Internals --------------------------------------------------------------
 
-func _build_chunk(chunk_pos: Vector3i) -> void:
+## Generate voxels for as many queued chunks as the budget allows, and hand
+## each one's meshing to the worker pool.
+func _submit_jobs(started: int) -> void:
+	while not _build_queue.is_empty() and _in_flight.size() < MAX_JOBS_IN_FLIGHT:
+		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
+			return
+		var chunk_pos: Vector3i = _build_queue.pop_front()
+		if _chunks.has(chunk_pos):
+			continue
+		_generate_and_submit(chunk_pos)
+
+
+func _generate_and_submit(chunk_pos: Vector3i) -> void:
 	var t_gen := Time.get_ticks_usec()
 	var chunk := Chunk.new(chunk_pos)
 	generator.generate_into(chunk)
@@ -186,18 +226,79 @@ func _build_chunk(chunk_pos: Vector3i) -> void:
 	# and replaying here means they can arrive in any order, at any time.
 	_replay_edits_for(chunk)
 
+	# The node exists immediately, with no mesh. That keeps the bookkeeping in
+	# one place: everything downstream can assume a chunk in _chunks has a node
+	# in _chunk_nodes, whether or not its mesh has arrived yet.
 	var node := ChunkNode.new()
 	node.setup(chunk, config.block_size)
 	add_child(node)
 	_chunk_nodes[chunk_pos] = node
 
-	# A chunk built before its neighbours still meshes correctly: is_solid_world
-	# falls through to the generator, which gives the same answer the neighbour
-	# will have once it exists. So no re-mesh pass is needed at load time.
-	var t_mesh := Time.get_ticks_usec()
-	node.rebuild(Callable(self, "is_solid_world"))
-	_mesh_ms += Time.get_ticks_usec() - t_mesh
-	_built += 1
+	var job := MeshJob.new()
+	job.chunk = chunk
+	job.generator = generator
+	job.block_size = config.block_size
+	job.neighbours = _face_neighbour_chunks(chunk_pos)
+	_in_flight[chunk_pos] = {
+		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk mesh"),
+		"job": job,
+	}
+
+
+## Install meshes for jobs the pool has finished with.
+##
+## Upload order does not matter to what the world ends up looking like, which
+## is why walking a Dictionary is acceptable here and is not anywhere in
+## worldgen: this decides which chunk appears a frame earlier, not what is in
+## it.
+func _collect_finished(started: int) -> void:
+	var done: Array[Vector3i] = []
+	for chunk_pos in _in_flight:
+		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
+			break
+		var entry: Dictionary = _in_flight[chunk_pos]
+		if not WorkerThreadPool.is_task_completed(entry["task"]):
+			continue
+		# Required even for a task already reported complete - it is what
+		# releases the pool's own bookkeeping for it.
+		WorkerThreadPool.wait_for_task_completion(entry["task"])
+
+		var t_upload := Time.get_ticks_usec()
+		var node: ChunkNode = _chunk_nodes.get(chunk_pos)
+		if node != null and is_instance_valid(node):
+			node.apply_arrays(entry["job"].arrays)
+		_mesh_ms += Time.get_ticks_usec() - t_upload
+		done.append(chunk_pos)
+		_built += 1
+
+	for chunk_pos in done:
+		_in_flight.erase(chunk_pos)
+
+
+## The six chunks sharing a face with this one, for the mesher to ask about
+## neighbours it cannot see itself. Missing ones are simply absent, and the job
+## falls back to the generator for them.
+func _face_neighbour_chunks(chunk_pos: Vector3i) -> Dictionary:
+	var out := {}
+	for offset in [
+		Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
+		Vector3i(0, 1, 0), Vector3i(0, -1, 0),
+		Vector3i(0, 0, 1), Vector3i(0, 0, -1),
+	]:
+		var pos: Vector3i = chunk_pos + offset
+		var c: Chunk = _chunks.get(pos)
+		if c != null:
+			out[pos] = c
+	return out
+
+
+## Block until the pool has finished everything. Called before the world is
+## thrown away - a worker still reading a chunk we are about to drop is exactly
+## the kind of bug that shows up once a month and never reproduces.
+func _drain_jobs() -> void:
+	for chunk_pos in _in_flight:
+		WorkerThreadPool.wait_for_task_completion(_in_flight[chunk_pos]["task"])
+	_in_flight.clear()
 
 
 func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
@@ -276,7 +377,9 @@ func _free_distant_chunks(keep_radius: int) -> void:
 	for pos in _chunks:
 		var dx: int = pos.x - _center.x
 		var dz: int = pos.z - _center.y
-		if dx * dx + dz * dz > keep_sq:
+		# Never free a chunk a worker is still reading. It will drift out of
+		# range again on the next refresh, by which time its job is done.
+		if dx * dx + dz * dz > keep_sq and not _in_flight.has(pos):
 			doomed.append(pos)
 	for pos in doomed:
 		_chunks.erase(pos)
@@ -471,3 +574,10 @@ func _replay_edits_for(chunk: Chunk) -> void:
 ## True once a seed is known, i.e. setup() has been called.
 func has_seed() -> bool:
 	return generator != null
+
+
+## Leaving the scene while workers are still meshing would free chunks out from
+## under them. Draining first is cheap - the jobs are milliseconds - and turns
+## a rare crash on scene change into nothing at all.
+func _exit_tree() -> void:
+	_drain_jobs()

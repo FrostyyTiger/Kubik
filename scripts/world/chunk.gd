@@ -26,11 +26,28 @@ var voxels: PackedByteArray
 ## Set when the contents change, cleared once a mesh has been rebuilt.
 var dirty := true
 
+## Whether this chunk contains any air, and any solid, at all.
+##
+## Almost every chunk in a heightmap world is entirely underground or entirely
+## sky, and knowing which lets the mesher skip most of its work: a chunk with no
+## solid blocks has no faces to draw AT ALL, and one with no air can only have
+## faces on its six outer surfaces. Without this the mesher pays the same fixed
+## cost for a chunk of empty sky as for the surface.
+##
+## They are maintained conservatively - set true, never cleared, when a voxel
+## is written. An edit can therefore leave has_air true for a chunk that is now
+## solid throughout, which costs a little meshing time and can never draw the
+## wrong thing. Erring the other way would hide faces that should be drawn, so
+## the default below matters: a fresh chunk is zero-filled, and AIR is 0.
+var has_air := true
+var has_solid := false
+
 
 func _init(p_chunk_pos: Vector3i) -> void:
 	chunk_pos = p_chunk_pos
 	voxels = PackedByteArray()
-	# Packed arrays zero-fill on resize, and AIR is 0, so a fresh chunk is empty.
+	# Packed arrays zero-fill on resize, and AIR is 0, so a fresh chunk is
+	# empty - which is why has_air starts true and has_solid starts false.
 	voxels.resize(VOLUME)
 
 
@@ -59,6 +76,10 @@ func set_voxel(x: int, y: int, z: int, id: int) -> bool:
 	if voxels[i] == id:
 		return false
 	voxels[i] = id
+	if id == Block.AIR:
+		has_air = true
+	else:
+		has_solid = true
 	dirty = true
 	return true
 
