@@ -5,8 +5,13 @@
 # Android build template, if we ever export to mobile.
 /android/
 
-# Export settings can contain signing keys / absolute paths.
-export_presets.cfg
+# export_presets.cfg is deliberately NOT ignored. CI has no editor and cannot
+# invent an export configuration, so the preset must travel with the repo.
+# That is safe only while codesign/enable stays false - signing credentials
+# belong in GitHub Actions secrets, never in a committed file.
+
+# Local export output.
+build/
 
 # Generated from CSV translation files.
 *.translation
