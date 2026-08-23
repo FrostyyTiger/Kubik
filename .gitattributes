@@ -1,0 +1,11 @@
+# Normalize everything to LF in the repository. Godot reads either, but
+# without this, two machines with different core.autocrlf settings produce
+# whole-file diffs on scenes and scripts.
+* text=auto eol=lf
+
+# Binary assets: never touch, never try to diff as text.
+*.png binary
+*.jpg binary
+*.ogg binary
+*.wav binary
+*.ttf binary
