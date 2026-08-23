@@ -100,6 +100,12 @@ func _build_chunk(chunk_pos: Vector3i) -> void:
 	generator.generate_into(chunk)
 	_chunks[chunk_pos] = chunk
 
+	# Replay any edits that belong to this chunk. A joining player receives
+	# broadcasts while its chunks are still being built, so edits routinely
+	# arrive before the ground they belong to. Recording them unconditionally
+	# and replaying here means they can arrive in any order, at any time.
+	_replay_edits_for(chunk)
+
 	var node := ChunkNode.new()
 	node.setup(chunk)
 	add_child(node)
@@ -261,3 +267,18 @@ func find_surface_y(wx: int, wz: int) -> int:
 		if is_solid_world(wx, y, wz):
 			return y
 	return -1
+
+
+func _replay_edits_for(chunk: Chunk) -> void:
+	if _edits.is_empty():
+		return
+	var origin := chunk.origin()
+	for pos in _edits:
+		var local: Vector3i = pos - origin
+		if Chunk.in_bounds(local.x, local.y, local.z):
+			chunk.set_voxel(local.x, local.y, local.z, _edits[pos])
+
+
+## True once a seed is known, i.e. setup() has been called.
+func has_seed() -> bool:
+	return generator != null

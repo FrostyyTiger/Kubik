@@ -28,6 +28,8 @@ shadow_enabled = true
 [node name="World" type="Node3D" parent="."]
 script = ExtResource("2_world")
 
+[node name="Players" type="Node3D" parent="."]
+
 [node name="FlyCamera" type="Camera3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 0.9063, -0.4226, 0, 0.4226, 0.9063, 0, 56, 0)
 current = true
