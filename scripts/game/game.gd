@@ -1,18 +1,30 @@
 extends Node3D
 
-## Root of the in-game scene. For now it only reports which role we are;
-## the world, camera and player sync land in later commits.
+## Root of the in-game scene.
+
+## Temporary. Next step is the host picking a seed and sending it during the
+## join handshake. Until then a shared constant does the same job: both
+## machines generate byte-identical terrain with zero voxels on the wire.
+const DEBUG_SEED := 1337
+
+@onready var _world: World = $World
+@onready var _status: Label = $HUD/Status
 
 
 func _ready() -> void:
 	var role_name := "host" if Net.is_host() else "client"
-	$HUD/Status.text = "Running as %s (peer id %d)" % [role_name, Net.local_peer_id()]
-	print("[Game] entered as %s" % role_name)
+	_status.text = "%s - generating world..." % role_name
+	_world.generation_finished.connect(_on_world_ready)
+	_world.setup(DEBUG_SEED)
+
+
+func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
+	var role_name := "host" if Net.is_host() else "client"
+	_status.text = "%s (peer %d) - %d chunks in %d ms - seed %d" % [
+		role_name, Net.local_peer_id(), chunk_count, elapsed_ms, _world.world_seed]
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# Escape leaves the session and returns to the menu, which also tears the
-	# ENet peer down so the port is free for the next Host.
 	if event.is_action_pressed("ui_cancel"):
 		Net.leave()
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
