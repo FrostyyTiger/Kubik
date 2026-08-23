@@ -47,8 +47,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	# Click back into the window after releasing the cursor.
+	# Click back into the window after releasing the cursor - unless a debug
+	# panel is what wanted the cursor released. Without that check, clicking a
+	# tuning spinbox would grab the mouse and the panel could not be used at
+	# all.
 	if event is InputEventMouseButton and event.pressed and not _mouse_captured():
+		if DebugHUD.ui_has_mouse:
+			return
 		_capture_mouse(true)
 		get_viewport().set_input_as_handled()
 		return

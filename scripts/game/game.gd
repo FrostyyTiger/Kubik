@@ -26,6 +26,12 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _camera: FlyCamera = $FlyCamera
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
+@onready var _debug: DebugHUD = $DebugHUD
+
+## Every tunable number. Loaded once here and handed to World, so there is
+## exactly one instance per session and no chance of two halves of the game
+## generating against different values.
+var config: WorldgenConfig = null
 
 ## peer_id -> RemotePlayer. Everyone except us.
 var _players := {}
@@ -41,6 +47,12 @@ var _build_ms := 0
 
 
 func _ready() -> void:
+	config = WorldgenConfig.load_or_default()
+	_debug.setup(config, _world, _camera)
+	_debug.reroll_requested.connect(_on_reroll_requested)
+	_debug.config_changed.connect(_on_config_changed)
+	_debug.config_reload_requested.connect(_on_config_reload_requested)
+
 	_world.generation_finished.connect(_on_world_ready)
 	Net.peer_left.connect(_on_peer_left)
 	Net.host_disconnected.connect(_on_host_disconnected)
@@ -54,7 +66,7 @@ func _ready() -> void:
 		# The host invents the world. Godot randomises its RNG seed at startup,
 		# so this differs every session.
 		_status.text = "host - generating world..."
-		_world.setup(randi())
+		_world.setup(randi(), config)
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
 		# request plus the reply is the entire world transfer: one integer and
@@ -122,7 +134,10 @@ func _srv_request_join_state() -> void:
 func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
 	if _world.has_seed():
 		return  # A retry crossed with the reply. Ignore the duplicate.
-	_world.setup(seed_value)
+	# Stage 11 sends the host's config alongside the seed. Until then both
+	# machines use their own defaults, which is only safe because neither has
+	# tuned anything - the handshake is where that assumption gets closed.
+	_world.setup(seed_value, config)
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
 	_world.apply_edit_snapshot(edits)
@@ -211,6 +226,32 @@ func _on_peer_left(peer_id: int) -> void:
 	_states.erase(peer_id)
 	_remove_player(peer_id)
 	_update_status()
+
+
+# --- Tuning loop ------------------------------------------------------------
+#
+# Reroll rebuilds the world in place from a new seed, without leaving the
+# session. Stage 11 makes this host-only and has clients follow, because a
+# client rerolling alone is exactly the silent desync the README warns about.
+
+func _on_reroll_requested(new_seed: int) -> void:
+	print("[Game] reroll -> seed %d, config %s" % [new_seed, config.hash_key()])
+	_slab_present = false
+	_world.reset()
+	_world.setup(new_seed, config)
+	_status.text = "regenerating world..."
+
+
+## A knob moved in the tuning panel. The config object is shared, so World
+## already sees the new value; what it does NOT have is terrain built with it.
+func _on_config_changed() -> void:
+	_status.text = "config changed - press F7 to rebuild"
+
+
+func _on_config_reload_requested() -> void:
+	config = WorldgenConfig.load_or_default()
+	_debug.rebind(config)
+	_on_reroll_requested(_world.world_seed)
 
 
 # --- HUD and debug ----------------------------------------------------------

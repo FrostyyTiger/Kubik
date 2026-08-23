@@ -1,8 +1,9 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
 [ext_resource type="Script" path="res://scripts/player/fly_camera.gd" id="3_camera"]
+[ext_resource type="Script" path="res://scripts/ui/debug_hud.gd" id="4_hud"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -44,3 +45,6 @@ offset_top = 16.0
 offset_right = 916.0
 offset_bottom = 44.0
 text = "..."
+
+[node name="DebugHUD" type="CanvasLayer" parent="."]
+script = ExtResource("4_hud")

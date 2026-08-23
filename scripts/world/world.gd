@@ -22,6 +22,10 @@ const BUILD_BUDGET_MS := 8
 var world_seed := 0
 var generator: TerrainGenerator = null
 
+## Every tunable number. Part of the determinism contract alongside the seed,
+## so it is stored here next to it rather than reached for globally.
+var config: WorldgenConfig = null
+
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
 var _build_queue: Array[Vector3i] = []
@@ -29,10 +33,19 @@ var _build_queue: Array[Vector3i] = []
 var _total_ms := 0
 var _built := 0
 
+## Split generate from mesh rather than reporting one number. They are tuned by
+## completely different means - generate by noise layer count, mesh by the
+## meshing algorithm - and one combined figure hides which of the two just got
+## worse.
+var _gen_ms := 0
+var _mesh_ms := 0
+var _heightmap_ms := 0
+
 
 ## Start building. Called once per session.
-func setup(p_seed: int) -> void:
+func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	world_seed = p_seed
+	config = p_config if p_config != null else WorldgenConfig.new()
 	generator = TerrainGenerator.new(p_seed)
 
 	_build_queue.clear()
@@ -93,11 +106,53 @@ func is_world_ready() -> bool:
 	return generator != null and _build_queue.is_empty()
 
 
+## Throw the world away so a new seed can be built in its place.
+##
+## Reroll is a tuning tool: change a number, press the key, look at a fresh
+## world without leaving the session. The edit dictionary is cleared with
+## everything else - edits are positions in a world that no longer exists, and
+## replaying them into the new one would drop blocks in mid-air.
+func reset() -> void:
+	for pos in _chunk_nodes:
+		_chunk_nodes[pos].queue_free()
+	_chunk_nodes.clear()
+	_chunks.clear()
+	_build_queue.clear()
+	_edits.clear()
+	_total_ms = 0
+	_built = 0
+	_gen_ms = 0
+	_mesh_ms = 0
+	_heightmap_ms = 0
+
+
+func loaded_chunk_count() -> int:
+	return _chunks.size()
+
+
+func queued_chunk_count() -> int:
+	return _build_queue.size()
+
+
+## Averages, not totals: a total tells you the world loaded, a per-chunk
+## average tells you whether the next one will arrive in time. The HUD shows
+## these live and they are the number the performance work in Stage 6 moves.
+func last_timings() -> Dictionary:
+	var n: int = maxi(_built, 1)
+	return {
+		"gen_ms": float(_gen_ms) / 1000.0 / float(n),
+		"mesh_ms": float(_mesh_ms) / 1000.0 / float(n),
+		"heightmap_ms": _heightmap_ms,
+	}
+
+
 # --- Internals --------------------------------------------------------------
 
 func _build_chunk(chunk_pos: Vector3i) -> void:
+	var t_gen := Time.get_ticks_usec()
 	var chunk := Chunk.new(chunk_pos)
 	generator.generate_into(chunk)
+	_gen_ms += Time.get_ticks_usec() - t_gen
 	_chunks[chunk_pos] = chunk
 
 	# Replay any edits that belong to this chunk. A joining player receives
@@ -114,7 +169,9 @@ func _build_chunk(chunk_pos: Vector3i) -> void:
 	# A chunk built before its neighbours still meshes correctly: is_solid_world
 	# falls through to the generator, which gives the same answer the neighbour
 	# will have once it exists. So no re-mesh pass is needed at load time.
+	var t_mesh := Time.get_ticks_usec()
 	node.rebuild(Callable(self, "is_solid_world"))
+	_mesh_ms += Time.get_ticks_usec() - t_mesh
 	_built += 1
 
 
