@@ -64,6 +64,10 @@ var _initial_load_reported := false
 ## and whose mesh is being built by the worker pool.
 var _in_flight := {}
 
+## The low-poly terrain beyond the voxel radius. Everything the player can see
+## but not touch.
+var _far_field: FarField = null
+
 ## Wall clock, as distinct from _total_ms which counts main-thread time only.
 ## With threading those two stop being the same number, and the gap between
 ## them is precisely what the threading bought.
@@ -79,6 +83,7 @@ var _built := 0
 var _gen_ms := 0
 var _mesh_ms := 0
 var _heightmap_ms := 0
+var _far_vertices := 0
 
 
 ## Start building. Called once per session.
@@ -98,6 +103,15 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 
 	_initial_load_reported = false
 	_wall_start_ms = Time.get_ticks_msec()
+
+	if _far_field == null:
+		_far_field = FarField.new()
+		_far_field.name = "FarField"
+		_far_field.rebuilt.connect(_on_far_field_rebuilt)
+		add_child(_far_field)
+	_far_field.setup(generator, config)
+	_far_field.request_rebuild(_center * Chunk.SIZE)
+
 	refresh_region()
 	print("[World] seed %d, %d chunks queued around %s" % [
 		p_seed, _build_queue.size(), _center])
@@ -124,6 +138,7 @@ func _process(_delta: float) -> void:
 		print("[World] %d chunks in %d ms wall (%d ms main thread: %.2f gen, %.2f upload per chunk)" % [
 			_built, wall, _total_ms, float(_gen_ms) / 1000.0 / n,
 			float(_mesh_ms) / 1000.0 / n])
+		print("[World] far field %d vertices" % _far_vertices)
 		generation_finished.emit(_built, wall)
 
 
@@ -165,6 +180,8 @@ func is_world_ready() -> bool:
 ## replaying them into the new one would drop blocks in mid-air.
 func reset() -> void:
 	_drain_jobs()
+	if _far_field != null:
+		_far_field.drain()
 	for pos in _chunk_nodes:
 		_chunk_nodes[pos].queue_free()
 	_chunk_nodes.clear()
@@ -278,6 +295,14 @@ func _collect_finished(started: int) -> void:
 ## The six chunks sharing a face with this one, for the mesher to ask about
 ## neighbours it cannot see itself. Missing ones are simply absent, and the job
 ## falls back to the generator for them.
+func _on_far_field_rebuilt(vertex_count: int) -> void:
+	_far_vertices = vertex_count
+
+
+func far_field_vertices() -> int:
+	return _far_vertices
+
+
 func _face_neighbour_chunks(chunk_pos: Vector3i) -> Dictionary:
 	var out := {}
 	for offset in [
@@ -324,6 +349,10 @@ func set_center_from_position(pos_m: Vector3) -> bool:
 		return false
 	_center = c
 	refresh_region()
+	# The voxel hole in the far mesh has moved, so the far mesh is now wrong.
+	# Rebuilding is threaded, so this costs the main thread nothing.
+	if _far_field != null:
+		_far_field.request_rebuild(_center * Chunk.SIZE)
 	return true
 
 
@@ -581,3 +610,5 @@ func has_seed() -> bool:
 ## a rare crash on scene change into nothing at all.
 func _exit_tree() -> void:
 	_drain_jobs()
+	if _far_field != null:
+		_far_field.drain()
