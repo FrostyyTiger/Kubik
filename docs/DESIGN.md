@@ -36,6 +36,29 @@ client, world on the host, carried between worlds. Rejected because it requires
 the host to trust a client's claims about its own stats, and keeping one
 authority for everything is worth more to us than portable characters.
 
+## Camera
+
+**Third person only.** No first-person mode.
+
+Cube World style orbit follow: mid-distance, mouse orbits the character, camera
+collides with terrain rather than clipping into it. Chosen because the game is
+sold on reading landscape at a glance, and an over-the-shoulder framing hides
+exactly the thing worth looking at.
+
+A free-fly / noclip toggle exists behind a debug key. It is a tool, not a mode.
+
+## World
+
+Bounded, not infinite: one fixed 1.5 x 1.5 km region. Blocks are 0.5 m, so a
+player is 4 blocks tall.
+
+Bounded is a feature, not a limitation - it is what makes a global heightmap
+affordable, and a global heightmap is what makes real per-basin lakes possible
+at all. You cannot find a depression by looking at one chunk.
+
+Rendering is voxels near the player and a low-poly heightmap mesh far away.
+Terrain generation targets are in `plans/terrain-v1.md`.
+
 ## Combat
 
 Simple and readable. If a player cannot tell what just hit them, it is wrong.
