@@ -1,0 +1,24 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly, since the parameters
+; that go here are not all obvious.
+
+config_version=5
+
+[application]
+
+config/name="Kubik"
+config/description="Two-player co-op voxel exploration game. Host-authoritative."
+run/main_scene="res://scenes/main_menu.tscn"
+config/features=PackedStringArray("4.4", "Forward Plus")
+config/icon="res://icon.svg"
+
+[autoload]
+
+; `Net` is a singleton available from every script. It owns the multiplayer
+; role (host vs client) and the transport lifecycle. See scripts/net/.
+Net="*res://scripts/net/net_manager.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720

@@ -1,0 +1,6 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Isometric cube: top, left, right faces. -->
+  <polygon points="64,16 116,46 64,76 12,46" fill="#7ac74f"/>
+  <polygon points="12,46 64,76 64,112 12,82" fill="#6b4f3a"/>
+  <polygon points="116,46 64,76 64,112 116,82" fill="#4f3a2a"/>
+</svg>

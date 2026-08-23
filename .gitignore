@@ -1,0 +1,23 @@
+# --- Godot 4 ---
+# Derived import/shader/UID cache. Regenerated on open, never commit it.
+.godot/
+
+# Android build template, if we ever export to mobile.
+/android/
+
+# Export settings can contain signing keys / absolute paths.
+export_presets.cfg
+
+# Generated from CSV translation files.
+*.translation
+
+# NOTE: *.import files next to assets ARE committed on purpose. They record
+# import settings (e.g. nearest-neighbour filtering on our block texture).
+# Ignoring them makes assets re-import with defaults on someone else's machine.
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
