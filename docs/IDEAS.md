@@ -2,14 +2,15 @@
 
 ## Next 3
 
-Seeded once from the pillars, to reach a first playable build. From the next
-playtest onward this list is filled by what the playtest taught us.
+Seeded once from the pillars, then re-ordered when terrain v1 was scoped. From
+here on this list is filled by what a playtest taught us.
 
-1. **Player body.** Physics character, collision against chunk meshes, input
-   sent to the host and simulated there - replacing the provisional
-   position-reporting in `Game._srv_report_state`.
-   *Answers:* does moving through this world feel good enough to want to walk
-   further into it?
+1. **Terrain v1 - the world itself.** Swiss pre-Alpine landscape: meadow
+   valleys, forested slopes, bare rock, snow peaks, lakes in real depressions,
+   fog and a day/night cycle. Full plan in
+   [plans/terrain-v1.md](plans/terrain-v1.md).
+   *Answers:* the postcard test - can I frame a mountain, its forest and a lake
+   in one view within two minutes of walking from spawn?
 
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
@@ -20,17 +21,18 @@ playtest onward this list is filled by what the playtest taught us.
    *Answers:* is reaching the fire a relief, and does dying cost time without
    costing progress?
 
-Together these make the loop loop at small scale: walk out, get attacked, fight
-it together, retreat to the fire or die trying. That is the smallest thing that
-can tell us whether the pillars are true.
+Terrain moved to the front because items 2 and 3 both need somewhere to happen -
+readable geography with flat valley floors to fight and camp on. It is a
+prerequisite, not a detour.
+
+Terrain v1 delivers a walking third-person player as a side effect, but on
+**local physics only**. Rewiring it into the host-authoritative input path is a
+carried ticket, not done.
 
 Deliberately not here:
 
-- **Chunk streaming.** Pillar 3 needs it eventually, but it is a large
-  engineering job that answers no design question. The fixed 5x5 area is enough
-  world to test all three items above.
-- **Day/night and darkness.** Half of pillar 2's danger axis, but a modifier on
-  a loop that does not exist yet.
+- **Day/night as a danger axis.** The cycle ships in terrain v1, but visual
+  only. Pillar 2 wants darkness to mean something; that needs the enemy first.
 - **Breaking terrain.** Unsettled in DESIGN.md. Settle it before building it.
 
 ## Someday
