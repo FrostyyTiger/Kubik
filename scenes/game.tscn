@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
-[ext_resource type="Script" path="res://scripts/player/fly_camera.gd" id="3_camera"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="3_player"]
 [ext_resource type="Script" path="res://scripts/ui/debug_hud.gd" id="4_hud"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
@@ -31,11 +31,8 @@ script = ExtResource("2_world")
 
 [node name="Players" type="Node3D" parent="."]
 
-[node name="FlyCamera" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.9063, -0.4226, 0, 0.4226, 0.9063, 0, 56, 0)
-current = true
-far = 512.0
-script = ExtResource("3_camera")
+[node name="Player" parent="." instance=ExtResource("3_player")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 60, 0)
 
 [node name="HUD" type="CanvasLayer" parent="."]
 

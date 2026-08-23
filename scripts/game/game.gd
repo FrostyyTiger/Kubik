@@ -24,7 +24,7 @@ const JOIN_RETRY_SECONDS := 1.0
 const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 
 @onready var _world: World = $World
-@onready var _camera: FlyCamera = $FlyCamera
+@onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
 @onready var _debug: DebugHUD = $DebugHUD
@@ -49,7 +49,7 @@ var _build_ms := 0
 
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
-	_debug.setup(config, _world, _camera)
+	_debug.setup(config, _world, _player)
 	_debug.reroll_requested.connect(_on_reroll_requested)
 	_debug.config_changed.connect(_on_config_changed)
 	_debug.config_reload_requested.connect(_on_config_reload_requested)
@@ -68,6 +68,7 @@ func _ready() -> void:
 		# so this differs every session.
 		_status.text = "host - generating world..."
 		_world.setup(randi(), config)
+		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
 		# request plus the reply is the entire world transfer: one integer and
@@ -84,10 +85,10 @@ func _process(delta: float) -> void:
 		if _join_retry <= 0.0:
 			_request_join_state()
 
-	# Voxels exist only near whoever is looking. Until Stage 4 the debug camera
-	# is the stand-in for the player; after it, this line moves to the player.
+	# Voxels exist only near the player.
 	if _world.has_seed():
-		_world.set_center_from_position(_camera.position)
+		_world.set_center_from_position(_player.global_position)
+	_release_player_when_ground_exists()
 
 	# A session we are no longer part of has nothing to sync, and calling rpc()
 	# without a live peer is an engine error, not a no-op.
@@ -111,11 +112,42 @@ func _process(delta: float) -> void:
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	_chunk_count = chunk_count
 	_build_ms = elapsed_ms
-	# The camera starts above everything so it is never buried mid-generation;
-	# once the terrain exists we drop it to just above the ground. In METRES -
-	# find_surface_y answers in blocks and the scene graph is in metres.
-	_camera.position = Vector3(0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
 	_update_status()
+
+
+# --- Spawning ---------------------------------------------------------------
+#
+# The player is frozen until the ground beneath the spawn point exists.
+#
+# Not cosmetic: chunks are built over many frames, and a CharacterBody3D
+# dropped into a world with no collision in it yet does not wait politely - it
+# accelerates downward, and by the time its chunk arrives it is a hundred
+# metres below and still falling. Waiting for one specific chunk rather than
+# for the whole world means the wait is a moment rather than the full load.
+
+var _awaiting_ground := false
+
+
+func _spawn_player() -> void:
+	# In METRES: surface_height_m answers in metres, find_surface_y in blocks,
+	# and the scene graph is metres.
+	_player.global_position = Vector3(
+		0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
+	_player.velocity = Vector3.ZERO
+	_player.set_physics_process(false)
+	_awaiting_ground = true
+
+
+func _release_player_when_ground_exists() -> void:
+	if not _awaiting_ground:
+		return
+	var spawn_block := Vector3i(
+		0, _world.find_surface_y(0, 0), 0)
+	if not _world.has_chunk(Chunk.world_to_chunk(spawn_block)):
+		return
+	_awaiting_ground = false
+	_player.set_physics_process(true)
+	print("[Game] spawn chunk ready, player released at %.1f m" % _player.global_position.y)
 
 
 # --- Join handshake ---------------------------------------------------------
@@ -144,6 +176,7 @@ func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
 	# machines use their own defaults, which is only safe because neither has
 	# tuned anything - the handshake is where that assumption gets closed.
 	_world.setup(seed_value, config)
+	_spawn_player()
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
 	_world.apply_edit_snapshot(edits)
@@ -161,8 +194,8 @@ func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
 # the payload changes. _srv_report_state is the function to replace.
 
 func _publish_local_state() -> void:
-	var pos := _camera.position
-	var yaw := _camera.rotation.y
+	var pos := _player.global_position
+	var yaw := _player.rotation.y
 	if Net.is_host():
 		_states[Net.local_peer_id()] = {"p": pos, "y": yaw}
 	else:
@@ -245,6 +278,7 @@ func _on_reroll_requested(new_seed: int) -> void:
 	_slab_present = false
 	_world.reset()
 	_world.setup(new_seed, config)
+	_spawn_player()
 	_status.text = "regenerating world..."
 
 
@@ -265,7 +299,7 @@ func _on_config_reload_requested() -> void:
 func _update_status() -> void:
 	if not _world.is_world_ready():
 		return
-	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space/Ctrl, [G] slab, Esc" % [
+	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space jump, [F] fly, [G] slab, [F3] debug, Esc" % [
 		_role_name(), Net.local_peer_id(), _players.size(),
 		_chunk_count, _build_ms, _world.world_seed]
 
