@@ -75,18 +75,33 @@ const USER_PATH := "user://worldgen.tres"
 
 ## 1200 blocks / 600 m - broad "where is high ground at all" trend.
 @export var continent_freq := 0.00083
-@export var continent_amp := 38.0
+@export var continent_amp := 48.0
 
 ## 300 blocks / 150 m - THE feature layer. Ridged, so it makes peaks and
 ## valleys rather than lumps. Mountain footprints land at 100-200 m across,
 ## which is the readability target: big enough to be a landmark, small enough
 ## to walk around before you get bored.
 @export var mountain_freq := 0.00333
-@export var mountain_amp := 155.0
+@export var mountain_amp := 178.0
+
+## Where mountains are ALLOWED to be, as a window on the continent layer.
+##
+## Summing the layers everywhere gives a world that is uniformly bumpy - the
+## same amount of relief in every direction, no lowlands to speak of, and
+## nowhere flat enough to hold a lake. Gating the mountain layer on the
+## continent layer instead gives what the design actually asks for: broad
+## lowlands with meadows and water, and mountain country concentrated into
+## massifs you can see from outside and walk into.
+##
+## Below _lo the mountain layer contributes nothing at all; above _hi it
+## contributes in full; between them it fades in. Both are values of the
+## continent noise, so they live in [-1, 1].
+@export var mountain_mask_lo := -0.12
+@export var mountain_mask_hi := 0.47
 
 ## 60 blocks / 30 m - slope detail, so hillsides are not smooth ramps.
 @export var hills_freq := 0.01667
-@export var hills_amp := 18.0
+@export var hills_amp := 16.0
 
 ## 12 blocks / 6 m - per-block roughness, added at voxel time only. Deliberately
 ## NOT part of the coarse heightmap: lake basins are found in the coarse map,
@@ -102,7 +117,7 @@ const USER_PATH := "user://worldgen.tres"
 @export var zone_jitter_blocks := 12.0
 
 ## Altitude the layers build up from, in blocks.
-@export var base_altitude := 32.0
+@export var base_altitude := 70.0
 
 ## Hard clamps. 0 is bedrock and the very top must stay air, or the sky is
 ## solid and the far mesh has nothing to draw against.

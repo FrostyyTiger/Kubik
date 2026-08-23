@@ -46,7 +46,16 @@ var _heightmap_ms := 0
 func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	world_seed = p_seed
 	config = p_config if p_config != null else WorldgenConfig.new()
-	generator = TerrainGenerator.new(p_seed)
+	generator = TerrainGenerator.new(p_seed, config)
+
+	# The whole world's surface, once, before any chunk exists. Everything
+	# downstream reads its shape from here, which is what stops the voxels, the
+	# far mesh and the lakes from each having their own private opinion about
+	# where the ground is.
+	_heightmap_ms = generator.build_heightmap()
+	print("[World] coarse heightmap %dx%d in %d ms, hash %s" % [
+		generator.heightmap.cols, generator.heightmap.cols,
+		_heightmap_ms, generator.heightmap.hash_key()])
 
 	_build_queue.clear()
 	for cy in CHUNKS_Y:
