@@ -1,0 +1,114 @@
+# Builds a standalone Windows Kubik.exe on every push to main.
+#
+# Why the Godot binary is downloaded by hand rather than using a community
+# "setup-godot" action: those actions lag behind Godot releases, and an export
+# template that does not exactly match the engine version silently produces a
+# broken build. Pinning the version here means the build can never drift.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  # Lets you trigger a build from the Actions tab without pushing anything.
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  windows:
+    # A Linux runner cross-building a Windows exe is normal and intended: the
+    # Windows export template *is* a Windows binary, and exporting just staples
+    # our packed game data onto it. Linux runners are also faster and GitHub
+    # bills them at a third of the Windows rate.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The export templates are a 1.2 GB download. Fetching them on every push
+      # would make each build slow and hammer Godot's CDN for no reason, so they
+      # are cached under a key that changes only when GODOT_VERSION does.
+      - name: Restore cached Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-cache
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot and export templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-cache
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o ~/godot-cache/godot.zip \
+            "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o ~/godot-cache/templates.tpz \
+            "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+
+      - name: Install Godot and export templates
+        run: |
+          unzip -q ~/godot-cache/godot.zip -d ~/godot-bin
+          sudo install -m 755 \
+            ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+
+          # The .tpz is a zip whose files sit under a generic "templates/" folder.
+          # Godot looks for them in a folder named after the exact version, so we
+          # unpack then rename. Getting this path wrong is the usual cause of
+          # "No export template found" in CI.
+          unzip -q ~/godot-cache/templates.tpz -d /tmp/tpl
+          mkdir -p ~/.local/share/godot/export_templates
+          mv /tmp/tpl/templates ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+
+          godot --version
+
+      # .godot/ is gitignored, so a fresh clone has no import cache and the block
+      # texture is not yet a usable resource. Without this pass the export
+      # succeeds but ships a game with missing textures.
+      - name: Import assets
+        run: godot --headless --editor --quit --path .
+
+      - name: Export Kubik.exe
+        run: |
+          mkdir -p build
+          godot --headless --path . --export-release "Windows Desktop" build/Kubik.exe
+
+      # Godot has been known to report export failures on stderr while still
+      # exiting 0, which would upload an empty or stub artifact and look like a
+      # successful build. A real export is ~70-90 MB, so anything under 20 MB
+      # means something went wrong upstream.
+      - name: Verify the build is real
+        run: |
+          test -f build/Kubik.exe || { echo "::error::no exe was produced"; exit 1; }
+          size=$(stat -c%s build/Kubik.exe)
+          echo "Kubik.exe is $((size / 1024 / 1024)) MB"
+          if [ "$size" -lt 20000000 ]; then
+            echo "::error::exe is only $size bytes - the export template was probably missing"
+            exit 1
+          fi
+
+      # Both players must run the SAME build. Kubik never sends terrain, only a
+      # seed, so two slightly different builds generate two different worlds from
+      # that seed and neither machine reports an error. Stamping the commit into
+      # the download at least makes "are we on the same build?" answerable.
+      #
+      # TODO(marcel): make the join handshake compare this build id and refuse
+      # the connection on mismatch. Hint: Game._srv_send_world_state already
+      # sends the seed to a joining peer - send a version string alongside it and
+      # have the client bail out with a readable message instead of desyncing.
+      - name: Stamp the build
+        run: |
+          {
+            echo "commit:  ${{ github.sha }}"
+            echo "branch:  ${{ github.ref_name }}"
+            echo "godot:   ${GODOT_VERSION}"
+            echo "run:     ${{ github.run_number }}"
+          } > build/BUILD_INFO.txt
+          cat build/BUILD_INFO.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Kubik-windows-${{ github.run_number }}-${{ github.sha }}
+          path: build/
+          if-no-files-found: error

@@ -92,8 +92,10 @@ a miserable thing to debug. See `Chunk.floor_div`.
 
 ## Running it
 
-You need **Godot 4.4 or newer** (standard build, no C# needed) from
-[godotengine.org](https://godotengine.org/download).
+You need **Godot 4.7.2** (standard build, no C# needed) from
+[godotengine.org](https://godotengine.org/download). The version is pinned
+rather than "4.x or newer" because CI builds against exactly this version,
+and an export template that does not match the engine produces a broken build.
 
 1. Open the Godot project manager, *Import*, select `project.godot`.
 2. First open takes a moment while Godot imports the block texture.
@@ -138,6 +140,34 @@ takes the host role without opening a socket.
 `G` exists to prove the authority chain works before we have block interaction:
 press it on the **client** and the blocks appear on both machines, because the
 client only sent a request and the host broadcast the result back.
+
+---
+
+## Builds
+
+Every push to `main` builds a standalone `Kubik.exe` on GitHub Actions. You do
+not need Godot to run it, and you do not need to build it yourself.
+
+**To get one:** repo -> *Actions* tab -> click the newest `build` run -> download
+the `Kubik-windows-...` artifact at the bottom. Unzip and run `Kubik.exe`.
+
+- The `.pck` is embedded, so it really is one file.
+- It is unsigned, so Windows shows *"Windows protected your PC"* on first run.
+  *More info -> Run anyway*. Warn whoever you send it to, or they will assume it
+  is broken.
+- `BUILD_INFO.txt` in the zip records the commit the build came from.
+- Downloading an Actions artifact requires a (free) GitHub account. If we ever
+  want a plain public link, we add a tag-triggered Release.
+
+### Both players must run the same build
+
+Kubik never sends terrain over the network, only the seed - both machines
+regenerate the world from it. Two builds with even slightly different terrain
+code therefore produce two *different* worlds from the same seed, and neither
+machine reports an error. You would just see the other player's capsule walking
+through solid rock.
+
+Check `BUILD_INFO.txt` matches before blaming the netcode.
 
 ---
 
