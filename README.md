@@ -9,6 +9,9 @@ voxel world you and one friend explore together, one hosting and one joining.
 > **Status: early.** Right now you get generated terrain, a fly camera, and two
 > instances that see each other. There is no player character, no collision, and
 > no way to break or place blocks yet.
+>
+> Verified on Godot 4.7.2: 75 chunks generate and mesh in ~960 ms, the two-peer
+> handshake works, and the world is clean of runtime errors.
 
 ---
 
@@ -105,6 +108,23 @@ the address left at `127.0.0.1`.
 Both windows print to the same editor console, prefixed `[Net/host]` and
 `[Net/client:<id>]` so you can tell them apart.
 
+### Skipping the menu
+
+Clicking through the menu on every test run gets old. Anything after a bare
+`--` is passed to the game instead of the engine:
+
+```
+Godot_v4.7.2-stable_win64.exe --path . -- --host
+Godot_v4.7.2-stable_win64.exe --path . -- --join 127.0.0.1
+```
+
+Add `--headless` to run with no window at all, which is how the networking is
+smoke-tested — the logs tell you everything. `--quit-after N` stops after N
+frames, though note headless runs far faster than 60 fps, so N is not seconds.
+
+Pressing **F6** on `scenes/game.tscn` also works: with no session, the game
+takes the host role without opening a socket.
+
 ### Controls
 
 | Input | Action |
@@ -147,8 +167,8 @@ the point where they need replacing.
   distributes the table — only the payload is wrong.
 - **Naive meshing, single threaded.** One quad per exposed face, built on the
   main thread across an 8 ms-per-frame budget. Greedy meshing and a worker
-  thread come once we can measure that this is the bottleneck; the world already
-  prints its build time so there is a number to beat.
+  thread come once we can measure that this is the bottleneck. **The number to
+  beat is ~960 ms for 75 chunks** (Godot 4.7.2), printed on every run.
 - **Fixed 5x5 chunk area.** No streaming as players move.
 - **No collision.** Nothing to collide with yet.
 
