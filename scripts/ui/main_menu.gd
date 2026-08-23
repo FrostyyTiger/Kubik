@@ -55,7 +55,9 @@ func _apply_launch_args() -> void:
 	_launch_handled = true
 
 	var args := OS.get_cmdline_user_args()
-	if args.has("--host"):
+	# The screenshot tour is a host session that drives itself, so it implies
+	# --host rather than needing both spelled out.
+	if args.has("--host") or args.has("--tour"):
 		_on_host_pressed()
 	elif args.has("--join"):
 		var i := args.find("--join")

@@ -69,11 +69,16 @@ func _ready() -> void:
 		# zero clients rather than a separate offline mode.
 		Net.host_offline()
 
+	if "--tour" in OS.get_cmdline_user_args():
+		_start_tour.call_deferred()
+
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
 		# so this differs every session.
 		_status.text = "host - generating world..."
-		_world.setup(randi(), config)
+		# Godot randomises its RNG seed at startup, so a bare host differs every
+		# session; --seed pins it, which is what makes a tour reproducible.
+		_world.setup(_startup_seed(), config)
 		print("[Game] hosting world: seed %d, config %s" % [
 			_world.world_seed, _world.config.hash_key()])
 		_spawn_player()
@@ -156,6 +161,28 @@ func _release_player_when_ground_exists() -> void:
 	_awaiting_ground = false
 	_player.set_physics_process(true)
 	print("[Game] spawn chunk ready, player released at %.1f m" % _player.global_position.y)
+
+
+## Seed for a new world: --seed N if given, otherwise a fresh random one.
+func _startup_seed() -> int:
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--seed")
+	if i != -1 and i + 1 < args.size():
+		return args[i + 1].to_int()
+	return randi()
+
+
+## Hand the session over to the screenshot tour, which drives the camera to six
+## vantage points, photographs each and quits.
+func _start_tour() -> void:
+	# The HUD is for playing, not for photographs - a debug readout across the
+	# corner of every picture makes them useless for judging terrain.
+	$HUD.visible = false
+	_debug.visible = false
+	var tour := ScreenshotTour.new()
+	tour.name = "ScreenshotTour"
+	add_child(tour)
+	tour.run(_world, _player)
 
 
 # --- Join handshake ---------------------------------------------------------

@@ -157,10 +157,18 @@ const USER_PATH := "user://worldgen.tres"
 ## stopping dead.
 @export var tree_probability := 0.12
 
-@export var tree_trunk_min := 3
-@export var tree_trunk_max := 5
-@export var tree_canopy_min := 2
-@export var tree_canopy_max := 3
+## Tree size, in blocks.
+##
+## The plan specifies a 3-5 block trunk and a 2-3 block canopy. At 0.5 m per
+## block that is a 2 m tree with a 1.5 m crown - the same height as the player,
+## which on screen reads as a shrub, and a "forested slope" of them reads as a
+## lawn. Those numbers were sized for 1 m blocks; the same plan sets blocks at
+## 0.5 m. Doubled here so a tree is 5-10 m, which is a small conifer, and a
+## forest looks like one. Recorded in STATUS.md as a departure.
+@export var tree_trunk_min := 8
+@export var tree_trunk_max := 14
+@export var tree_canopy_min := 4
+@export var tree_canopy_max := 6
 
 ## A basin smaller than this many coarse cells is a puddle, not a lake, and is
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
@@ -194,9 +202,15 @@ const USER_PATH := "user://worldgen.tres"
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
-## Where the cycle starts. 0.25 is morning, 0.5 midday - the world should open
-## in daylight, not at midnight.
-@export var day_start := 0.3
+## Where the cycle starts. 0.25 is sunrise, 0.5 midday.
+##
+## 0.38 is mid-morning, with the sun about 45 degrees up. Measured rather than
+## picked: the sun's angle sets how much light a flat surface receives, and at
+## the old 0.3 it was only 18 degrees up, so level ground got under a third of
+## the sunlight and the whole palette rendered dark. Here a lit flat surface
+## lands within a few percent of its authored colour, which is the point of
+## having authored it.
+@export var day_start := 0.38
 
 
 # --- Serialisation ----------------------------------------------------------

@@ -272,7 +272,8 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 
 	var bs: float = config.block_size
 	var step: int = config.coarse_step
-	var color := Color(0.290, 0.565, 0.643, 0.65)   # #4A90A4
+	# Linear, like the rest of the palette - see Block.COLORS.
+	var color := Color(0.0685, 0.2789, 0.3712, 0.65)   # #4A90A4
 
 	for j in _cols:
 		var i := 0

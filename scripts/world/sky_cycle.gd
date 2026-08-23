@@ -104,12 +104,21 @@ static func fog_color(elevation: float) -> Color:
 
 ## Never quite zero. A pitch-black night is not atmospheric, it is a black
 ## screen with a HUD on it, and there is no torch yet to fix it with.
+##
+## These two were halved after looking at the first screenshot tour. Sun 1.15
+## plus a full-strength sky ambient blew the palette out completely - #86B04A
+## meadow arrived on screen as near-white, and every zone looked like every
+## other zone. Flat-shaded terrain has no texture detail to survive
+## over-exposure with, so it goes to paste sooner than a textured world would.
 static func sun_energy(elevation: float) -> float:
-	return lerpf(0.06, 1.15, day_amount(elevation))
+	return lerpf(0.04, 0.85, day_amount(elevation))
 
 
+## Sky ambient is strong - it is lit by the same sky the sun is in - so this
+## stays well below the sun. Too much and the terrain loses its shading
+## entirely and reads as flat coloured paper.
 static func ambient_energy(elevation: float) -> float:
-	return lerpf(0.25, 1.0, day_amount(elevation))
+	return lerpf(0.10, 0.30, day_amount(elevation))
 
 
 # --- Applying it ------------------------------------------------------------
@@ -141,7 +150,11 @@ func apply() -> void:
 		# fog reads as a wall in front of the sky rather than as distance.
 		_sky.sky_horizon_color = fog_color(elevation)
 		_sky.ground_horizon_color = fog_color(elevation)
-		_sky.ground_bottom_color = FOG_NIGHT.lerp(Color(0.22, 0.24, 0.22), day)
+		# The sky's "ground" is what you see below the horizon where terrain
+		# does not reach - past the far mesh, or over its edge from high up.
+		# Anything other than the fog colour there draws a hard grey band
+		# across the bottom of the sky, which the first tour showed clearly.
+		_sky.ground_bottom_color = fog_color(elevation)
 		_sky.sun_angle_max = lerpf(2.0, 12.0, dusk)
 
 
@@ -149,6 +162,19 @@ func apply() -> void:
 func _apply_fog_distances() -> void:
 	if _env == null or config == null:
 		return
+
+	# LINEAR tonemapping, not Filmic.
+	#
+	# There are no textures here - a block is exactly its colour - so the
+	# palette IS the art direction, and a tonemapper that reshapes it is
+	# reshaping the art. Measured off the first tour: Filmic turned #86B04A
+	# meadow into #68D62F on screen, brighter AND hue-shifted toward green,
+	# because it curves each channel separately. Linear reproduces what was
+	# authored, and the light energies below are set so a fully lit flat
+	# surface lands at about 1.0 and nothing clips.
+	_env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	_env.tonemap_exposure = 1.0
+
 	_env.fog_enabled = true
 	# Depth fog rather than exponential: the config says "clear until 120 m,
 	# gone by 200 m", and depth fog takes exactly those two numbers. Matching

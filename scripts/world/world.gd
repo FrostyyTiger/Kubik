@@ -211,6 +211,14 @@ func reset() -> void:
 	_wall_start_ms = Time.get_ticks_msec()
 
 
+## Nothing queued and nothing out at the worker pool. is_world_ready() answers
+## a weaker question - it does not know about jobs in flight - and the
+## screenshot tour needs to know the world has actually finished arriving
+## before it takes a picture of it.
+func is_idle() -> bool:
+	return generator != null and _build_queue.is_empty() and _in_flight.is_empty()
+
+
 func loaded_chunk_count() -> int:
 	return _chunks.size()
 

@@ -1,6 +1,9 @@
 # Terrain v1 - overnight implementation plan
 
-**Status: not started.** Written 2026-08-23 for an unattended single-pass run.
+**Status: done.** Written 2026-08-23 for an unattended single-pass run, and
+executed the same night on branch `feat/terrain-v1`. All twelve stages
+completed. What was built, what was measured, and where the result departs from
+this document is in `STATUS.md` at the repo root — read that, not this.
 
 Goal: Marcel launches the game in the morning and walks a readable Swiss
 pre-Alpine landscape in third person - meadow valleys, forested slopes, bare

@@ -268,6 +268,9 @@ static func get_material() -> StandardMaterial3D:
 		# The entire surface appearance: the per-block colour baked into the
 		# vertices IS the albedo. No texture, no UVs in the vertex stream.
 		m.vertex_color_use_as_albedo = true
+		# Note there is no vertex_color_is_srgb here: the palette in Block is
+		# already stored linear. That flag is ignored by the Compatibility
+		# renderer, and this has to look the same on both.
 		# Terrain is soil, grass, rock and snow. None of them are shiny, and a
 		# specular highlight sliding across a hillside as you walk is the
 		# fastest way to make a matte world look like wet plastic.

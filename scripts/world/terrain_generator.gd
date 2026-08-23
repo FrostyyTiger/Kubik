@@ -566,8 +566,18 @@ func _set_if_inside(chunk: Chunk, origin: Vector3i, bx: int, by: int, bz: int,
 ## from a long way off. Rock and snow are stone all the way down; recorded as a
 ## deliberate departure.
 func block_for(depth: int, zone: int) -> int:
-	if depth == 0:
+	# TWO blocks of surface, not one.
+	#
+	# The detail layer puts a one-block step every few blocks, and with a
+	# single-block skin every one of those steps exposes the soil beneath it.
+	# On screen that is a haze of dark brown flecks over every hillside -
+	# clearly visible in the first screenshot tour, and confirmed as soil
+	# rather than tree trunks by re-shooting the same seed with trees off.
+	# A second block of turf covers the one-block risers and leaves soil
+	# showing only where the ground is genuinely steep, which is where you
+	# want to see it.
+	if depth <= 1:
 		return ZONE_SURFACE[zone]
-	if zone <= ZONE_FOREST and depth < 4:
+	if zone <= ZONE_FOREST and depth < 5:
 		return Block.DIRT
 	return Block.STONE
