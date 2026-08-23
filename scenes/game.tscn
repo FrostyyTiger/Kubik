@@ -1,7 +1,8 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
+[ext_resource type="Script" path="res://scripts/player/fly_camera.gd" id="3_camera"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -27,11 +28,17 @@ shadow_enabled = true
 [node name="World" type="Node3D" parent="."]
 script = ExtResource("2_world")
 
+[node name="FlyCamera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.9063, -0.4226, 0, 0.4226, 0.9063, 0, 56, 0)
+current = true
+far = 512.0
+script = ExtResource("3_camera")
+
 [node name="HUD" type="CanvasLayer" parent="."]
 
 [node name="Status" type="Label" parent="HUD"]
 offset_left = 16.0
 offset_top = 16.0
-offset_right = 816.0
+offset_right = 916.0
 offset_bottom = 44.0
 text = "..."

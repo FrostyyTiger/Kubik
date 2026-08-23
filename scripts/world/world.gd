@@ -252,3 +252,12 @@ func _remesh(cpos: Vector3i) -> void:
 	var node: ChunkNode = _chunk_nodes.get(cpos)
 	if node != null:
 		node.rebuild(Callable(self, "is_solid_world"))
+
+
+## Y of the highest solid block in this column, or -1 if the column is empty.
+## Used for spawning things on the ground instead of inside it.
+func find_surface_y(wx: int, wz: int) -> int:
+	for y in range(CHUNKS_Y * Chunk.SIZE - 1, -1, -1):
+		if is_solid_world(wx, y, wz):
+			return y
+	return -1

@@ -11,26 +11,36 @@ const DEBUG_SEED := 1337
 ## guaranteed to land in open air and be visible from anywhere.
 const DEBUG_SLAB_Y := 47
 
+## How far above the ground to drop the camera once the world exists.
+const SPAWN_CLEARANCE := 6.0
+
 @onready var _world: World = $World
+@onready var _camera: FlyCamera = $FlyCamera
 @onready var _status: Label = $HUD/Status
 
 var _slab_present := false
 
 
 func _ready() -> void:
-	var role_name := "host" if Net.is_host() else "client"
-	_status.text = "%s - generating world..." % role_name
+	_status.text = "%s - generating world..." % _role_name()
 	_world.generation_finished.connect(_on_world_ready)
 	_world.setup(DEBUG_SEED)
 
 
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
-	var role_name := "host" if Net.is_host() else "client"
-	_status.text = "%s (peer %d) - %d chunks in %d ms - seed %d - [G] toggle test slab" % [
-		role_name, Net.local_peer_id(), chunk_count, elapsed_ms, _world.world_seed]
+	# The camera starts above everything so it is never buried mid-generation;
+	# once the terrain exists we drop it to just above the ground at the
+	# origin. Happens within a second of entering the scene.
+	var surface := _world.find_surface_y(0, 0)
+	_camera.position = Vector3(0.5, surface + SPAWN_CLEARANCE, 0.5)
+
+	_status.text = "%s (peer %d) | %d chunks in %d ms | seed %d | WASD+mouse, Space/Ctrl, [G] test slab, Esc" % [
+		_role_name(), Net.local_peer_id(), chunk_count, elapsed_ms, _world.world_seed]
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Reaches us only if FlyCamera did not consume it, which is how the
+	# two-stage Escape works: first press frees the cursor, second lands here.
 	if event.is_action_pressed("ui_cancel"):
 		Net.leave()
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
@@ -52,3 +62,7 @@ func _toggle_debug_slab() -> void:
 		for z in range(-1, 2):
 			# Note: a request, not a write. Even the host goes through this.
 			_world.request_set_block(Vector3i(x, DEBUG_SLAB_Y, z), id)
+
+
+func _role_name() -> String:
+	return "host" if Net.is_host() else "client"
