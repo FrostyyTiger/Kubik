@@ -12,21 +12,34 @@ enum {
 	GRASS = 3,
 	SAND = 4,
 	SNOW = 5,
+	FOREST_FLOOR = 6,
+	LEAVES = 7,
+	TRUNK = 8,
 }
 
-## Per-type tint. We use one greyscale placeholder texture for every block and
-## multiply it by these vertex colours, so a single 16x16 png gives us a whole
-## palette. Real per-face textures (an atlas) come later.
+## The palette. These ARE the look of the game - there are no textures, so a
+## block is exactly its colour and nothing else.
+##
+## Warm and slightly saturated on purpose. A physically plausible grey-green
+## reads as washed out at distance, and distance is what this world is for: the
+## design is sold on telling a meadow from a forest from a snowfield across a
+## valley, which is a question about colour separation, not realism.
 const COLORS := [
-	Color(0, 0, 0),             # AIR - never drawn
-	Color(0.55, 0.56, 0.58),    # STONE
-	Color(0.45, 0.33, 0.22),    # DIRT
-	Color(0.36, 0.62, 0.28),    # GRASS
-	Color(0.85, 0.78, 0.52),    # SAND
-	Color(0.92, 0.94, 0.97),    # SNOW
+	Color(0, 0, 0),                   # AIR - never drawn
+	Color(0.604, 0.561, 0.502),       # STONE       #9A8F80 bare rock
+	Color(0.545, 0.435, 0.278),       # DIRT        #8B6F47 soil
+	Color(0.525, 0.690, 0.290),       # GRASS       #86B04A meadow
+	Color(0.85, 0.78, 0.52),          # SAND        (unused for now)
+	Color(0.949, 0.941, 0.910),       # SNOW        #F2F0E8
+	Color(0.353, 0.549, 0.235),       # FOREST_FLOOR #5A8C3C
+	Color(0.306, 0.478, 0.196),       # LEAVES      #4E7A32 foliage
+	Color(0.420, 0.310, 0.165),       # TRUNK       #6B4F2A
 ]
 
-const NAMES := ["air", "stone", "dirt", "grass", "sand", "snow"]
+const NAMES := [
+	"air", "stone", "dirt", "grass", "sand", "snow",
+	"forest_floor", "leaves", "trunk",
+]
 
 
 ## Solid blocks hide the faces of their neighbours. Everything except air, for

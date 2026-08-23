@@ -128,19 +128,16 @@ func _compose_readout() -> String:
 	return String("\n").join(lines)
 
 
-## Stage 5 replaces this with the real jittered zone lookup. Until then it is
-## the plain threshold, which is right everywhere except within a few blocks of
-## a boundary.
-func _zone_name(alt_blocks: float) -> String:
-	if config == null:
+## The real zone, jitter and all, at the player's own position - so the readout
+## agrees with the ground they are standing on rather than with a global
+## threshold the ground does not obey.
+func _zone_name(_alt_blocks: float) -> String:
+	if config == null or world == null or player == null:
 		return "?"
-	if alt_blocks < config.meadow_max:
-		return "meadow"
-	if alt_blocks < config.forest_max:
-		return "forest"
-	if alt_blocks < config.rock_max:
-		return "rock"
-	return "snow"
+	if world.generator == null:
+		return "?"
+	var p := player.global_position
+	return world.generator.zone_name_at_m(p.x, p.z, p.y)
 
 
 # --- Input ------------------------------------------------------------------

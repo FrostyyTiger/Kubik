@@ -45,7 +45,7 @@ func _init() -> void:
 		st["max"] * config.block_size,
 		st["mean"] * config.block_size])
 
-	_print_zones(hm, config)
+	_print_zones(gen, hm, config)
 	quit()
 
 
@@ -56,21 +56,21 @@ func _init() -> void:
 ## peak, and from inside the game that just looks like a green world rather
 ## than like a bug. Shares are unequal on purpose: lowlands should dominate and
 ## snow should be the caps of the few highest summits, not a third of the map.
-func _print_zones(hm: Heightmap, config: WorldgenConfig) -> void:
+func _print_zones(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
 	var counts := [0, 0, 0, 0]
-	for h in hm.cells:
-		if h < config.meadow_max:
-			counts[0] += 1
-		elif h < config.forest_max:
-			counts[1] += 1
-		elif h < config.rock_max:
-			counts[2] += 1
-		else:
-			counts[3] += 1
-	var n := float(hm.cells.size())
-	var names := ["meadow", "forest", "rock", "snow"]
+	# The real assignment, jitter and dither included, rather than the raw
+	# thresholds - so this reports what the world is actually made of and not
+	# what the config says it should be.
+	for j in hm.cols:
+		var bz := hm.cell_to_block(j)
+		for i in hm.cols:
+			var bx := hm.cell_to_block(i)
+			var h := hm.cells[i + j * hm.cols]
+			counts[gen.surface_zone_at(bx, bz, h)] += 1
+	var n := float(hm.cols * hm.cols)
 	for i in 4:
-		print("zone %-9s %6.2f%%  (%d cells)" % [names[i], counts[i] / n * 100.0, counts[i]])
+		print("zone %-9s %6.2f%%  (%d cells)" % [
+			TerrainGenerator.ZONE_NAMES[i], counts[i] / n * 100.0, counts[i]])
 
 
 ## Reads `--seed N` from the user arguments, i.e. everything after a bare `--`.

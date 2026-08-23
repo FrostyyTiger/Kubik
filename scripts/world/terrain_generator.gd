@@ -58,6 +58,30 @@ const SEED_JITTER := 5
 const SEED_WARP_X := 6
 const SEED_WARP_Z := 7
 
+## Salts keep independent uses of the coordinate hash from agreeing with each
+## other. Without them every tree in the world would stand exactly where the
+## ground happens to dither.
+const SALT_ZONE_DITHER := 101
+const SALT_TREE := 202
+const SALT_TREE_TRUNK := 203
+const SALT_TREE_CANOPY := 204
+
+## Elevation zones, low to high.
+const ZONE_MEADOW := 0
+const ZONE_FOREST := 1
+const ZONE_ROCK := 2
+const ZONE_SNOW := 3
+
+const ZONE_NAMES := ["meadow", "forest", "rock", "snow"]
+
+## The block that shows at the surface of each zone.
+const ZONE_SURFACE := [
+	Block.GRASS,          # meadow
+	Block.FOREST_FLOOR,   # forest floor
+	Block.STONE,          # bare rock
+	Block.SNOW,           # snow
+]
+
 var world_seed: int
 var config: WorldgenConfig
 
@@ -223,6 +247,60 @@ func is_solid_at(bx: int, by: int, bz: int) -> bool:
 	return float(by) <= surface_at(float(bx), float(bz))
 
 
+# --- Elevation zones --------------------------------------------------------
+#
+# Altitude decides what a surface block is made of. Two things stop that from
+# looking like a contour map:
+#
+#   JITTER moves each boundary up and down by up to zone_jitter_blocks over a
+#   200 m wavelength, so the treeline follows the land instead of cutting
+#   across it at one exact altitude.
+#
+#   DITHER softens each boundary across zone_blend_blocks. Inside that band a
+#   block belongs to the higher zone with a probability that rises from 0 to 1,
+#   decided by hashing its position - so the two zones interleave, and at 0.5 m
+#   per block the eye reads the mixture as a gradient rather than as speckle.
+#   Blending the vertex COLOURS instead would be smoother still, but colour
+#   here comes from the block id and a block is one byte; keeping it that way
+#   is what lets an edit travel over the network as a single number.
+
+## Zone index for an altitude, given this column's jitter and dither values.
+func zone_at(altitude: float, jitter: float, dither: float) -> int:
+	var thresholds: Array[float] = [
+		config.meadow_max + jitter,
+		config.forest_max + jitter,
+		config.rock_max + jitter,
+	]
+	var blend := maxf(config.zone_blend_blocks, 0.001)
+	var zone := ZONE_MEADOW
+	for i in 3:
+		# 0 at the bottom of the blend band, 1 at the top.
+		var edge := (altitude - thresholds[i]) / blend + 0.5
+		if edge <= 0.0:
+			break
+		if edge >= 1.0 or dither < edge:
+			zone = i + 1
+		else:
+			break
+	return zone
+
+
+## Zone of the surface at one block column.
+func surface_zone_at(bx: int, bz: int, altitude: float) -> int:
+	return zone_at(
+		altitude,
+		zone_jitter_at(float(bx), float(bz)),
+		WorldHash.hash01(bx, bz, world_seed, SALT_ZONE_DITHER))
+
+
+## Zone name at a position, for the debug readout. Takes metres, because that
+## is what the thing asking has.
+func zone_name_at_m(x_m: float, z_m: float, y_m: float) -> String:
+	var bx := int(floor(x_m / config.block_size))
+	var bz := int(floor(z_m / config.block_size))
+	return ZONE_NAMES[surface_zone_at(bx, bz, y_m / config.block_size)]
+
+
 # --- TODO(marcel): three exercises ------------------------------------------
 #
 # Each has a fallback below it that WORKS. The world generates, is walkable and
@@ -329,12 +407,16 @@ func generate_into(chunk: Chunk) -> void:
 			# from N to N+1, so a surface at 40.7 means block 40 is the top
 			# solid one.
 			var top := int(floor(surface))
+			# The zone is a property of the COLUMN's surface, not of each
+			# voxel: a block three deep is soil because of what grows above it,
+			# not because of its own altitude.
+			var zone := surface_zone_at(bx, bz, surface)
 
 			for ly in Chunk.SIZE:
 				var by := origin.y + ly
 				var id := Block.AIR
 				if by <= top:
-					id = block_for(top - by, by)
+					id = block_for(top - by, zone)
 				chunk.voxels[Chunk.index(lx, ly, lz)] = id
 
 	chunk.dirty = true
@@ -342,17 +424,17 @@ func generate_into(chunk: Chunk) -> void:
 
 ## Block type for a solid voxel.
 ##
-## `depth` is how far below the surface this voxel is (0 = the surface block
-## itself), `by` its altitude. Stage 5 replaces the altitude thresholds here
-## with the jittered elevation zones and the real palette; this is the plain
-## version so that Stage 2 leaves a world you can look at.
-func block_for(depth: int, by: int) -> int:
+## `depth` is how far below the surface this voxel is - 0 is the surface block
+## itself - and `zone` is the elevation zone of the column above it.
+##
+## Soil sits under meadow and forest only. The plan says soil under any
+## surface, but a cliff face in the bare-rock zone then shows a brown stripe
+## three blocks below its top, and rock that is soil underneath reads as wrong
+## from a long way off. Rock and snow are stone all the way down; recorded as a
+## deliberate departure.
+func block_for(depth: int, zone: int) -> int:
 	if depth == 0:
-		if float(by) >= config.rock_max:
-			return Block.SNOW
-		if float(by) >= config.forest_max:
-			return Block.STONE
-		return Block.GRASS
-	if depth < 4:
+		return ZONE_SURFACE[zone]
+	if zone <= ZONE_FOREST and depth < 4:
 		return Block.DIRT
 	return Block.STONE
