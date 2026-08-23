@@ -2,7 +2,7 @@
 
 ## What is this
 
-Kubik is a strictly two-player co-op voxel exploration game with a fantasy
+Kubik is a 2-4 player co-op voxel exploration game with a fantasy
 setting and a cozy-but-adventurous tone. Open source (MIT), built in Godot 4,
 developed by two friends as a learning project.
 
@@ -14,12 +14,14 @@ stranger, more dangerous territory further from the safety of firelight.
 
 Every feature must serve at least one, and contradict none.
 
-- **BETTER TOGETHER.** Designed for exactly 2 players, always. Encounters
-  assume two bodies: flanking, saves, complementary roles. Max players is
-  hardcoded at 2. No solo balancing, no 3-4 player scaling, ever.
+- **BETTER TOGETHER.** Designed for 2-4 players and tuned for 2. Encounters
+  assume at least two bodies: flanking, saves, complementary roles. Party is
+  hardcoded at 4 maximum. Solo is a dev convenience, never a balanced mode -
+  no solo tuning, ever.
 - **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance from spawn and
   with darkness. Campfires (and daylight) are the safe, warm register: light,
-  regen, respawn point. Death costs time, not progress. No base building.
+  regen, respawn point. Death costs time, not progress. No base building: you
+  place objects, never terrain.
 - **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
   not from menus or crafting trees. Distance is the difficulty and content axis.
 
@@ -83,7 +85,7 @@ the seed generates and what the world actually looks like.
 
 That makes generation determinism a hard requirement. No `randf()` in
 `TerrainGenerator`, no dependence on iteration order, no floats that might round
-differently. Break it and the two players quietly end up in different worlds.
+differently. Break it and players quietly end up in different worlds.
 
 ### 4. Networking lives behind a seam
 
@@ -179,10 +181,10 @@ the `Kubik-windows-...` artifact at the bottom. Unzip and run `Kubik.exe`.
 - Downloading an Actions artifact requires a (free) GitHub account. If we ever
   want a plain public link, we add a tag-triggered Release.
 
-### Both players must run the same build
+### All players must run the same build
 
-Kubik never sends terrain over the network, only the seed - both machines
-regenerate the world from it. Two builds with even slightly different terrain
+Kubik never sends terrain over the network, only the seed - every machine
+regenerates the world from it. Two builds with even slightly different terrain
 code therefore produce two *different* worlds from the same seed, and neither
 machine reports an error. You would just see the other player's capsule walking
 through solid rock.
