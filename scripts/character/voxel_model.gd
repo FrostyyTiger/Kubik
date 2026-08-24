@@ -200,8 +200,11 @@ static func mirror_x(voxels: Array, width: int) -> Array:
 
 ## The anchor, mirrored the same way. Kept beside mirror_x so the two can never
 ## be applied to different widths.
-static func mirror_anchor_x(anchor: Vector3i, width: int) -> Vector3i:
-	return Vector3i(width - 1 - anchor.x, anchor.y, anchor.z)
+##
+## The anchor is in LATTICE coordinates, not voxel indices, so it mirrors about
+## the part's width rather than about width - 1. See _to_metres.
+static func mirror_anchor_x(anchor: Vector3, width: int) -> Vector3:
+	return Vector3(float(width) - anchor.x, anchor.y, anchor.z)
 
 
 # --- Geometry facts, for the self-tests -------------------------------------
@@ -270,7 +273,7 @@ static func material() -> StandardMaterial3D:
 ## the triangle budget ever breaks, this is the first thing to revisit; the
 ## counts are recorded in the status doc so the decision can be re-argued with
 ## numbers.
-static func build_mesh(voxels: Array, palette: Dictionary, anchor: Vector3i,
+static func build_mesh(voxels: Array, palette: Dictionary, anchor: Vector3,
 		ao_strength := 0.35) -> ArrayMesh:
 	if voxels.is_empty():
 		return null
@@ -323,7 +326,7 @@ static func build_mesh(voxels: Array, palette: Dictionary, anchor: Vector3i,
 ## seen from outside" - the face Godot draws, since back faces are culled.
 ## Getting it wrong does not lose a face, it turns the model inside out.
 static func _emit_face(p: Vector3i, d: int, s: int, solid: Dictionary,
-		color: Color, ao_strength: float, anchor: Vector3i,
+		color: Color, ao_strength: float, anchor: Vector3,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	var u := (d + 1) % 3
@@ -398,11 +401,19 @@ static func _vertex_ao(side1: bool, side2: bool, corner: bool) -> int:
 	return 3 - (int(side1) + int(side2) + int(corner))
 
 
-## Voxel-space corner to metres, with the anchor voxel's BOTTOM-CENTRE at the
-## origin. Bottom because a bone pivot is where a limb hangs from; centre in x
-## and z because a limb swings about its middle.
-static func _to_metres(voxel_pos: Vector3, anchor: Vector3i) -> Vector3:
-	return Vector3(
-		(voxel_pos.x - float(anchor.x) - 0.5) * VOXEL_M,
-		(voxel_pos.y - float(anchor.y)) * VOXEL_M,
-		(voxel_pos.z - float(anchor.z) - 0.5) * VOXEL_M)
+## Voxel-space corner to metres.
+##
+## THE ANCHOR IS A LATTICE POINT, NOT A VOXEL INDEX. Integer values fall on
+## voxel BOUNDARIES, so the anchor is the point of the part's own grid that
+## lands on the bone pivot: `Vector3(4, 0, 4)` is exactly the bottom-centre of
+## an 8 x 9 x 8 head, and `Vector3(1.5, 9, 1.5)` is exactly the top-centre of a
+## 3 x 9 x 3 leg, which is where a leg swings from.
+##
+## Voxel-index anchoring was the first version and it cannot centre an
+## even-width part: index 4 of an 8-wide head puts the head's middle half a
+## voxel - 3.1 cm - to one side, which is a visible list on a character whose
+## whole readability argument is symmetry. Lattice coordinates cost nothing and
+## make the plan's own example, anchor (4, 0, 4) for a width-8 head, exactly
+## right instead of nearly right.
+static func _to_metres(voxel_pos: Vector3, anchor: Vector3) -> Vector3:
+	return (voxel_pos - anchor) * VOXEL_M

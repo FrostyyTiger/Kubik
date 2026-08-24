@@ -58,6 +58,16 @@ const SETTLE_FRAMES := 4
 ## never touch at 15 m, which would make the mask metric measure the gap.
 const LINEUP_SPACING := 2.6
 
+## The yaw a subject stands at to FACE the camera.
+##
+## A character faces -Z and the camera backs away along +Z, so a subject left
+## at yaw 0 shows the camera its back. The first lineup shot taken here was a
+## row of backs labelled "front", which is a cheap mistake to make and an
+## expensive one to leave in a comparison harness - every silhouette sheet and
+## the whole mask metric would have been measuring the wrong side of the
+## character.
+const FACING_CAMERA := PI
+
 var config: WorldgenConfig = null
 
 @onready var _sun: DirectionalLight3D = $Sun
@@ -116,12 +126,25 @@ func _run() -> void:
 func _sheets() -> Dictionary:
 	return {
 		"testcube": _sheet_testcube,
+		"closeup": _sheet_closeup,
 		"lineup-front": _sheet_lineup_front,
 		"lineup-back": _sheet_lineup_back,
 	}
 
 
 # --- Sheets -----------------------------------------------------------------
+
+## A single character at 3 m, front and three-quarter. NOT part of the plan's
+## sheet list - it is the working shot, the one you look at while deciding
+## whether a face reads at all, before asking whether it reads at 15 m.
+func _sheet_closeup() -> void:
+	_set_lineup(_lineup_defs())
+	await _shoot("closeup-front", 3.0)
+	_face(FACING_CAMERA + deg_to_rad(35.0))
+	await _shoot("closeup-three-quarter", 3.0)
+	_face(0.0)
+	await _shoot("closeup-back", 3.0)
+
 
 func _sheet_lineup_front() -> void:
 	_set_lineup(_lineup_defs())
@@ -130,17 +153,28 @@ func _sheet_lineup_front() -> void:
 
 func _sheet_lineup_back() -> void:
 	_set_lineup(_lineup_defs())
-	for s in _subjects_root.get_children():
-		(s as Node3D).rotation.y = PI
+	_face(0.0)
 	await _shoot("lineup-back", 15.0)
 
 
-## Who stands in the lineup. Every race in the stocky scheme plus the lean
-## human, once those exist. Tonight there is no character system at all, so the
-## lineup is one capsule - which is exactly the "before" the run is measured
-## against, and the reason the plan says to shoot it anyway.
+## Turn every subject. Yaw is absolute, and FACING_CAMERA is the default the
+## lineup is built at.
+func _face(yaw: float) -> void:
+	for s in _subjects_root.get_children():
+		(s as Node3D).rotation.y = yaw
+
+
+## Who stands in the lineup. Every race in the stocky scheme, plus the lean
+## human once Stage 7 builds it. Stage 3 has only the human, so that is the
+## whole lineup; the capsule "before" is already on disk under
+## build/character/character-baseline.
 func _lineup_defs() -> Array:
-	return [null]
+	var out := []
+	var human := CharacterDef.new()
+	human.race = Races.HUMAN
+	human.validate()
+	out.append(human)
+	return out
 
 
 ## The part mesher, on the pad, at a distance where you can count the voxels.
@@ -163,7 +197,7 @@ func _sheet_testcube() -> void:
 				voxels.append(Vector4i(x, y, z, VoxelModel.SKIN))
 	var palette := {VoxelModel.SKIN: Color.html("#E0AC7E").srgb_to_linear()}
 	var mi := MeshInstance3D.new()
-	mi.mesh = VoxelModel.build_mesh(voxels, palette, Vector3i(n / 2, 0, n / 2), 0.35)
+	mi.mesh = VoxelModel.build_mesh(voxels, palette, Vector3(n / 2.0, 0.0, n / 2.0), 0.35)
 	var holder := Node3D.new()
 	holder.add_child(mi)
 	holder.position = Vector3(0.0, 0.0, SUBJECT_Z)
@@ -182,30 +216,44 @@ func _set_lineup(defs: Array) -> void:
 	for i in defs.size():
 		var node := _make_subject(defs[i])
 		node.position = Vector3(-span * 0.5 + float(i) * LINEUP_SPACING, 0.0, SUBJECT_Z)
+		node.rotation.y = FACING_CAMERA
 		_subjects_root.add_child(node)
 
 
-## One subject. THE ONLY PLACE the gallery decides what a character looks like,
-## so that when CharacterView arrives this function is the whole of the change.
-func _make_subject(_def) -> Node3D:
-	# The capsule from player.tscn, at the same offset: its centre sits 1 m up
-	# inside a 2 m body whose feet are at y = 0.
-	var mi := MeshInstance3D.new()
-	var capsule := CapsuleMesh.new()
-	capsule.radius = 0.4
-	capsule.height = 2.0
-	mi.mesh = capsule
-	mi.position = Vector3(0.0, 1.0, 0.0)
-	var holder := Node3D.new()
-	holder.add_child(mi)
-	return holder
+## One subject. THE ONLY PLACE the gallery decides what a character looks like -
+## and it decides by handing the def to CharacterView, which is the same thing
+## Player and RemotePlayer do. A gallery with its own model builder would be a
+## gallery that photographs something the game does not contain.
+##
+## `null` still means the capsule, so a "before" shot can be retaken at any
+## time against the same pad and the same light.
+func _make_subject(def) -> Node3D:
+	if def == null:
+		# The capsule from the old player.tscn, at the same offset: its centre
+		# sat 1 m up inside a 2 m body whose feet are at y = 0.
+		var mi := MeshInstance3D.new()
+		var capsule := CapsuleMesh.new()
+		capsule.radius = 0.4
+		capsule.height = 2.0
+		mi.mesh = capsule
+		mi.position = Vector3(0.0, 1.0, 0.0)
+		var holder := Node3D.new()
+		holder.add_child(mi)
+		return holder
+	var view := CharacterView.new()
+	view.build(def)
+	return view
 
 
 ## Chest height of whatever is standing in the lineup, for the camera to aim
-## at. Derived rather than fixed so a 1.5 m dwarf and a 2.25 m elf in the same
-## row are both in frame.
+## at. Derived from the tallest subject rather than fixed, so a 1.5 m dwarf and
+## a 2.25 m elf in the same row are both in frame.
 func _lineup_chest_height() -> float:
-	return 1.3
+	var tallest := 2.0
+	for def in _lineup_defs():
+		if def != null:
+			tallest = maxf(tallest, Races.height_m(def.race))
+	return tallest * 0.62
 
 
 # --- Taking the picture -----------------------------------------------------

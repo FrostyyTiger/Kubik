@@ -63,7 +63,11 @@ const FLY_SPEED := 18.0
 @onready var _pivot: Node3D = $CamPivot
 @onready var _arm: SpringArm3D = $CamPivot/SpringArm3D
 @onready var _camera: Camera3D = $CamPivot/SpringArm3D/Camera3D
-@onready var _body: MeshInstance3D = $Body
+## The character. NOT a capsule any more: the collider is still a capsule and
+## always will be - hard rule 3, one collider for every race - but what you see
+## is a CharacterView built from the saved CharacterDef. The model's feet are at
+## y = 0 and the capsule's centre is at y = 1, and the two agree.
+@onready var _view: CharacterView = $View
 
 ## Debug flight. A tool, not a mode - see docs/DESIGN.md. Tuning terrain
 ## without it is miserable, which is the entire reason it survives.
@@ -94,6 +98,10 @@ var _pitch := deg_to_rad(-15.0)
 
 func _ready() -> void:
 	_capture_mouse(true)
+	# The character Marcel made, or the default human on a machine that has
+	# never opened the creation screen. `--race` and friends override it for
+	# one run - see CharacterDef.load_or_default().
+	_view.build(CharacterDef.load_or_default())
 	# Terrain is a staircase of half-metre steps and the capsule must stay
 	# glued to it going downhill, or walking down any slope turns into a
 	# sequence of small hops.
@@ -176,7 +184,7 @@ func _set_noclip(on: bool) -> void:
 	# Turning the collider off is what makes it noclip rather than merely
 	# flight. Without it you would hover, but still be stopped by hillsides.
 	$Collider.disabled = on
-	_body.visible = not on
+	_view.visible = not on
 	print("[Player] noclip %s" % ("on" if on else "off"))
 
 
