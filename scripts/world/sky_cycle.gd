@@ -42,6 +42,19 @@ var config: WorldgenConfig = null
 ## 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
 var time_of_day := 0.3
 
+## Stop the clock. Set by the screenshot tour and by nothing else.
+##
+## A full day is eight minutes and the tour takes about five on a software
+## renderer, so without this the sun sets somewhere around the fourth
+## photograph - which is how the v1 tour came to have three usable shots and
+## three black rectangles. Nobody noticed, because on a real GPU the tour
+## finishes before the light has moved.
+##
+## It matters beyond the black frames: two tours of the same seed have to
+## differ ONLY where the terrain differs, and a comparison harness whose
+## lighting depends on how long rendering took compares the wrong thing.
+var frozen := false
+
 var _sun: DirectionalLight3D = null
 var _env: Environment = null
 var _sky: ProceduralSkyMaterial = null
@@ -62,7 +75,7 @@ func setup(p_config: WorldgenConfig, sun: DirectionalLight3D,
 
 
 func _process(delta: float) -> void:
-	if config == null:
+	if config == null or frozen:
 		return
 	if config.day_seconds > 0.0:
 		time_of_day = fposmod(time_of_day + delta / config.day_seconds, 1.0)

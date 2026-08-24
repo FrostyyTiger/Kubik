@@ -20,6 +20,21 @@ extends Node
 ## runs are comparable and a change in terrain shows up as a change in the
 ## pictures.
 
+## Where the pictures go. A run with `--label NAME` writes to a subdirectory of
+## its own instead, which is what makes this a COMPARISON HARNESS rather than
+## just a screenshot tool:
+##
+##     godot --path . -- --tour --seed 42 --label v2-baseline
+##     ...change something...
+##     godot --path . -- --tour --seed 42 --label stage9-after
+##
+## Same seed, same six vantage points, both sets left on disk side by side. A
+## terrain change that only shows up as a number in the probe can then be
+## looked at, and - the part that actually matters - a change that makes the
+## world worse can be seen to have made it worse rather than argued about.
+##
+## Without a label it writes to build/tour directly, which is where the v1
+## shots live and what STATUS.md tells you to run.
 const OUT_DIR := "res://build/tour"
 
 ## Metres. Far enough back to frame a mountain, near enough that the subject is
@@ -33,16 +48,29 @@ const EYE_HEIGHT := 26.0
 const SETTLE_FRAMES := 8
 const MAX_WAIT_FRAMES := 5400
 
+## Time of day every shot is taken at, unless --time says otherwise.
+##
+## The config's own day_start, so the tour photographs the world at the light
+## level it was tuned against rather than at a light level of its own.
+const DEFAULT_TOUR_TIME := -1.0
+
 var _world: World = null
 var _player: Player = null
+var _sky: SkyCycle = null
 var _camera: Camera3D = null
 
+## Resolved from --label at run(). Empty means write straight into OUT_DIR.
+var _out_dir := OUT_DIR
 
-func run(world: World, player: Player) -> void:
+
+func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	_world = world
 	_player = player
+	_sky = sky
 
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	_freeze_time()
+	_out_dir = _resolve_out_dir()
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_out_dir))
 
 	# A camera of our own rather than steering the player's orbit rig. The rig
 	# is built to follow a character and fight for control of its own pitch;
@@ -64,7 +92,7 @@ func run(world: World, player: Player) -> void:
 	for i in shots.size():
 		await _capture(i, shots[i])
 
-	print("[Tour] done, %d images in %s" % [shots.size(), OUT_DIR])
+	print("[Tour] done, %d images in %s" % [shots.size(), _out_dir])
 	get_tree().quit()
 
 
@@ -83,10 +111,11 @@ func _choose_vantages() -> Array:
 	var postcard := _find_postcard(hm)
 
 	var shots := []
+	var spawn := gen.spawn_block
 	shots.append({
 		"name": "1-spawn",
 		"note": "where the player starts",
-		"target": _to_metres(Vector2i(0, 0), gen.surface_at(0.0, 0.0), cfg),
+		"target": _to_metres(spawn, gen.surface_at(float(spawn.x), float(spawn.y)), cfg),
 		"distance": 46.0, "height": 9.0,
 	})
 	shots.append({
@@ -286,7 +315,7 @@ func _capture(index: int, shot: Dictionary) -> void:
 	# The image is only valid once the frame has actually been drawn.
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
-	var path := "%s/%s.png" % [OUT_DIR, shot["name"]]
+	var path := "%s/%s.png" % [_out_dir, shot["name"]]
 	var err := image.save_png(path)
 	if err != OK:
 		push_warning("[Tour] could not write %s: %s" % [path, error_string(err)])
@@ -314,3 +343,61 @@ func _to_metres(block_xz: Vector2i, altitude_blocks: float, cfg: WorldgenConfig)
 		float(block_xz.x) * cfg.block_size,
 		altitude_blocks * cfg.block_size,
 		float(block_xz.y) * cfg.block_size)
+
+
+## `--tour --label NAME` -> res://build/tour/NAME. No label -> res://build/tour.
+##
+## The label is sanitised rather than trusted: it becomes a directory name, and
+## a stray slash in it would scatter screenshots somewhere surprising.
+func _resolve_out_dir() -> String:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--label")
+	if i < 0 or i + 1 >= argv.size():
+		return OUT_DIR
+	var label := argv[i + 1].strip_edges()
+	# Letters, digits, dash, underscore and dot survive; everything else becomes
+	# a dash. is_valid_identifier() alone would reject digits, since a digit
+	# cannot START an identifier - "v2-baseline" would come out as "--baseline".
+	var clean := ""
+	for c in label:
+		if c.is_valid_identifier() or (c >= "0" and c <= "9") or c in "-_.":
+			clean += c
+		else:
+			clean += "-"
+	clean = clean.strip_edges()
+	if clean.is_empty():
+		push_warning("[Tour] --label %s is not usable as a directory name" % label)
+		return OUT_DIR
+	return "%s/%s" % [OUT_DIR, clean]
+
+
+## Stop the sun where it is, for the whole tour.
+##
+## THE HARNESS WAS BROKEN WITHOUT THIS and it had been since v1. A day is
+## day_seconds long - 480 by default - and a six-shot tour under software
+## rendering takes about five minutes, so the sun set between shot three and
+## shot four and the last of them came back as black rectangles. It never
+## showed up on a real GPU, where the whole tour is over in seconds.
+##
+## The black frames are the obvious half. The half that matters is that a
+## comparison harness whose lighting depends on how long rendering took cannot
+## be used to compare anything - two runs of the same seed would differ in the
+## light before they differed in the terrain.
+##
+## `--time 0.5` overrides it, for deliberately photographing the world at noon
+## or at dusk.
+func _freeze_time() -> void:
+	if _sky == null:
+		push_warning("[Tour] no SkyCycle - the sun will move during the tour")
+		return
+	var t := DEFAULT_TOUR_TIME
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--time")
+	if i >= 0 and i + 1 < argv.size():
+		t = clampf(argv[i + 1].to_float(), 0.0, 1.0)
+	if t < 0.0:
+		t = _world.config.day_start
+	_sky.time_of_day = t
+	_sky.frozen = true
+	_sky.apply()
+	print("[Tour] time of day frozen at %.3f" % t)

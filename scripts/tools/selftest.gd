@@ -1,23 +1,66 @@
-extends SceneTree
+extends Node
 
 ## Worldgen and mesher self-tests, offline.
 ##
-##     godot --headless --path . --script scripts/tools/selftest.gd
+##     godot --headless --path . scenes/selftest.tscn
 ##
 ## Everything here checks something that is either invisible from inside the
 ## game, or only visible once you already know what you are looking at.
 ## Exits non-zero on failure, so CI can run it.
+##
+##
+## WHY THIS IS A SCENE AND NOT `--script`, AS IT WAS UNTIL TERRAIN V2 STAGE 3
+##
+## `--script` replaces the main loop, and Godot only creates AUTOLOADS for a
+## real one. World names the Net autoload directly in its edit path, so under
+## `--script` world.gd fails to compile with "Identifier not found: Net" - and
+## the symptom is not that error but a later, much stranger one:
+## `World.new()` reporting that GDScript has no function called new().
+##
+## That mattered the moment there was a test of the edit path to write. The
+## alternatives were to reach around Net from worldgen, or to test a
+## reimplementation of the ordering rather than the ordering itself. Running
+## the suite in the same environment the game runs in is the honest fix, and it
+## costs one scene file and a different command line.
+##
+## Engine.register_singleton() is NOT a way around this. It fills a different
+## table from the one the GDScript compiler resolves autoload names against.
 
-func _init() -> void:
+func _ready() -> void:
+	# Called through a list, and each result type-checked, because a runtime
+	# error inside a test does NOT stop the run - and worse, it does not report
+	# one either. GDScript aborts the failing function and returns the DEFAULT
+	# VALUE OF ITS DECLARED RETURN TYPE, so a test declared `-> int` that
+	# crashes on its second line comes back as 0, which is this file's code for
+	# "passed". The Stage 3 test did exactly that and the run printed
+	# "all passed" twice before it was noticed.
+	#
+	# Hence the tests below are deliberately UNTYPED. An aborted untyped
+	# function returns null, which is a value no test ever returns on purpose,
+	# and that is the difference between a crash being visible and being
+	# indistinguishable from success.
+	var tests := {
+		"winding": _test_winding,
+		"ao cost": _measure_ao_cost,
+		"tree borders": _test_tree_borders,
+		"chunk determinism": _test_chunk_determinism,
+		"edit during generation": _test_edit_during_generation,
+		"facing": _test_facing,
+		"day cycle": _test_day_cycle,
+		"config contract": _test_config_contract,
+	}
 	var failures := 0
-	failures += _test_winding()
-	failures += _test_tree_borders()
-	failures += _test_chunk_determinism()
-	failures += _test_day_cycle()
-	failures += _test_config_contract()
+	for name in tests:
+		var result = (tests[name] as Callable).call()
+		if not (result is int):
+			print("  %s DID NOT COMPLETE - it returned %s, so it crashed" % [
+				name, type_string(typeof(result))])
+			failures += 1
+			continue
+		failures += result
 	print("")
 	print("SELFTEST: %s" % ("all passed" if failures == 0 else "%d FAILED" % failures))
-	quit(1 if failures > 0 else 0)
+	get_tree().quit(1 if failures > 0 else 0)
 
 
 ## WINDING. Every triangle must satisfy
@@ -33,49 +76,96 @@ func _init() -> void:
 ## runs, and the worst case for merging. This test earned its keep immediately:
 ## it caught a fresh Chunk defaulting has_air to false, which made the mesher
 ## treat a hand-built chunk as solid throughout and skip all its interior faces.
-func _test_winding() -> int:
+func _test_winding():
 	var bad := 0
 	var checked := 0
 	var quads := 0
 
-	for case in ["single", "slab", "checker"]:
-		var chunk := Chunk.new(Vector3i(0, 0, 0))
-		for y in Chunk.SIZE:
-			for z in Chunk.SIZE:
-				for x in Chunk.SIZE:
-					var solid := false
-					match case:
-						"single": solid = (x == 8 and y == 8 and z == 8)
-						"slab": solid = y < 6
-						"checker": solid = ((x + y + z) % 2 == 0)
-					if solid:
-						chunk.set_voxel(x, y, z, Block.STONE)
+	# Both with AO off and with AO on. Baked AO splits merged quads wherever
+	# the corner shading changes, so it produces a DIFFERENT set of rectangles
+	# out of the same voxels - and the winding of every one of them still has
+	# to be right. Running only the AO-off case would have left the splitting
+	# path completely untested, which is the path that is new.
+	# quads emitted per case, keyed "case@ao", so the AO-off and AO-on runs can
+	# be compared at the end.
+	var per_case := {}
 
-		var arrays := ChunkMesher.build_arrays(chunk, func(_a, _b, _c): return false, 1.0)
-		if arrays.is_empty():
-			print("winding %s: EMPTY - nothing was meshed" % case)
-			bad += 1
-			continue
-		var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		quads += v.size() / 4
-		var i := 0
-		while i < idx.size():
-			var p0 := v[idx[i]]
-			var p1 := v[idx[i + 1]]
-			var p2 := v[idx[i + 2]]
-			var cross := (p1 - p0).cross(p2 - p0)
-			var want := -n[idx[i]]
-			checked += 1
-			if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+	for ao in [0.0, 0.45]:
+		for case in ["single", "slab", "checker", "ledge"]:
+			var chunk := Chunk.new(Vector3i(0, 0, 0))
+			for y in Chunk.SIZE:
+				for z in Chunk.SIZE:
+					for x in Chunk.SIZE:
+						var solid := false
+						match case:
+							"single": solid = (x == 8 and y == 8 and z == 8)
+							"slab": solid = y < 6
+							"checker": solid = ((x + y + z) % 2 == 0)
+							# A slab with a wall standing on one edge of it.
+							# The top of the slab is one merged quad with AO
+							# off; with AO on the strip against the wall is
+							# darker than the open ground and has to split off.
+							# Without a case like this the whole splitting path
+							# would be untested, because the other three shapes
+							# have nothing to merge in the first place.
+							"ledge": solid = (y < 6) or (x < 3 and y < 10)
+						if solid:
+							chunk.set_voxel(x, y, z, Block.STONE)
+
+			var cfg := WorldgenConfig.new()
+			cfg.block_size = 1.0
+			cfg.ao_strength = ao
+			# Tinting off: this test is about winding and about how AO splits
+			# quads, and a per-vertex colour would change none of that while
+			# making a failure much harder to read.
+			cfg.color_jitter_value = 0.0
+			cfg.color_jitter_hue = 0.0
+			cfg.slope_tint = 0.0
+			cfg.aspect_tint = 0.0
+			var arrays := ChunkMesher.build_arrays(
+				chunk, func(_a, _b, _c): return false, cfg, 0)
+			if arrays.is_empty():
+				print("winding %s: EMPTY - nothing was meshed" % case)
 				bad += 1
-				if bad <= 3:
-					print("  BAD %s: cross %s want %s" % [case, cross.normalized(), want])
-			i += 3
-		print("  %-8s %5d verts, %5d tris" % [case, v.size(), idx.size() / 3])
+				continue
+			var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			quads += v.size() / 4
+			var i := 0
+			while i < idx.size():
+				var p0 := v[idx[i]]
+				var p1 := v[idx[i + 1]]
+				var p2 := v[idx[i + 2]]
+				var cross := (p1 - p0).cross(p2 - p0)
+				var want := -n[idx[i]]
+				checked += 1
+				if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+					bad += 1
+					if bad <= 3:
+						print("  BAD %s ao=%.2f: cross %s want %s" % [
+							case, ao, cross.normalized(), want])
+				i += 3
+			per_case["%s@%.2f" % [case, ao]] = v.size() / 4
+			print("  %-8s ao=%.2f %5d verts, %5d tris" % [
+				case, ao, v.size(), idx.size() / 3])
 
 	print("winding: %d triangles checked, %d wrong, %d quads emitted" % [checked, bad, quads])
+
+	# The point of running the AO pass at all is that it emits a DIFFERENT set
+	# of rectangles. If it emitted the same set everywhere, the AO-on half of
+	# this test would be re-checking the AO-off half and proving nothing.
+	var split_seen := false
+	for case in ["single", "slab", "checker", "ledge"]:
+		if per_case.get("%s@0.45" % case, 0) > per_case.get("%s@0.00" % case, 0):
+			split_seen = true
+	if not split_seen:
+		print("  WARNING: AO never split a quad - the splitting path is untested")
+		bad += 1
+	else:
+		print("  ledge: %d quads with AO off -> %d with AO on" % [
+			per_case.get("ledge@0.00", 0), per_case.get("ledge@0.45", 0)])
+
 	return 1 if bad > 0 else 0
 
 
@@ -93,7 +183,7 @@ func _test_winding() -> int:
 ## nothing, leaves are only drawn over air - so if the normal margin is wide
 ## enough the two chunks are identical byte for byte. If it is too narrow, the
 ## wide pass finds blocks the normal one missed.
-func _test_tree_borders() -> int:
+func _test_tree_borders():
 	var cfg := WorldgenConfig.new()
 	var gen := TerrainGenerator.new(4242, cfg)
 	gen.build_heightmap()
@@ -139,7 +229,7 @@ func _test_tree_borders() -> int:
 
 ## Same seed, same config, same chunks - byte for byte. This is the guarantee
 ## the whole terrain-is-never-sent contract rests on.
-func _test_chunk_determinism() -> int:
+func _test_chunk_determinism():
 	var cfg := WorldgenConfig.new()
 	var hashes := []
 	for run in 2:
@@ -166,7 +256,7 @@ func _test_chunk_determinism() -> int:
 ## What would actually break: a NaN from normalising a zero vector, the sun
 ## never rising, or fog and sky disagreeing at the horizon, which reads as a
 ## grey wall standing in front of the view.
-func _test_day_cycle() -> int:
+func _test_day_cycle():
 	var bad := 0
 	var highest := -2.0
 	var lowest := 2.0
@@ -228,12 +318,16 @@ func _test_day_cycle() -> int:
 ##   3. and a config that made the round trip must generate the SAME WORLD,
 ##      byte for byte, as the one it was copied from. That is the property a
 ##      joining client depends on and the other two only imply.
-func _test_config_contract() -> int:
+func _test_config_contract():
 	var bad := 0
 
 	var host_config := WorldgenConfig.new()
 	host_config.mountain_amp += 37.0
-	host_config.forest_max -= 11.0
+	# A zone share rather than the retired forest_max, and it is worth being a
+	# SHARE specifically: since Stage 7 the zone boundaries are percentiles
+	# resolved at generation time, so this checks that a value which only takes
+	# effect through a later computation still crosses the wire intact.
+	host_config.share_forest = 0.31
 	host_config.tree_probability = 0.21
 
 	var defaults := WorldgenConfig.new()
@@ -269,3 +363,199 @@ func _heightmap_hash(world_seed: int, cfg: WorldgenConfig) -> String:
 	var gen := TerrainGenerator.new(world_seed, cfg)
 	gen.build_heightmap()
 	return gen.heightmap.hash_key()
+
+
+## WHAT BAKED AO COSTS, on real terrain rather than on a test shape.
+##
+## AO splits merged quads wherever the corner shading changes, so it buys its
+## look with vertices and with meshing time. Both numbers belong in STATUS.md
+## and neither may be estimated (plan hard rule 6), so they are measured here -
+## same chunks, same order, once with AO off and once with it on.
+##
+## Not a test: it prints and always passes. There is no threshold to assert
+## against that would not be a number invented on the spot.
+func _measure_ao_cost():
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(31337, cfg)
+	gen.build_heightmap()
+
+	# Chunk columns around the origin, at the altitudes terrain actually passes
+	# through, so this measures surface chunks and not empty sky.
+	var positions: Array[Vector3i] = []
+	for cx in range(-2, 3):
+		for cz in range(-2, 3):
+			var span := gen.column_surface_range(cx, cz)
+			var cy := Chunk.floor_div(int(span.x), Chunk.SIZE)
+			for k in 3:
+				positions.append(Vector3i(cx, cy + k, cz))
+
+	var chunks: Array[Chunk] = []
+	for pos in positions:
+		var c := Chunk.new(pos)
+		gen.generate_into(c)
+		chunks.append(c)
+
+	var solid := func(wx: int, wy: int, wz: int) -> bool:
+		return gen.is_solid_at(wx, wy, wz)
+
+	var results := []
+	for ao in [0.0, WorldgenConfig.new().ao_strength]:
+		cfg.ao_strength = ao
+		var quads := 0
+		var started := Time.get_ticks_usec()
+		for c in chunks:
+			var arrays := ChunkMesher.build_arrays(c, solid, cfg, 31337)
+			if not arrays.is_empty():
+				quads += (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 4
+		results.append({
+			"ao": ao,
+			"quads": quads,
+			"ms": float(Time.get_ticks_usec() - started) / 1000.0,
+		})
+
+	var off: Dictionary = results[0]
+	var on: Dictionary = results[1]
+	print("ao cost: %d chunks, %d -> %d quads (%+.1f%%), %.1f -> %.1f ms (%+.1f%%)" % [
+		chunks.size(), off["quads"], on["quads"],
+		(float(on["quads"]) / maxf(float(off["quads"]), 1.0) - 1.0) * 100.0,
+		off["ms"], on["ms"],
+		(on["ms"] / maxf(off["ms"], 0.001) - 1.0) * 100.0])
+	return 0
+
+
+## THE STAGE 3 HAZARD, MADE INTO A TEST.
+##
+## Generation moved to worker threads, so between the moment a chunk is
+## submitted and the moment it comes back there is a window in which the chunk
+## DOES NOT EXIST. An edit arriving in that window has no voxels to be written
+## into. v1's STATUS.md flagged this as the reason generation had not been
+## threaded yet, and it is the kind of bug that would show up as "sometimes the
+## block I broke comes back" - intermittent, timing-dependent, and dependent on
+## how busy the worker pool happened to be, so effectively unreproducible.
+##
+## Three things have to hold, and all three are checked here:
+##
+##   1. the host ACCEPTS an edit into a chunk that is still generating. If
+##      validation only accepted loaded chunks, the edit would be dropped on
+##      the floor with no error anywhere.
+##   2. the edit SURVIVES generation. The worker overwrites every voxel in the
+##      chunk, so an edit applied before it finished would be wiped; it has to
+##      be replayed after.
+##   3. an edit into a chunk that is neither loaded nor pending is still
+##      REFUSED. Otherwise "accept pending chunks" would have quietly become
+##      "accept everything", and a client could edit the far side of the world.
+func _test_edit_during_generation():
+	var bad := 0
+
+	# A deliberately tiny world: this test is about ordering, not about scale,
+	# and a 3 km heightmap would cost seconds to prove a property that does not
+	# depend on it.
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.voxel_radius_chunks = 2
+
+	var world := World.new()
+	world.setup(1234, cfg)
+
+	# A block that is solid in the unedited world, so changing it is visible.
+	var surface := int(floor(world.generator.surface_at(0.0, 0.0)))
+	var block_pos := Vector3i(0, surface, 0)
+	var cpos := Chunk.world_to_chunk(block_pos)
+
+	if world.has_chunk(cpos):
+		print("  the chunk existed before generation was submitted")
+		bad += 1
+
+	# 3. Nothing is loaded and nothing is pending yet, so this must be refused.
+	if world._validate_edit(1, block_pos, Block.SNOW):
+		print("  an edit was accepted into a chunk that is neither loaded nor pending")
+		bad += 1
+
+	# Now put exactly that chunk out at the worker pool and leave it there.
+	world._submit_generation(cpos)
+
+	# 1. Still no voxels, but the chunk is coming, so the host must accept.
+	if not world._validate_edit(1, block_pos, Block.SNOW):
+		print("  an edit was REFUSED into a chunk that is still generating")
+		bad += 1
+
+	# The client path, which is the one that needs no network to exercise:
+	# record the edit, and discover there is nothing to apply it to yet.
+	world._cl_apply_block(block_pos, Block.SNOW)
+	if world.get_block(block_pos) != Block.AIR:
+		print("  a chunk with no voxels answered get_block with something")
+		bad += 1
+
+	# Let the job finish and be collected, exactly as _process would.
+	# With a delay, because the spin without one is over in microseconds and
+	# the worker has not necessarily even been scheduled by then - which looks
+	# exactly like the chunk never arriving.
+	var spins := 0
+	while not world.has_chunk(cpos) and spins < 5000:
+		world._collect_finished(Time.get_ticks_msec())
+		OS.delay_msec(1)
+		spins += 1
+	if not world.has_chunk(cpos):
+		print("  the chunk never arrived")
+		bad += 1
+
+	# 2. The worker wrote every voxel in the chunk. The edit has to have been
+	# replayed over the top of it.
+	var got := world.get_block(block_pos)
+	if got != Block.SNOW:
+		print("  the edit did not survive generation: got %s, wanted snow" % Block.name_of(got))
+		bad += 1
+
+	world._drain_jobs()
+	if world._far_field != null:
+		world._far_field.drain()
+	world.free()
+
+	print("edit during generation: %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
+## THE CHARACTER FACES WHERE IT IS GOING, and not the other way round.
+##
+## Player._face_movement() turns the body toward its travel direction. For the
+## whole of terrain v1 it computed atan2(wish.x, wish.z), which is the yaw that
+## points local +Z along travel - and Godot's forward is -Z, so the character
+## was 180 degrees out in every direction, every frame.
+##
+## Nobody saw it because Body is a CapsuleMesh and a capsule is rotationally
+## symmetric. It would have appeared the moment a character with a front and a
+## back arrived, and it would have looked like a bug in the new character.
+##
+## The assertion is against Vector3.FORWARD rather than against a hand-written
+## (0, 0, -1), because FORWARD is the engine's own definition of the thing this
+## has to agree with. If Godot ever changed its convention this test would
+## change with it, which is the behaviour you want from a test of a convention.
+func _test_facing():
+	var bad := 0
+	var checked := 0
+	# Eight compass directions plus two off-axis ones, so a sign error on one
+	# axis alone cannot hide.
+	for degrees in [0, 45, 90, 135, 180, 225, 270, 315, 23, 197]:
+		var a := deg_to_rad(float(degrees))
+		var wish := Vector3(sin(a), 0.0, cos(a))
+		# The expression from Player._face_movement().
+		var yaw := atan2(-wish.x, -wish.z)
+		var facing := (Basis(Vector3.UP, yaw) * Vector3.FORWARD).normalized()
+		checked += 1
+		if facing.distance_to(wish.normalized()) > 0.0001:
+			bad += 1
+			if bad <= 3:
+				print("  %d deg: wish %s but forward points %s" % [degrees, wish, facing])
+
+	# ...and the old expression must FAIL the same test, or this proves nothing
+	# about the bug having been real.
+	var wish_check := Vector3(1.0, 0.0, 0.0)
+	var old_yaw := atan2(wish_check.x, wish_check.z)
+	var old_facing := (Basis(Vector3.UP, old_yaw) * Vector3.FORWARD).normalized()
+	var old_was_wrong: bool = old_facing.distance_to(wish_check) > 1.0
+    
+	print("facing: %d directions checked, %d wrong; the old expression was %s" % [
+		checked, bad, "180 degrees out as described" if old_was_wrong else "FINE - the fix may be wrong"])
+	if not old_was_wrong:
+		bad += 1
+	return 1 if bad > 0 else 0

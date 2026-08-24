@@ -50,6 +50,15 @@ var _build_ms := 0
 
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_view_arg()
+	# After the preset, so --set can override a value the preset owns; before
+	# everything that reads one.
+	config.apply_cli_overrides(OS.get_cmdline_user_args())
+	_apply_msaa()
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+		config.view_distance_name(), config.voxel_radius_chunks,
+		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
+		int(config.fog_end_m)])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	# A client retuning its own terrain has silently left the host's world, so
@@ -71,6 +80,8 @@ func _ready() -> void:
 
 	if "--tour" in OS.get_cmdline_user_args():
 		_start_tour.call_deferred()
+	elif "--traverse" in OS.get_cmdline_user_args():
+		_start_traverse.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -144,18 +155,33 @@ var _awaiting_ground := false
 func _spawn_player() -> void:
 	# In METRES: surface_height_m answers in metres, find_surface_y in blocks,
 	# and the scene graph is metres.
-	_player.global_position = Vector3(
-		0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
+	# Not the origin any more. Since terrain v2 Stage 12 the world chooses a
+	# spawn that satisfies the acceptance test by construction - flat, dry, a
+	# mountain in view and water within a two-minute walk - rather than
+	# dropping the player at (0, 0) and hoping.
+	_player.global_position = _world.spawn_position_m(SPAWN_CLEARANCE)
 	_player.velocity = Vector3.ZERO
 	_player.set_physics_process(false)
 	_awaiting_ground = true
 
 
+## THE CHUNK UNDER SPAWN, not the chunk at the origin.
+##
+## This checked (0, 0) until terrain v2 Stage 12 moved spawn off the origin,
+## and the two are not the same place any more. The world loads chunks around
+## the PLAYER, so if spawn lands further from the origin than the voxel radius
+## - 192 blocks at High, against a spawn search that ranges over 750 - the
+## chunk at (0, 0) never loads, the condition below is never satisfied, and the
+## player stays frozen with physics disabled forever.
+##
+## Seed 42 spawns 131 blocks out and worked by luck. The traversal probe found
+## it by teleporting to a corner and reporting 0 m walked in 90 seconds.
 func _release_player_when_ground_exists() -> void:
 	if not _awaiting_ground:
 		return
+	var spawn := _world.generator.spawn_block
 	var spawn_block := Vector3i(
-		0, _world.find_surface_y(0, 0), 0)
+		spawn.x, _world.find_surface_y(spawn.x, spawn.y), spawn.y)
 	if not _world.has_chunk(Chunk.world_to_chunk(spawn_block)):
 		return
 	_awaiting_ground = false
@@ -182,7 +208,21 @@ func _start_tour() -> void:
 	var tour := ScreenshotTour.new()
 	tour.name = "ScreenshotTour"
 	add_child(tour)
-	tour.run(_world, _player)
+	tour.run(_world, _player, _sky)
+
+
+## Walk the player from one corner of the world to the other and time it.
+##
+## The world doubled to 3 km in terrain v2 and the one thing that could make
+## that a mistake is traversal. See TraversalProbe for why the answer has to be
+## walked rather than divided.
+func _start_traverse() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := TraversalProbe.new()
+	probe.name = "TraversalProbe"
+	add_child(probe)
+	probe.run(_world, _player)
 
 
 # --- Join handshake ---------------------------------------------------------
@@ -350,9 +390,56 @@ func _adopt_host_config(config_data: Dictionary) -> void:
 	_sky.rebind(config)
 
 
+## `--view low|medium|high|ultra|custom` overrides the saved preset.
+##
+## Exists so the four presets can be measured without editing a file between
+## runs - the plan asks for chunk and vertex counts per preset, and a
+## measurement you have to hand-edit the config for is a measurement nobody
+## repeats. Also the fastest way to answer "is it my machine or the settings".
+func _apply_view_arg() -> void:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--view")
+	if i < 0 or i + 1 >= argv.size():
+		return
+	var wanted := argv[i + 1].strip_edges().to_lower()
+	if wanted == "custom":
+		config.view_distance = WorldgenConfig.VIEW_CUSTOM
+		return
+	for p in WorldgenConfig.VIEW_PRESETS.size():
+		if WorldgenConfig.VIEW_PRESETS[p]["name"] == wanted:
+			config.view_distance = p
+			config.apply_view_preset()
+			return
+	push_warning("[Game] --view %s is not a preset, keeping %s" % [
+		wanted, config.view_distance_name()])
+
+
+## Antialiasing for the 3D viewport.
+##
+## Off by default in Forward+, and terrain is close to the worst case for that:
+## every voxel edge is a hard straight line against a bright sky, which is
+## exactly the geometry aliasing is most visible on. This is half of the answer
+## to "not sharp - maybe missing antialiasing in the distance"; the other half
+## is baked AO, which is what gives a surface something to be sharp ABOUT up
+## close.
+##
+## Read from the config rather than project.godot so it is reachable from the
+## F4 panel, and applied here rather than in World because it is a property of
+## the viewport and there is one of those per game, not per world.
+func _apply_msaa() -> void:
+	var levels := [
+		Viewport.MSAA_DISABLED, Viewport.MSAA_2X,
+		Viewport.MSAA_4X, Viewport.MSAA_8X,
+	]
+	var level := clampi(config.msaa_level, 0, levels.size() - 1)
+	get_viewport().msaa_3d = levels[level]
+	print("[Game] MSAA %s" % ["off", "2x", "4x", "8x"][level])
+
+
 ## A knob moved in the tuning panel. The config object is shared, so World
 ## already sees the new value; what it does NOT have is terrain built with it.
 func _on_config_changed() -> void:
+	_apply_msaa()
 	# Fog and day length take effect immediately - they cost nothing to change
 	# and are much easier to tune when you can see the result at once. Terrain
 	# shape needs a rebuild, which is what the message is about.
@@ -362,6 +449,15 @@ func _on_config_changed() -> void:
 
 func _on_config_reload_requested() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_view_arg()
+	# After the preset, so --set can override a value the preset owns; before
+	# everything that reads one.
+	config.apply_cli_overrides(OS.get_cmdline_user_args())
+	_apply_msaa()
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+		config.view_distance_name(), config.voxel_radius_chunks,
+		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
+		int(config.fog_end_m)])
 	_debug.rebind(config)
 	_sky.rebind(config)
 	_on_reroll_requested(_world.world_seed)

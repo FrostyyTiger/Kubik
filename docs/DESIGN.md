@@ -155,15 +155,56 @@ A free-fly / noclip toggle exists behind a debug key. It is a tool, not a mode.
 
 ## World
 
-Bounded, not infinite: one fixed 1.5 x 1.5 km region. Blocks are 0.5 m, so a
+Bounded, not infinite: one fixed 3 x 3 km region. Blocks are 0.5 m, so a
 player is 4 blocks tall.
+
+*Was 1.5 x 1.5 km through terrain v1. Doubled in terrain v2 Stage 6, once
+sprint existed to cross it — see Traversal below.*
 
 Bounded is a feature, not a limitation - it is what makes a global heightmap
 affordable, and a global heightmap is what makes real per-basin lakes possible
 at all. You cannot find a depression by looking at one chunk.
 
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
-Terrain generation targets are in `plans/terrain-v1.md`.
+Terrain generation targets are in `plans/terrain-v2.md`.
+
+### Scale: the world is 1:4 against reality
+
+Every object in the world is a quarter of its real-world size, and the value of
+saying so is that ONE ratio has to appear on every line. The eye judges size by
+comparison, so an object at 1:10 standing next to one at 1:4 does not read as a
+small world - it reads as a broken one.
+
+| Thing | In game | Real equivalent |
+| --- | --- | --- |
+| Tree | 6.5 - 10.5 m | ~30 m spruce |
+| Largest lake | ~116 m across | ~400 m tarn |
+| Mountain relief | ~350 m | ~1400 m |
+
+The player is the deliberate exception, at 2 m against a real 1.75 m. A
+quarter-scale player would be 44 cm tall and everything about the camera, the
+step height and the reach distance would have to be re-derived from it, for a
+world that looked exactly the same. So the character is life-size and the land
+is quarter-size, and the visible consequence is that sprint looks fast.
+
+**Full scale was considered and rejected, in writing, so it is not
+relitigated.** A real 1400 m mountain needs roughly a 6 km base, which does not
+fit inside a 3 km world at all; a 15 km world that could hold one has a 21 km
+diagonal, about 35 minutes' sprint corner to corner. That is the failure mode
+that damaged Cube World's 2019 release.
+
+Rendering was never the constraint. Since terrain v2 the far field is built in
+LOD rings, so its cost is roughly logarithmic in view distance - 80k vertices at
+600 m, 82k at 800 m. **Traversal was the constraint**, and it still is.
+
+### Traversal
+
+The map diagonal is 4243 m and the target is under six minutes at sprint. Walk
+is 5 m/s, sprint is 2.6x that at 13 m/s, Shift held. Alt is a precision crawl
+for lining up a shot.
+
+A world nobody wants to cross is smaller than a world they do, whatever the map
+says. If the world grows again, this number is what has to grow with it.
 
 ## Combat
 

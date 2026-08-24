@@ -15,6 +15,9 @@ enum {
 	FOREST_FLOOR = 6,
 	LEAVES = 7,
 	TRUNK = 8,
+	SHORE = 9,
+	ALPINE_GRASS = 10,
+	HEATH = 11,
 }
 
 ## The palette. These ARE the look of the game - there are no textures, so a
@@ -24,6 +27,13 @@ enum {
 ## reads as washed out at distance, and distance is what this world is for: the
 ## design is sold on telling a meadow from a forest from a snowfield across a
 ## valley, which is a question about colour separation, not realism.
+##
+## SEVEN ZONES, NOT FOUR, since terrain v2 Stage 7. The three added surfaces
+## exist to break up the green: the world was 57% meadow by area and read as
+## one colour with a treeline drawn on it. Low to high the surfaces now run
+## gravel, meadow, forest floor, short yellow alpine turf, rusty heath, bare
+## rock, snow - a progression that changes hue as well as value, so a slope
+## reads as bands at a distance rather than as a gradient.
 ##
 ## THE VALUES BELOW ARE LINEAR, and the hex code beside each is what it was
 ## authored as. Godot renders in linear space and treats a vertex colour as
@@ -45,11 +55,15 @@ const COLORS := [
 	Color(0.1022, 0.2623, 0.0452),   # FOREST_FLOOR #5A8C3C
 	Color(0.0762, 0.1946, 0.0319),   # LEAVES       #4E7A32  foliage
 	Color(0.1470, 0.0782, 0.0232),   # TRUNK        #6B4F2A
+	Color(0.5209, 0.4508, 0.2549),   # SHORE        #BFB48C  wet gravel
+	Color(0.3864, 0.4793, 0.1170),   # ALPINE_GRASS #A7B860  short yellow turf
+	Color(0.2623, 0.1144, 0.0704),   # HEATH        #8C5F4B  rusty dwarf shrub
 ]
 
 const NAMES := [
 	"air", "stone", "dirt", "grass", "sand", "snow",
 	"forest_floor", "leaves", "trunk",
+	"shore", "alpine_grass", "heath",
 ]
 
 
@@ -66,3 +80,111 @@ static func color_of(id: int) -> Color:
 
 static func name_of(id: int) -> String:
 	return NAMES[id] if id >= 0 and id < NAMES.size() else "unknown(%d)" % id
+
+
+# --- Terrain v2 Stage 10: making one colour into many ----------------------
+#
+# The palette is nine flat colours and the world is built entirely out of them,
+# so a meadow is one exact green over its whole extent and reads as a painted
+# surface. These two functions break that up without adding a single vertex.
+#
+# THE CONSTRAINT THAT SHAPES BOTH OF THEM IS GREEDY MESHING. Per-BLOCK colour
+# variation is the obvious implementation and it is incompatible with merging:
+# if neighbouring blocks differ in colour they cannot share a quad, and a flat
+# meadow chunk goes from one quad to two hundred and fifty six. So the
+# variation lives in the VERTICES instead, sampled at the quad's corners and
+# interpolated across it. Two quads meeting at a lattice point sample the same
+# point and get the same value, so the field is continuous, nothing has to
+# split, and the cost is zero quads.
+
+## Deterministic per-vertex tint, hashed from a coarse lattice.
+##
+## `patch` is how many blocks share one hash cell. Small values give fine
+## mottling that is mostly invisible after interpolation; large ones give broad
+## drifts of tone across a hillside, which is what actually reads. The value
+## and hue amounts are fractions and are meant to be small - this is texture,
+## not confetti.
+##
+## Hue is faked as a red-against-blue tilt rather than a real HSV rotation.
+## The palette is stored linear, a correct rotation means converting to sRGB,
+## to HSV, back, and back again per vertex, and the visible difference between
+## that and tilting two channels in opposite directions by two percent is
+## nothing at all.
+static func jitter(color: Color, bx: int, bz: int, world_seed: int,
+		patch: int, value_amount: float, hue_amount: float) -> Color:
+	if value_amount <= 0.0 and hue_amount <= 0.0:
+		return color
+	var cell := maxi(patch, 1)
+	var cx := (bx - posmod(bx, cell)) / cell
+	var cz := (bz - posmod(bz, cell)) / cell
+	var v := 1.0 + (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_VALUE) * 2.0 - 1.0) * value_amount
+	var h := (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_HUE) * 2.0 - 1.0) * hue_amount
+	return Color(
+		maxf(color.r * v * (1.0 + h), 0.0),
+		maxf(color.g * v, 0.0),
+		maxf(color.b * v * (1.0 - h), 0.0),
+		color.a)
+
+
+## Tint one face by which way it points.
+##
+## SLOPE. Steep faces get less sky, so they are darker. The renderer's own
+## lighting already does some of this, which is why the default is gentle - the
+## job here is to separate a wall from a floor when both happen to be lit the
+## same, not to relight the world.
+##
+## ASPECT. A slope facing the sun is warmer and drier than one in shade, and in
+## the Alps that is visible as a real difference in what grows on it. Baked
+## against a FIXED direction rather than against the sun's actual position,
+## deliberately: the mesh is built once and the sun moves, so a baked lighting
+## term would be wrong for half of every day. What this bakes is not lighting,
+## it is aspect - a fact about the ground, which does not move.
+static func aspect_shade(color: Color, normal: Vector3,
+		slope_amount: float, aspect_amount: float) -> Color:
+	var out := color
+	if slope_amount > 0.0:
+		# 1 for a floor or ceiling, 0 for a wall.
+		var flatness := absf(normal.y)
+		var shade := 1.0 - slope_amount * (1.0 - flatness)
+		out = Color(out.r * shade, out.g * shade, out.b * shade, out.a)
+	if aspect_amount > 0.0:
+		var facing := aspect_curve(normal.x * SUN_ASPECT.x + normal.z * SUN_ASPECT.y)
+		var warm := 1.0 + aspect_amount * facing
+		var cool := 1.0 - aspect_amount * facing
+		out = Color(out.r * warm, out.g * (1.0 + aspect_amount * facing * 0.35),
+			out.b * cool, out.a)
+	return out
+
+
+## Which way "sunward" points, in XZ. Any fixed direction would do; this one is
+## the -Z the camera starts looking along, so the aspect difference is visible
+## in the first screenshot rather than behind you.
+const SUN_ASPECT := Vector2(0.0, -1.0)
+
+const SALT_TINT_VALUE := 301
+const SALT_TINT_HUE := 302
+
+
+## TODO(marcel): make the aspect tint pick a side.
+##
+## `dot` is -1 for a face pointing directly away from the sun, +1 for one
+## pointing straight at it, and 0 for one side-on. Returned unchanged, the tint
+## varies smoothly through every angle - which is physically reasonable and
+## visually weak, because almost every face in a voxel world is side-on and
+## almost every face therefore gets almost no tint at all.
+##
+## What a real Alpine hillside looks like is two kinds of slope, not a gradient
+## between them: the sunny side is dry and brown, the shaded side is dark and
+## green, and the changeover is quick.
+##
+##   Hint:  return smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0
+##   Still -1 to +1, but it spends most of its range near the two ends instead
+##   of in the middle. Push the 0.4 in towards zero to make the changeover
+##   sharper, out towards 1 to make it gentler.
+##
+## Worth doing with aspect_tint turned well up in the F4 panel first, so you
+## can see what the curve is doing, and then turning it back down.
+##
+## Fallback: linear, i.e. the dot product straight through.
+static func aspect_curve(dot: float) -> float:
+	return dot
