@@ -54,6 +54,9 @@ const FLY_SPEED := 18.0
 var noclip := false
 
 var _yaw := 0.0
+# The pivot's authored offset above the feet, read from the scene at _ready
+# and then carried by hand - see _ready() for why it cannot stay a child.
+var _pivot_offset := Vector3.ZERO
 var _pitch := deg_to_rad(-15.0)
 
 
@@ -67,6 +70,25 @@ func _ready() -> void:
 	# The arm casts from inside the player's own capsule, so without this it
 	# collides with the player and jams the camera at zero distance.
 	_arm.add_excluded_object(get_rid())
+
+	# The camera pivot must NOT inherit the body's rotation.
+	#
+	# _face_movement() turns the body toward its travel direction every
+	# frame. As a child, the pivot was dragged round with it, so the
+	# camera's world yaw was body.rotation.y + _yaw - while
+	# _wish_direction() rotated the input by _yaw alone. W therefore meant
+	# "away from the camera" only while the body happened to face north,
+	# and worse, it fed back: press W, the body turns, the camera swings
+	# with it, so W now points somewhere else and the body turns again.
+	# Holding one key made you curve.
+	#
+	# top_level makes the pivot's transform world-space, which is what
+	# DESIGN.md asks for - the camera orbits freely, the body faces its own
+	# travel, and the two do not talk to each other. Position is carried by
+	# hand in _physics_process.
+	_pivot_offset = _pivot.position
+	_pivot.top_level = true
+	_pivot.global_position = global_position + _pivot_offset
 
 
 func _exit_tree() -> void:
@@ -129,6 +151,10 @@ func _set_noclip(on: bool) -> void:
 # --- Movement ---------------------------------------------------------------
 
 func _physics_process(delta: float) -> void:
+	# Carried by hand because the pivot is top_level. One frame behind the
+	# body, which the spring arm smooths away.
+	_pivot.global_position = global_position + _pivot_offset
+
 	if not _mouse_captured():
 		# Cursor released means a menu or a panel has focus. Walking on while
 		# someone types a seed into a text field is not helpful.
