@@ -129,6 +129,10 @@ func _sheets() -> Dictionary:
 		"closeup": _sheet_closeup,
 		"lineup-front": _sheet_lineup_front,
 		"lineup-back": _sheet_lineup_back,
+		"anim-walk": _sheet_anim_walk,
+		"anim-sprint": _sheet_anim_sprint,
+		"anim-jump": _sheet_anim_jump,
+		"anim-poses": _sheet_anim_poses,
 	}
 
 
@@ -205,6 +209,141 @@ func _sheet_testcube() -> void:
 	await _shoot("testcube", 2.4)
 
 
+# --- Animation strips ---------------------------------------------------------
+#
+# EIGHT COPIES OF ONE CHARACTER, POSED AT PHASE k/8, IN A ROW.
+#
+# Static, so a strip costs no more to shoot than a portrait, and - the part
+# that matters - two runs of the same stage produce pixel-comparable images.
+# A video of a walk cycle cannot be diffed; a row of eight frozen poses can,
+# and "nothing about the stocky human changed" is a claim Stage 7 has to make
+# and Stage 14 has to make again.
+
+## How many phases a locomotion strip is cut into.
+const STRIP_STEPS := 8
+
+func _sheet_anim_walk() -> void:
+	await _phase_strip("anim-%s-walk", 5.0, LocomotionState.MODE_WALK)
+
+
+func _sheet_anim_sprint() -> void:
+	await _phase_strip("anim-%s-sprint", 13.0, LocomotionState.MODE_SPRINT)
+
+
+## One row per race in the lineup, at eight points of its own cycle.
+func _phase_strip(name_format: String, speed: float, mode: int) -> void:
+	for def in _lineup_defs():
+		var states := []
+		for k in STRIP_STEPS:
+			var st := LocomotionState.new()
+			st.speed = speed
+			st.mode = mode
+			st.grounded = true
+			states.append({"state": st, "phase": float(k) / float(STRIP_STEPS)})
+		_set_posed_row(def, states)
+		await _shoot_row(name_format % Races.name_of(def.race), states.size())
+
+
+## Takeoff, rising, apex, falling, landing, recovered - the six moments of a
+## jump, which is not a cycle and so cannot be cut into eight equal phases.
+func _sheet_anim_jump() -> void:
+	for def in _lineup_defs():
+		var moments := []
+		for m in [
+			{"g": true, "r": false, "v": 0.0, "land": 0.0},
+			{"g": false, "r": true, "v": 6.0, "land": 0.0},
+			{"g": false, "r": false, "v": 0.2, "land": 0.0},
+			{"g": false, "r": false, "v": -4.0, "land": 0.0},
+			{"g": true, "r": false, "v": 0.0, "land": 1.0},
+			{"g": true, "r": false, "v": 0.0, "land": 0.0},
+		]:
+			var st := LocomotionState.new()
+			st.speed = 5.0
+			st.grounded = m["g"]
+			st.rising = m["r"]
+			st.vertical = m["v"]
+			moments.append({"state": st, "phase": 0.25, "land": m["land"]})
+		_set_posed_row(def, moments)
+		await _shoot_row("anim-%s-jump" % Races.name_of(def.race), moments.size())
+
+
+## Sit, downed, wave, idle. The four things a character does when it is not
+## going anywhere, and the sheet the campfire plan and the death design will
+## both want to look at before they own their halves of it.
+func _sheet_anim_poses() -> void:
+	for def in _lineup_defs():
+		var poses := []
+		for p in [LocomotionState.POSE_SIT, LocomotionState.POSE_DOWNED,
+				LocomotionState.POSE_WAVE, LocomotionState.POSE_NONE]:
+			var st := LocomotionState.new()
+			st.pose = p
+			st.grounded = true
+			poses.append({"state": st, "phase": 0.0,
+				# Mid-wave rather than at the start of it, or the arm is still
+				# on its way up.
+				"wave": Animator.WAVE_SECONDS * 0.5 if p == LocomotionState.POSE_WAVE else 0.0,
+				"t": 0.35})
+		# NEARLY SIDE ON, and this is not a preference. A sitting character's
+		# legs point along its own forward axis, straight at a camera it is
+		# facing, so from the front a sit is a standing character with short
+		# legs - which is exactly what the first version of this sheet showed
+		# and what nearly had the sit pose debugged for being correct. 55 degrees
+		# rather than a full 90: side on hides the wave, which is on the right
+		# arm, so the angle is the compromise that shows all four.
+		_set_posed_row(def, poses, 55.0)
+		await _shoot_row("anim-%s-poses" % Races.name_of(def.race), poses.size())
+
+
+## A row of copies of one character, each frozen in its own pose.
+func _set_posed_row(def: CharacterDef, entries: Array, yaw_deg := 35.0) -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	var span := float(entries.size() - 1) * LINEUP_SPACING
+	for i in entries.size():
+		var entry: Dictionary = entries[i]
+		var view: CharacterView = _make_subject(def)
+		view.position = Vector3(-span * 0.5 + float(i) * LINEUP_SPACING, 0.0, SUBJECT_Z)
+		# Three-quarter rather than square on: a leg swing is almost invisible
+		# from directly in front, which is the one angle a walk strip must not
+		# be shot from.
+		view.rotation.y = FACING_CAMERA + deg_to_rad(yaw_deg)
+		_subjects_root.add_child(view)
+		_freeze_pose(view, entry)
+
+
+## Put one character into one pose and stop it animating.
+##
+## `_process` is turned OFF rather than the pose being applied every frame,
+## because the view would otherwise blend back toward whatever its own
+## LocomotionState says on the very next frame - and the whole point of a strip
+## is that the pose in the picture is the pose that was asked for.
+func _freeze_pose(view: CharacterView, entry: Dictionary) -> void:
+	view.set_process(false)
+	var state: LocomotionState = entry["state"]
+	var pose := Animator.pose_for(state, float(entry.get("phase", 0.0)),
+		float(entry.get("t", 0.0)), CharacterConfig.load_or_default(),
+		Races.dims(view.def.race, view.def.build),
+		{"look_yaw": 0.0, "look_pitch": 0.0,
+		"land": float(entry.get("land", 0.0)), "wave": float(entry.get("wave", 0.0))})
+	view.rig.apply_pose(pose)
+
+
+## Frame a row of `count` subjects, from far enough back that the whole row is
+## in shot with a margin.
+func _shoot_row(file_name: String, count: int) -> void:
+	var span := float(count - 1) * LINEUP_SPACING + 2.0
+	# Horizontal half-angle: Godot's fov is VERTICAL and keep_aspect is
+	# KEEP_HEIGHT, so the horizontal extent follows the viewport's aspect.
+	var aspect := float(get_viewport().size.x) / float(get_viewport().size.y)
+	var half := atan(tan(deg_to_rad(FOV) * 0.5) * aspect)
+	var distance := (span * 0.5) / tan(half)
+	# Level with the row's chest rather than at standing eye height. A strip
+	# shot from 1.7 m at 12 m back is a nearly level view either way, but the
+	# level one centres the row instead of parking it in the top third and
+	# giving over half the frame to grass.
+	await _shoot(file_name, distance, "", _lineup_chest_height())
+
+
 # --- Subjects ---------------------------------------------------------------
 
 ## Replace the lineup. `defs` is an array of CharacterDef, or null for the
@@ -259,9 +398,10 @@ func _lineup_chest_height() -> float:
 # --- Taking the picture -----------------------------------------------------
 
 ## Photograph the lineup from `distance` metres in front of it.
-func _shoot(sheet_name: String, distance: float, suffix := "") -> void:
+func _shoot(sheet_name: String, distance: float, suffix := "", eye := -1.0) -> void:
 	var look_at := Vector3(0.0, _lineup_chest_height(), SUBJECT_Z)
-	_camera.global_position = Vector3(0.0, EYE_HEIGHT, SUBJECT_Z + distance)
+	_camera.global_position = Vector3(
+		0.0, EYE_HEIGHT if eye < 0.0 else eye, SUBJECT_Z + distance)
 	_camera.look_at(look_at, Vector3.UP)
 	await _save("%s%s" % [sheet_name, suffix])
 

@@ -33,6 +33,12 @@ func _ready() -> void:
 		"character height": _test_character_height,
 		"def round trip": _test_def_round_trip,
 		"def from strangers": _test_def_from_strangers,
+		"pose is finite": _test_pose_finite,
+		"phase by distance": _test_phase_by_distance,
+		"idle converges": _test_idle_converges,
+		"poses differ": _test_poses_differ,
+		"sprint lean": _test_sprint_lean,
+		"animator cost": _measure_animator_cost,
 	}
 	var failures := 0
 	for name in tests:
@@ -616,3 +622,311 @@ func _test_def_from_strangers():
 
 	print("def from strangers: 100 random payloads plus 4 malformed, %d checks failed" % bad)
 	return 1 if bad > 0 else 0
+
+
+# --- Stage 4 -----------------------------------------------------------------
+
+## A LocomotionState covering one interesting case.
+func _state(speed := 0.0, mode := LocomotionState.MODE_WALK, grounded := true,
+		rising := false, pose := LocomotionState.POSE_NONE) -> LocomotionState:
+	var st := LocomotionState.new()
+	st.speed = speed
+	st.mode = mode
+	st.grounded = grounded
+	st.rising = rising
+	st.vertical = 4.0 if rising else (0.0 if grounded else -6.0)
+	st.pose = pose
+	return st
+
+
+## Every state this game can be in, for the tests that have to cover all of
+## them rather than a sample.
+func _every_state() -> Array:
+	var out := []
+	for mode in [LocomotionState.MODE_WALK, LocomotionState.MODE_SPRINT,
+			LocomotionState.MODE_PRECISION]:
+		for speed in [0.0, 0.4, 5.0, 13.0]:
+			out.append(_state(speed, mode))
+			out.append(_state(speed, mode, false, true))
+			out.append(_state(speed, mode, false, false))
+	for pose in [LocomotionState.POSE_SIT, LocomotionState.POSE_DOWNED,
+			LocomotionState.POSE_WAVE]:
+		out.append(_state(0.0, LocomotionState.MODE_WALK, true, false, pose))
+		out.append(_state(5.0, LocomotionState.MODE_WALK, true, false, pose))
+	return out
+
+
+## NOTHING IS EVER NaN OR INF, in any state, at any point in the cycle.
+##
+## A single NaN in a rotation propagates into the transform and Godot's answer
+## is to draw nothing at all - the character silently disappears rather than
+## looking wrong, which is the hardest kind of animation bug to find. 600 steps
+## at 1/60 is ten seconds, which is long enough for every timer, blend and
+## chain lag in the file to have been through several cycles.
+func _test_pose_finite():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var checked := 0
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race, Races.STOCKY)
+		for st in _every_state():
+			var anim := Animator.new()
+			anim.setup(config, dims)
+			for step in 600:
+				anim.update(st, 1.0 / 60.0)
+				if step % 120 != 0:
+					continue  # checking every frame is 700k comparisons
+				for bone in anim.current_pose():
+					var entry: Dictionary = anim.current_pose()[bone]
+					checked += 1
+					if not _finite(entry["rot"]) or not _finite(entry["pos"]):
+						print("  %s bone %s went non-finite: %s" % [
+							Races.name_of(race), bone, entry])
+						bad += 1
+						break
+	print("pose is finite: %d bone samples over every state and race, %d bad" % [
+		checked, bad])
+	return 1 if bad > 0 else 0
+
+
+func _finite(v: Vector3) -> bool:
+	return is_finite(v.x) and is_finite(v.y) and is_finite(v.z)
+
+
+## THE CYCLE ADVANCES BY DISTANCE, NOT BY TIME.
+##
+## `phase += speed * dt / stride`, exactly. This is the property that stops
+## feet sliding, and it is the one that a "make it look right" fix would
+## quietly break by scaling the cycle rate instead.
+##
+## Also checked: the rate cap. At sprint the stride must GROW rather than the
+## legs exceeding cycle_hz_max, and the resulting rate must be the cap itself.
+func _test_phase_by_distance():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var dt := 1.0 / 60.0
+
+	for race in Races.RACE_COUNT:
+		var anim := Animator.new()
+		anim.setup(config, Races.dims(race, Races.STOCKY))
+		var speed := 5.0
+		var stride := anim.stride_for(speed)
+		var before := anim.phase
+		anim.update(_state(speed), dt)
+		var moved := fposmod(anim.phase - before, 1.0)
+		var want := speed * dt / stride
+		if absf(moved - want) > 0.0001:
+			print("  %s advanced %.6f, wanted %.6f" % [Races.name_of(race), moved, want])
+			bad += 1
+
+	# Stride scales with leg length: the dwarf's 5 voxels against the human's 9
+	# and the elf's 12, from one table and one line of arithmetic.
+	var human := Animator.new()
+	human.setup(config, Races.dims(Races.HUMAN))
+	var dwarf := Animator.new()
+	dwarf.setup(config, Races.dims(Races.DWARF))
+	var elf := Animator.new()
+	elf.setup(config, Races.dims(Races.ELF))
+	if not (dwarf.stride_for(1.0) < human.stride_for(1.0)
+			and human.stride_for(1.0) < elf.stride_for(1.0)):
+		print("  strides are not ordered dwarf < human < elf: %.3f %.3f %.3f" % [
+			dwarf.stride_for(1.0), human.stride_for(1.0), elf.stride_for(1.0)])
+		bad += 1
+
+	# The rate cap. 13 m/s is the sprint speed DESIGN.md accepted.
+	var sprint_stride := human.stride_for(13.0)
+	var hz := 13.0 / sprint_stride
+	if absf(hz - config.cycle_hz_max) > 0.001:
+		print("  at 13 m/s the leg rate is %.3f Hz, wanted the cap of %.3f" % [
+			hz, config.cycle_hz_max])
+		bad += 1
+
+	print("phase by distance: walk stride %.3f m, sprint stride %.3f m at %.2f Hz, %d checks failed" % [
+		human.stride_for(5.0), sprint_stride, hz, bad])
+	return 1 if bad > 0 else 0
+
+
+## AT ZERO SPEED, EVERYTHING THAT SHOULD STOP HAS STOPPED.
+##
+## Two seconds of standing still and every locomotion bone is within a
+## thousandth of a radian of rest. The exponential blend makes that arithmetic
+## - exp(-10 * 2) is 2e-9 - so a failure here is not a slow blend, it is a term
+## that never goes away: a swing that does not scale with speed, or an arm
+## still carrying the jump it landed from.
+##
+## THE CHAINS ARE EXCLUDED, AND NOT AS A CONVENIENCE. The plan's own table
+## lists `tail_hz` / `tail_deg` as IDLE sway, so a tail that stops dead when
+## its owner does is the thing that would be wrong. And a first-order blend
+## chasing a 1.2 Hz sine lags it by design - at k = 10 the lag is about 37
+## degrees of phase - so "the blend has caught up" is not even a well-formed
+## question about a bone that is never trying to arrive anywhere. Two earlier
+## versions of this test failed on exactly that, once against rest and once
+## against the moving target.
+##
+## Breathing is excluded for the same reason: it is a position on the torso and
+## it is supposed to run forever.
+const IDLE_BONES := ["leg_r", "leg_l", "arm_r", "arm_l", "torso", "head", "hips"]
+
+func _test_idle_converges():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var anim := Animator.new()
+	anim.setup(config, Races.dims(Races.HUMAN))
+
+	# Walk, then jump, then land - so there is something to converge FROM, and
+	# so the fall pose's arms-out has to be unwound as well as the swing.
+	for i in 60:
+		anim.update(_state(5.0), 1.0 / 60.0)
+	for i in 30:
+		anim.update(_state(5.0, LocomotionState.MODE_WALK, false, false), 1.0 / 60.0)
+	var idle := _state(0.0)
+	for i in 120:
+		anim.update(idle, 1.0 / 60.0)
+
+	var worst := 0.0
+	var worst_bone := ""
+	for bone in IDLE_BONES:
+		var got: Dictionary = anim.current_pose().get(bone, {})
+		var rot: Vector3 = got.get("rot", Vector3.ZERO)
+		if rot.length() > worst:
+			worst = rot.length()
+			worst_bone = bone
+	if worst > 0.001:
+		print("  after two seconds standing still, %s is still rotated %.5f rad" % [
+			worst_bone, worst])
+		bad += 1
+
+	# The chains are not tested for stillness - see above - but they DO have to
+	# stay inside their own amplitude, or "sway" has become "spin".
+	var limit := deg_to_rad(config.tail_deg) * 1.2
+	for i in Animator.MAX_CHAIN_LINKS:
+		var bone := "tail_%d" % (i + 1)
+		var rot: Vector3 = (anim.current_pose().get(bone, {}) as Dictionary).get("rot", Vector3.ZERO)
+		if rot.length() > limit:
+			print("  %s swung %.4f rad, past its %.4f rad amplitude" % [bone, rot.length(), limit])
+			bad += 1
+
+	print("idle converges: worst locomotion residual %.6f rad (%s), chains within amplitude, %d checks failed" % [
+		worst, worst_bone if not worst_bone.is_empty() else "none", bad])
+	return 1 if bad > 0 else 0
+
+
+## SIT, DOWNED AND IDLE ARE THREE DIFFERENT THINGS.
+##
+## Cheap to check and worth checking, because a static pose that silently falls
+## through to the locomotion pose looks like a bug in the key binding rather
+## than a missing pose. Hip height separates all three: standing hips are a leg
+## up, sitting hips are on the ground, and downed hips are on the ground AND
+## rotated onto their back.
+func _test_poses_differ():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var dims := Races.dims(Races.HUMAN)
+	var heights := {}
+	for pose in [LocomotionState.POSE_NONE, LocomotionState.POSE_SIT,
+			LocomotionState.POSE_DOWNED]:
+		var got := Animator.pose_for(
+			_state(0.0, LocomotionState.MODE_WALK, true, false, pose),
+			0.0, 0.0, config, dims)
+		heights[pose] = (got.get("hips", {}).get("pos", Vector3.ZERO) as Vector3).y
+
+	var names := {LocomotionState.POSE_NONE: "idle", LocomotionState.POSE_SIT: "sit",
+		LocomotionState.POSE_DOWNED: "downed"}
+	var seen := []
+	for pose in heights:
+		for other in seen:
+			if absf(heights[pose] - heights[other]) < 0.01:
+				print("  %s and %s put the hips at the same height (%.3f m)" % [
+					names[pose], names[other], heights[pose]])
+				bad += 1
+		seen.append(pose)
+
+	# ...and downed is actually lying down, not merely low.
+	var downed := Animator.pose_for(
+		_state(0.0, LocomotionState.MODE_WALK, true, false, LocomotionState.POSE_DOWNED),
+		0.0, 0.0, config, dims)
+	var pitch: float = (downed["hips"]["rot"] as Vector3).x
+	if absf(absf(pitch) - PI * 0.5) > 0.01:
+		print("  downed pitches the hips %.3f rad, wanted a right angle" % pitch)
+		bad += 1
+
+	print("poses differ: idle %.3f, sit %.3f, downed %.3f m at the hips, %d checks failed" % [
+		heights[LocomotionState.POSE_NONE], heights[LocomotionState.POSE_SIT],
+		heights[LocomotionState.POSE_DOWNED], bad])
+	return 1 if bad > 0 else 0
+
+
+## THE SPRINT LEAN IS THE NUMBER IN THE CONFIG, once it has settled.
+##
+## The strongest single cue that a character is running rather than walking
+## quickly, and the one most likely to be quietly halved by a blend that never
+## quite arrives. Three seconds of sprinting and the torso pitch must be
+## sprint_lean_deg within a degree.
+func _test_sprint_lean():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var anim := Animator.new()
+	anim.setup(config, Races.dims(Races.HUMAN))
+	var sprint := _state(13.0, LocomotionState.MODE_SPRINT)
+	for i in 180:
+		anim.update(sprint, 1.0 / 60.0)
+	var pitch: float = (anim.current_pose()["torso"]["rot"] as Vector3).x
+	var got := rad_to_deg(absf(pitch))
+	if absf(got - config.sprint_lean_deg) > 1.0:
+		print("  sprinting torso pitch is %.2f deg, wanted %.2f" % [
+			got, config.sprint_lean_deg])
+		bad += 1
+	# ...and it leans FORWARD, which is -X on a bone whose child is above it.
+	if pitch > 0.0:
+		print("  the torso leans backward at sprint (%.2f deg)" % got)
+		bad += 1
+
+	# Walking does not lean at all, or the cue means nothing.
+	var walk_anim := Animator.new()
+	walk_anim.setup(config, Races.dims(Races.HUMAN))
+	for i in 180:
+		walk_anim.update(_state(5.0), 1.0 / 60.0)
+	var walk_pitch := rad_to_deg(absf((walk_anim.current_pose()["torso"]["rot"] as Vector3).x))
+	if walk_pitch > 0.5:
+		print("  walking leans the torso %.2f deg - it should not lean at all" % walk_pitch)
+		bad += 1
+
+	print("sprint lean: %.2f deg sprinting, %.2f deg walking, %d checks failed" % [
+		got, walk_pitch, bad])
+	return 1 if bad > 0 else 0
+
+
+## HOW LONG ONE CHARACTER COSTS PER FRAME.
+##
+## Reported, not gated: four players cannot break a frame budget at any
+## plausible value of this, and a threshold measured on llvmpipe would fail on
+## a machine that is faster in every other respect. The number goes in the
+## status doc so the first-enemy plan, which will have many more than four of
+## these, starts from a measurement rather than a guess.
+##
+## update() AND apply() together, because apply() is the half that touches the
+## scene tree and is therefore the half that could surprise anyone.
+func _measure_animator_cost():
+	var config := CharacterConfig.new()
+	var view := CharacterView.new()
+	view.build(CharacterDef.new())
+	var anim: Animator = view.animator
+	var st := _state(5.0)
+	var frames := 600
+
+	# Warm up, so the first call's script compilation is not in the average.
+	for i in 60:
+		anim.update(st, 1.0 / 60.0)
+		anim.apply(view.rig)
+
+	var start := Time.get_ticks_usec()
+	for i in frames:
+		anim.update(st, 1.0 / 60.0)
+		anim.apply(view.rig)
+	var elapsed := Time.get_ticks_usec() - start
+	var per_frame := float(elapsed) / float(frames) / 1000.0
+
+	print("animator cost: %.4f ms per character per frame over %d frames (budget 0.15, NOT gated)" % [
+		per_frame, frames])
+	view.free()
+	return 0

@@ -83,6 +83,21 @@ const USER_PATH := "user://character_tuning.tres"
 @export var breath_hz := 0.25
 @export var breath_vox := 0.5
 
+## How high the hips sit above the ground in the two static poses, in model
+## voxels.
+##
+## BOTH ARE "HIPS AT GROUND LEVEL" IN THE PLAN, and they cannot be the same
+## number. A sitting character's thighs lie flat on the ground and its hip
+## pivot ends up half a thigh above it; a character on its back is lying on the
+## depth of its own body, which is thicker. Sitting is the lower of the two,
+## and the difference is what stops the two poses reading as one.
+##
+## Chosen by eye against the gallery's pose strip, so they live here rather
+## than in the animator - and they are in the re-check table with everything
+## else that was.
+@export var sit_lift_vox := 1.5
+@export var downed_lift_vox := 2.5
+
 ## Blink timing. The interval is drawn uniformly between the two bounds; the
 ## blink itself is a mesh swap, not a shader.
 @export var blink_min_s := 3.0
@@ -143,6 +158,8 @@ const TUNING_ROWS := [
 	["fall_arms_deg", "fall arms out (deg)", 0.0, 90.0, 1.0],
 	["land_squash_vox", "landing dip (vox)", 0.0, 8.0, 0.1],
 	["land_squash_ms", "landing dip (ms)", 20.0, 600.0, 10.0],
+	["sit_lift_vox", "sit hip height (vox)", 0.0, 8.0, 0.1],
+	["downed_lift_vox", "downed hip height (vox)", 0.0, 8.0, 0.1],
 	["breath_hz", "breathing (Hz)", 0.0, 2.0, 0.05],
 	["breath_vox", "breathing rise (vox)", 0.0, 3.0, 0.1],
 	["blink_min_s", "blink gap min (s)", 0.5, 20.0, 0.5],

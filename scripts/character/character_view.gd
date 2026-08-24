@@ -25,8 +25,10 @@ var local := false
 
 var def: CharacterDef = null
 var rig: Rig = null
+var animator: Animator = null
 
 var _config: CharacterConfig = null
+var _state := LocomotionState.new()
 
 
 func _ready() -> void:
@@ -59,6 +61,34 @@ func build(new_def: CharacterDef) -> void:
 		Races.palette(def.race, def.skin, def.hair_color, def.eyes),
 		_config.ao_strength,
 		Races.hips_pitch_rad(def.race))
+
+	# A fresh animator per build, and snapped rather than blended into place.
+	# Carrying the old one over would mean the creation screen's new dwarf
+	# starts in the elf's mid-stride and eases out of it, which reads as a
+	# glitch rather than as a change of character.
+	animator = Animator.new()
+	animator.setup(_config, Races.dims(def.race, def.build))
+	animator.snap_to(_state)
+	animator.apply(rig)
+
+
+## What this character is doing. Called every physics frame by Player, and
+## every sync tick by RemotePlayer.
+##
+## The look yaw arrives in WORLD space - that is what the wire carries, because
+## the receiver does not know the sender's body yaw at the same instant - and
+## is made relative HERE, because this node is the one that is standing on the
+## body and therefore the only one that knows both.
+func set_state(state: LocomotionState) -> void:
+	_state = state
+	_state.look_yaw_rel = wrapf(state.look_yaw - global_rotation.y, -PI, PI)
+
+
+func _process(delta: float) -> void:
+	if animator == null or rig == null:
+		return
+	animator.update(_state, delta)
+	animator.apply(rig)
 
 
 ## The appearance this view was built from, as bytes. Used to decide whether a

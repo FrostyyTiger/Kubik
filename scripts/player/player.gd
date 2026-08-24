@@ -89,6 +89,10 @@ var sprint_override := false
 ## a probe that never jumps measures a world nobody plays in.
 var jump_override := false
 
+## A static pose, when something has asked for one. Scaffolding until the
+## campfire owns sit and the death design owns downed - see the debug keys.
+var pose := LocomotionState.POSE_NONE
+
 var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
 # and then carried by hand - see _ready() for why it cannot stay a child.
@@ -207,12 +211,14 @@ func _physics_process(delta: float) -> void:
 			velocity.z = 0.0
 			velocity.y -= GRAVITY * delta
 			move_and_slide()
+		_publish_locomotion()
 		return
 
 	if noclip:
 		_fly(delta)
 	else:
 		_walk(delta)
+	_publish_locomotion()
 
 
 func _walk(delta: float) -> void:
@@ -327,6 +333,47 @@ func _face_movement(wish: Vector3, delta: float) -> void:
 	# Frame-rate independent smoothing - see RemotePlayer for why this shape
 	# rather than lerp(current, target, 0.1).
 	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
+
+
+## Everything the animator is allowed to know about what this body is doing.
+##
+## Built fresh every frame rather than mutated, because the same object is
+## handed to the view and read next frame, and a struct that two things hold a
+## reference to is a struct that changes under one of them.
+##
+## THIS IS THE SEAM the host-authoritative rewrite goes through. When the host
+## starts simulating players, it fills a LocomotionState from its own table and
+## nothing in the animation system changes - see LocomotionState.
+func locomotion_state() -> LocomotionState:
+	var st := LocomotionState.new()
+	st.speed = Vector2(velocity.x, velocity.z).length()
+	st.vertical = velocity.y
+	st.grounded = is_on_floor()
+	st.mode = _locomotion_mode()
+	# Not `vertical > 0`: the two differ for one frame at the apex, and a
+	# legs-tucked pose that flickers there is worse than one that commits.
+	st.rising = not st.grounded and velocity.y > 0.5
+	st.pose = pose
+	st.look_yaw = _yaw
+	st.look_pitch = _pitch
+	st.noclip = noclip
+	return st
+
+
+func _publish_locomotion() -> void:
+	_view.set_state(locomotion_state())
+
+
+## Which of the three gaits this frame is in. THE SAME PRECEDENCE as
+## _speed_multiplier - sprint first, so holding both keys is not ambiguous -
+## and derived from the same inputs, so the animation can never disagree with
+## the speed it is animating.
+func _locomotion_mode() -> int:
+	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
+		return LocomotionState.MODE_SPRINT
+	if Input.is_physical_key_pressed(KEY_ALT):
+		return LocomotionState.MODE_PRECISION
+	return LocomotionState.MODE_WALK
 
 
 ## Multiplier applied to the base speed this frame. Applies to walking and to
