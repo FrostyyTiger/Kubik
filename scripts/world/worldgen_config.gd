@@ -55,10 +55,12 @@ const USER_PATH := "user://worldgen.tres"
 const REFERENCE_RELIEF_BLOCKS := 267.0
 const REF_CONTINENT_AMP := 48.0
 const REF_MOUNTAIN_AMP := 178.0
+const REF_CONTINENT_FREQ := 0.00083
+const REF_MOUNTAIN_FREQ := 0.00333
+const REF_ZONE_JITTER_FREQ := 0.0025
 const REF_BASE_ALTITUDE := 70.0
 const REF_MAX_ALTITUDE := 318.0
 const REF_ZONE_JITTER_BLOCKS := 12.0
-const REF_ZONE_BLEND_BLOCKS := 6.0
 
 ## The real-world sizes everything is measured against, in metres.
 ##
@@ -160,16 +162,16 @@ const FOG_START_RATIO := 0.6
 # wavelength it works out to, because that is the number you can actually
 # picture standing in the world.
 
-## 1200 blocks / 600 m - broad "where is high ground at all" trend.
+## 3150 blocks / 1575 m - broad "where is high ground at all" trend.
 ## Amplitude is derived from world_scale; see apply_world_scale().
-@export var continent_freq := 0.00083
+@export var continent_freq := 0.000317
 @export var continent_amp := 125.8
 
-## 300 blocks / 150 m - THE feature layer. Ridged, so it makes peaks and
+## 787 blocks / 394 m - THE feature layer. Ridged, so it makes peaks and
 ## valleys rather than lumps. Mountain footprints land at 100-200 m across,
 ## which is the readability target: big enough to be a landmark, small enough
 ## to walk around before you get bored.
-@export var mountain_freq := 0.00333
+@export var mountain_freq := 0.00127
 @export var mountain_amp := 466.7
 
 ## Where mountains are ALLOWED to be, as a window on the continent layer.
@@ -187,9 +189,132 @@ const FOG_START_RATIO := 0.6
 @export var mountain_mask_lo := -0.12
 @export var mountain_mask_hi := 0.47
 
-## 60 blocks / 30 m - slope detail, so hillsides are not smooth ramps.
-@export var hills_freq := 0.01667
+## 360 blocks / 180 m - the rolling-country layer.
+##
+## WAS 60 blocks / 30 m, and that was the corrugation Marcel reported. At 8 m
+## of amplitude over a 30 m wavelength its characteristic slope was 46.9
+## degrees - as steep as a mountain face - laid over the entire world at
+## uniform strength. Standing anywhere, the ground was a staircase.
+##
+## The amplitude was never the problem: 8 m for a real 30 m hill is already
+## 1:4. Cutting it flattens hills into nothing; stretching the wavelength draws
+## them out into hills you can walk over. Swept at 30 / 90 / 120 / 180 / 240 /
+## 360 m, measuring the share of map under 5 degrees:
+##
+##   30 m  1.30%     120 m  4.50%     240 m  5.58%
+##   90 m  3.84%     180 m  5.29%     360 m  5.63%
+##
+## 180 m takes almost all of the gain and everything past it is decimal places,
+## so that is the pick - and it lands the layer at 10.1 degrees, which is the
+## plan's target of about 10.
+##
+## THE SWEEP ALSO SHOWS WHY WAVELENGTH ALONE IS NOT THE ANSWER. Even at 360 m
+## the mean slope only falls from 45.7 to 40.3 degrees and five-sixths of the
+## map is still steeper than 10 degrees. fbm noise is a sum of smooth waves, so
+## every point sits on some slope and genuinely level ground has measure zero.
+## Flat ground needs a transform with a dead zone in it - see terracing and
+## hill gating below.
+@export var hills_freq := 0.002778
 @export var hills_amp := 16.0
+
+## HILL GATING. Strength of the low-frequency mask on the hills layer, 0 to 1.
+## 0 disables it entirely and is the default.
+##
+## The mountain layer is gated on the continent layer, and that gate is the
+## reason massifs read as massifs with an outside to see them from. Nothing
+## gated the hills, so hills were everywhere at uniform strength - which is
+## even bumpiness, not landscape. Gating them on their own mask gives hilly
+## districts and genuinely flat districts, which is half of the Cube World
+## shape Marcel is asking for: flats, with hills rising out of them.
+@export var hills_gate_strength := 1.0
+
+## 667 blocks / 333 m - how big a hilly or flat district is.
+@export var hills_mask_freq := 0.0015
+
+## Window on the mask noise, in [-1, 1]. Below _lo the hills layer contributes
+## nothing; above _hi it contributes in full.
+@export var hills_mask_lo := -0.25
+@export var hills_mask_hi := 0.35
+
+## TERRACING. Height of one shelf, in blocks. 0 disables it and is the default.
+##
+## Quantise height to shelves with short risers between them, so that most of
+## each shelf is genuinely flat. This is the other half of the Cube World
+## shape, and unlike a wavelength it produces ground with zero gradient rather
+## than merely gentler gradient.
+##
+## A small multiple of the block size, so shelves land on block boundaries
+## rather than fighting them.
+##
+## NOTE, AND THE PLAN IS WRONG ABOUT THIS: it says to ship terrace_sharpness at
+## 1.0 as a no-op. It is not one. At sharpness 1 the transform is
+## smoothstep(frac), which is an S-curve with zero gradient at both ends - that
+## is already terracing, just gentle terracing. The genuine off switch is
+## terrace_height 0, which is what ships.
+@export var terrace_height := 8.0
+
+## How much of each shelf is flat. 1 is a gentle S-curve, higher values push
+## the riser into a smaller and smaller fraction of the shelf.
+##
+## 1.5 IS A TRADE AGAINST THE LAKES, and it is worth knowing which way it goes.
+## TERRACING MANUFACTURES WATER: a perfectly flat shelf with any rim at all
+## floods across its whole width, however shallow the depth cap is. At
+## sharpness 3 the share of map under 5 degrees reaches 27.9% and the largest
+## lake goes to 1:1.8 - a lake at half real size in a quarter-scale world, and
+## 7.7% of the map under water. Dropping to 1.5 costs 7.6 points of flat ground
+## and brings lakes back to 1:3.0 at 2.6% of the map.
+##
+##   sharpness   under 5 deg   largest lake   water
+##   1.5           20.30%        1 : 3.0       2.6%
+##   2.0           23.10%        1 : 2.3       4.3%
+##   3.0           27.88%        1 : 1.8       7.7%
+##
+## TUNED BLIND on the flat-ground number and on nothing else. If Marcel wants a
+## wetter, flatter world this is the first knob to turn up, and lake_max_depth
+## is the second.
+@export var terrace_sharpness := 1.5
+
+## SLOPE-AWARE ZONING. Strength, 0 to 1; 0 disables it and is the default.
+##
+## Zones key on slope as well as height, which is what makes real mountains
+## read: snow does not sit on a cliff, it slides off, and a face too steep to
+## hold soil is scree whatever altitude it is at. This is what Marcel meant by
+## "snow covered tops and rocky tops".
+@export var slope_zone_strength := 1.0
+
+## Ground steeper than this is bare rock at any altitude, in degrees.
+##
+## 75 IS SET BY THE SHARE BUDGET, NOT BY PHYSICS, and the conflict is worth
+## naming because the plan asks for both. Vegetation genuinely stops around
+## 40-45 degrees, and at 45 this rule converts 29% of the map - rock overshoots
+## its 11% target by nineteen points and snow collapses to 0.8%. The two
+## requirements, "steep faces become rock at any altitude" and "zone shares
+## still within tolerance", cannot both hold on terrain this steep.
+##
+## So the threshold is pushed up until the shares fit: at 75 the rule touches
+## only genuinely vertical faces and the worst zone lands 0.96 points off,
+## inside the plan's 1 point tolerance. The honest consequence is that "rock at
+## any altitude" barely happens below the treeline - the snow rule below is the
+## one doing the visible work. Recorded in STATUS.md.
+@export var rock_slope_deg := 78.0
+
+## Snow needs ground gentler than this to lie on, in degrees.
+##
+## This is the rule that fixes the skyline. In the v1 tour, snow was painted
+## over near-vertical spires, which is the single thing that made the summits
+## read as decorated cones rather than as mountains. Real snow avalanches off
+## anything past about 50-60 degrees, so 60 is both physical and affordable:
+## the snowfields become the summit plateaux and the gentler shoulders, and the
+## faces between them go bare.
+##
+## 72, NOT THE 60 THIS FIRST SHIPPED AT. The mountain layer's characteristic
+## slope is 67 degrees, so a 60 degree cut-off takes snow off essentially every
+## face of every peak - the summit screenshot came back as bare brown rock with
+## a few white flecks, which is further from "snow covered tops" than the
+## plastered-on version it replaced. At 72 the snowfields hold the summits and
+## the shoulders and only the true walls go bare, which is the shape the design
+## asks for.
+@export var snow_max_slope_deg := 72.0
 
 ## 12 blocks / 6 m - per-block roughness, added at voxel time only. Deliberately
 ## NOT part of the coarse heightmap: lake basins are found in the coarse map,
@@ -197,9 +322,9 @@ const FOG_START_RATIO := 0.6
 @export var detail_freq := 0.08333
 @export var detail_amp := 3.0
 
-## 400 blocks / 200 m - wobbles the elevation zone thresholds so the treeline
+## 1048 blocks / 524 m - wobbles the elevation zone thresholds so the treeline
 ## is not a ruler-straight contour line.
-@export var zone_jitter_freq := 0.0025
+@export var zone_jitter_freq := 0.000954
 
 ## Blocks of threshold wobble at full jitter, applied +/-.
 @export var zone_jitter_blocks := 31.5
@@ -253,7 +378,27 @@ const FOG_START_RATIO := 0.6
 @export var share_snow := 0.05
 
 ## Blocks over which two neighbouring zone colours cross-fade.
-@export var zone_blend_blocks := 15.7
+##
+## DOES NOT SCALE WITH world_scale, and it did in the first version of Stage 8,
+## which was a mistake worth recording. A blend band is a distance in ALTITUDE,
+## and the area it covers on the ground depends on how steep that ground is. On
+## a 2.6x taller world the scaled 15.7-block band was fine on a hillside and a
+## disaster on the flats Stage 9 had just created: an entire plain sat inside
+## one band and the whole thing came out as green-and-tan confetti.
+@export var zone_blend_blocks := 6.0
+
+## Size of one dither patch, in blocks.
+##
+## The dither decides which side of a blurred boundary a piece of ground falls
+## on. Hashed per BLOCK it interleaves at 0.5 m, which reads as a gradient on a
+## hillside - where the band is only a metre or two wide - and as salt and
+## pepper on a plain, where the whole plain is inside the band at once. Stage 9
+## created a lot of plains and the first screenshot of one was confetti.
+##
+## Hashing a coarser grid makes the interleave happen in patches instead, which
+## reads as ground cover rather than as noise. 4 blocks is 2 m, about the size
+## of a bush.
+@export var zone_dither_blocks := 4
 
 
 # --- Content ----------------------------------------------------------------
@@ -310,7 +455,7 @@ const FOG_START_RATIO := 0.6
 ## at 1:4.0 on seed 42 and 1:3.8 on seed 7, which is the coherence the whole
 ## stage is about. It is also the main water dial - turn it up for a wetter
 ## world, and Plan B's rivers will want a say in it.
-@export var lake_max_depth := 11.0
+@export var lake_max_depth := 4.0
 
 
 # --- Atmosphere -------------------------------------------------------------
@@ -389,12 +534,17 @@ const PROPERTIES: PackedStringArray = [
 	"player_height_blocks", "player_radius_blocks",
 	"continent_freq", "continent_amp", "mountain_freq", "mountain_amp",
 	"mountain_mask_lo", "mountain_mask_hi",
-	"hills_freq", "hills_amp", "detail_freq", "detail_amp",
+	"hills_freq", "hills_amp",
+	"hills_gate_strength", "hills_mask_freq", "hills_mask_lo", "hills_mask_hi",
+	"terrace_height", "terrace_sharpness",
+	"slope_zone_strength", "rock_slope_deg", "snow_max_slope_deg",
+	"detail_freq", "detail_amp",
 	"zone_jitter_freq", "zone_jitter_blocks",
 	"base_altitude", "min_altitude", "max_altitude",
 	"warp_strength", "valley_curve",
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
-	"share_heath", "share_rock", "share_snow", "zone_blend_blocks",
+	"share_heath", "share_rock", "share_snow",
+	"zone_blend_blocks", "zone_dither_blocks",
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
@@ -482,16 +632,33 @@ func clone() -> WorldgenConfig:
 ## current values, so calling it twice does not compound. A world_scale of 0 or
 ## less means "leave these alone", for hand-tuning.
 ##
-## WHAT MOVES AND WHAT DOES NOT. The three noise amplitudes that build relief
-## scale, along with the altitudes that bound them and the two zone-boundary
-## fuzz distances - those last two because they are altitude-space quantities,
-## and a 12-block wobble on a 700-block mountain is a wobble nobody can see.
+## BOTH AXES SCALE TOGETHER, and the first version of this scaled only the
+## vertical. That is worth recording because it looked obviously right and was
+## obviously wrong within one measurement.
 ##
-## hills_amp and detail_amp deliberately do NOT scale. Hills are 8 m for a real
-## 30 m hill, which is already 1:4; per-block roughness is 1.5 m and is about
-## the size of a block rather than about the size of the world. Scaling those
-## would make the corrugation 2.6 times worse, which is the exact opposite of
-## what Stage 9 is for.
+## The plan's Stage 8 lists the amplitudes and the altitudes and no
+## wavelengths. Scaling those alone made the mountain layer 2.6x taller over
+## the same 150 m footprint, which took its characteristic slope from 67
+## degrees to 81 and put 34.7% OF THE MAP PAST 60 DEGREES. A third of the world
+## was a cliff - unwalkable, since the character's floor angle is 55 - and the
+## traversal probe duly wedged against one and never got out. What that
+## produces is not a bigger mountain, it is a spire.
+##
+## So world_scale changes SIZE and not SHAPE: continent and mountain
+## wavelengths stretch by exactly the same factor their amplitudes do, which
+## reproduces v1's slope profile at the new size - continent back to 9.1
+## degrees, mountains back to 67.1. Massif footprints go from 150 m to 394 m,
+## which is what a 350 m mountain ought to be wide, and a 3 km world still
+## holds seven or eight of them.
+##
+## zone_jitter_freq goes with them: the treeline's wobble is a horizontal
+## terrain wavelength like any other, and leaving it fixed while the land grew
+## would make the boundary look increasingly ruled.
+##
+## hills and detail are deliberately exempt. Hills are 8 m for a real 30 m
+## hill, which is already 1:4, and per-block roughness is about the size of a
+## block rather than the size of the world. Scaling those would make the
+## corrugation 2.6 times worse, which is the exact opposite of Stage 9.
 func apply_world_scale() -> void:
 	if world_scale <= 0.0:
 		return
@@ -503,10 +670,14 @@ func apply_world_scale() -> void:
 
 	continent_amp = REF_CONTINENT_AMP * k
 	mountain_amp = REF_MOUNTAIN_AMP * k
+	# Frequency is 1 / wavelength, so a feature k times taller is k times wider
+	# when its frequency is divided by k.
+	continent_freq = REF_CONTINENT_FREQ / k
+	mountain_freq = REF_MOUNTAIN_FREQ / k
+	zone_jitter_freq = REF_ZONE_JITTER_FREQ / k
 	base_altitude = REF_BASE_ALTITUDE * k
 	max_altitude = REF_MAX_ALTITUDE * k
 	zone_jitter_blocks = REF_ZONE_JITTER_BLOCKS * k
-	zone_blend_blocks = REF_ZONE_BLEND_BLOCKS * k
 
 	# The ceiling has to clear the highest possible summit plus the tallest
 	# possible tree standing on it, and land on a chunk boundary. Only chunks

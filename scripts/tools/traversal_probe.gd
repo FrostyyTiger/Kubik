@@ -69,6 +69,11 @@ const FALL_THROUGH_M := 6.0
 const DETOUR_ANGLE_DEG := 65.0
 const DETOUR_SECONDS := 4.0
 
+## How many detours on one side before trying the other. Wall-following needs
+## commitment; a probe that changes its mind every four seconds walks a zigzag
+## in a corner forever.
+const DETOUR_TRIES_PER_SIDE := 4
+
 ## Progress smaller than this over STALL_WINDOW seconds counts as blocked.
 const STALL_GAIN_M := 2.0
 const STALL_WINDOW := 1.5
@@ -97,6 +102,7 @@ var _rescues := 0
 
 var _detour_until := -1.0
 var _detour_sign := 1.0
+var _detour_tries := 0
 var _detours := 0
 var _stall_ref := Vector3.ZERO
 var _stall_at := 0.0
@@ -165,7 +171,15 @@ func _physics_process(delta: float) -> void:
 		_stall_ref = pos
 		_stall_at = _elapsed
 	elif _elapsed - _stall_at > STALL_WINDOW and _elapsed > _detour_until:
-		_detour_sign = -_detour_sign
+		# KEEP GOING THE SAME WAY, which is the difference between following a
+		# wall and bouncing off it. The first version alternated sides on every
+		# stall and oscillated in place: 31 detours, 940 m walked, and 0 m of
+		# progress over ninety seconds. A side is only abandoned after several
+		# attempts have failed to find a way round on it.
+		_detour_tries += 1
+		if _detour_tries > DETOUR_TRIES_PER_SIDE:
+			_detour_sign = -_detour_sign
+			_detour_tries = 0
 		_detour_until = _elapsed + DETOUR_SECONDS
 		_detours += 1
 		_stall_at = _elapsed

@@ -57,6 +57,7 @@ const SEED_DETAIL := 4
 const SEED_JITTER := 5
 const SEED_WARP_X := 6
 const SEED_WARP_Z := 7
+const SEED_HILLS_MASK := 8
 
 ## Salts keep independent uses of the coordinate hash from agreeing with each
 ## other. Without them every tree in the world would stand exactly where the
@@ -65,6 +66,7 @@ const SALT_ZONE_DITHER := 101
 const SALT_TREE := 202
 const SALT_TREE_TRUNK := 203
 const SALT_TREE_CANOPY := 204
+const SALT_SLOPE_ZONE := 205
 
 ## Elevation zones, low to high. Seven since terrain v2 Stage 7.
 const ZONE_SHORE := 0
@@ -102,6 +104,28 @@ const ZONE_HISTOGRAM_BUCKETS := 2048
 ## tightly than the 1% tolerance this has to hit, for a quarter of the cost.
 const ZONE_SAMPLE_STRIDE := 2
 
+## Correction rounds run when slope-aware zoning is on, and how coarsely they
+## sample.
+##
+## The (altitude - jitter) percentile is EXACT while altitude is the only thing
+## that decides a zone. Slope-aware zoning breaks that: it moves cells between
+## zones after the fact, and it moves far more of them than the shares can
+## absorb - at a 45 degree threshold, 29% of this map is steep and rock's whole
+## budget is 11%.
+##
+## So the solver closes the loop. Resolve thresholds, MEASURE what the full
+## zone function actually produced, push the targets by the error, resolve
+## again. Three rounds is enough to converge and it costs a few hundred
+## milliseconds at stride 4, which is a sixteenth of the map and still tens of
+## thousands of samples.
+##
+## The virtue of doing it this way is that it is indifferent to WHAT the extra
+## rule is. Any future rule that moves cells between zones - a river carving
+## its banks, a burnt area, anything - is absorbed the same way without
+## touching this code.
+const ZONE_CORRECT_ROUNDS := 3
+const ZONE_CORRECT_STRIDE := 4
+
 var world_seed: int
 var config: WorldgenConfig
 
@@ -123,6 +147,7 @@ var _detail: FastNoiseLite
 var _jitter: FastNoiseLite
 var _warp_x: FastNoiseLite
 var _warp_z: FastNoiseLite
+var _hills_mask: FastNoiseLite
 
 
 func _init(p_seed: int, p_config: WorldgenConfig = null) -> void:
@@ -142,6 +167,10 @@ func _init(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	# they bend whole ridgelines rather than jiggling individual blocks.
 	_warp_x = _make_noise(SEED_WARP_X, config.mountain_freq * 0.5, 2)
 	_warp_z = _make_noise(SEED_WARP_Z, config.mountain_freq * 0.5, 2)
+	# Two octaves, not three: this decides WHERE hills are, and a mask with
+	# fine detail in it makes hilly and flat country interleave at a scale you
+	# cannot see, which is the uniform bumpiness the mask exists to remove.
+	_hills_mask = _make_noise(SEED_HILLS_MASK, config.hills_mask_freq, 2)
 
 
 func _make_noise(seed_offset: int, freq: float, octaves: int) -> FastNoiseLite:
@@ -222,16 +251,39 @@ func _resolve_zone_thresholds() -> void:
 			counts[bucket] += 1
 			total += 1
 
+	var target := config.zone_shares()
+	var working := target.duplicate()
+	_thresholds_from(counts, total, lo, span, working)
+
+	# Only when something other than altitude decides a zone. With slope-aware
+	# zoning off, the first pass is already exact and three more passes over
+	# the map would buy nothing.
+	if config.slope_zone_strength > 0.0:
+		for round_index in ZONE_CORRECT_ROUNDS:
+			var got := _measure_zone_shares()
+			for z in ZONE_COUNT:
+				working[z] = maxf(working[z] + (target[z] - got[z]), 0.0)
+			_thresholds_from(counts, total, lo, span, working)
+
+
+## Read six threshold altitudes off the histogram for one set of shares.
+func _thresholds_from(counts: PackedInt32Array, total: int, lo: float, span: float,
+		shares: PackedFloat32Array) -> void:
 	zone_thresholds = PackedFloat32Array()
 	zone_thresholds.resize(ZONE_COUNT - 1)
 
-	var shares := config.zone_shares()
+	var sum := 0.0
+	for v in shares:
+		sum += v
+	if sum <= 0.0:
+		sum = 1.0
+
 	var cumulative := 0.0
 	var seen := 0
 	var bucket := 0
 	var previous := lo
 	for z in ZONE_COUNT - 1:
-		cumulative += shares[z]
+		cumulative += shares[z] / sum
 		var want := int(round(cumulative * float(total)))
 		# The cursor never moves backwards, so the six thresholds come out of
 		# one pass over the histogram in order.
@@ -244,6 +296,28 @@ func _resolve_zone_thresholds() -> void:
 		# its colour, which reads as a zone that simply does not exist.
 		zone_thresholds[z] = maxf(altitude, previous + 0.01)
 		previous = zone_thresholds[z]
+
+
+## What share of the map each zone ACTUALLY came out as, jitter, dither and
+## slope included - which is the only way to find out, since the whole point of
+## the correction rounds is that the analytic answer is no longer right.
+func _measure_zone_shares() -> PackedFloat32Array:
+	var counts := PackedInt32Array()
+	counts.resize(ZONE_COUNT)
+	var total := 0
+	var cols := heightmap.cols
+	for j in range(0, cols, ZONE_CORRECT_STRIDE):
+		var bz := heightmap.cell_to_block(j)
+		var row := j * cols
+		for i in range(0, cols, ZONE_CORRECT_STRIDE):
+			var bx := heightmap.cell_to_block(i)
+			counts[surface_zone_at(bx, bz, heightmap.cells[row + i])] += 1
+			total += 1
+	var out := PackedFloat32Array()
+	out.resize(ZONE_COUNT)
+	for z in ZONE_COUNT:
+		out[z] = float(counts[z]) / float(maxi(total, 1))
+	return out
 
 
 # --- The layered heightmap --------------------------------------------------
@@ -279,11 +353,57 @@ func height_at_block(bx: float, bz: float) -> float:
 	# skyline reads.
 	h += _ridge(_mountain.get_noise_2d(wx, wz)) * config.mountain_amp * massif
 
-	# Slope detail, so hillsides are not smooth ramps.
-	h += _hills.get_noise_2d(wx, wz) * config.hills_amp
+	# Rolling country, gated the same way the mountains are.
+	#
+	# Ungated, this layer is everywhere at uniform strength, which is even
+	# bumpiness rather than landscape. The gate gives hilly districts and flat
+	# districts, and the flat ones are where a campfire or a fight can happen.
+	h += _hills.get_noise_2d(wx, wz) * config.hills_amp * _hills_gate(wx, wz)
 
 	h = _flatten_valleys(h)
+	h = _terrace(h)
 	return clampf(h, config.min_altitude, config.max_altitude)
+
+
+## How strongly the hills layer speaks here, 0 to 1.
+##
+## Deliberately the same shape as the mountain gate above rather than a second
+## mechanism: one idea, applied at two scales, is a thing you can hold in your
+## head, and the mountain gate had already proved the idea works.
+func _hills_gate(wx: float, wz: float) -> float:
+	if config.hills_gate_strength <= 0.0:
+		return 1.0
+	var mask := smoothstep(config.hills_mask_lo, config.hills_mask_hi,
+		_hills_mask.get_noise_2d(wx, wz))
+	# Blended towards 1 rather than used raw, so the knob is a dial from "no
+	# gating at all" to "fully gated" instead of an on/off switch.
+	return lerpf(1.0, mask, clampf(config.hills_gate_strength, 0.0, 1.0))
+
+
+## Quantise height onto shelves with short risers between them.
+##
+## WHY THIS EXISTS AND A WAVELENGTH CANNOT REPLACE IT. fbm noise is a sum of
+## smooth waves, so every point sits on some slope and the set of genuinely
+## level ground has measure zero. Stretching a wavelength makes slopes gentler
+## and leaves the world uniformly undulating - measured over a 12x sweep of the
+## hills wavelength, the share of map under 5 degrees moved from 1.3% to 5.6%
+## and then stopped. Flat ground needs a transform with a DEAD ZONE in it, and
+## this is one: over most of a shelf the output does not change at all.
+##
+## smoothstep(pow(frac, sharpness)) rather than a hard floor(): a hard one
+## makes cliffs at every riser, which is a different world from the one this is
+## trying to build. Higher sharpness pushes the riser into a smaller fraction
+## of the shelf, so the shelf itself gets flatter.
+func _terrace(h: float) -> float:
+	if config.terrace_height <= 0.0:
+		return h
+	var t := h / config.terrace_height
+	# Types spelled out: the untyped pow() global returns Variant, and := on one
+	# is a parse error under this project's warnings-as-errors.
+	var shelf := floorf(t)
+	var frac := t - shelf
+	var curved: float = pow(frac, maxf(config.terrace_sharpness, 0.001))
+	return (shelf + smoothstep(0.0, 1.0, curved)) * config.terrace_height
 
 
 ## Per-block roughness, in blocks. Added to the interpolated coarse height when
@@ -383,10 +503,58 @@ func zone_band(zone: int) -> Vector2:
 
 ## Zone of the surface at one block column.
 func surface_zone_at(bx: int, bz: int, altitude: float) -> int:
-	return zone_at(
+	# Hashed on a coarser grid than the blocks themselves, so the interleave at
+	# a zone boundary happens in patches rather than per block. See
+	# zone_dither_blocks: per-block dither reads as a gradient on a hillside and
+	# as confetti on a plain, and Stage 9 made a great many plains.
+	var patch: int = maxi(config.zone_dither_blocks, 1)
+	var zone := zone_at(
 		altitude,
 		zone_jitter_at(float(bx), float(bz)),
-		WorldHash.hash01(bx, bz, world_seed, SALT_ZONE_DITHER))
+		WorldHash.hash01(Chunk.floor_div(bx, patch), Chunk.floor_div(bz, patch),
+			world_seed, SALT_ZONE_DITHER))
+	return _slope_zone(bx, bz, zone)
+
+
+## Let the STEEPNESS of the ground override what its altitude said.
+##
+## Two rules, and between them they are what makes a mountain read as a
+## mountain rather than as a green cone with a white hat:
+##
+##   SNOW DOES NOT SIT ON A CLIFF. It slides off. High ground that is steep is
+##   bare rock, and the snowfields are the gentler shoulders and summit
+##   plateaux - which is exactly the pattern you see on a real skyline and
+##   exactly what was missing when snow was painted on near-vertical spires.
+##
+##   NOTHING GROWS ON SCREE. A face too steep to hold soil is rock at any
+##   altitude, so a forested slope shows its crags instead of a green sheet
+##   draped over them.
+##
+## Off by default. Both thresholds are in degrees because that is the unit the
+## slope histogram is reported in, so a value here can be read straight off the
+## probe rather than converted.
+func _slope_zone(bx: int, bz: int, zone: int) -> int:
+	if config.slope_zone_strength <= 0.0 or heightmap == null:
+		return zone
+
+	var slope := heightmap.slope_deg_at(float(bx), float(bz))
+
+	# The strength knob is a probability rather than a blend, because a zone is
+	# an integer and there is no half-way between rock and snow. Hashed from
+	# the position, never drawn from a stream, so it is deterministic - and on
+	# its own salt, or the same cells that dither would also be the cells that
+	# turn to rock and the two patterns would visibly line up.
+	var roll := WorldHash.hash01(bx, bz, world_seed, SALT_SLOPE_ZONE)
+	if roll > clampf(config.slope_zone_strength, 0.0, 1.0):
+		return zone
+
+	if zone == ZONE_SNOW and slope >= config.snow_max_slope_deg:
+		return ZONE_ROCK
+	# Shore is left alone: a steep lake margin is still a lake margin, and
+	# turning it to rock would put scree at the waterline everywhere.
+	if zone > ZONE_SHORE and zone < ZONE_ROCK and slope >= config.rock_slope_deg:
+		return ZONE_ROCK
+	return zone
 
 
 ## Zone name at a position, for the debug readout. Takes metres, because that

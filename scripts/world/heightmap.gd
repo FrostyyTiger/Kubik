@@ -79,6 +79,23 @@ func height_at(bx: float, bz: float) -> float:
 	return lerpf(lerpf(h00, h10, tx), lerpf(h01, h11, tx), tz)
 
 
+## Local ground steepness in DEGREES at any block position.
+##
+## Central differences over one cell either side, so it is the drop across two
+## cells rather than to one neighbour - a one-sided difference on noise is half
+## measurement and half which direction you happened to look. Both rise and run
+## are in blocks, so the ratio is dimensionless and block_size cancels.
+##
+## Reads the interpolated surface rather than the raw cells, which means it is
+## defined between cells too and gives the same answer to the zone code, the
+## probe and anything else that asks.
+func slope_deg_at(bx: float, bz: float) -> float:
+	var d := float(step)
+	var gx := (height_at(bx + d, bz) - height_at(bx - d, bz)) / (2.0 * d)
+	var gz := (height_at(bx, bz + d) - height_at(bx, bz - d)) / (2.0 * d)
+	return rad_to_deg(atan(sqrt(gx * gx + gz * gz)))
+
+
 ## Is this block position inside the world footprint at all?
 func in_bounds(bx: int, bz: int) -> bool:
 	return bx >= min_block and bz >= min_block \
