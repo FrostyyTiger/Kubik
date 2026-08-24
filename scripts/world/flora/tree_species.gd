@@ -513,10 +513,11 @@ static func _draw_slender(writer, bx: int, ground: int, bz: int,
 ## SNAG. A dead trunk with a few stubs and no leaves at all.
 ##
 ## Cheap in blocks and worth more than it costs. A forest of nothing but
-## healthy trees reads as planted; one grey trunk in twenty says the place has
+## healthy trees reads as planted; a scatter of grey trunks says the place has
 ## been there a while and nobody is looking after it - which is the whole
 ## register of "tense out, cozy in the light". It gets commoner with wildness
-## for exactly that reason.
+## for exactly that reason, and measurably so: on seed 42 snags are about a
+## fifteenth of the world's trees near spawn and a fifth at the far corner.
 static func _draw_bare(writer, bx: int, ground: int, bz: int,
 		params: Dictionary) -> int:
 	var h: int = params["height"]

@@ -491,10 +491,120 @@ const FOG_START_RATIO := 0.6
 ## One candidate tree per this many blocks, in both x and z.
 @export var tree_cell_blocks := 4
 
-## Placement probability in the MIDDLE of the forest band. Tapers linearly to
-## zero at both edges of the band, so the treeline thins out instead of
-## stopping dead.
-@export var tree_probability := 0.12
+## Global multiplier on the whole placement product. 0 empties the world of
+## trees, 1 is the tuned density, 2 doubles it.
+##
+## REPLACED tree_probability IN STAGE 4. That knob was "the chance in the
+## middle of the forest band", which stopped being a single number the moment
+## there were five bands with different rules - a meadow's 0.008 and a forest's
+## 0.45 cannot both be it. What survives is the thing a person actually reaches
+## for the slider to do, which is "more trees" or "fewer trees" everywhere at
+## once. Recorded as a departure.
+@export var tree_density_scale := 1.0
+
+
+# --- Where a tree is allowed to grow ----------------------------------------
+#
+# THE PLACEMENT PRODUCT. A candidate's probability is
+#
+#   p = base(zone, altitude in band) * grove * glade
+#       * slope_ok * bench_ok * spawn_ok * tree_density_scale
+#
+# A PRODUCT OF INDEPENDENT TERMS, not a single tuned number, and that is the
+# structural point of the stage. Each term answers one question, each is
+# disabled by setting its own knob to 0, and none of them has to know what the
+# others decided. The old world had one term and read as evenly scattered
+# cones, because one term is exactly what "evenly scattered" means.
+
+## Peak probability in the middle of the forest band, and at its two edges.
+##
+## 0.45 against the old 0.12. Nearly four times as many trees in the heart of a
+## forest, which is what makes it a forest you cannot see through rather than
+## an orchard - and the edge value is what keeps the treeline a thinning rather
+## than a boundary.
+@export var tree_base_forest := 0.45
+@export var tree_base_forest_edge := 0.10
+
+## Meadow. Two orders of magnitude below the forest on purpose: a meadow with
+## trees scattered through it is not a meadow. These are the lone beech and the
+## birch at the margin, and there should be room to see between them.
+@export var tree_base_meadow := 0.008
+
+## The shore band - birch only - and how far above a lake's shore level it
+## reaches, in blocks.
+@export var tree_base_shore := 0.06
+@export var tree_shore_blocks := 12.0
+
+## Krummholz above the forest, through alpine and heath. Fades to nothing at
+## the midpoint of the two bands together, so the last twisted pines give out
+## well below the rock.
+@export var tree_base_alpine := 0.05
+
+## GROVES: forest clumps, ~90 m across. `grove_share` of the forest is inside a
+## grove and grows at full probability; the rest grows at `grove_floor` of it.
+##
+## This is what breaks the evenness. A forest at one probability everywhere is
+## a Poisson scatter, and a Poisson scatter has no clearings, no thickets and
+## no edges - which is why the old one read as wallpaper however dense it got.
+@export var grove_freq := 0.005556
+@export var grove_share := 0.35
+@export var grove_floor := 0.35
+
+## GLADES: clearings inside the forest, ~160 m across. The top `glade_share` of
+## the mask grows nothing at all.
+##
+## Flowers go in them in Stage 6, which is the other half of why they exist: a
+## clearing you can stand in and see the sky is where the light gets to the
+## floor, and light on the floor is what grows there.
+@export var glade_freq := 0.003125
+@export var glade_share := 0.12
+
+## Ground steeper than this grows no trees, in degrees. Krummholz has its own,
+## steeper, limit in the species table - it is the one thing up there that
+## holds onto a slope.
+@export var tree_max_slope_deg := 40.0
+
+## Whether trees avoid benches and plateaux, 0 to 1. 0 disables the term.
+##
+## A bench is an artificially flat shelf cut into a slope. Covering one in dense
+## forest hides the only thing it was carved for, and a flat shelf carrying a
+## thicket reads as a lawn that someone planted.
+@export var tree_bench_avoid := 1.0
+
+## No trees within this many metres of spawn, ramping to full at the second.
+##
+## Spawn is chosen to be flat, dry and open, with a mountain in view - and a
+## forest closing over it undoes every one of those at once. It is also where
+## a player stands still for their first minute, so it is the one place in the
+## world where the frame cost of dense foliage is least worth paying.
+@export var tree_spawn_clear_m := 24.0
+@export var tree_spawn_ramp_m := 60.0
+
+## Chance per meadow candidate of a hero - the one enormous tree.
+##
+## 0.0004 over a 4-block lattice is about one per 300 x 300 m of meadow, which
+## is the density that makes one remarkable. Ten times this and they are just
+## big trees.
+@export var hero_probability := 0.0004
+
+## How far a trunk may step off its lattice cell, in blocks, on each axis.
+##
+## BOUNDED, AND THE BOUND IS WALKABILITY. Candidates sit every
+## tree_cell_blocks, so two neighbouring trunks are at least
+## (tree_cell_blocks - 2 * jitter) blocks apart. At cell 4 and jitter 1 that is
+## 2 blocks between trunk centres. Raise the jitter and trees start to touch,
+## and a forest you cannot walk through is a wall, not a forest - which the
+## traversal probe is what actually checks.
+@export var tree_jitter_blocks := 1
+
+## How much wildness adds to the snag and krummholz weights at the far edge of
+## the world, taken from spruce.
+##
+## Distance is the difficulty axis - see the pillars - and this is that axis
+## expressed in vegetation rather than in numbers. Far from spawn the forest
+## has more dead trees in it and gives way to twisted pine sooner.
+@export var wildness_snag := 0.15
+@export var wildness_krummholz := 0.15
 
 ## Global multiplier on every species' height and crown radius.
 ##
@@ -725,7 +835,15 @@ const PROPERTIES: PackedStringArray = [
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
 	"share_heath", "share_rock", "share_snow",
 	"zone_blend_blocks", "zone_dither_blocks",
-	"tree_cell_blocks", "tree_probability", "tree_size_scale",
+	"tree_cell_blocks", "tree_size_scale", "tree_density_scale",
+	"tree_base_forest", "tree_base_forest_edge", "tree_base_meadow",
+	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
+	"grove_freq", "grove_share", "grove_floor",
+	"glade_freq", "glade_share",
+	"tree_max_slope_deg", "tree_bench_avoid",
+	"tree_spawn_clear_m", "tree_spawn_ramp_m",
+	"hero_probability", "tree_jitter_blocks",
+	"wildness_snag", "wildness_krummholz",
 	"spawn_water_m", "spawn_mountain_m", "spawn_max_slope_deg",
 	"spawn_center_fraction", "wildness_relief", "wildness_rock_deg",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth", "lake_min_depth",

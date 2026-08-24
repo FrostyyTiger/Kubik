@@ -201,20 +201,21 @@ func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) 
 	var hi := int(config.world_blocks_xz / 2)
 	var cell_lo := lo / step
 	var cell_hi := hi / step
+	# THE WORLD'S OWN RULE, asked directly. Restating the placement formula
+	# here would be a second copy of it, and a second copy of a rule this long
+	# would be wrong within a stage - which is the whole reason decide() is one
+	# function that the stamper, the probe, the tour and the far-tree ring all
+	# call.
+	var masks := TreePlacement.masks_for(gen)
 	for cz in range(cell_lo, cell_hi):
 		for cx in range(cell_lo, cell_hi):
-			var bx := cx * step
-			var bz := cz * step
-			var surface := gen.surface_at(float(bx), float(bz))
-			var chance := gen.tree_probability_at(
-				surface, gen.zone_jitter_at(float(bx), float(bz)))
-			if chance <= 0.0:
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
 				continue
-			if WorldHash.hash01(cx, cz, gen.world_seed, TerrainGenerator.SALT_TREE) < chance:
-				trees += 1
-				var species := _species_at(gen, cx, cz, surface, config)
-				if species >= 0 and species < per_species.size():
-					per_species[species] += 1
+			trees += 1
+			var species: int = found["species"]
+			if species >= 0 and species < per_species.size():
+				per_species[species] += 1
 	print("trees         %d in the whole world (%d ms)" % [
 		trees, Time.get_ticks_msec() - started])
 	for s in names.size():
@@ -227,17 +228,6 @@ func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) 
 	_print_flora(gen, hm, config)
 
 
-## Which species stands at an accepted candidate.
-##
-## Stage 4 replaces the body with a call into TreePlacement's weight table.
-## Until then there is one species and the answer is trivially it - which is
-## still worth going through this function for, so that the day the table
-## arrives the probe reports it without being edited again.
-func _species_at(_gen: TerrainGenerator, _cell_x: int, _cell_z: int,
-		_surface: float, _config: WorldgenConfig) -> int:
-	return TreeSpecies.SPRUCE
-
-
 ## How much of the forest band is CLEARING rather than trees.
 ##
 ## The glade mask is what stops a forest from being a solid block of canopy
@@ -246,24 +236,13 @@ func _species_at(_gen: TerrainGenerator, _cell_x: int, _cell_z: int,
 ## removing them, so the total barely shifts while the world changes
 ## completely. This is the number that says whether they are happening.
 func _print_glades(gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfig) -> void:
-	if not gen.has_method("glade_at"):
-		print("glades        not yet - the glade mask arrives in Stage 4")
-		return
 	var step := 8
-	var lo := -int(_config.world_blocks_xz / 2)
-	var hi := int(_config.world_blocks_xz / 2)
-	var forest := 0
-	var glade := 0
-	for bz in range(lo, hi, step):
-		for bx in range(lo, hi, step):
-			var surface := gen.surface_at(float(bx), float(bz))
-			if gen.surface_zone_at(bx, bz, surface) != TerrainGenerator.ZONE_FOREST:
-				continue
-			forest += 1
-			if gen.call("glade_at", float(bx), float(bz)) <= 0.0:
-				glade += 1
-	print("glades        %.1f%% of the forest band, sampled every %d blocks" % [
-		100.0 * float(glade) / float(maxi(forest, 1)), step])
+	print("groves        %.1f%% of the forest band (want %.1f%%), every %d blocks" % [
+		100.0 * TreePlacement.grove_share_measured(gen, step),
+		100.0 * _config.grove_share, step])
+	print("glades        %.1f%% of the forest band (want %.1f%%), every %d blocks" % [
+		100.0 * TreePlacement.glade_share_measured(gen, step),
+		100.0 * _config.glade_share, step])
 
 
 ## Ground cover, per zone.

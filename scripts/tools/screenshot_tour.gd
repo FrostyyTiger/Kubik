@@ -418,6 +418,7 @@ func _find_densest_forest(hm: Heightmap, gen: TerrainGenerator) -> Vector2i:
 	var cell: int = _world.config.tree_cell_blocks
 	if cell <= 0:
 		return best
+	_forest_masks = TreePlacement.masks_for(gen)
 
 	for j in range(2, hm.cols - 2, FOREST_SCAN_STRIDE):
 		for i in range(2, hm.cols - 2, FOREST_SCAN_STRIDE):
@@ -452,26 +453,17 @@ func _count_trees_near(gen: TerrainGenerator, bx: int, bz: int, cell: int) -> in
 
 ## Does a tree stand at this candidate cell?
 ##
-## The world's own acceptance rule, restated here rather than reached for,
-## because in Stage 1 it still lives inside TerrainGenerator._stamp_tree()
-## where nothing outside can call it - and the plan is explicit that the only
-## edits to terrain_generator.gd are the hooks it names per stage, which for
-## Stage 1 is none.
-##
-## STAGE 4 REPLACES THIS with a call into TreePlacement, and so does the same
-## restatement in worldgen_probe.gd. Two copies of a rule is one too many; the
-## reason to accept it for three stages is that the alternative is editing a
-## file another plan may be working in tonight.
+## The world's own rule, asked rather than restated. Stage 1 had a copy of it
+## here because the rule still lived inside TerrainGenerator where nothing
+## outside could call it; Stage 4 moved it into TreePlacement.decide(), which
+## is now the single place that answers this for the stamper, the probe, this
+## tour and the far-tree ring alike.
 func _accepts_tree(gen: TerrainGenerator, cell_x: int, cell_z: int) -> bool:
-	var bx := cell_x * _world.config.tree_cell_blocks
-	var bz := cell_z * _world.config.tree_cell_blocks
-	var surface := gen.surface_at(float(bx), float(bz))
-	var chance := gen.tree_probability_at(
-		surface, gen.zone_jitter_at(float(bx), float(bz)))
-	if chance <= 0.0:
-		return false
-	return WorldHash.hash01(cell_x, cell_z, gen.world_seed,
-		TerrainGenerator.SALT_TREE) < chance
+	return TreePlacement.accepts(gen, cell_x, cell_z, _forest_masks)
+
+
+## Built once, before the density scan, rather than per candidate.
+var _forest_masks: TreePlacement.Masks = null
 
 
 ## A spot in the top of the forest band, on a slope, and which way is up.

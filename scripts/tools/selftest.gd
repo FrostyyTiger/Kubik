@@ -459,7 +459,12 @@ func _test_config_contract():
 	# resolved at generation time, so this checks that a value which only takes
 	# effect through a later computation still crosses the wire intact.
 	host_config.share_forest = 0.31
-	host_config.tree_probability = 0.21
+	# A flora shape knob, because foliage v1 added twenty of them and every one
+	# is part of the join handshake: two machines that disagreed about the
+	# grove share would grow forests in different places while the handshake
+	# reported a match, which is the exact failure this test exists to catch.
+	host_config.grove_share = 0.21
+	host_config.tree_density_scale = 1.4
 
 	var defaults := WorldgenConfig.new()
 	if host_config.hash_key() == defaults.hash_key():

@@ -1106,9 +1106,14 @@ func generate_into(chunk: Chunk) -> void:
 # written out here - a tree reaches into chunks that do not contain its trunk,
 # so every chunk scans a region wider than itself and clips.
 #
-# What is left below is the two questions the rest of the engine asks about
-# trees and cannot get anywhere else: how much sky to reserve above the
-# terrain, and how likely a candidate is at a given altitude.
+# What is left below is the one question the rest of the engine asks about
+# trees and cannot get anywhere else - how much sky to reserve above the
+# terrain - and the hook that draws them.
+#
+# tree_probability_at() went with the rest in Stage 4. It was "the chance in
+# the middle of the forest band", and there is no such single number any more:
+# the probability is a product of six terms across five zones, and anything
+# that wants to know whether a tree stands somewhere asks TreePlacement.
 
 ## How far above the surface a tree can reach, in blocks. World uses this to
 ## decide how much empty sky above the terrain still has to be built - without
@@ -1122,24 +1127,6 @@ func generate_into(chunk: Chunk) -> void:
 ## sometimes, and only near a chunk ceiling - is a miserable thing to find.
 func max_tree_height() -> int:
 	return TreeSpecies.max_height(config)
-
-
-## Probability that a candidate cell grows a tree, given the surface altitude
-## there and that column's zone jitter.
-##
-## Peaks in the MIDDLE of the forest band and tapers linearly to zero at both
-## edges, so the treeline thins out instead of stopping dead along a contour.
-func tree_probability_at(surface: float, jitter: float) -> float:
-	# The forest band is wherever Stage 7 put it this world, not a pair of
-	# altitudes in the config. Without this the treeline and the forest FLOOR
-	# would be two different bands, and trees would grow on grass.
-	var band := zone_band(ZONE_FOREST)
-	var lo := band.x + jitter
-	var hi := band.y + jitter
-	if surface <= lo or surface >= hi or hi <= lo:
-		return 0.0
-	var t := (surface - lo) / (hi - lo)
-	return config.tree_probability * (1.0 - absf(t - 0.5) * 2.0)
 
 
 func _place_trees(chunk: Chunk) -> void:
