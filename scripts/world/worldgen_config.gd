@@ -37,12 +37,17 @@ const USER_PATH := "user://worldgen.tres"
 
 ## World footprint in blocks, centred on the origin: x and z run
 ## -world_blocks_xz/2 .. world_blocks_xz/2 - 1.
-@export var world_blocks_xz := 3000
+##
+## 6000 blocks is 3 x 3 km. Doubled from v1's 1.5 km in terrain v2 Stage 6,
+## and deliberately not until sprint existed to cross it: the map diagonal is
+## 4243 m and a world nobody wants to walk across is smaller than a world they
+## do, whatever the map says.
+@export var world_blocks_xz := 6000
 
 ## Vertical extent in blocks. 320 blocks = 160 m.
 @export var world_height_blocks := 320
 
-## Blocks per coarse heightmap cell. 4 blocks = 2 m, giving a 750x750 grid.
+## Blocks per coarse heightmap cell. 4 blocks = 2 m, giving a 1500x1500 grid.
 @export var coarse_step := 4
 
 ## Blocks per far-field mesh vertex. 8 blocks = 4 m, giving 375x375.

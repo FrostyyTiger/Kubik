@@ -15,10 +15,25 @@ extends CharacterBody3D
 ## "client sends input, host simulates, host broadcasts position" is a carried
 ## ticket, and the shape of the existing channel is already right for it.
 
-## Metres per second on flat ground. The world is at half scale (0.5 m blocks),
-## so this is slower in blocks than it looks: 5 m/s is 10 blocks a second.
+## Metres per second on flat ground. Blocks are 0.5 m, so this is faster in
+## blocks than it looks: 5 m/s is 10 blocks a second.
 const WALK_SPEED := 5.0
-const SPRINT_MULTIPLIER := 1.9
+
+## SET BY TRAVERSAL, NOT BY REALISM, and worth knowing that before judging it.
+##
+## The world is 3 x 3 km, so its diagonal is 4243 m, and terrain v2 sets the
+## target at under six minutes corner to corner. That is 11.8 m/s, and 2.6
+## gives 13.0 m/s and crosses it in 5.4 minutes.
+##
+## The tension this creates is real and deliberate. The LAND is at 1:4 against
+## reality; the PLAYER is at 1:0.9, essentially life-size. So a sprint that
+## covers the land at a sensible rate covers it at 47 km/h next to a 2 m
+## character, and it will look fast. The alternative is a world that takes
+## twenty minutes to cross, which is the Cube World 2019 failure the plan
+## names by name. Speed is the cheaper mistake.
+const SPRINT_MULTIPLIER := 2.6
+
+## For lining up a screenshot, or edging along a ledge.
 const PRECISION_MULTIPLIER := 0.3
 
 ## Deliberately above Earth gravity. Real 9.8 makes a jump feel like it is
@@ -41,7 +56,8 @@ const MOUSE_SENSITIVITY := 0.0025
 const PITCH_MIN_DEG := -70.0
 const PITCH_MAX_DEG := 35.0
 
-## Flight speed multiplier, so noclip is useful for crossing a 1.5 km world.
+## Flight speed multiplier, so noclip is useful for crossing a 3 km world.
+## Sprint multiplies it too, which is how you get across the map in a hurry.
 const FLY_SPEED := 18.0
 
 @onready var _pivot: Node3D = $CamPivot
@@ -52,6 +68,17 @@ const FLY_SPEED := 18.0
 ## Debug flight. A tool, not a mode - see docs/DESIGN.md. Tuning terrain
 ## without it is miserable, which is the entire reason it survives.
 var noclip := false
+
+## Steering for the traversal probe, in world space. Zero means "read the
+## keyboard", which is every case except `--traverse`.
+##
+## A hook rather than synthesised key events: Input state is global and faking
+## a held key would leak into the debug panel, the menu and anything else that
+## polls it. This is one vector that one tool sets and nothing else reads.
+var wish_override := Vector3.ZERO
+
+## Held down by the traversal probe. Same reasoning as wish_override.
+var sprint_override := false
 
 var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
@@ -155,9 +182,13 @@ func _physics_process(delta: float) -> void:
 	# body, which the spring arm smooths away.
 	_pivot.global_position = global_position + _pivot_offset
 
-	if not _mouse_captured():
+	if not _mouse_captured() and wish_override == Vector3.ZERO:
 		# Cursor released means a menu or a panel has focus. Walking on while
 		# someone types a seed into a text field is not helpful.
+		#
+		# The traversal probe is exempt: it runs headless, where the mouse is
+		# never captured, and without the exemption it would measure how long
+		# the world takes to cross while standing still.
 		if not noclip:
 			velocity.x = 0.0
 			velocity.z = 0.0
@@ -236,6 +267,8 @@ func _fly(delta: float) -> void:
 ## is looking. Normalised so diagonals are not sqrt(2) times faster than
 ## straight lines.
 func _wish_direction() -> Vector3:
+	if wish_override != Vector3.ZERO:
+		return wish_override.normalized()
 	var input := Vector2.ZERO
 	if Input.is_physical_key_pressed(KEY_W):
 		input.y -= 1.0
@@ -265,19 +298,22 @@ func _face_movement(wish: Vector3, delta: float) -> void:
 	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
 
 
-## Multiplier applied to the base speed this frame.
+## Multiplier applied to the base speed this frame. Applies to walking and to
+## flight both.
+##
+## This was a TODO(marcel) exercise and terrain v2's plan claims it explicitly -
+## the single exception it makes to its own rule about leaving the exercises
+## alone - because a 3 km world without sprint is the traversal failure the
+## whole stage exists to avoid.
+##
+## Sprint is checked FIRST so that holding both keys is not ambiguous.
 func _speed_multiplier() -> float:
-	# TODO(marcel): one speed gets old fast when the world is 1.5 km across.
-	#
-	#   - Shift held -> SPRINT_MULTIPLIER
-	#   - Alt held   -> PRECISION_MULTIPLIER  (for lining up a screenshot)
-	#   - neither    -> 1.0
-	#
-	# Hint: Input.is_physical_key_pressed(KEY_SHIFT) and KEY_ALT. Check sprint
-	# first so that holding both is not ambiguous. Three lines, no state.
-	#
-	# (This exercise moved here from the old fly camera, which this node
-	# replaced. It applies to walking and to flight both.)
+	if sprint_override:
+		return SPRINT_MULTIPLIER
+	if Input.is_physical_key_pressed(KEY_SHIFT):
+		return SPRINT_MULTIPLIER
+	if Input.is_physical_key_pressed(KEY_ALT):
+		return PRECISION_MULTIPLIER
 	return 1.0
 
 

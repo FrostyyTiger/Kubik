@@ -47,9 +47,13 @@ func _init() -> void:
 	print("seed          %d" % world_seed)
 	print("config        %s" % config.hash_key())
 
+	# Memory around the two big allocations, because the world doubling to 3 km
+	# quadrupled both and "it is only floats" stops being true somewhere.
+	var mem_before := OS.get_static_memory_usage()
 	var gen := TerrainGenerator.new(world_seed, config)
 	var ms := gen.build_heightmap()
 	var hm := gen.heightmap
+	var mem_heightmap := OS.get_static_memory_usage()
 
 	print("heightmap     %dx%d cells, %d blocks per cell, %d ms" % [
 		hm.cols, hm.cols, hm.step, ms])
@@ -75,6 +79,10 @@ func _init() -> void:
 	# cannot be answered from the summary _print_lakes prints.
 	var lakes := Lakes.new()
 	lakes.compute(hm, config)
+	print("memory        heightmap %.1f MB, + lakes %.1f MB (%.1f MB total)" % [
+		float(mem_heightmap - mem_before) / 1048576.0,
+		float(OS.get_static_memory_usage() - mem_heightmap) / 1048576.0,
+		float(OS.get_static_memory_usage() - mem_before) / 1048576.0])
 	_print_lakes(lakes, hm)
 	_print_object_scale(hm, lakes, config)
 	_print_trees(gen, hm, config)

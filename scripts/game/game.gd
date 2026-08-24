@@ -80,6 +80,8 @@ func _ready() -> void:
 
 	if "--tour" in OS.get_cmdline_user_args():
 		_start_tour.call_deferred()
+	elif "--traverse" in OS.get_cmdline_user_args():
+		_start_traverse.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -192,6 +194,20 @@ func _start_tour() -> void:
 	tour.name = "ScreenshotTour"
 	add_child(tour)
 	tour.run(_world, _player, _sky)
+
+
+## Walk the player from one corner of the world to the other and time it.
+##
+## The world doubled to 3 km in terrain v2 and the one thing that could make
+## that a mistake is traversal. See TraversalProbe for why the answer has to be
+## walked rather than divided.
+func _start_traverse() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := TraversalProbe.new()
+	probe.name = "TraversalProbe"
+	add_child(probe)
+	probe.run(_world, _player)
 
 
 # --- Join handshake ---------------------------------------------------------
