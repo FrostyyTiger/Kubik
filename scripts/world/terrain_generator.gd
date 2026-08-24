@@ -330,7 +330,8 @@ func zone_name_at_m(x_m: float, z_m: float, y_m: float) -> String:
 ## in the morning. It is NOT ridged: the skyline comes out as rounded blobs,
 ## which is exactly the "before" picture this exercise is the "after" of.
 func _ridge(n: float) -> float:
-	return (n + 1.0) * 0.5
+	var r := 1.0 - absf(n)
+	return r * r
 
 
 ## 2. DOMAIN WARP. Returns an offset in blocks, added to the sample position.
@@ -354,8 +355,18 @@ func _ridge(n: float) -> float:
 ##   once.
 ##
 ## Fallback: no warp, sample at the plain coordinates.
-func _domain_warp(_bx: float, _bz: float) -> Vector2:
-	return Vector2.ZERO
+func _domain_warp(bx: float, bz: float) -> Vector2:
+	# Two INDEPENDENT noise fields, one per axis. Sharing a single field
+	# would offset every point along the same diagonal, which slides the
+	# terrain rather than bending it - the grid alignment we are trying to
+	# destroy would survive the move completely intact.
+	#
+	# Both are seeded at half the mountain frequency (see _build_noise), so
+	# the warp varies over a longer distance than the mountains it bends.
+	# Warping faster than the feature being warped shreds it instead.
+	return Vector2(
+		_warp_x.get_noise_2d(bx, bz) * config.warp_strength,
+		_warp_z.get_noise_2d(bx, bz) * config.warp_strength)
 
 
 ## 3. VALLEY FLATTENING. Takes an altitude in blocks, returns one.
@@ -384,7 +395,33 @@ func _domain_warp(_bx: float, _bz: float) -> Vector2:
 ##
 ## Fallback: linear, i.e. leave the height exactly as the layers built it.
 func _flatten_valleys(h: float) -> float:
-	return h
+	var lo := config.min_altitude
+	var hi := config.max_altitude
+
+	# Normalise into 0..1 so the exponent always means the same thing. Left
+	# in raw blocks, the curve would silently change character every time
+	# min_altitude or max_altitude moved.
+	var t := (h - lo) / (hi - lo)
+
+	# Defensive: the layers can sum below min_altitude, and the clamp that
+	# catches that happens in the CALLER, after this runs. pow() of a
+	# negative base with a fractional exponent is NaN, and a NaN here would
+	# not crash - it would quietly poison one heightmap cell and every
+	# chunk, lake and tree that reads it.
+	t = clampf(t, 0.0, 1.0)
+
+	# The height change is the obvious effect; the GRADIENT change is the
+	# one that matters. d/dt of t^c is c * t^(c-1), so at c = 1.6 the slope
+	# of low ground (t = 0.1) is multiplied by 0.40 and the slope of high
+	# ground (t = 0.9) by 1.50. One exponent flattens the valley floors and
+	# steepens the peaks at the same time, which is the profile erosion
+	# carves - and it is why this is a curve and not two separate knobs.
+	#
+	# smoothstep() is the other defensible answer. It flattens the TOPS as
+	# well, so summits become plateaus. Worth trying before settling.
+	t = pow(t, config.valley_curve)
+
+	return lo + t * (hi - lo)
 
 
 # --- Voxels -----------------------------------------------------------------
