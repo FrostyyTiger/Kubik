@@ -77,6 +77,39 @@ const RING_STEP_MULTIPLE := [1, 2, 4]
 ## the hillside, a skirt that is too short is a hole in the horizon.
 const SKIRT_DEPTH_CELLS := 1.0
 
+## THE TRANSITION BAND, in cells of the innermost ring.
+##
+## Terrain v1 left the voxel/far-field seam as a known artefact, and at 96 m of
+## voxels against 600 m of visibility it became the most visible thing in the
+## game. The far mesh is the COARSE heightmap; the voxels are that plus
+## per-block detail, so the two disagree by up to detail_amp - three blocks,
+## 1.5 m - and they disagree along a circle centred on the player that moves
+## with them.
+##
+## Three fixes were on the table. A skirt hides a hole but not a STEP, and a
+## step is what this is. A blend band that merely fades the colour leaves the
+## geometry wrong. So: sample the detail layer into the far mesh near the seam,
+## at full strength where it meets the voxels and fading to nothing over this
+## many cells. At the seam the far mesh is then computing the same surface the
+## voxels are, so there is nothing left to disagree about; a few cells out it
+## is back to the cheap coarse mesh, and the fade is what stops the boundary of
+## the FIX becoming the new visible line.
+##
+## 4 cells is 32 blocks, 16 m at the default far_step. Long enough that the
+## fade is not itself an edge, short enough that the extra noise samples are a
+## few hundred quads on a ring of tens of thousands.
+const SEAM_BAND_CELLS := 4.0
+
+## Blocks to raise the far mesh by inside the band, to meet the TOP of a voxel
+## rather than its centre.
+##
+## The topmost solid block in a column is floor(surface), and the face you see
+## and stand on is its top, at floor(surface) + 1. So the visible voxel ground
+## averages half a block above the surface function the far mesh draws
+## directly. Without this the seam is level on average and still a consistent
+## half-block step down, which reads as a shallow moat around the player.
+const VOXEL_TOP_BIAS_BLOCKS := 0.5
+
 ## Skirts are drawn darker than the surface they hang from. They stand in for
 ## ground seen edge-on through a crack, and a crack that lights up BRIGHTER
 ## than the terrain around it draws the eye straight to the artefact it is
@@ -93,6 +126,12 @@ var center := Vector2i.ZERO
 var arrays: Array = []
 var vertex_count := 0
 
+## Distance from the player, in blocks, at which the voxels stop and this mesh
+## takes over. Set by run() and read by _corner_y(); a member rather than
+## another parameter threaded through three functions that all already have
+## six.
+var _seam_radius := 0.0
+
 
 func run() -> void:
 	var bs: float = config.block_size
@@ -106,6 +145,7 @@ func run() -> void:
 	# a hole you can see the sky through.
 	var voxel_radius_blocks: float = float(config.voxel_radius_chunks * Chunk.SIZE)
 	var exclude := maxf(voxel_radius_blocks - float(2 * base_step), 0.0)
+	_seam_radius = exclude
 
 	# The far mesh is the COARSE heightmap; the voxels are that plus per-block
 	# detail, so at the boundary the two differ by up to detail_amp. Dropping
@@ -170,6 +210,11 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	var span := int(ceil(outer / float(step))) + 1
 	var skirt_drop := float(step) * SKIRT_DEPTH_CELLS * bs
 
+	# Only the innermost ring touches the voxels, so only it pays for the
+	# detail samples. A band of zero switches _corner_y() back to the plain
+	# coarse height with one comparison.
+	var band := float(step) * SEAM_BAND_CELLS if ring == 0 else 0.0
+
 	for j in range(-span, span):
 		for i in range(-span, span):
 			var bx0 := cx + i * step
@@ -190,10 +235,10 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# Corner order is the +Y face order from ChunkMesher, which is
 			# clockwise seen from above - the same winding the voxels use, so
 			# both are lit and culled identically.
-			var p0 := Vector3(float(bx0) * bs, h00 * bs + y_offset, float(bz0) * bs)
-			var p1 := Vector3(float(bx1) * bs, h10 * bs + y_offset, float(bz0) * bs)
-			var p2 := Vector3(float(bx1) * bs, h11 * bs + y_offset, float(bz1) * bs)
-			var p3 := Vector3(float(bx0) * bs, h01 * bs + y_offset, float(bz1) * bs)
+			var p0 := Vector3(float(bx0) * bs, _corner_y(bx0, bz0, h00, band, y_offset), float(bz0) * bs)
+			var p1 := Vector3(float(bx1) * bs, _corner_y(bx1, bz0, h10, band, y_offset), float(bz0) * bs)
+			var p2 := Vector3(float(bx1) * bs, _corner_y(bx1, bz1, h11, band, y_offset), float(bz1) * bs)
+			var p3 := Vector3(float(bx0) * bs, _corner_y(bx0, bz1, h01, band, y_offset), float(bz1) * bs)
 
 			# Colour from the same zone rules the voxels use, sampled at the
 			# quad's middle. Anything else and the treeline would be in a
@@ -219,6 +264,36 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				_push_skirt(e[0], e[1], skirt_drop, shaded,
 					verts, normals, colors, indices)
+
+
+## Height of one far-field vertex, in METRES, blended towards the voxel surface
+## as it approaches the seam.
+##
+## `inner` is where the voxels stop, so the blend is 1 at the seam and 0 a band
+## further out. Note what the two ends actually compute:
+##
+##   at the seam   coarse + detail + half a block - no y_offset. That is the
+##                 voxel surface, so the two meshes meet at the same altitude.
+##   outside it    the plain coarse height, dropped by y_offset so it can never
+##                 poke up through voxels that are not there to hide it.
+##
+## detail_at() is a noise sample and this is the only place the far field pays
+## for one, which is why the band is deliberately narrow.
+func _corner_y(bx: int, bz: int, coarse: float, band: float, y_offset: float) -> float:
+	var bs: float = config.block_size
+	if band <= 0.0:
+		return coarse * bs + y_offset
+	var dx := float(bx - center.x)
+	var dz := float(bz - center.y)
+	var blend := clampf(1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / band, 0.0, 1.0)
+	if blend <= 0.0:
+		return coarse * bs + y_offset
+	var h := coarse + (generator.detail_at(float(bx), float(bz))
+		+ VOXEL_TOP_BIAS_BLOCKS) * blend
+	# The offset exists to keep the far mesh UNDER voxels whose detail it does
+	# not know about. Where it does know about it, there is nothing to hide
+	# from and the offset would reintroduce the step it was covering.
+	return h * bs + y_offset * (1.0 - blend)
 
 
 ## Is the quad whose corner is (bx0, bz0) part of this ring?
