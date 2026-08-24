@@ -99,8 +99,14 @@ static var _material: StandardMaterial3D = null
 ## Returns an empty Array for a chunk with nothing to draw. This function
 ## touches no scene state and no rendering API, which is what lets it run on a
 ## worker thread.
-static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: float,
-		ao_strength: float = 0.0) -> Array:
+## `config` is the world's SNAPSHOT of its tuning values - World clones it at
+## setup and never writes to it again - so reading it from a worker thread is
+## safe and needs no copying. It replaced a growing list of loose float
+## parameters at Stage 10, when per-vertex tinting added five more.
+static func build_arrays(chunk: Chunk, solid_outside: Callable,
+		config: WorldgenConfig, world_seed: int) -> Array:
+	var block_size: float = config.block_size
+	var ao_strength: float = config.ao_strength
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -197,8 +203,9 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: floa
 						ao_mask[iu + jv * size] = AO_OPEN
 
 			if has_face:
-				_emit_slice(mask, ao_mask, size, d, u, v, slice + 1, block_size,
-					ao_strength, verts, normals, colors, indices)
+				_emit_slice(mask, ao_mask, size, d, u, v, slice + 1,
+					config, world_seed, origin,
+					verts, normals, colors, indices)
 
 	if verts.is_empty():
 		return []
@@ -220,7 +227,8 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: floa
 ## rectangles is expensive, and this gets within a few percent of it for the
 ## shapes terrain actually makes.
 static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size: int,
-		d: int, u: int, v: int, plane: int, block_size: float, ao_strength: float,
+		d: int, u: int, v: int, plane: int,
+		config: WorldgenConfig, world_seed: int, origin: Vector3i,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	for jv in size:
@@ -253,8 +261,8 @@ static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size:
 					break
 				h += 1
 
-			_emit_quad(d, u, v, plane, iu, jv, w, h, value, ao_value, block_size,
-				ao_strength, verts, normals, colors, indices)
+			_emit_quad(d, u, v, plane, iu, jv, w, h, value, ao_value,
+				config, world_seed, origin, verts, normals, colors, indices)
 
 			for dv in h:
 				for du in w:
@@ -264,10 +272,12 @@ static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size:
 
 static func _emit_quad(d: int, u: int, v: int, plane: int,
 		u0: int, v0: int, w: int, h: int, value: int, ao_value: int,
-		block_size: float, ao_strength: float,
+		config: WorldgenConfig, world_seed: int, origin: Vector3i,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	var positive := value > 0
+	var block_size: float = config.block_size
+	var ao_strength: float = config.ao_strength
 	var color := Block.color_of(absi(value))
 
 	var normal := Vector3.ZERO
@@ -298,6 +308,10 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 			[u0, v0, AO_CORNER_U0V0], [u1, v0, AO_CORNER_U1V0],
 			[u1, v1, AO_CORNER_U1V1], [u0, v1, AO_CORNER_U0V1]]
 
+	# Aspect and slope are properties of the FACE, so they are computed once for
+	# the whole quad. Only the jitter varies from corner to corner.
+	var shaded := Block.aspect_shade(color, normal, config.slope_tint, config.aspect_tint)
+
 	var first := verts.size()
 	for c in corners:
 		var p := Vector3.ZERO
@@ -312,7 +326,15 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 		# is re-authored.
 		var level: int = (ao_value >> (int(c[2]) * 2)) & 3
 		var shade := 1.0 - ao_strength * (1.0 - float(level) / 3.0)
-		colors.push_back(Color(color.r * shade, color.g * shade, color.b * shade, color.a))
+		# Jitter is sampled at the corner's WORLD position, so two quads meeting
+		# at a lattice point agree about it and the field is continuous across
+		# chunk boundaries as well as across quad boundaries.
+		var tinted := Block.jitter(shaded,
+			origin.x + int(p.x), origin.z + int(p.z), world_seed,
+			config.color_jitter_blocks, config.color_jitter_value,
+			config.color_jitter_hue)
+		colors.push_back(Color(
+			tinted.r * shade, tinted.g * shade, tinted.b * shade, tinted.a))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)
@@ -336,9 +358,9 @@ static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
 
 ## Synchronous build, for the one chunk changed by an edit. Bulk loading goes
 ## through build_arrays() on a worker thread instead.
-static func build(chunk: Chunk, world_solid: Callable, block_size: float,
-		ao_strength: float = 0.0) -> ArrayMesh:
-	return arrays_to_mesh(build_arrays(chunk, world_solid, block_size, ao_strength))
+static func build(chunk: Chunk, world_solid: Callable,
+		config: WorldgenConfig, world_seed: int) -> ArrayMesh:
+	return arrays_to_mesh(build_arrays(chunk, world_solid, config, world_seed))
 
 
 ## One shared material for every chunk. Sharing it means the renderer can batch

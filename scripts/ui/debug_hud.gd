@@ -66,6 +66,11 @@ const LOCAL_TUNING_ROWS := [
 	["view_distance", "view distance (-1..3)", -1.0, 3.0, 1.0],
 	["ao_strength", "baked AO strength", 0.0, 1.0, 0.05],
 	["msaa_level", "MSAA (0 off, 3 = 8x)", 0.0, 3.0, 1.0],
+	["color_jitter_value", "tint: brightness", 0.0, 0.3, 0.01],
+	["color_jitter_hue", "tint: hue", 0.0, 0.2, 0.005],
+	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
+	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
+	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
 ]
 
 var config: WorldgenConfig = null

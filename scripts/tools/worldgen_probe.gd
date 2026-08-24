@@ -70,15 +70,18 @@ func _init() -> void:
 		st["max"] * config.block_size,
 		st["mean"] * config.block_size])
 
+	# Lakes FIRST, and handed straight back to the generator, because the game
+	# does the same: since Stage 11 the detail layer is faded out near a water
+	# line, and without this the probe would count trees and measure surfaces
+	# the game never builds.
+	var lakes := Lakes.new()
+	lakes.compute(hm, config)
+	gen.lakes = lakes
+
 	_print_altitude_percentiles(hm, config)
 	_print_layer_slopes(config)
 	_print_slope_histogram(hm, config)
 	_print_zones(gen, hm, config)
-	# Computed once and handed to both readouts. The object-scale line needs
-	# the largest lake's WIDTH, which is a different question from its area and
-	# cannot be answered from the summary _print_lakes prints.
-	var lakes := Lakes.new()
-	lakes.compute(hm, config)
 	print("memory        heightmap %.1f MB, + lakes %.1f MB (%.1f MB total)" % [
 		float(mem_heightmap - mem_before) / 1048576.0,
 		float(OS.get_static_memory_usage() - mem_heightmap) / 1048576.0,

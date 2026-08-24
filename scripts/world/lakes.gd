@@ -62,6 +62,26 @@ var water := PackedFloat32Array()
 ## Which lake each cell belongs to, or -1 for none. Index into `lakes`.
 var lake_id := PackedInt32Array()
 
+## Water level of the nearest lake, for cells near one. `shore_near` is 1 where
+## `shore_level` means anything and 0 everywhere else.
+##
+## WHY THIS EXISTS. Lakes are capped at a couple of blocks deep so they stay in
+## scale, and per-block detail roughness is up to three blocks. A shallow sheet
+## of water over bumpy ground therefore intersects it constantly, and the first
+## postcard of the new terrain came back with a shoreline made of a hundred
+## disconnected tan islands. The fix is to damp the detail layer near the water
+## line - see TerrainGenerator.detail_at() - and to do that a block column has
+## to know what the water level near it is, which is a question about a
+## NEIGHBOURHOOD and not about the cell itself.
+##
+## Built by scattering OUTWARD from the flooded cells rather than by scanning
+## the map for them. That distinction is the whole reason this is affordable: a
+## gather pass is 2.25 million cells times four neighbours whatever the world
+## looks like, while a scatter is the number of flooded cells - 58,000 here -
+## times the dilation area, and it gets cheaper as the world gets drier.
+var shore_level := PackedFloat32Array()
+var shore_near := PackedByteArray()
+
 ## One entry per surviving lake:
 ##   {"level": float, "cells": int, "area_m2": float}
 var lakes: Array = []
@@ -92,8 +112,53 @@ func compute(heightmap: Heightmap, config: WorldgenConfig) -> void:
 
 	_fill_to_spill_points(heightmap, config, total)
 	_find_lakes(heightmap, config, total)
+	_build_shore_field(config, total)
 
 	_elapsed_ms = Time.get_ticks_msec() - started
+
+
+## Dilate each lake's water level outward over the dry land around it.
+##
+## Deterministic by construction: a fixed scan over cells, a fixed square
+## neighbourhood, and where two lakes reach the same cell the LOWER level wins.
+## "Lower wins" rather than "nearer wins" because it needs no distances and
+## because the lower of two water lines is the one a shore actually sits on.
+func _build_shore_field(config: WorldgenConfig, total: int) -> void:
+	shore_level = PackedFloat32Array()
+	shore_near = PackedByteArray()
+	var reach: int = config.shore_flat_cells
+	if reach <= 0 or config.shore_flat_blocks <= 0.0:
+		return
+
+	shore_level.resize(total)
+	shore_near.resize(total)
+
+	for idx in total:
+		if lake_id[idx] < 0:
+			continue
+		var level := water[idx]
+		var cx := idx % _cols
+		var cz := idx / _cols
+		var x0 := maxi(cx - reach, 0)
+		var x1 := mini(cx + reach, _cols - 1)
+		var z0 := maxi(cz - reach, 0)
+		var z1 := mini(cz + reach, _cols - 1)
+		for z in range(z0, z1 + 1):
+			var row := z * _cols
+			for x in range(x0, x1 + 1):
+				var at := row + x
+				if shore_near[at] == 0 or level < shore_level[at]:
+					shore_level[at] = level
+					shore_near[at] = 1
+
+
+## Water level near this cell, or NAN if there is none. Cell index, not blocks.
+func shore_level_at_cell(idx: int) -> float:
+	if shore_near.is_empty() or idx < 0 or idx >= shore_near.size():
+		return NAN
+	if shore_near[idx] == 0:
+		return NAN
+	return shore_level[idx]
 
 
 # --- Priority flood ---------------------------------------------------------

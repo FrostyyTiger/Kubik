@@ -28,19 +28,23 @@ var neighbours := {}
 ## loaded region does not sprout a wall of faces.
 var generator: TerrainGenerator = null
 
-var block_size := 1.0
+## The world's SNAPSHOT of its tuning values, captured at submit time with
+## everything else the job needs. World clones it once at setup and never
+## writes to it again, so several workers reading it at once is safe and a
+## slider moving mid-load cannot change what a chunk already in flight comes
+## back looking like.
+var config: WorldgenConfig = null
 
-## Baked corner AO strength, 0 to 1. Captured at submit time with everything
-## else the job needs, so a slider moving mid-load cannot change what a chunk
-## already in flight comes back looking like.
-var ao_strength := 0.0
+## Needed by the per-vertex colour jitter, which is hashed from position and
+## seed like everything else in worldgen.
+var world_seed := 0
 
 ## The result. Read by the main thread once the task reports completion.
 var arrays: Array = []
 
 
 func run() -> void:
-	arrays = ChunkMesher.build_arrays(chunk, solid_at, block_size, ao_strength)
+	arrays = ChunkMesher.build_arrays(chunk, solid_at, config, world_seed)
 
 
 ## Is there a solid block at this WORLD position? Called only for positions

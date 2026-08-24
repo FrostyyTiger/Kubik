@@ -274,6 +274,36 @@ const FOG_START_RATIO := 0.6
 ## is the second.
 @export var terrace_sharpness := 1.5
 
+## ALPINE BENCHES. Strength 0 to 1; 0 disables them.
+##
+## Wide flat shelves partway up a slope - very Swiss, and they are where a
+## campfire or a fight can happen on ground that is otherwise all gradient.
+## Distinct from ordinary terracing by SIZE: a terrace riser of 8 blocks on a
+## 30 degree slope gives shelves about 7 m wide, which is a step. A bench riser
+## of 24 blocks gives shelves three or four times that, which is a place.
+##
+## Masked, so benches happen in some districts and not others. Unmasked they
+## would be a staircase up every mountain in the world.
+##
+## TUNED BLIND, and the probe cannot help here. Benches are local by design -
+## a mask and an altitude window between them confine the effect to a small
+## part of the map - so the world-wide share of map under 5 degrees moves from
+## 25.64% to 25.67% whether they are on or off. That is the feature working as
+## intended and it is also why this value has no measurement behind it. Look at
+## a hillside before trusting it.
+@export var bench_strength := 0.7
+@export var bench_height := 24.0
+@export var bench_freq := 0.0009
+
+## PLATEAU REGIONS. Strength 0 to 1; 0 disables them.
+##
+## Occasional high tableland, as a contrast to ridged country. Same mechanism
+## as the benches with a much larger riser and an altitude window higher up, so
+## what it produces is one flat top rather than a flight of steps.
+@export var plateau_strength := 0.6
+@export var plateau_height := 90.0
+@export var plateau_freq := 0.0005
+
 ## SLOPE-AWARE ZONING. Strength, 0 to 1; 0 disables it and is the default.
 ##
 ## Zones key on slope as well as height, which is what makes real mountains
@@ -343,7 +373,7 @@ const FOG_START_RATIO := 0.6
 
 ## Exponent for the valley flattening curve, used by the other TODO(marcel)
 ## exercise. Ignored by the fallback.
-@export var valley_curve := 1.25
+@export var valley_curve := 1.6
 
 
 # --- Elevation zones --------------------------------------------------------
@@ -428,6 +458,25 @@ const FOG_START_RATIO := 0.6
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
 @export var lake_min_cells := 40
 
+## SHORE FLATS. Blocks of altitude either side of the water line over which
+## the detail layer is faded out. 0 disables it.
+##
+## Lakes are capped shallow so they stay in scale, and per-block detail is up
+## to three blocks tall, so a sheet of water over rough ground breaks into
+## islands - which is exactly what the first postcard of the new terrain showed
+## along every shoreline. Fading detail to nothing at the water line gives a
+## clean edge and a margin you can walk up to instead of one that drops
+## straight in.
+##
+## Deliberately a fade on the DETAIL layer rather than a change to the coarse
+## heightmap. Lakes are found in the coarse map, so editing it after the fact
+## could move a spill point and drain the lake the flattening was for.
+@export var shore_flat_blocks := 4.0
+
+## How far the shore field reaches from the water, in coarse cells. 3 cells is
+## 12 blocks, 6 m of margin.
+@export var shore_flat_cells := 3
+
 ## Blocks below the spill point to set the water surface. Without it the water
 ## sits exactly at the lip and leaks visually over the edge.
 @export var lake_level_offset := 1.0
@@ -455,7 +504,7 @@ const FOG_START_RATIO := 0.6
 ## at 1:4.0 on seed 42 and 1:3.8 on seed 7, which is the coherence the whole
 ## stage is about. It is also the main water dial - turn it up for a wetter
 ## world, and Plan B's rivers will want a say in it.
-@export var lake_max_depth := 4.0
+@export var lake_max_depth := 2.0
 
 
 # --- Atmosphere -------------------------------------------------------------
@@ -499,6 +548,33 @@ const FOG_START_RATIO := 0.6
 #
 # Recorded in STATUS.md as a departure from the plan's hard rule 2.
 
+## COLOUR VARIATION, all four TUNED BLIND - this box has no display.
+##
+## Direct answer to "too green and samey", on top of the seven zones. The zones
+## separate a meadow from a forest; these separate one part of a meadow from
+## another, which is what stops a hillside reading as a painted surface.
+##
+## Per VERTEX, not per block, because per-block colour is incompatible with
+## greedy meshing - see Block.jitter(). The cost is zero extra quads.
+
+## How far the per-vertex tint moves brightness, as a fraction. Start small.
+@export var color_jitter_value := 0.05
+
+## Red-against-blue tilt, as a fraction. Smaller than the value jitter: a hue
+## shift is much more visible than a brightness shift at the same magnitude.
+@export var color_jitter_hue := 0.02
+
+## Blocks per tint cell. 12 blocks is 6 m, so the mottling drifts over about
+## three player-widths - broad enough to read as ground rather than as noise.
+@export var color_jitter_blocks := 12
+
+## How much darker a vertical face is than a horizontal one, 0 to 1.
+@export var slope_tint := 0.10
+
+## How much warmer a sun-facing slope is than a shaded one, 0 to 1. This is
+## aspect, not lighting - see Block.aspect_shade().
+@export var aspect_tint := 0.06
+
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
 ##
@@ -537,6 +613,8 @@ const PROPERTIES: PackedStringArray = [
 	"hills_freq", "hills_amp",
 	"hills_gate_strength", "hills_mask_freq", "hills_mask_lo", "hills_mask_hi",
 	"terrace_height", "terrace_sharpness",
+	"bench_strength", "bench_height", "bench_freq",
+	"plateau_strength", "plateau_height", "plateau_freq",
 	"slope_zone_strength", "rock_slope_deg", "snow_max_slope_deg",
 	"detail_freq", "detail_amp",
 	"zone_jitter_freq", "zone_jitter_blocks",
@@ -548,6 +626,7 @@ const PROPERTIES: PackedStringArray = [
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
+	"shore_flat_blocks", "shore_flat_cells",
 	"day_seconds", "day_start",
 ]
 
@@ -572,6 +651,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"view_distance", "voxel_radius_chunks", "far_step",
 	"fog_start_m", "fog_end_m",
 	"ao_strength", "msaa_level",
+	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
+	"slope_tint", "aspect_tint",
 ]
 
 

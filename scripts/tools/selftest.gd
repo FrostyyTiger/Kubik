@@ -111,8 +111,18 @@ func _test_winding():
 						if solid:
 							chunk.set_voxel(x, y, z, Block.STONE)
 
+			var cfg := WorldgenConfig.new()
+			cfg.block_size = 1.0
+			cfg.ao_strength = ao
+			# Tinting off: this test is about winding and about how AO splits
+			# quads, and a per-vertex colour would change none of that while
+			# making a failure much harder to read.
+			cfg.color_jitter_value = 0.0
+			cfg.color_jitter_hue = 0.0
+			cfg.slope_tint = 0.0
+			cfg.aspect_tint = 0.0
 			var arrays := ChunkMesher.build_arrays(
-				chunk, func(_a, _b, _c): return false, 1.0, ao)
+				chunk, func(_a, _b, _c): return false, cfg, 0)
 			if arrays.is_empty():
 				print("winding %s: EMPTY - nothing was meshed" % case)
 				bad += 1
@@ -388,11 +398,12 @@ func _measure_ao_cost():
 		return gen.is_solid_at(wx, wy, wz)
 
 	var results := []
-	for ao in [0.0, cfg.ao_strength]:
+	for ao in [0.0, WorldgenConfig.new().ao_strength]:
+		cfg.ao_strength = ao
 		var quads := 0
 		var started := Time.get_ticks_usec()
 		for c in chunks:
-			var arrays := ChunkMesher.build_arrays(c, solid, cfg.block_size, ao)
+			var arrays := ChunkMesher.build_arrays(c, solid, cfg, 31337)
 			if not arrays.is_empty():
 				quads += (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 4
 		results.append({

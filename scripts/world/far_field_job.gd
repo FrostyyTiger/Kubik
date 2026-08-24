@@ -336,11 +336,21 @@ func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color
 	else:
 		normal = normal.normalized()
 
+	# The same aspect and jitter the voxels get, from the same functions and the
+	# same seed. If the far field skipped them, the boundary between voxels and
+	# far mesh would be a visible line in COLOUR as well as in geometry - and
+	# Stage 5 has just spent a whole commit removing it from the geometry.
+	var shaded := Block.aspect_shade(color, normal, config.slope_tint, config.aspect_tint)
+	var inv_bs := 1.0 / config.block_size
+
 	var first := verts.size()
 	for p in [p0, p1, p2, p3]:
 		verts.push_back(p)
 		normals.push_back(normal)
-		colors.push_back(color)
+		colors.push_back(Block.jitter(shaded,
+			int(round(p.x * inv_bs)), int(round(p.z * inv_bs)), generator.world_seed,
+			config.color_jitter_blocks, config.color_jitter_value,
+			config.color_jitter_hue))
 	indices.push_back(first)
 	indices.push_back(first + 1)
 	indices.push_back(first + 2)

@@ -10,17 +10,19 @@ extends MeshInstance3D
 var chunk: Chunk
 
 var _block_size := 1.0
-var _ao_strength := 0.0
+var _config: WorldgenConfig = null
+var _world_seed := 0
 var _collider: CollisionShape3D = null
 
 
-func setup(p_chunk: Chunk, block_size: float, ao_strength: float = 0.0) -> void:
+func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int) -> void:
 	chunk = p_chunk
-	_block_size = block_size
+	_block_size = config.block_size
 	# Kept so an edited chunk remeshes with the same shading as the bulk load
 	# gave it. Without this a block you break would leave its chunk flat-shaded
 	# and visibly different from its neighbours.
-	_ao_strength = ao_strength
+	_config = config
+	_world_seed = world_seed
 
 	# Collision is a StaticBody3D child rather than this node becoming one,
 	# because a dedicated server wants Chunk with no mesh AND no body, and
@@ -40,7 +42,7 @@ func setup(p_chunk: Chunk, block_size: float, ao_strength: float = 0.0) -> void:
 	# Note the scale factor rather than a scaled node: origin() is in BLOCKS and
 	# the scene graph is in METRES, and that conversion happens here and in the
 	# mesher and nowhere else.
-	position = Vector3(p_chunk.origin()) * block_size
+	position = Vector3(p_chunk.origin()) * _block_size
 
 
 ## Install a mesh built on a worker thread. This half of meshing has to happen
@@ -56,7 +58,7 @@ func apply_arrays(arrays: Array) -> void:
 func rebuild(world_solid: Callable) -> void:
 	# build() returns null for a chunk with no visible faces. Assigning null
 	# clears the mesh, which is exactly what we want.
-	mesh = ChunkMesher.build(chunk, world_solid, _block_size, _ao_strength)
+	mesh = ChunkMesher.build(chunk, world_solid, _config, _world_seed)
 	_apply_collision()
 	chunk.dirty = false
 

@@ -80,3 +80,86 @@ static func color_of(id: int) -> Color:
 
 static func name_of(id: int) -> String:
 	return NAMES[id] if id >= 0 and id < NAMES.size() else "unknown(%d)" % id
+
+
+# --- Terrain v2 Stage 10: making one colour into many ----------------------
+#
+# The palette is nine flat colours and the world is built entirely out of them,
+# so a meadow is one exact green over its whole extent and reads as a painted
+# surface. These two functions break that up without adding a single vertex.
+#
+# THE CONSTRAINT THAT SHAPES BOTH OF THEM IS GREEDY MESHING. Per-BLOCK colour
+# variation is the obvious implementation and it is incompatible with merging:
+# if neighbouring blocks differ in colour they cannot share a quad, and a flat
+# meadow chunk goes from one quad to two hundred and fifty six. So the
+# variation lives in the VERTICES instead, sampled at the quad's corners and
+# interpolated across it. Two quads meeting at a lattice point sample the same
+# point and get the same value, so the field is continuous, nothing has to
+# split, and the cost is zero quads.
+
+## Deterministic per-vertex tint, hashed from a coarse lattice.
+##
+## `patch` is how many blocks share one hash cell. Small values give fine
+## mottling that is mostly invisible after interpolation; large ones give broad
+## drifts of tone across a hillside, which is what actually reads. The value
+## and hue amounts are fractions and are meant to be small - this is texture,
+## not confetti.
+##
+## Hue is faked as a red-against-blue tilt rather than a real HSV rotation.
+## The palette is stored linear, a correct rotation means converting to sRGB,
+## to HSV, back, and back again per vertex, and the visible difference between
+## that and tilting two channels in opposite directions by two percent is
+## nothing at all.
+static func jitter(color: Color, bx: int, bz: int, world_seed: int,
+		patch: int, value_amount: float, hue_amount: float) -> Color:
+	if value_amount <= 0.0 and hue_amount <= 0.0:
+		return color
+	var cell := maxi(patch, 1)
+	var cx := (bx - posmod(bx, cell)) / cell
+	var cz := (bz - posmod(bz, cell)) / cell
+	var v := 1.0 + (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_VALUE) * 2.0 - 1.0) * value_amount
+	var h := (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_HUE) * 2.0 - 1.0) * hue_amount
+	return Color(
+		maxf(color.r * v * (1.0 + h), 0.0),
+		maxf(color.g * v, 0.0),
+		maxf(color.b * v * (1.0 - h), 0.0),
+		color.a)
+
+
+## Tint one face by which way it points.
+##
+## SLOPE. Steep faces get less sky, so they are darker. The renderer's own
+## lighting already does some of this, which is why the default is gentle - the
+## job here is to separate a wall from a floor when both happen to be lit the
+## same, not to relight the world.
+##
+## ASPECT. A slope facing the sun is warmer and drier than one in shade, and in
+## the Alps that is visible as a real difference in what grows on it. Baked
+## against a FIXED direction rather than against the sun's actual position,
+## deliberately: the mesh is built once and the sun moves, so a baked lighting
+## term would be wrong for half of every day. What this bakes is not lighting,
+## it is aspect - a fact about the ground, which does not move.
+static func aspect_shade(color: Color, normal: Vector3,
+		slope_amount: float, aspect_amount: float) -> Color:
+	var out := color
+	if slope_amount > 0.0:
+		# 1 for a floor or ceiling, 0 for a wall.
+		var flatness := absf(normal.y)
+		var shade := 1.0 - slope_amount * (1.0 - flatness)
+		out = Color(out.r * shade, out.g * shade, out.b * shade, out.a)
+	if aspect_amount > 0.0:
+		var facing := normal.x * SUN_ASPECT.x + normal.z * SUN_ASPECT.y
+		var warm := 1.0 + aspect_amount * facing
+		var cool := 1.0 - aspect_amount * facing
+		out = Color(out.r * warm, out.g * (1.0 + aspect_amount * facing * 0.35),
+			out.b * cool, out.a)
+	return out
+
+
+## Which way "sunward" points, in XZ. Any fixed direction would do; this one is
+## the -Z the camera starts looking along, so the aspect difference is visible
+## in the first screenshot rather than behind you.
+const SUN_ASPECT := Vector2(0.0, -1.0)
+
+const SALT_TINT_VALUE := 301
+const SALT_TINT_HUE := 302

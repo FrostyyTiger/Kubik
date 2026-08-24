@@ -58,6 +58,8 @@ const SEED_JITTER := 5
 const SEED_WARP_X := 6
 const SEED_WARP_Z := 7
 const SEED_HILLS_MASK := 8
+const SEED_BENCH := 9
+const SEED_PLATEAU := 10
 
 ## Salts keep independent uses of the coordinate hash from agreeing with each
 ## other. Without them every tree in the world would stand exactly where the
@@ -140,6 +142,14 @@ var heightmap: Heightmap = null
 ## the far-field job and the chunk mesher ask about zones from worker threads.
 var zone_thresholds := PackedFloat32Array()
 
+## The world's lakes, once they have been found. Optional: everything here
+## works without it, and the detail layer is simply not damped near water.
+##
+## Set AFTER build_heightmap() and after Lakes.compute(), never before - lakes
+## are found in the coarse heightmap and the coarse heightmap must not depend
+## on them, or the two would be defined in terms of each other.
+var lakes: Lakes = null
+
 var _continent: FastNoiseLite
 var _mountain: FastNoiseLite
 var _hills: FastNoiseLite
@@ -148,6 +158,8 @@ var _jitter: FastNoiseLite
 var _warp_x: FastNoiseLite
 var _warp_z: FastNoiseLite
 var _hills_mask: FastNoiseLite
+var _bench_mask: FastNoiseLite
+var _plateau_mask: FastNoiseLite
 
 
 func _init(p_seed: int, p_config: WorldgenConfig = null) -> void:
@@ -171,6 +183,10 @@ func _init(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	# fine detail in it makes hilly and flat country interleave at a scale you
 	# cannot see, which is the uniform bumpiness the mask exists to remove.
 	_hills_mask = _make_noise(SEED_HILLS_MASK, config.hills_mask_freq, 2)
+	# One octave each: these decide WHERE a bench or a plateau is, and detail
+	# in that answer would scatter them into fragments instead of districts.
+	_bench_mask = _make_noise(SEED_BENCH, config.bench_freq, 1)
+	_plateau_mask = _make_noise(SEED_PLATEAU, config.plateau_freq, 1)
 
 
 func _make_noise(seed_offset: int, freq: float, octaves: int) -> FastNoiseLite:
@@ -362,7 +378,77 @@ func height_at_block(bx: float, bz: float) -> float:
 
 	h = _flatten_valleys(h)
 	h = _terrace(h)
+	h = _benches_and_plateaus(h, wx, wz)
 	return clampf(h, config.min_altitude, config.max_altitude)
+
+
+## Altitude window, as a fraction of the world's vertical range, in which each
+## of the two masked layers is allowed to act.
+##
+## Constants rather than config, because they are what the two layers MEAN
+## rather than how strong they are. A bench belongs on the middle of a slope
+## and a plateau belongs high up; moving those windows turns one feature into
+## the other, which is not a tuning operation.
+const BENCH_ALTITUDE_BAND := Vector2(0.20, 0.60)
+const PLATEAU_ALTITUDE_BAND := Vector2(0.50, 1.00)
+
+## How much of each band is spent fading in and out at its edges, as a
+## fraction. Without a fade, a bench stops at exactly one altitude across the
+## whole world - which is a contour line, and contour lines are what the jitter
+## and the blend elsewhere exist to destroy.
+const MASKED_BAND_FADE := 0.25
+
+
+## Alpine benches and high plateaux: terracing again, with a bigger riser, in
+## some places only.
+##
+## Both are the same mechanism and that is deliberate. A bench is a wide flat
+## interrupting a slope; a plateau is a very wide flat on top of one. The only
+## differences are how far apart the shelves are and how high up they happen,
+## so writing them as one function with two sets of numbers keeps the thing you
+## have to understand down to one.
+func _benches_and_plateaus(h: float, wx: float, wz: float) -> float:
+	var out := h
+	if config.bench_strength > 0.0:
+		out = _masked_terrace(out, wx, wz, _bench_mask, config.bench_strength,
+			config.bench_height, BENCH_ALTITUDE_BAND)
+	if config.plateau_strength > 0.0:
+		out = _masked_terrace(out, wx, wz, _plateau_mask, config.plateau_strength,
+			config.plateau_height, PLATEAU_ALTITUDE_BAND)
+	return out
+
+
+## Blend `h` towards a terraced version of itself, by how much the mask and the
+## altitude window both allow.
+func _masked_terrace(h: float, wx: float, wz: float, mask: FastNoiseLite,
+		strength: float, height: float, band: Vector2) -> float:
+	if height <= 0.0:
+		return h
+
+	# Where in the world's vertical range this point sits.
+	var t := (h - config.min_altitude) \
+		/ maxf(config.max_altitude - config.min_altitude, 0.001)
+	var fade := (band.y - band.x) * MASKED_BAND_FADE
+	var in_band := smoothstep(band.x, band.x + fade, t) \
+		* (1.0 - smoothstep(band.y - fade, band.y, t))
+	if in_band <= 0.0:
+		return h
+
+	# Only the upper half of the mask's range, so these are occasional rather
+	# than the default state of the world.
+	var where := smoothstep(0.1, 0.55, mask.get_noise_2d(wx, wz))
+	var amount := clampf(strength, 0.0, 1.0) * in_band * where
+	if amount <= 0.0:
+		return h
+
+	var t_shelf := h / height
+	var shelf := floorf(t_shelf)
+	var frac := t_shelf - shelf
+	# Sharper than ordinary terracing: the point of a bench is that most of it
+	# is flat and you arrive at the next one over a short rise.
+	var curved: float = pow(frac, 4.0)
+	var stepped := (shelf + smoothstep(0.0, 1.0, curved)) * height
+	return lerpf(h, stepped, amount)
 
 
 ## How strongly the hills layer speaks here, 0 to 1.
@@ -408,8 +494,40 @@ func _terrace(h: float) -> float:
 
 ## Per-block roughness, in blocks. Added to the interpolated coarse height when
 ## voxels are built - never before lakes are decided. See the file header.
+##
+## FADED OUT NEAR A WATER LINE. Lakes are capped shallow to stay in scale and
+## this layer is up to three blocks tall, so without the fade a sheet of water
+## over rough ground breaks into a hundred disconnected islands - which is what
+## the first postcard of the new terrain showed along every shoreline. At the
+## water line the ground is exactly the coarse heightmap, which is the surface
+## the lake's level was computed against, so the edge is clean by construction.
+##
+## Note this cannot move a lake. The coarse map decides where water is; this
+## only decides how rough the ground is once that is settled.
 func detail_at(bx: float, bz: float) -> float:
-	return _detail.get_noise_2d(bx, bz) * config.detail_amp
+	var d := _detail.get_noise_2d(bx, bz) * config.detail_amp
+	if lakes == null or config.shore_flat_blocks <= 0.0:
+		return d
+	var level := lakes.shore_level_at_cell(_cell_index(bx, bz))
+	if is_nan(level):
+		return d
+	# 0 at the water line, 1 a full band away from it - so the fade covers the
+	# ground just above the water AND the lake bed just below, and the shore
+	# has no step in it at the point where the two meet.
+	var t := clampf(absf(heightmap.height_at(bx, bz) - level)
+		/ config.shore_flat_blocks, 0.0, 1.0)
+	return d * t
+
+
+## Coarse cell index for a block position, or -1 outside the world.
+func _cell_index(bx: float, bz: float) -> int:
+	if heightmap == null:
+		return -1
+	var i := int(floor((bx - float(heightmap.min_block)) / float(heightmap.step)))
+	var j := int(floor((bz - float(heightmap.min_block)) / float(heightmap.step)))
+	if i < 0 or j < 0 or i >= heightmap.cols or j >= heightmap.cols:
+		return -1
+	return i + j * heightmap.cols
 
 
 ## Wobble applied to the elevation zone boundaries, in blocks. Without it every

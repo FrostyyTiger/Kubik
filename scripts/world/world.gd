@@ -307,15 +307,15 @@ func _submit_mesh(chunk: Chunk) -> void:
 	# one place: everything downstream can assume a chunk in _chunks has a node
 	# in _chunk_nodes, whether or not its mesh has arrived yet.
 	var node := ChunkNode.new()
-	node.setup(chunk, config.block_size, config.ao_strength)
+	node.setup(chunk, config, world_seed)
 	add_child(node)
 	_chunk_nodes[chunk_pos] = node
 
 	var job := MeshJob.new()
 	job.chunk = chunk
 	job.generator = generator
-	job.block_size = config.block_size
-	job.ao_strength = config.ao_strength
+	job.config = config
+	job.world_seed = world_seed
 	job.neighbours = _face_neighbour_chunks(chunk_pos)
 	_in_flight[chunk_pos] = {
 		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk mesh"),
@@ -400,6 +400,11 @@ func _collect_meshed(started: int) -> void:
 func _build_lakes() -> void:
 	lakes = Lakes.new()
 	lakes.compute(generator.heightmap, config)
+	# The generator needs them back, so it can fade the detail layer out at the
+	# water line. Strictly one-way and strictly in this order: lakes are found
+	# in the coarse heightmap, and the coarse heightmap must never depend on
+	# them or the two would be defined in terms of each other.
+	generator.lakes = lakes
 
 	if _water == null:
 		_water = MeshInstance3D.new()
