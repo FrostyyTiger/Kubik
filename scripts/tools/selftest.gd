@@ -312,7 +312,11 @@ func _test_config_contract():
 
 	var host_config := WorldgenConfig.new()
 	host_config.mountain_amp += 37.0
-	host_config.forest_max -= 11.0
+	# A zone share rather than the retired forest_max, and it is worth being a
+	# SHARE specifically: since Stage 7 the zone boundaries are percentiles
+	# resolved at generation time, so this checks that a value which only takes
+	# effect through a later computation still crosses the wire intact.
+	host_config.share_forest = 0.31
 	host_config.tree_probability = 0.21
 
 	var defaults := WorldgenConfig.new()

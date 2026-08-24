@@ -66,21 +66,41 @@ const SALT_TREE := 202
 const SALT_TREE_TRUNK := 203
 const SALT_TREE_CANOPY := 204
 
-## Elevation zones, low to high.
-const ZONE_MEADOW := 0
-const ZONE_FOREST := 1
-const ZONE_ROCK := 2
-const ZONE_SNOW := 3
+## Elevation zones, low to high. Seven since terrain v2 Stage 7.
+const ZONE_SHORE := 0
+const ZONE_MEADOW := 1
+const ZONE_FOREST := 2
+const ZONE_ALPINE := 3
+const ZONE_HEATH := 4
+const ZONE_ROCK := 5
+const ZONE_SNOW := 6
 
-const ZONE_NAMES := ["meadow", "forest", "rock", "snow"]
+const ZONE_COUNT := 7
+
+const ZONE_NAMES := [
+	"shore", "meadow", "forest", "alpine", "heath", "rock", "snow",
+]
 
 ## The block that shows at the surface of each zone.
 const ZONE_SURFACE := [
+	Block.SHORE,          # shore / wetland
 	Block.GRASS,          # meadow
 	Block.FOREST_FLOOR,   # forest floor
-	Block.STONE,          # bare rock
+	Block.ALPINE_GRASS,   # alpine meadow
+	Block.HEATH,          # heath
+	Block.STONE,          # bare rock and scree
 	Block.SNOW,           # snow
 ]
+
+## Buckets in the altitude histogram the zone thresholds are resolved against.
+## Over a 318 block range that is 0.16 blocks per bucket, which is finer than
+## the zone boundary wobbles anyway.
+const ZONE_HISTOGRAM_BUCKETS := 2048
+
+## Sample every Nth cell on each axis when building that histogram. A quarter
+## of a 750x750 map is 140,000 samples, which pins a percentile far more
+## tightly than the 1% tolerance this has to hit, for a quarter of the cost.
+const ZONE_SAMPLE_STRIDE := 2
 
 var world_seed: int
 var config: WorldgenConfig
@@ -89,6 +109,12 @@ var config: WorldgenConfig
 ## mesh, lakes, trees - reads the world's shape from here rather than
 ## recomputing noise, so they cannot disagree about it.
 var heightmap: Heightmap = null
+
+## Altitude, in blocks, of the top of each zone except the highest - so six
+## values for seven zones. Resolved from the world's own altitude histogram at
+## the end of build_heightmap(), and read-only from then on, which is what lets
+## the far-field job and the chunk mesher ask about zones from worker threads.
+var zone_thresholds := PackedFloat32Array()
 
 var _continent: FastNoiseLite
 var _mountain: FastNoiseLite
@@ -153,7 +179,71 @@ func build_heightmap() -> int:
 		for i in cols:
 			var bx := float(heightmap.cell_to_block(i))
 			heightmap.cells[row + i] = height_at_block(bx, bz)
+	# The zones are percentiles of THIS world's altitudes, so they cannot be
+	# known until the altitudes are. Everything downstream - voxels, the far
+	# mesh, trees, the probe - reads them from here.
+	_resolve_zone_thresholds()
 	return Time.get_ticks_msec() - started
+
+
+## Turn the seven target shares of map area into six altitudes.
+##
+## THE HISTOGRAM IS OF (altitude - jitter), NOT OF ALTITUDE, and that is the
+## whole trick. A cell's zone is decided by comparing its altitude against
+## threshold + jitter, which is the same comparison as altitude - jitter
+## against threshold. Taking the percentiles of the jittered quantity makes the
+## resulting shares exact by construction instead of approximately right and
+## then off by however much the jitter happened to bias them.
+##
+## Dither needs no such treatment: it decides which side of a boundary a cell
+## falls on within the blend band, symmetrically, so it moves individual cells
+## across and does not move the boundary.
+##
+## Buckets rather than a sort. Sorting 2.25 million floats to read six
+## percentiles off them is seconds of work for an answer that is already exact
+## to a sixth of a block at 2048 buckets.
+func _resolve_zone_thresholds() -> void:
+	var lo := config.min_altitude
+	var span := maxf(config.max_altitude - lo, 0.001)
+
+	var counts := PackedInt32Array()
+	counts.resize(ZONE_HISTOGRAM_BUCKETS)
+	var total := 0
+	var cols := heightmap.cols
+	for j in range(0, cols, ZONE_SAMPLE_STRIDE):
+		var bz := float(heightmap.cell_to_block(j))
+		var row := j * cols
+		for i in range(0, cols, ZONE_SAMPLE_STRIDE):
+			var bx := float(heightmap.cell_to_block(i))
+			var v := heightmap.cells[row + i] - zone_jitter_at(bx, bz)
+			var bucket := clampi(
+				int((v - lo) / span * float(ZONE_HISTOGRAM_BUCKETS)),
+				0, ZONE_HISTOGRAM_BUCKETS - 1)
+			counts[bucket] += 1
+			total += 1
+
+	zone_thresholds = PackedFloat32Array()
+	zone_thresholds.resize(ZONE_COUNT - 1)
+
+	var shares := config.zone_shares()
+	var cumulative := 0.0
+	var seen := 0
+	var bucket := 0
+	var previous := lo
+	for z in ZONE_COUNT - 1:
+		cumulative += shares[z]
+		var want := int(round(cumulative * float(total)))
+		# The cursor never moves backwards, so the six thresholds come out of
+		# one pass over the histogram in order.
+		while bucket < ZONE_HISTOGRAM_BUCKETS - 1 and seen + counts[bucket] < want:
+			seen += counts[bucket]
+			bucket += 1
+		var altitude := lo + (float(bucket) + 0.5) / float(ZONE_HISTOGRAM_BUCKETS) * span
+		# Two tiny shares can land in the same bucket. Left equal, the zone
+		# between them would have zero area and the one above it would inherit
+		# its colour, which reads as a zone that simply does not exist.
+		zone_thresholds[z] = maxf(altitude, previous + 0.01)
+		previous = zone_thresholds[z]
 
 
 # --- The layered heightmap --------------------------------------------------
@@ -266,16 +356,11 @@ func is_solid_at(bx: int, by: int, bz: int) -> bool:
 
 ## Zone index for an altitude, given this column's jitter and dither values.
 func zone_at(altitude: float, jitter: float, dither: float) -> int:
-	var thresholds: Array[float] = [
-		config.meadow_max + jitter,
-		config.forest_max + jitter,
-		config.rock_max + jitter,
-	]
 	var blend := maxf(config.zone_blend_blocks, 0.001)
-	var zone := ZONE_MEADOW
-	for i in 3:
+	var zone := ZONE_SHORE
+	for i in zone_thresholds.size():
 		# 0 at the bottom of the blend band, 1 at the top.
-		var edge := (altitude - thresholds[i]) / blend + 0.5
+		var edge := (altitude - (zone_thresholds[i] + jitter)) / blend + 0.5
 		if edge <= 0.0:
 			break
 		if edge >= 1.0 or dither < edge:
@@ -283,6 +368,17 @@ func zone_at(altitude: float, jitter: float, dither: float) -> int:
 		else:
 			break
 	return zone
+
+
+## Altitude range of one zone, in blocks, before jitter.
+##
+## The bottom zone runs down to min_altitude and the top one up to
+## max_altitude; everything between is bounded by two resolved thresholds.
+func zone_band(zone: int) -> Vector2:
+	var lo: float = config.min_altitude if zone <= 0 else zone_thresholds[zone - 1]
+	var hi: float = config.max_altitude if zone >= zone_thresholds.size() \
+		else zone_thresholds[zone]
+	return Vector2(lo, hi)
 
 
 ## Zone of the surface at one block column.
@@ -501,8 +597,12 @@ func max_tree_height() -> int:
 ## Peaks in the MIDDLE of the forest band and tapers linearly to zero at both
 ## edges, so the treeline thins out instead of stopping dead along a contour.
 func tree_probability_at(surface: float, jitter: float) -> float:
-	var lo := config.meadow_max + jitter
-	var hi := config.forest_max + jitter
+	# The forest band is wherever Stage 7 put it this world, not a pair of
+	# altitudes in the config. Without this the treeline and the forest FLOOR
+	# would be two different bands, and trees would grow on grass.
+	var band := zone_band(ZONE_FOREST)
+	var lo := band.x + jitter
+	var hi := band.y + jitter
 	if surface <= lo or surface >= hi or hi <= lo:
 		return 0.0
 	var t := (surface - lo) / (hi - lo)
@@ -615,6 +715,9 @@ func block_for(depth: int, zone: int) -> int:
 	# want to see it.
 	if depth <= 1:
 		return ZONE_SURFACE[zone]
-	if zone <= ZONE_FOREST and depth < 5:
+	# Everything up to and including heath grows on soil; rock and snow are
+	# stone all the way down. A cliff face in the bare-rock zone with a brown
+	# stripe three blocks below its top reads as wrong from a long way off.
+	if zone <= ZONE_HEATH and depth < 5:
 		return Block.DIRT
 	return Block.STONE

@@ -178,13 +178,34 @@ const FOG_START_RATIO := 0.6
 
 # --- Elevation zones --------------------------------------------------------
 #
-# Altitudes in blocks. Each boundary is nudged by the zone_jitter layer, and
-# colours blend across zone_blend_blocks so the transition reads as a gradient
-# rather than a contour line on a map.
-
-@export var meadow_max := 75.0
-@export var forest_max := 140.0
-@export var rock_max := 195.0
+# SHARES OF MAP AREA, not altitudes, since terrain v2 Stage 7. Each boundary is
+# still nudged by the zone_jitter layer and colours still blend across
+# zone_blend_blocks, so a transition reads as a wobbling gradient rather than a
+# contour line on a map. Only the CENTRE of each boundary changed, from an
+# absolute altitude to a percentile of the world's own altitude histogram.
+#
+# WHY, and it is the most important structural change in terrain v2. Absolute
+# thresholds are silently coupled to every other terrain knob. Turning valley
+# flattening on at valley_curve 1.6 sent meadow from 56.7% of the map to 79.8%
+# and snow from 6.1% to 1.7% - the world had not become greener, it had become
+# LOWER, and low means meadow when meadow is defined as "below 75 blocks".
+# Every stage that reshapes the terrain would otherwise re-zone the world as a
+# side effect, and the re-zoning would look like the stage having gone wrong.
+#
+# As shares, the zoning is decoupled from world size, from valley_curve, from
+# the mountain amplitude, and from anything future. Stage 8 raises relief by
+# 2.6x and the seven shares must not move; if they do, this is what is wrong.
+#
+# The numbers below are the plan's. Meadow falls from 57% to 30%, which is the
+# direct answer to "too green and samey". They are normalised before use, so
+# they do not have to sum to exactly 1.
+@export var share_shore := 0.04
+@export var share_meadow := 0.30
+@export var share_forest := 0.26
+@export var share_alpine := 0.14
+@export var share_heath := 0.10
+@export var share_rock := 0.11
+@export var share_snow := 0.05
 
 ## Blocks over which two neighbouring zone colours cross-fade.
 @export var zone_blend_blocks := 6.0
@@ -314,7 +335,8 @@ const PROPERTIES: PackedStringArray = [
 	"zone_jitter_freq", "zone_jitter_blocks",
 	"base_altitude", "min_altitude", "max_altitude",
 	"warp_strength", "valley_curve",
-	"meadow_max", "forest_max", "rock_max", "zone_blend_blocks",
+	"share_shore", "share_meadow", "share_forest", "share_alpine",
+	"share_heath", "share_rock", "share_snow", "zone_blend_blocks",
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
@@ -440,6 +462,32 @@ static func load_or_default() -> WorldgenConfig:
 	# default and not merely the recommendation.
 	cfg.apply_view_preset()
 	return cfg
+
+
+## The seven zone shares, low to high, normalised to sum to 1.
+##
+## Normalised rather than validated, because these are hand-tuned numbers and
+## "your shares add up to 0.98, refusing to generate a world" is a worse
+## outcome than quietly scaling them. The ratios are what the design means; the
+## absolute values never mattered.
+func zone_shares() -> PackedFloat32Array:
+	var out := PackedFloat32Array([
+		maxf(share_shore, 0.0), maxf(share_meadow, 0.0), maxf(share_forest, 0.0),
+		maxf(share_alpine, 0.0), maxf(share_heath, 0.0), maxf(share_rock, 0.0),
+		maxf(share_snow, 0.0),
+	])
+	var total := 0.0
+	for v in out:
+		total += v
+	if total <= 0.0:
+		# Every share zeroed. Equal bands is a defensible world; a division by
+		# zero is a heightmap full of NaN and a black screen.
+		for i in out.size():
+			out[i] = 1.0 / float(out.size())
+		return out
+	for i in out.size():
+		out[i] = out[i] / total
+	return out
 
 
 ## Apply `--set name=value` arguments, in order, and report what changed.

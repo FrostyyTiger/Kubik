@@ -97,7 +97,8 @@ func _init() -> void:
 ## than like a bug. Shares are unequal on purpose: lowlands should dominate and
 ## snow should be the caps of the few highest summits, not a third of the map.
 func _print_zones(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
-	var counts := [0, 0, 0, 0]
+	var counts := PackedInt32Array()
+	counts.resize(TerrainGenerator.ZONE_COUNT)
 	# The real assignment, jitter and dither included, rather than the raw
 	# thresholds - so this reports what the world is actually made of and not
 	# what the config says it should be.
@@ -108,9 +109,19 @@ func _print_zones(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) 
 			var h := hm.cells[i + j * hm.cols]
 			counts[gen.surface_zone_at(bx, bz, h)] += 1
 	var n := float(hm.cols * hm.cols)
-	for i in 4:
-		print("zone %-9s %6.2f%%  (%d cells)" % [
-			TerrainGenerator.ZONE_NAMES[i], counts[i] / n * 100.0, counts[i]])
+	var shares := config.zone_shares()
+	var worst := 0.0
+	for i in TerrainGenerator.ZONE_COUNT:
+		var got := counts[i] / n * 100.0
+		var want := shares[i] * 100.0
+		worst = maxf(worst, absf(got - want))
+		print("zone %-9s %6.2f%%  (want %5.2f%%, %+5.2f)  %8d cells  above %.1f blk" % [
+			TerrainGenerator.ZONE_NAMES[i], got, want, got - want, counts[i],
+			config.min_altitude if i == 0 else gen.zone_thresholds[i - 1]])
+	# The acceptance number for Stage 7, on its own line. The point of that
+	# stage is that this stays small while everything else about the terrain
+	# changes underneath it.
+	print("zone error    worst %.2f percentage points off target" % worst)
 
 
 ## Reads `--seed N` from the user arguments, i.e. everything after a bare `--`.

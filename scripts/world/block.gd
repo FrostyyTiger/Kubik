@@ -15,6 +15,9 @@ enum {
 	FOREST_FLOOR = 6,
 	LEAVES = 7,
 	TRUNK = 8,
+	SHORE = 9,
+	ALPINE_GRASS = 10,
+	HEATH = 11,
 }
 
 ## The palette. These ARE the look of the game - there are no textures, so a
@@ -24,6 +27,13 @@ enum {
 ## reads as washed out at distance, and distance is what this world is for: the
 ## design is sold on telling a meadow from a forest from a snowfield across a
 ## valley, which is a question about colour separation, not realism.
+##
+## SEVEN ZONES, NOT FOUR, since terrain v2 Stage 7. The three added surfaces
+## exist to break up the green: the world was 57% meadow by area and read as
+## one colour with a treeline drawn on it. Low to high the surfaces now run
+## gravel, meadow, forest floor, short yellow alpine turf, rusty heath, bare
+## rock, snow - a progression that changes hue as well as value, so a slope
+## reads as bands at a distance rather than as a gradient.
 ##
 ## THE VALUES BELOW ARE LINEAR, and the hex code beside each is what it was
 ## authored as. Godot renders in linear space and treats a vertex colour as
@@ -45,11 +55,15 @@ const COLORS := [
 	Color(0.1022, 0.2623, 0.0452),   # FOREST_FLOOR #5A8C3C
 	Color(0.0762, 0.1946, 0.0319),   # LEAVES       #4E7A32  foliage
 	Color(0.1470, 0.0782, 0.0232),   # TRUNK        #6B4F2A
+	Color(0.5209, 0.4508, 0.2549),   # SHORE        #BFB48C  wet gravel
+	Color(0.3864, 0.4793, 0.1170),   # ALPINE_GRASS #A7B860  short yellow turf
+	Color(0.2623, 0.1144, 0.0704),   # HEATH        #8C5F4B  rusty dwarf shrub
 ]
 
 const NAMES := [
 	"air", "stone", "dirt", "grass", "sand", "snow",
 	"forest_floor", "leaves", "trunk",
+	"shore", "alpine_grass", "heath",
 ]
 
 
