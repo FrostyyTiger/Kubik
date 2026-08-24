@@ -200,14 +200,21 @@ func _test_tree_borders():
 
 				var wide := Chunk.new(Vector3i(cx, cy, cz))
 				gen.generate_into(wide)
-				var span := 6 * cfg.tree_canopy_max + Chunk.SIZE
+				# SIX TIMES the margin the world actually uses, so a tree the
+				# real scan missed lands in `wide` and shows up as a differing
+				# voxel. Derived from the species table, not from a config
+				# knob, for the same reason the real margin is: the widest
+				# crown is a property of the table and grows when it does.
+				var span := 6 * TreeSpecies.max_reach(cfg) + Chunk.SIZE
 				var c0x := Chunk.floor_div(cx * Chunk.SIZE - span, cfg.tree_cell_blocks)
 				var c1x := Chunk.floor_div(cx * Chunk.SIZE + span, cfg.tree_cell_blocks)
 				var c0z := Chunk.floor_div(cz * Chunk.SIZE - span, cfg.tree_cell_blocks)
 				var c1z := Chunk.floor_div(cz * Chunk.SIZE + span, cfg.tree_cell_blocks)
+				var writer := TreeSpecies.ChunkWriter.new()
+				writer.bind(wide)
 				for tz in range(c0z, c1z + 1):
 					for tx in range(c0x, c1x + 1):
-						gen._stamp_tree(wide, tx, tz)
+						TreePlacement.stamp_cell(writer, gen, tx, tz)
 
 				tested += 1
 				for i in Chunk.VOLUME:
@@ -215,8 +222,7 @@ func _test_tree_borders():
 						bad += 1
 						break
 				for i in Chunk.VOLUME:
-					var id := narrow.voxels[i]
-					if id == Block.LEAVES or id == Block.TRUNK:
+					if TreeSpecies.is_tree_block(narrow.voxels[i]):
 						tree_blocks += 1
 
 	print("tree borders: %d chunks, %d tree blocks, %d differed under a 6x margin" % [
