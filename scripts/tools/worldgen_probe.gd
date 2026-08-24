@@ -429,8 +429,23 @@ func _print_object_scale(hm: Heightmap, lakes: Lakes, config: WorldgenConfig) ->
 	# A tree's total height is its trunk plus the canopy standing above it. The
 	# canopy starts one block below the trunk top and is canopy_radius + 3
 	# layers tall, so the tip lands at trunk + canopy_radius + 1 blocks.
-	var tree_lo := float(config.tree_trunk_min + config.tree_canopy_min + 1) * bs
-	var tree_hi := float(config.tree_trunk_max + config.tree_canopy_max + 1) * bs
+	# The shortest and tallest CANOPY tree. Three species are deliberately left
+	# out, and which three is the whole point of the row: it exists to compare
+	# a tree against a real tree, so it has to be measuring trees. The hero is
+	# one per 300 x 300 m and would report the world as twice the size almost
+	# none of it is; a krummholz is a wind-flattened shrub 1.5 m tall and
+	# dragged the reported minimum down to a ratio of 1:5.7, which said the
+	# scale had drifted when nothing had moved; a snag is a dead trunk with no
+	# crown at all.
+	var tree_lo := INF
+	var tree_hi := 0.0
+	for i in TreeSpecies.table(config).size():
+		if i == TreeSpecies.HERO or i == TreeSpecies.KRUMMHOLZ \
+				or i == TreeSpecies.SNAG:
+			continue
+		var row: Dictionary = TreeSpecies.table(config)[i]
+		tree_lo = minf(tree_lo, float(row["height"].x) * bs)
+		tree_hi = maxf(tree_hi, float(row["height"].y) * bs)
 
 	var lake_w := _largest_lake_width_m(hm, lakes, config)
 	print("scale         player %.2f m, tree %.1f-%.1f m, lake %.0f m across (%.0f m span), relief %.0f m" % [

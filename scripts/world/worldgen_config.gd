@@ -75,8 +75,24 @@ const REAL_LAKE_MIN_M2 := 2560.0
 const REAL_LAKE_WIDTH_M := 400.0
 const REAL_PLAYER_HEIGHT_M := 1.75
 
-## How much of a tree is trunk. The rest is canopy, plus one block for the tip.
-const TREE_TRUNK_FRACTION := 0.65
+## The largest tree in the species table, and the sky the world must reserve
+## above the terrain for it - both in blocks, at tree_size_scale 1.
+##
+## RESTATED HERE RATHER THAN READ FROM TreeSpecies, deliberately. TreeSpecies
+## takes a WorldgenConfig in every signature, and having this file call back
+## into it makes the two mutually dependent for the sake of two integers. The
+## self-test asserts the two agree instead, which is the same guarantee without
+## the cycle - see "sky reserve" in selftest.gd.
+const REF_TREE_MAX_BLOCKS := 21.0
+const REF_MAX_TREE_BLOCKS := 42.0
+
+## Blocks of slack above the tallest tree. FLAT, NOT SCALED, and the self-test
+## is what found that out: a shape may round a layer upward by a block or two
+## whatever size it is being drawn at, so the slack is a property of the
+## rounding and not of the tree. Scaling it with everything else left the
+## reserve one block short at tree_size_scale 0.5 - which would have shown up
+## as heroes with flat tops, in some columns, on small-scale worlds only.
+const TREE_RESERVE_MARGIN := 3.0
 
 ## World footprint in blocks, centred on the origin: x and z run
 ## -world_blocks_xz/2 .. world_blocks_xz/2 - 1.
@@ -480,18 +496,23 @@ const FOG_START_RATIO := 0.6
 ## stopping dead.
 @export var tree_probability := 0.12
 
-## Tree size, in blocks.
+## Global multiplier on every species' height and crown radius.
 ##
-## The plan specifies a 3-5 block trunk and a 2-3 block canopy. At 0.5 m per
-## block that is a 2 m tree with a 1.5 m crown - the same height as the player,
-## which on screen reads as a shrub, and a "forested slope" of them reads as a
-## lawn. Those numbers were sized for 1 m blocks; the same plan sets blocks at
-## 0.5 m. Doubled here so a tree is 5-10 m, which is a small conifer, and a
-## forest looks like one. Recorded in STATUS.md as a departure.
-@export var tree_trunk_min := 8
-@export var tree_trunk_max := 14
-@export var tree_canopy_min := 4
-@export var tree_canopy_max := 6
+## REPLACED FOUR KNOBS IN FOLIAGE V1 STAGE 3, and the four are worth naming
+## because they were doing something this one is not: tree_trunk_min/max and
+## tree_canopy_min/max described ONE tree, because there was one. Seven species
+## cannot share four numbers - a krummholz is 3 blocks and a hero is 42 - so
+## the per-species sizes moved into the table in TreeSpecies where they can be
+## read next to each other, and what is left here is the only thing that
+## genuinely applies to all of them at once: how big trees are in general.
+##
+## A SHAPE KNOB, so it is in PROPERTIES. Two machines that disagreed about it
+## would grow different trees while the join handshake reported a match, which
+## is the exact failure the handshake exists to prevent.
+##
+## 1.0 means the table as authored, which is sized for world_scale 4 - see
+## apply_world_scale(), which sets this rather than leaving it at 1.
+@export var tree_size_scale := 1.0
 
 ## A basin smaller than this many coarse cells is a puddle, not a lake, and is
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
@@ -704,8 +725,7 @@ const PROPERTIES: PackedStringArray = [
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
 	"share_heath", "share_rock", "share_snow",
 	"zone_blend_blocks", "zone_dither_blocks",
-	"tree_cell_blocks", "tree_probability",
-	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
+	"tree_cell_blocks", "tree_probability", "tree_size_scale",
 	"spawn_water_m", "spawn_mountain_m", "spawn_max_slope_deg",
 	"spawn_center_fraction", "wildness_relief", "wildness_rock_deg",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth", "lake_min_depth",
@@ -843,21 +863,22 @@ func apply_world_scale() -> void:
 	max_altitude = REF_MAX_ALTITUDE * k
 	zone_jitter_blocks = REF_ZONE_JITTER_BLOCKS * k
 
+	# Trees. The species table is AUTHORED for world_scale 4: a spruce there is
+	# 13-21 blocks, which is exactly (26..42 m / 4) / 0.5 - the same derivation
+	# this used to run for the one species that existed. So the only thing left
+	# to derive is the ratio between what this scale asks for and what the
+	# table already is, and at world_scale 4 that ratio is 1.
+	var tree_hi := (REAL_TREE_HEIGHT_M.y / world_scale) / block_size
+	tree_size_scale = maxf(tree_hi / REF_TREE_MAX_BLOCKS, 0.05)
+
 	# The ceiling has to clear the highest possible summit plus the tallest
 	# possible tree standing on it, and land on a chunk boundary. Only chunks
 	# terrain passes through are built, so headroom is free.
-	var needed := max_altitude + float(tree_trunk_max + tree_canopy_max + 3) + 16.0
+	#
+	# AFTER the tree scale, not before: the tallest tree is a function of it.
+	var needed := max_altitude \
+		+ REF_MAX_TREE_BLOCKS * tree_size_scale + TREE_RESERVE_MARGIN + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
-
-	# Trees. Total height is trunk + canopy radius + 1 for the tip, and the
-	# split is TREE_TRUNK_FRACTION. At world_scale 4 this reproduces 8-14 and
-	# 4-6 exactly, which is the point: they were already right.
-	var tree_lo := int(round((REAL_TREE_HEIGHT_M.x / world_scale) / block_size))
-	var tree_hi := int(round((REAL_TREE_HEIGHT_M.y / world_scale) / block_size))
-	tree_trunk_min = maxi(int(round(float(tree_lo) * TREE_TRUNK_FRACTION)), 1)
-	tree_trunk_max = maxi(int(round(float(tree_hi) * TREE_TRUNK_FRACTION)), tree_trunk_min)
-	tree_canopy_min = maxi(tree_lo - tree_trunk_min - 1, 1)
-	tree_canopy_max = maxi(tree_hi - tree_trunk_max - 1, tree_canopy_min)
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a
 	# puddle. Cells are coarse_step blocks square.

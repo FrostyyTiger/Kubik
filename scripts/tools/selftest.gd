@@ -48,6 +48,8 @@ func _ready() -> void:
 		"facing": _test_facing,
 		"day cycle": _test_day_cycle,
 		"config contract": _test_config_contract,
+		"sky reserve": _test_sky_reserve,
+		"species borders": _test_species_borders,
 	}
 	var failures := 0
 	for name in tests:
@@ -172,9 +174,9 @@ func _test_winding():
 ## THE CHUNK BORDER TEST.
 ##
 ## A tree is rooted in one chunk and reaches into its neighbours, so every
-## chunk it touches has to draw its own share of it. TerrainGenerator does that
-## by iterating candidate cells over a region wider than the chunk by
-## tree_canopy_max. If that margin were too narrow, canopies would be sliced
+## chunk it touches has to draw its own share of it. TreePlacement does that by
+## iterating candidate cells over a region wider than the chunk by the widest
+## crown in the species table. If that margin were too narrow, canopies would be sliced
 ## off at chunk boundaries - and only sometimes, depending on which chunks
 ## happened to be loaded, which is the worst kind of bug to be handed.
 ##
@@ -231,6 +233,129 @@ func _test_tree_borders():
 		print("  WARNING: no tree blocks in the sample - this test proved nothing")
 		return 1
 	return 1 if bad > 0 else 0
+
+
+## EVERY SPECIES MUST SURVIVE BEING CUT UP BY CHUNK BOUNDARIES.
+##
+## _test_tree_borders proves the world's candidate scan is wide enough, but it
+## can only prove it for the species the world actually grows - which until
+## Stage 4 is spruce and nothing else. Six shapes would therefore reach Stage 4
+## having never been drawn across a boundary at all, and the ones most likely
+## to break are exactly the ones that write furthest from their root: a hero
+## with a 2 x 2 trunk and a crown of 8, a krummholz whose lean moves its whole
+## body one block sideways.
+##
+## THE TEST IS THE DEFINITION OF CORRECT, stated directly. Draw the tree once
+## into an unbounded buffer - the whole tree, clipped by nothing. Then draw it
+## again into each of the chunks around it, through the writer the world uses.
+## The union of the clipped copies must equal the unbounded one, block for
+## block, with nothing missing and nothing extra. That is precisely what "every
+## chunk draws its own share" means, so there is no gap between what is checked
+## and what is required.
+func _test_species_borders():
+	var cfg := WorldgenConfig.new()
+	var bad := 0
+	var checked := 0
+
+	for species in TreeSpecies.table(cfg).size():
+		# Rooted deliberately AWKWARDLY: one block inside a chunk corner, so
+		# the tree straddles boundaries on both axes at once and the biggest
+		# crowns reach three chunks out.
+		var root := Vector3i(15, 40, 15)
+		var params := TreeSpecies.params_for(species, 3, 5, 777, cfg)
+
+		var whole := {}   # Vector3i -> block id
+		var loose := LooseWriter.new()
+		loose.blocks = whole
+		TreeSpecies.draw(loose, species, root.x, root.y, root.z, params, cfg)
+		if whole.is_empty():
+			print("  %s drew nothing" % TreeSpecies.table(cfg)[species]["name"])
+			bad += 1
+			continue
+
+		# Every chunk the tree could possibly have reached, and two beyond.
+		var pieces := {}
+		var reach := TreeSpecies.max_reach(cfg) + 2
+		var lo := Chunk.world_to_chunk(root - Vector3i(reach, 2, reach))
+		var hi := Chunk.world_to_chunk(
+			root + Vector3i(reach, TreeSpecies.max_height(cfg) + 2, reach))
+		for cy in range(lo.y, hi.y + 1):
+			for cz in range(lo.z, hi.z + 1):
+				for cx in range(lo.x, hi.x + 1):
+					var chunk := Chunk.new(Vector3i(cx, cy, cz))
+					var writer := TreeSpecies.ChunkWriter.new()
+					writer.bind(chunk)
+					TreeSpecies.draw(writer, species, root.x, root.y, root.z,
+						params, cfg)
+					var origin := chunk.origin()
+					for i in Chunk.VOLUME:
+						if chunk.voxels[i] == Block.AIR:
+							continue
+						var ly := i / Chunk.SIZE_SQ
+						var rem := i % Chunk.SIZE_SQ
+						pieces[origin + Vector3i(
+							rem % Chunk.SIZE, ly, rem / Chunk.SIZE)] = chunk.voxels[i]
+
+		var missing := 0
+		var extra := 0
+		for pos in whole:
+			if not pieces.has(pos):
+				missing += 1
+		for pos in pieces:
+			if not whole.has(pos):
+				extra += 1
+		checked += 1
+		if missing > 0 or extra > 0:
+			print("  %s: %d blocks missing, %d extra, of %d" % [
+				TreeSpecies.table(cfg)[species]["name"], missing, extra,
+				whole.size()])
+			bad += 1
+
+	print("species borders: %d species stamped across chunk boundaries, %d wrong" % [
+		checked, bad])
+	return bad
+
+
+## A writer that clips to nothing, for the reference copy above.
+class LooseWriter extends RefCounted:
+	var blocks := {}
+
+	func set_block(bx: int, by: int, bz: int, id: int, only_air: bool) -> void:
+		var pos := Vector3i(bx, by, bz)
+		if only_air and blocks.has(pos):
+			return
+		blocks[pos] = id
+
+
+## THE SKY RESERVE MUST COVER THE TALLEST TREE THE TABLE CAN GROW.
+##
+## World builds only the chunks a column's terrain passes through, plus
+## max_tree_height() of empty sky above it. If a species is ever added that is
+## taller than WorldgenConfig's REF_MAX_TREE_BLOCKS, the world stops queueing
+## the chunk that species' crown needs - and the symptom is not an error. It is
+## a tree with a flat top, sometimes, in some columns, depending on where the
+## terrain happened to sit relative to a chunk ceiling.
+##
+## The two numbers live apart on purpose: WorldgenConfig sizing itself from
+## TreeSpecies, which takes a WorldgenConfig in every signature, would make the
+## two mutually dependent for the sake of an integer. This is the cheaper half
+## of that trade - the coupling is a test rather than an import, and the test
+## says exactly what breaks.
+func _test_sky_reserve():
+	var bad := 0
+	for scale in [0.5, 1.0, 1.7, 2.5]:
+		var cfg := WorldgenConfig.new()
+		cfg.tree_size_scale = scale
+		var needed := TreeSpecies.max_height(cfg)
+		var reserved := int(ceil(
+			WorldgenConfig.REF_MAX_TREE_BLOCKS * scale
+			+ WorldgenConfig.TREE_RESERVE_MARGIN))
+		if needed > reserved:
+			print("  scale %.2f: table needs %d blocks, config reserves %d" % [
+				scale, needed, reserved])
+			bad += 1
+	print("sky reserve: 4 scales checked, %d short" % bad)
+	return bad
 
 
 ## Same seed, same config, same chunks - byte for byte. This is the guarantee

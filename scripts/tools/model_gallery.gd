@@ -296,9 +296,13 @@ func _shoot() -> void:
 	await _settle()
 
 	# THE WIDE SHOT. Every species at every size in one frame, from the front
-	# and above, so the three rows read as three rows.
-	var span_x := float(_by_species.size() * BAY_BLOCKS) * _config.block_size
-	await _capture("gallery", _fit(0.0, span_x, _tallest(_specimens), 34.0), _look_at(0.0))
+	# and above, so the two rows read as two rows.
+	var box := _extent()
+	var all_h := _tallest(_specimens)
+	await _capture("gallery",
+		_fit(0.0, float(box.size.x) * _config.block_size, all_h,
+			float(box.size.y) * _config.block_size, 30.0, all_h),
+		_look_at(0.0, all_h))
 
 	# ONE CLOSE-UP PER SPECIES. Framed on that species' three sizes only, from
 	# nearer and lower, which is the view a shape is actually judged from - a
@@ -309,9 +313,14 @@ func _shoot() -> void:
 		for s in group:
 			cx += float(s["center"].x)
 		cx /= float(group.size())
-		var bay := float(BAY_BLOCKS) * _config.block_size
+		var h := _tallest(group)
+		# The three sizes of one species share a row, so there is no depth to
+		# allow for beyond the tree itself - unlike the wide shot, which has to
+		# fit both rows in. Passing the whole pad's depth here would push the
+		# camera back until the close-up stopped being close.
+		var bay := float(2 * SIZE_BLOCKS + 2 * PAD_MARGIN) * _config.block_size
 		await _capture("species-%s" % name,
-			_fit(cx, bay, _tallest(group), 14.0), _look_at(cx))
+			_fit(cx, bay, h, 6.0, 12.0, h), _look_at(cx, h))
 
 	print("[Gallery] done, %d images in %s" % [1 + _by_species.size(), _out_dir])
 	get_tree().quit()
@@ -324,11 +333,14 @@ func _tallest(group: Array) -> float:
 	return h
 
 
-func _look_at(cx: float) -> Vector3:
-	# Slightly below half height. Aiming at the middle of a tree puts a third
-	# of the frame under the pad; aiming a little low keeps the crown - which
-	# is the part being judged - in the upper half where it reads.
-	return Vector3(cx, float(GROUND) * _config.block_size + _tallest(_specimens) * 0.40, 0.0)
+## What the camera aims at: a little below the middle of the tallest thing in
+## frame.
+##
+## Aiming at the true middle puts a third of the picture under the pad. Aiming
+## low keeps the crown - which is the part being judged - in the upper half,
+## where it reads against the sky rather than against grass.
+func _look_at(cx: float, height_m: float) -> Vector3:
+	return Vector3(cx, float(GROUND) * _config.block_size + height_m * 0.40, 0.0)
 
 
 ## Where to stand so a box this size fills the frame.
@@ -340,24 +352,30 @@ func _look_at(cx: float) -> Vector3:
 ## the two images could not be compared with each other. Fitting the subject
 ## means the framing changes exactly when the subject does.
 ##
+## MEASURE THE SUBJECT, NOT THE LAYOUT CONSTANTS. The first version of this
+## multiplied the species count by the bay pitch, which was right until the
+## species wrapped into two rows - after which it claimed the pad was seventy
+## per cent wider than it is and shot the whole gallery from too far away.
+## Reading the extent the specimens actually landed in cannot drift like that.
+##
 ## Godot's `fov` is the VERTICAL angle, so the horizontal one has to be
 ## recovered through the aspect ratio - getting that backwards crops the sides
 ## on a wide window, which is every window here.
-func _fit(cx: float, width_m: float, height_m: float, pitch_deg: float) -> Vector3:
+func _fit(cx: float, width_m: float, height_m: float, depth_m: float,
+		pitch_deg: float, look_height_m: float) -> Vector3:
 	var aspect := float(get_viewport().get_visible_rect().size.aspect())
 	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
 	var tan_h := tan_v * aspect
-	# The rows recede as well as spread, so the depth of the pad counts towards
-	# what has to fit vertically once the camera is tilted down onto it.
-	var depth_m := float(_extent().size.y) * _config.block_size
 	var need_h := (width_m * 0.5) / maxf(tan_h, 0.001)
-	var need_v := (height_m * 0.5 + depth_m * 0.25) / maxf(tan_v, 0.001)
-	# 1.15 leaves a margin of sky and pad around the subject. Without it the
+	# Rows recede as well as spread, so the pad's depth counts towards what has
+	# to fit vertically once the camera is tilted down onto it.
+	var need_v := (height_m * 0.5 + depth_m * 0.30) / maxf(tan_v, 0.001)
+	# 1.12 leaves a margin of sky and pad around the subject. Without it the
 	# outermost crown touches the frame edge and the shot reads as cropped.
-	var dist := maxf(maxf(need_h, need_v), 8.0) * 1.15
+	var dist := maxf(maxf(need_h, need_v), 8.0) * 1.12
 	var pitch := deg_to_rad(pitch_deg)
-	var target := _look_at(cx)
-	return target + Vector3(0.0, sin(pitch), -cos(pitch)) * dist
+	return _look_at(cx, look_height_m) \
+		+ Vector3(0.0, sin(pitch), -cos(pitch)) * dist
 
 
 func _settle() -> void:
