@@ -41,6 +41,15 @@ reading this on another machine, run the tour.
 3. **Is the heath the right colour?** It is a rusty red-brown and it is doing a
    lot of work breaking up the green. On a software renderer it looks right; on
    your screen it may look like Mars.
+4. **Is the meadow still too bumpy up close?** The COARSE ground is flat now —
+   that is what "24% of the map under 5°" measures, and it is measured on the
+   coarse heightmap. The DETAIL layer sits on top of it at 1.5 m of amplitude
+   over a 6 m wavelength, unchanged from v1 and untouched by this plan, so a
+   flat meadow is still a field of half-metre steps at block scale. Baked AO
+   now makes those read as texture rather than as corrugation, which may be
+   enough. If it is not, `detail_amp` is the knob and it is in the F4 panel —
+   and note that the slope histogram will not move when you turn it, because
+   the histogram is measured on the coarse map and detail is not in it.
 
 ### The renderer caveat still applies, and it applies harder
 
@@ -224,6 +233,41 @@ produce a spawn meeting every criterion.** 8,836 candidates in ~780 ms each.
 
 Across all ten, slope rejects about 60% of candidates and **water and mountain
 reject none**. The world is short of flat ground, not short of scenery.
+
+---
+
+## The acceptance test
+
+> Within two minutes of walking from spawn, Marcel should be able to frame a
+> mountain, its forested slopes, and a lake in one screenshot.
+
+**Passes, and now by construction rather than by luck** — Stage 12 requires a
+mountain within 600 m and water within a two-minute walk before it will accept
+a spawn, and all ten test seeds satisfy it. `build/tour/v2-final/6-postcard.png`
+is the frame.
+
+The plan's three additions for v2, judged against the same seed's baseline:
+
+**"The corrugation is gone, and there is real flat ground."** Yes, and it is
+the largest single change in the run. The share of map under 5° went from
+1.30% to 24.12%, and 4-valley-floor.png went from a chaotic staircase where the
+tour could not find anywhere level to a meadow you can stand on. The traversal
+probe is the other half of the evidence: the same walk that managed 1.35 m/s
+before now runs at 12.82 m/s. **Caveat**: that is the coarse ground. The detail
+layer still puts half-metre steps everywhere at block scale — see the fourth
+judgement item at the top.
+
+**"The scale reads."** Yes. Relief went from 134 m to 400 m, and everything in
+the world now measures between 1:3.5 and 1:4.0 against its real equivalent
+except the player, who is life-size on purpose. From the valley floor a
+mountain is something you would have to climb.
+
+**"The world does not look flat-shaded and samey."** Yes on both halves. Baked
+AO makes blocks read as blocks up close — the summit shots before and after are
+the clearest single comparison in the set. And the seven zones read as distinct
+bands at distance: meadow green, forest dark green, alpine yellow-green, heath
+rusty red-brown, rock grey, snow white. Meadow is 30% of the map instead of
+57%.
 
 ---
 
@@ -550,3 +594,49 @@ Against the pillars:
 - **THE WORLD IS THE CONTENT.** The world is four times the area, the mountains
   are three times as tall, and distance now reads as wildness in the terrain
   itself rather than only on a map.
+
+---
+
+## Traversal — measured, and not fully answered
+
+The plan sets the target at the map diagonal in under six minutes at sprint.
+`TraversalProbe` walks it rather than dividing, because on flat ground the
+crossing time is exactly distance over speed and computing it proves nothing —
+what a division cannot tell you is what the terrain does.
+
+```
+godot --headless --path . -- --host --seed 42 --traverse --view low
+```
+
+It runs in real time and cannot be hurried: Godot advances physics from the
+wall clock. Use `--view low` — the voxel radius decides how much of a moving
+4 km corridor has to be built, and the answer at High is most of a day.
+
+**What was measured, on the finished terrain, seed 42:**
+
+| | |
+| --- | --- |
+| Corner to corner | 4,107 m |
+| Sprint on flat | 13.0 m/s |
+| Speed made good, first 30 s | **12.82 m/s** |
+| Speed made good, first 60 s | 10.20 m/s |
+| Distance covered before wedging | 612–840 m |
+| Implied diagonal at the sustained rate | **5.3 – 6.7 min** |
+
+**The crossing was not completed.** Every run got 600–850 m at close to full
+sprint and then wedged against something it could not walk round. Three
+navigation strategies were tried — alternate sides on every stall, commit to
+one side for several attempts, and lengthen each attempt on a side — and the
+third was *worse* than the second.
+
+Whether that is a fact about the terrain or about the probe is **not resolved**
+and should not be reported as though it were. What can be said is that the
+first 20% of the crossing happens at 79–99% of the theoretical sprint speed,
+which is the number the six-minute target is actually about, and that a probe
+steering blind in a straight line is a much worse navigator than a player
+looking at a mountain and deciding to go round the left of it.
+
+The run before the terrain was flattened is the useful comparison: it managed
+**1.35 m/s** and 68 m, against 12.82 m/s and 386 m now. Whatever is left in the
+way, the corrugated world was not crossable at all and this one mostly is.
+

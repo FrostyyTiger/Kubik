@@ -41,7 +41,7 @@ const REPORT_EVERY := 30.0
 ## Walking into a cliff face forever otherwise looks exactly like a slow
 ## crossing right up until the timeout.
 const STUCK_GAIN_M := 5.0
-const STUCK_WINDOW := 90.0
+const STUCK_WINDOW := 150.0
 
 ## How far below the local ground counts as having fallen out of the world.
 ##
@@ -192,7 +192,14 @@ func _physics_process(delta: float) -> void:
 		if _detour_tries > DETOUR_TRIES_PER_SIDE:
 			_detour_sign = -_detour_sign
 			_detour_tries = 0
-		_detour_until = _elapsed + DETOUR_SECONDS
+		# AND EACH ATTEMPT ON A SIDE IS LONGER THAN THE LAST. A fixed four
+		# seconds is 50 m of sprint, which clears a boulder and does not clear
+		# a mountain flank - the run before this one made 840 m at near full
+		# speed and then spent 84 seconds taking 27 four-second detours around
+		# something several hundred metres wide. Lengthening means the first
+		# attempts stay cheap and a genuine obstacle eventually gets walked
+		# round rather than nibbled at.
+		_detour_until = _elapsed + DETOUR_SECONDS * float(_detour_tries + 1)
 		_detours += 1
 		_stall_at = _elapsed
 
