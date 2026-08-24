@@ -169,17 +169,27 @@ in worldgen is either invisible from inside the game or only obvious once you
 already know what you are looking at.
 
 ```
-# Self-tests: mesher winding, tree chunk borders, determinism, day cycle,
-# and the config half of the join handshake. Exits non-zero on failure.
-godot --headless --path . --script scripts/tools/selftest.gd
+# Self-tests: mesher winding (with and without baked AO), the AO cost in
+# quads and ms, tree chunk borders, determinism, edits landing in a chunk
+# that is still generating, the day cycle, and the config half of the join
+# handshake. Exits non-zero on failure.
+#
+# A SCENE, not --script. --script replaces the main loop and Godot only
+# creates autoloads for a real one, so World - which names the Net autoload -
+# cannot even be compiled under it.
+godot --headless --path . scenes/selftest.tscn
 
-# What a given seed actually produced: altitude spread, zone shares,
-# lake count and areas, tree count, and a hash of every altitude.
+# What a given seed actually produced: altitude spread and percentiles,
+# per-layer and measured slope, the share of map under 5 and 10 degrees,
+# zone shares, lakes, trees, object scale against real-world sizes, and a
+# hash of every altitude.
 godot --headless --path . --script scripts/tools/worldgen_probe.gd -- --seed 42
 
 # Six screenshots - summit, forest, valley, lake, and a postcard framing
-# a mountain, its forest and a lake together. Writes to build/tour/.
-godot --path . -- --tour --seed 42
+# a mountain, its forest and a lake together. Writes to build/tour/, or to
+# build/tour/<label>/ with --label, so before and after sets can sit side
+# by side and be compared.
+godot --path . -- --tour --seed 42 --label some-name
 ```
 
 Run the probe twice with the same seed and every line must match. Run it on the

@@ -1,24 +1,65 @@
-extends SceneTree
+extends Node
 
 ## Worldgen and mesher self-tests, offline.
 ##
-##     godot --headless --path . --script scripts/tools/selftest.gd
+##     godot --headless --path . scenes/selftest.tscn
 ##
 ## Everything here checks something that is either invisible from inside the
 ## game, or only visible once you already know what you are looking at.
 ## Exits non-zero on failure, so CI can run it.
+##
+##
+## WHY THIS IS A SCENE AND NOT `--script`, AS IT WAS UNTIL TERRAIN V2 STAGE 3
+##
+## `--script` replaces the main loop, and Godot only creates AUTOLOADS for a
+## real one. World names the Net autoload directly in its edit path, so under
+## `--script` world.gd fails to compile with "Identifier not found: Net" - and
+## the symptom is not that error but a later, much stranger one:
+## `World.new()` reporting that GDScript has no function called new().
+##
+## That mattered the moment there was a test of the edit path to write. The
+## alternatives were to reach around Net from worldgen, or to test a
+## reimplementation of the ordering rather than the ordering itself. Running
+## the suite in the same environment the game runs in is the honest fix, and it
+## costs one scene file and a different command line.
+##
+## Engine.register_singleton() is NOT a way around this. It fills a different
+## table from the one the GDScript compiler resolves autoload names against.
 
-func _init() -> void:
+func _ready() -> void:
+	# Called through a list, and each result type-checked, because a runtime
+	# error inside a test does NOT stop the run - and worse, it does not report
+	# one either. GDScript aborts the failing function and returns the DEFAULT
+	# VALUE OF ITS DECLARED RETURN TYPE, so a test declared `-> int` that
+	# crashes on its second line comes back as 0, which is this file's code for
+	# "passed". The Stage 3 test did exactly that and the run printed
+	# "all passed" twice before it was noticed.
+	#
+	# Hence the tests below are deliberately UNTYPED. An aborted untyped
+	# function returns null, which is a value no test ever returns on purpose,
+	# and that is the difference between a crash being visible and being
+	# indistinguishable from success.
+	var tests := {
+		"winding": _test_winding,
+		"ao cost": _measure_ao_cost,
+		"tree borders": _test_tree_borders,
+		"chunk determinism": _test_chunk_determinism,
+		"edit during generation": _test_edit_during_generation,
+		"day cycle": _test_day_cycle,
+		"config contract": _test_config_contract,
+	}
 	var failures := 0
-	failures += _test_winding()
-	failures += _measure_ao_cost()
-	failures += _test_tree_borders()
-	failures += _test_chunk_determinism()
-	failures += _test_day_cycle()
-	failures += _test_config_contract()
+	for name in tests:
+		var result = (tests[name] as Callable).call()
+		if not (result is int):
+			print("  %s DID NOT COMPLETE - it returned %s, so it crashed" % [
+				name, type_string(typeof(result))])
+			failures += 1
+			continue
+		failures += result
 	print("")
 	print("SELFTEST: %s" % ("all passed" if failures == 0 else "%d FAILED" % failures))
-	quit(1 if failures > 0 else 0)
+	get_tree().quit(1 if failures > 0 else 0)
 
 
 ## WINDING. Every triangle must satisfy
@@ -34,7 +75,7 @@ func _init() -> void:
 ## runs, and the worst case for merging. This test earned its keep immediately:
 ## it caught a fresh Chunk defaulting has_air to false, which made the mesher
 ## treat a hand-built chunk as solid throughout and skip all its interior faces.
-func _test_winding() -> int:
+func _test_winding():
 	var bad := 0
 	var checked := 0
 	var quads := 0
@@ -131,7 +172,7 @@ func _test_winding() -> int:
 ## nothing, leaves are only drawn over air - so if the normal margin is wide
 ## enough the two chunks are identical byte for byte. If it is too narrow, the
 ## wide pass finds blocks the normal one missed.
-func _test_tree_borders() -> int:
+func _test_tree_borders():
 	var cfg := WorldgenConfig.new()
 	var gen := TerrainGenerator.new(4242, cfg)
 	gen.build_heightmap()
@@ -177,7 +218,7 @@ func _test_tree_borders() -> int:
 
 ## Same seed, same config, same chunks - byte for byte. This is the guarantee
 ## the whole terrain-is-never-sent contract rests on.
-func _test_chunk_determinism() -> int:
+func _test_chunk_determinism():
 	var cfg := WorldgenConfig.new()
 	var hashes := []
 	for run in 2:
@@ -204,7 +245,7 @@ func _test_chunk_determinism() -> int:
 ## What would actually break: a NaN from normalising a zero vector, the sun
 ## never rising, or fog and sky disagreeing at the horizon, which reads as a
 ## grey wall standing in front of the view.
-func _test_day_cycle() -> int:
+func _test_day_cycle():
 	var bad := 0
 	var highest := -2.0
 	var lowest := 2.0
@@ -266,7 +307,7 @@ func _test_day_cycle() -> int:
 ##   3. and a config that made the round trip must generate the SAME WORLD,
 ##      byte for byte, as the one it was copied from. That is the property a
 ##      joining client depends on and the other two only imply.
-func _test_config_contract() -> int:
+func _test_config_contract():
 	var bad := 0
 
 	var host_config := WorldgenConfig.new()
@@ -318,7 +359,7 @@ func _heightmap_hash(world_seed: int, cfg: WorldgenConfig) -> String:
 ##
 ## Not a test: it prints and always passes. There is no threshold to assert
 ## against that would not be a number invented on the spot.
-func _measure_ao_cost() -> int:
+func _measure_ao_cost():
 	var cfg := WorldgenConfig.new()
 	var gen := TerrainGenerator.new(31337, cfg)
 	gen.build_heightmap()
@@ -364,3 +405,95 @@ func _measure_ao_cost() -> int:
 		off["ms"], on["ms"],
 		(on["ms"] / maxf(off["ms"], 0.001) - 1.0) * 100.0])
 	return 0
+
+
+## THE STAGE 3 HAZARD, MADE INTO A TEST.
+##
+## Generation moved to worker threads, so between the moment a chunk is
+## submitted and the moment it comes back there is a window in which the chunk
+## DOES NOT EXIST. An edit arriving in that window has no voxels to be written
+## into. v1's STATUS.md flagged this as the reason generation had not been
+## threaded yet, and it is the kind of bug that would show up as "sometimes the
+## block I broke comes back" - intermittent, timing-dependent, and dependent on
+## how busy the worker pool happened to be, so effectively unreproducible.
+##
+## Three things have to hold, and all three are checked here:
+##
+##   1. the host ACCEPTS an edit into a chunk that is still generating. If
+##      validation only accepted loaded chunks, the edit would be dropped on
+##      the floor with no error anywhere.
+##   2. the edit SURVIVES generation. The worker overwrites every voxel in the
+##      chunk, so an edit applied before it finished would be wiped; it has to
+##      be replayed after.
+##   3. an edit into a chunk that is neither loaded nor pending is still
+##      REFUSED. Otherwise "accept pending chunks" would have quietly become
+##      "accept everything", and a client could edit the far side of the world.
+func _test_edit_during_generation():
+	var bad := 0
+
+	# A deliberately tiny world: this test is about ordering, not about scale,
+	# and a 3 km heightmap would cost seconds to prove a property that does not
+	# depend on it.
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.voxel_radius_chunks = 2
+
+	var world := World.new()
+	world.setup(1234, cfg)
+
+	# A block that is solid in the unedited world, so changing it is visible.
+	var surface := int(floor(world.generator.surface_at(0.0, 0.0)))
+	var block_pos := Vector3i(0, surface, 0)
+	var cpos := Chunk.world_to_chunk(block_pos)
+
+	if world.has_chunk(cpos):
+		print("  the chunk existed before generation was submitted")
+		bad += 1
+
+	# 3. Nothing is loaded and nothing is pending yet, so this must be refused.
+	if world._validate_edit(1, block_pos, Block.SNOW):
+		print("  an edit was accepted into a chunk that is neither loaded nor pending")
+		bad += 1
+
+	# Now put exactly that chunk out at the worker pool and leave it there.
+	world._submit_generation(cpos)
+
+	# 1. Still no voxels, but the chunk is coming, so the host must accept.
+	if not world._validate_edit(1, block_pos, Block.SNOW):
+		print("  an edit was REFUSED into a chunk that is still generating")
+		bad += 1
+
+	# The client path, which is the one that needs no network to exercise:
+	# record the edit, and discover there is nothing to apply it to yet.
+	world._cl_apply_block(block_pos, Block.SNOW)
+	if world.get_block(block_pos) != Block.AIR:
+		print("  a chunk with no voxels answered get_block with something")
+		bad += 1
+
+	# Let the job finish and be collected, exactly as _process would.
+	# With a delay, because the spin without one is over in microseconds and
+	# the worker has not necessarily even been scheduled by then - which looks
+	# exactly like the chunk never arriving.
+	var spins := 0
+	while not world.has_chunk(cpos) and spins < 5000:
+		world._collect_finished(Time.get_ticks_msec())
+		OS.delay_msec(1)
+		spins += 1
+	if not world.has_chunk(cpos):
+		print("  the chunk never arrived")
+		bad += 1
+
+	# 2. The worker wrote every voxel in the chunk. The edit has to have been
+	# replayed over the top of it.
+	var got := world.get_block(block_pos)
+	if got != Block.SNOW:
+		print("  the edit did not survive generation: got %s, wanted snow" % Block.name_of(got))
+		bad += 1
+
+	world._drain_jobs()
+	if world._far_field != null:
+		world._far_field.drain()
+	world.free()
+
+	print("edit during generation: %d checks failed" % bad)
+	return 1 if bad > 0 else 0

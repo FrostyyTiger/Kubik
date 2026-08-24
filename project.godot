@@ -28,3 +28,17 @@ Net="*res://scripts/net/net_manager.gd"
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+
+[threading]
+
+; Chunk generation and chunk meshing both run as LOW priority worker tasks, and
+; Godot gives the low-priority pool only 30% of its threads by default. On a
+; 6-core box that is one or two threads for the entire world build, which is
+; why threading generation in terrain v2 Stage 3 cut main-thread cost by 90%
+; and made WALL time worse: the two phases had started competing for the same
+; two threads that meshing alone used to have.
+;
+; 0.75 leaves a quarter of the pool for whatever else wants it while giving the
+; world build most of the machine, which is the right split for a game whose
+; startup cost is dominated by exactly this work.
+worker_pool/low_priority_thread_ratio=0.75
