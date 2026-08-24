@@ -1,7 +1,12 @@
 # Terrain v1 — run status
 
-Unattended run of `docs/plans/terrain-v1.md`, 2026-08-23, branch
-`feat/terrain-v1`. All twelve stages completed and committed.
+Unattended run of `docs/plans/terrain-v1.md`, 2026-08-23. All twelve stages
+completed, committed one per stage on `feat/terrain-v1`, and **merged to `main`
+on 2026-08-24**.
+
+The merge also brought in `af2a6fe` (the character identity model), which landed
+on `main` while this run was in progress. Nothing in it conflicts with terrain
+v1 — see "Where this run meets the new design" below.
 
 ---
 
@@ -10,6 +15,7 @@ Unattended run of `docs/plans/terrain-v1.md`, 2026-08-23, branch
 **The plan is done.** Launch it and walk out of spawn:
 
 ```
+git checkout main && git pull
 godot --path . -- --host
 ```
 
@@ -34,6 +40,26 @@ Three things want your judgement, in order:
    consequence of the fallback terrain shape, and the two unimplemented
    exercises below are exactly what changes it.
 3. Is a ~8 s world load acceptable? If not, the fix is known and costed below.
+
+---
+
+## Where this run meets the new design
+
+`docs/DESIGN.md` gained a character identity model during the run. Checked
+against what was built, and it lines up:
+
+- **"at 4 terrain blocks (2 m) tall"** — the player capsule is exactly that,
+  2.0 m with a 0.4 m radius.
+- **"the chunk mesher is not the character mesher. Two systems, not one."** —
+  agreed and untouched. Terrain v1 built only the chunk mesher.
+- **Camera** — third person, orbit, collides with terrain, noclip behind a debug
+  key. Built as specified.
+
+The one gap to be explicit about: **the player is still a plain capsule.** The
+modular voxel character, races as part sets, and visible gear are all
+unimplemented, and were never in this plan's scope. That section also carries
+its own warning that the 24–32 voxel target is unconfirmed, so nothing here has
+been built on it.
 
 ---
 
@@ -262,9 +288,11 @@ Then, whichever you feel first:
   deliberately **not** re-ordered the Next 3 — that list is meant to be filled by
   what a playtest teaches you, and you have not played this yet.
 
-`docs/IDEAS.md` and `docs/DESIGN.md` still describe terrain v1 as upcoming and
-point at the wrong path for the plan. Worth a tidy once you have decided whether
-the result stands.
+`docs/IDEAS.md` still lists terrain v1 as Next 3 item 1, and both it and
+`docs/DESIGN.md` point at `plans/terrain-v1.md` when the file is at
+`docs/plans/terrain-v1.md`. Worth a tidy once you have decided whether the
+result stands — I left the Next 3 alone deliberately, since that list is meant
+to be reordered by what a playtest teaches you.
 
 ---
 
