@@ -179,8 +179,22 @@ func _print_lakes(lakes: Lakes, hm: Heightmap) -> void:
 ## Every candidate cell in the world, counted. Slower than sampling but it is
 ## the number that has to match between two machines, so it is the number worth
 ## printing.
+## How many trees the world grows, and of what.
+##
+## THE TOTAL WAS THE ONLY NUMBER UNTIL FOLIAGE V1, and one number cannot answer
+## the question that plan is judged on. "35,000 trees" is equally true of a
+## world that is one species everywhere and of one where larch replaces spruce
+## as you climb - and the second is the whole point of having seven of them. A
+## species that never occurs, or that occurs 40 times in three million
+## candidates, is a tuning bug that a total hides completely.
 func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
 	var started := Time.get_ticks_msec()
+	var names := PackedStringArray()
+	for row in TreeSpecies.gallery_rows(config):
+		names.append(row["name"])
+	var per_species := PackedInt32Array()
+	per_species.resize(names.size())
+
 	var trees := 0
 	var step: int = config.tree_cell_blocks
 	var lo := -int(config.world_blocks_xz / 2)
@@ -198,8 +212,86 @@ func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) 
 				continue
 			if WorldHash.hash01(cx, cz, gen.world_seed, TerrainGenerator.SALT_TREE) < chance:
 				trees += 1
+				var species := _species_at(gen, cx, cz, surface, config)
+				if species >= 0 and species < per_species.size():
+					per_species[species] += 1
 	print("trees         %d in the whole world (%d ms)" % [
 		trees, Time.get_ticks_msec() - started])
+	for s in names.size():
+		# Printed even at zero, and deliberately: a species missing from the
+		# list reads as "not implemented yet", a species listed at 0 reads as
+		# "implemented and never chosen", and those are different bugs.
+		print("  %-11s %7d  %5.1f%%" % [names[s], per_species[s],
+			100.0 * float(per_species[s]) / float(maxi(trees, 1))])
+	_print_glades(gen, hm, config)
+	_print_flora(gen, hm, config)
+
+
+## Which species stands at an accepted candidate.
+##
+## Stage 4 replaces the body with a call into TreePlacement's weight table.
+## Until then there is one species and the answer is trivially it - which is
+## still worth going through this function for, so that the day the table
+## arrives the probe reports it without being edited again.
+func _species_at(_gen: TerrainGenerator, _cell_x: int, _cell_z: int,
+		_surface: float, _config: WorldgenConfig) -> int:
+	return TreeSpecies.SPRUCE
+
+
+## How much of the forest band is CLEARING rather than trees.
+##
+## The glade mask is what stops a forest from being a solid block of canopy
+## with no floor visible anywhere, and it is the one placement term whose
+## effect is invisible in a tree count: glades move trees around rather than
+## removing them, so the total barely shifts while the world changes
+## completely. This is the number that says whether they are happening.
+func _print_glades(gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfig) -> void:
+	if not gen.has_method("glade_at"):
+		print("glades        not yet - the glade mask arrives in Stage 4")
+		return
+	var step := 8
+	var lo := -int(_config.world_blocks_xz / 2)
+	var hi := int(_config.world_blocks_xz / 2)
+	var forest := 0
+	var glade := 0
+	for bz in range(lo, hi, step):
+		for bx in range(lo, hi, step):
+			var surface := gen.surface_at(float(bx), float(bz))
+			if gen.surface_zone_at(bx, bz, surface) != TerrainGenerator.ZONE_FOREST:
+				continue
+			forest += 1
+			if gen.call("glade_at", float(bx), float(bz)) <= 0.0:
+				glade += 1
+	print("glades        %.1f%% of the forest band, sampled every %d blocks" % [
+		100.0 * float(glade) / float(maxi(forest, 1)), step])
+
+
+## Ground cover, per zone.
+##
+## SAMPLED AND SCALED, AND THE LINE SAYS SO. Every block column in a 3 km world
+## is nine million placement evaluations and this tool is run twice per stage;
+## a stride of 16 is 35,000 of them and answers the question the number is
+## actually asked - "does heath have shrubs on it" - to well inside the
+## precision anyone reads it at. A scaled estimate labelled as one is honest.
+## An exact count nobody waits for is not available.
+func _print_flora(_gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfig) -> void:
+	if not ResourceLoader.exists("res://scripts/world/flora/flora_placement.gd"):
+		print("flora         not yet - the decoration layer arrives in Stage 5")
+		return
+	var script := load("res://scripts/world/flora/flora_placement.gd")
+	if not script.has_method("probe_counts"):
+		print("flora         placement exists but reports nothing")
+		return
+	var stride := 16
+	var report: Dictionary = script.probe_counts(_gen, _config, stride)
+	print("flora         %d instances estimated, sampled every %d blocks and scaled" % [
+		int(report.get("total", 0)), stride])
+	for zone in TerrainGenerator.ZONE_NAMES:
+		var n: int = int(report.get(zone, 0))
+		print("  %-11s %9d" % [zone, n])
+	if report.has("build_ms"):
+		print("flora build   %.2f ms per column, %d columns sampled" % [
+			float(report["build_ms"]), int(report.get("columns", 0))])
 
 
 # --- Terrain v2 Stage 1: the instruments ------------------------------------

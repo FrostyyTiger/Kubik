@@ -1,7 +1,7 @@
 class_name ScreenshotTour
 extends Node
 
-## Drives the camera to six vantage points, photographs each, and quits.
+## Drives the camera to eleven vantage points, photographs each, and quits.
 ##
 ##     godot --path . -- --tour --seed 42
 ##
@@ -11,8 +11,15 @@ extends Node
 ## WHAT IT IS FOR. Terrain is judged by looking at it, and the whole of this
 ## project runs on a headless box over SSH. Six pictures in build/tour/ turn
 ## "the numbers look plausible" into something you can actually disagree with
-## over breakfast. The last shot is the acceptance test itself: a mountain, its
-## forested slopes and a lake in one frame.
+## over breakfast. Shot 6 is terrain v2's acceptance test - a mountain, its
+## forested slopes and a lake in one frame - and shot 11 is foliage v1's:
+## standing inside the forest at dusk.
+##
+## SHOTS 1-6 ARE ABOUT TERRAIN AND 7-11 ARE ABOUT WHAT GROWS ON IT, and they
+## are composed completely differently on purpose. The first six stand well
+## back and photograph shape. The last five stand IN the world at eye height,
+## because trunk spacing, undergrowth and a treeline do not exist at 80 m -
+## from there a forest is a green patch, dense or sparse alike.
 ##
 ## The vantage points are DERIVED FROM THE WORLD, not hardcoded - it scans the
 ## heightmap for the highest summit, the steepest forested slope, the biggest
@@ -93,12 +100,36 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 		await _capture(i, shots[i])
 
 	print("[Tour] done, %d images in %s" % [shots.size(), _out_dir])
+	await _shutdown()
+
+
+## Put the world down before ending the main loop.
+##
+## A TOUR THAT NEVER EXITS IS WORSE THAN A TOUR THAT NEVER RUNS, and this box
+## has produced one: a completed run was found still burning three and a half
+## cores seven hours after it wrote its last image. Nothing downstream noticed,
+## because every photograph it was asked for was on disk - it had simply not
+## returned, and the next thing to want the machine got a third of it.
+##
+## World holds chunk generation and meshing jobs on the WorkerThreadPool and
+## drains them in _exit_tree(). Relying on that means relying on the order the
+## engine tears a scene down in while a real renderer is also shutting down.
+## Draining first, explicitly, while the tree is still alive and a frame can
+## still be processed, costs a few milliseconds and takes the ordering question
+## off the table.
+##
+## If a tour still hangs after this, the drain is where it is hanging, which is
+## a far more useful thing to know than "it did not come back".
+func _shutdown() -> void:
+	if _world != null and is_instance_valid(_world):
+		_world.reset()
+	await get_tree().process_frame
 	get_tree().quit()
 
 
 # --- Choosing where to stand ------------------------------------------------
 
-## Six vantage points, found by reading the world rather than by guessing.
+## Eleven vantage points, found by reading the world rather than by guessing.
 func _choose_vantages() -> Array:
 	var hm := _world.generator.heightmap
 	var cfg := _world.config
@@ -151,7 +182,81 @@ func _choose_vantages() -> Array:
 		"eye_cell": postcard["eye"],
 		"distance": 0.0, "height": 15.0,
 	})
+
+	# --- Foliage v1 Stage 1: four vantage points about what grows -----------
+	#
+	# The six above photograph TERRAIN, from far enough back to see its shape.
+	# Not one of them is taken from inside anything, and a forest judged from
+	# 80 m away is judged as a green patch on a hillside. The four below stand
+	# in the world at eye height instead, because that is where undergrowth,
+	# trunk spacing and a treeline actually read - and because the acceptance
+	# test for this plan is a sentence about standing inside a forest.
+	shots.append_array(_foliage_vantages(hm, gen, cfg))
 	return shots
+
+
+## Eye-height vantages for foliage: inside a forest, in a meadow, at the
+## treeline, and at a shore.
+##
+## EYE HEIGHT IS 1.7 m AND THAT IS THE POINT. The player is 2 m tall at 1:1 and
+## trees are 1:4 landscape, so the whole question "does this read as a forest"
+## is a question about a specific viewpoint. Photographed from 20 m up, dense
+## forest and sparse forest look identical - both are green.
+func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
+		cfg: WorldgenConfig) -> Array:
+	var out := []
+
+	var forest := _find_densest_forest(hm, gen)
+	var forest_eye := _stand_at(forest, cfg, EYE_LEVEL_M)
+	# Looking level, lifted a little at the far end so the canopy is in frame.
+	# Straight ahead at eye height photographs trunks and forest floor and cuts
+	# the crowns off at the top of the picture, which answers half the question.
+	var forest_look := _along(forest_eye, _hashed_heading(7), 22.0, 5.0)
+	out.append({
+		"name": "7-forest-interior",
+		"note": "standing inside the densest forest in the world",
+		"eye_m": forest_eye, "target": forest_look,
+	})
+
+	var meadow := _find_valley_floor(hm, gen)
+	var meadow_eye := _stand_at(meadow, cfg, 3.0)
+	# Down 30 degrees. Ground cover is at the player's FEET, and a level camera
+	# in a meadow photographs the horizon with a green strip along the bottom.
+	out.append({
+		"name": "8-meadow-closeup",
+		"note": "meadow ground cover, from 3 m up looking down 30 degrees",
+		"eye_m": meadow_eye,
+		"target": _along(meadow_eye, _hashed_heading(8), 14.0, -tan(deg_to_rad(30.0)) * 14.0),
+	})
+
+	var treeline := _find_treeline(hm, gen)
+	var treeline_eye := _stand_at(treeline["cell"], cfg, EYE_LEVEL_M)
+	out.append({
+		"name": "9-treeline",
+		"note": "mid-slope below the top of the forest band, looking up it",
+		"eye_m": treeline_eye,
+		"target": _uphill_target(treeline_eye, treeline["uphill"], cfg, 70.0),
+	})
+
+	var shore := _find_shore_stand(hm, cfg)
+	out.append({
+		"name": "10-shore",
+		"note": "two metres from the water, looking along the shoreline",
+		"eye_m": shore["eye"], "target": shore["look"],
+	})
+
+	# THE ACCEPTANCE TEST FOR THIS PLAN, and the reason a shot carries its own
+	# time of day. "Standing inside the forest at dusk, it reads as a forest" is
+	# the sentence the whole run is judged on, and dusk is not a detail of it -
+	# it is when a forest stops being a green texture and becomes trunks with
+	# light between them. Same spot as shot 7, so the two are comparable.
+	out.append({
+		"name": "11-forest-dusk",
+		"note": "shot 7 again, at dusk - the acceptance test",
+		"eye_m": forest_eye, "target": forest_look,
+		"time": 0.85,
+	})
+	return out
 
 
 func _find_summit(hm: Heightmap) -> Vector2i:
@@ -280,6 +385,223 @@ func _find_postcard(hm: Heightmap) -> Dictionary:
 	return {"eye": eye, "look_at": look_at}
 
 
+# --- Foliage v1 Stage 1: finding the four foliage vantages ------------------
+
+## Eye height in metres. The player is player_height_blocks tall at 0.5 m per
+## block - 2 m - and eyes are not on top of a head.
+const EYE_LEVEL_M := 1.7
+
+## How coarse the search for the densest forest is, in heightmap cells.
+##
+## The count below is O(cells x tree candidates), and at stride 1 over a
+## 1500-cell map that is billions of surface samples. 16 cells is 64 blocks,
+## which is four times the window being counted - so the scan cannot miss a
+## dense patch by more than its own window, and a forest that dense is never
+## one window wide anyway.
+const FOREST_SCAN_STRIDE := 16
+
+## The window trees are counted in, in blocks, around each scanned cell.
+const FOREST_WINDOW_BLOCKS := 24
+
+
+## The cell with the most trees around it.
+##
+## COUNTED, NOT PREDICTED. Asking tree_probability_at() where its peak is would
+## answer "the middle of the forest band" and be wrong the moment Stage 4 adds
+## groves and glades - the densest place stops being the highest-probability
+## place and becomes wherever the grove mask happens to agree with it. Counting
+## actual accepted candidates means this vantage tracks the placement rules
+## through every stage without knowing anything about them.
+func _find_densest_forest(hm: Heightmap, gen: TerrainGenerator) -> Vector2i:
+	var best := Vector2i(hm.cols / 2, hm.cols / 2)
+	var best_count := -1
+	var cell: int = _world.config.tree_cell_blocks
+	if cell <= 0:
+		return best
+
+	for j in range(2, hm.cols - 2, FOREST_SCAN_STRIDE):
+		for i in range(2, hm.cols - 2, FOREST_SCAN_STRIDE):
+			var h := hm.cells[i + j * hm.cols]
+			var bx := hm.cell_to_block(i)
+			var bz := hm.cell_to_block(j)
+			if gen.surface_zone_at(bx, bz, h) != TerrainGenerator.ZONE_FOREST:
+				continue
+			var count := _count_trees_near(gen, bx, bz, cell)
+			if count > best_count:
+				best_count = count
+				best = Vector2i(i, j)
+	print("[Tour] densest forest cell %s with %d trees in %d blocks" % [
+		best, best_count, FOREST_WINDOW_BLOCKS])
+	return best
+
+
+## Trees accepted inside a window, using the world's own placement rules.
+func _count_trees_near(gen: TerrainGenerator, bx: int, bz: int, cell: int) -> int:
+	var half := FOREST_WINDOW_BLOCKS / 2
+	var c0x := Chunk.floor_div(bx - half, cell)
+	var c1x := Chunk.floor_div(bx + half, cell)
+	var c0z := Chunk.floor_div(bz - half, cell)
+	var c1z := Chunk.floor_div(bz + half, cell)
+	var count := 0
+	for cz in range(c0z, c1z + 1):
+		for cx in range(c0x, c1x + 1):
+			if _accepts_tree(gen, cx, cz):
+				count += 1
+	return count
+
+
+## Does a tree stand at this candidate cell?
+##
+## The world's own acceptance rule, restated here rather than reached for,
+## because in Stage 1 it still lives inside TerrainGenerator._stamp_tree()
+## where nothing outside can call it - and the plan is explicit that the only
+## edits to terrain_generator.gd are the hooks it names per stage, which for
+## Stage 1 is none.
+##
+## STAGE 4 REPLACES THIS with a call into TreePlacement, and so does the same
+## restatement in worldgen_probe.gd. Two copies of a rule is one too many; the
+## reason to accept it for three stages is that the alternative is editing a
+## file another plan may be working in tonight.
+func _accepts_tree(gen: TerrainGenerator, cell_x: int, cell_z: int) -> bool:
+	var bx := cell_x * _world.config.tree_cell_blocks
+	var bz := cell_z * _world.config.tree_cell_blocks
+	var surface := gen.surface_at(float(bx), float(bz))
+	var chance := gen.tree_probability_at(
+		surface, gen.zone_jitter_at(float(bx), float(bz)))
+	if chance <= 0.0:
+		return false
+	return WorldHash.hash01(cell_x, cell_z, gen.world_seed,
+		TerrainGenerator.SALT_TREE) < chance
+
+
+## A spot in the top of the forest band, on a slope, and which way is up.
+##
+## The top QUARTER of the band rather than its very edge: at the edge the trees
+## have already thinned to nothing and the picture is of bare heath with a
+## green line below it. A quarter down, the thinning is happening in frame,
+## which is what a treeline actually looks like.
+func _find_treeline(hm: Heightmap, gen: TerrainGenerator) -> Dictionary:
+	var band := gen.zone_band(TerrainGenerator.ZONE_FOREST)
+	var lo := lerpf(band.x, band.y, 0.70)
+	var hi := lerpf(band.x, band.y, 0.90)
+	var best := Vector2i(hm.cols / 2, hm.cols / 2)
+	var best_slope := -INF
+
+	for j in range(2, hm.cols - 2, 3):
+		for i in range(2, hm.cols - 2, 3):
+			var h := hm.cells[i + j * hm.cols]
+			if h < lo or h > hi:
+				continue
+			var bx := hm.cell_to_block(i)
+			var bz := hm.cell_to_block(j)
+			if gen.surface_zone_at(bx, bz, h) != TerrainGenerator.ZONE_FOREST:
+				continue
+			# Steep enough that "looking up the slope" means something, but not
+			# a cliff - the zone code turns those to rock and nothing grows.
+			var slope := hm.slope_deg_at(float(bx), float(bz))
+			if slope > 38.0:
+				continue
+			if slope > best_slope:
+				best_slope = slope
+				best = Vector2i(i, j)
+
+	return {"cell": best, "uphill": _uphill_at(hm, best)}
+
+
+## Which way the ground rises at a cell, as a unit vector in XZ.
+func _uphill_at(hm: Heightmap, cell: Vector2i) -> Vector2:
+	var i := clampi(cell.x, 1, hm.cols - 2)
+	var j := clampi(cell.y, 1, hm.cols - 2)
+	var gx := hm.cells[i + 1 + j * hm.cols] - hm.cells[i - 1 + j * hm.cols]
+	var gz := hm.cells[i + (j + 1) * hm.cols] - hm.cells[i + (j - 1) * hm.cols]
+	var g := Vector2(gx, gz)
+	return g.normalized() if g.length() > 0.0001 else Vector2(1.0, 0.0)
+
+
+## Stand two metres back from the water's edge, looking ALONG the shoreline.
+##
+## Along, not across: across the water is a picture of a lake, which shot 5
+## already is. Along it is a picture of the BAND - reeds, gravel, the birches
+## the plan puts at a shore - receding into the distance, which is the only
+## composition that shows whether the shore band has anything in it.
+func _find_shore_stand(hm: Heightmap, cfg: WorldgenConfig) -> Dictionary:
+	var lake_cell := _find_largest_lake(hm)
+	var lakes := _world.lakes
+	var outward := Vector2(1.0, 0.0)
+	var edge := lake_cell
+
+	if lakes != null and not lakes.lakes.is_empty():
+		var id := lakes.lake_id[lake_cell.x + lake_cell.y * hm.cols]
+		# Walk outward from a cell of the lake until the water stops. The first
+		# dry cell is the shore, and the direction we walked is "outward".
+		var dirs: Array[Vector2i] = [
+			Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
+		for dir in dirs:
+			var probe := lake_cell
+			var steps := 0
+			while steps < 200:
+				var next := probe + dir
+				if next.x < 1 or next.y < 1 or next.x >= hm.cols - 1 or next.y >= hm.cols - 1:
+					break
+				if lakes.lake_id[next.x + next.y * hm.cols] != id:
+					edge = next
+					outward = Vector2(dir).normalized()
+					steps = -1
+					break
+				probe = next
+				steps += 1
+			if steps == -1:
+				break
+
+	# Two metres further onto dry land, and look along the tangent.
+	var tangent := Vector2(-outward.y, outward.x)
+	var back := outward * (2.0 / cfg.block_size)
+	var bx := hm.cell_to_block(edge.x) + int(round(back.x))
+	var bz := hm.cell_to_block(edge.y) + int(round(back.y))
+	var eye := Vector3(
+		float(bx) * cfg.block_size,
+		_world.surface_height_m(bx, bz) + EYE_LEVEL_M,
+		float(bz) * cfg.block_size)
+	return {"eye": eye, "look": _along(eye, tangent, 40.0, 1.0)}
+
+
+# --- Small geometry helpers -------------------------------------------------
+
+## Eye position in metres, standing on the ground at a heightmap cell.
+func _stand_at(cell: Vector2i, cfg: WorldgenConfig, height_m: float) -> Vector3:
+	var bx := _world.generator.heightmap.cell_to_block(cell.x)
+	var bz := _world.generator.heightmap.cell_to_block(cell.y)
+	return Vector3(
+		float(bx) * cfg.block_size,
+		_world.surface_height_m(bx, bz) + height_m,
+		float(bz) * cfg.block_size)
+
+
+## A point `distance` away along a heading, `rise` metres higher.
+func _along(eye: Vector3, heading: Vector2, distance: float, rise: float) -> Vector3:
+	return eye + Vector3(heading.x, 0.0, heading.y) * distance + Vector3(0.0, rise, 0.0)
+
+
+## Look up a slope: the same distance out, but at the altitude the ground has
+## actually reached there, plus a little - so the camera follows the hill
+## rather than aiming through it.
+func _uphill_target(eye: Vector3, uphill: Vector2, cfg: WorldgenConfig,
+		distance: float) -> Vector3:
+	var target := eye + Vector3(uphill.x, 0.0, uphill.y) * distance
+	var bx := int(target.x / cfg.block_size)
+	var bz := int(target.z / cfg.block_size)
+	target.y = _world.surface_height_m(bx, bz) + 6.0
+	return target
+
+
+## An arbitrary but repeatable compass heading, hashed from the seed. Same
+## world, same direction, every run - so two tours differ only where the world
+## does.
+func _hashed_heading(index: int) -> Vector2:
+	var angle := WorldHash.hash01(index, 0, _world.world_seed, 909) * TAU
+	return Vector2(cos(angle), sin(angle))
+
+
 # --- Taking the picture -----------------------------------------------------
 
 func _capture(index: int, shot: Dictionary) -> void:
@@ -288,7 +610,13 @@ func _capture(index: int, shot: Dictionary) -> void:
 	var target: Vector3 = shot["target"]
 
 	var eye: Vector3
-	if shot.has("eye_cell"):
+	if shot.has("eye_m"):
+		# An exact standing position, worked out by the shot itself. The
+		# foliage vantages need this: "1.7 m up inside the forest" is not a
+		# distance and an azimuth from a subject, it IS the position, and the
+		# thing being looked at is 20 m of trees rather than a landmark.
+		eye = shot["eye_m"]
+	elif shot.has("eye_cell"):
 		var cell: Vector2i = shot["eye_cell"]
 		eye = _cell_to_metres(hm, cell, cfg)
 		eye.y += shot["height"]
@@ -312,6 +640,19 @@ func _capture(index: int, shot: Dictionary) -> void:
 	_camera.global_position = eye
 	_camera.look_at(target, Vector3.UP)
 
+	# A SHOT MAY OWN ITS OWN HOUR. 11-forest-dusk is shot 7 again at 0.85, and
+	# the whole point of it is the light - so the tour's frozen time is moved
+	# for this frame and put back afterwards. Restoring matters: leaving it
+	# would silently relight every shot after it, and the tour would stop being
+	# a comparison harness halfway through its own run.
+	var restore := -1.0
+	if shot.has("time") and _sky != null:
+		restore = _sky.time_of_day
+		_sky.time_of_day = shot["time"]
+		_sky.apply()
+		for i in SETTLE_FRAMES:
+			await get_tree().process_frame
+
 	# The image is only valid once the frame has actually been drawn.
 	await RenderingServer.frame_post_draw
 	var image := get_viewport().get_texture().get_image()
@@ -321,6 +662,10 @@ func _capture(index: int, shot: Dictionary) -> void:
 		push_warning("[Tour] could not write %s: %s" % [path, error_string(err)])
 	else:
 		print("[Tour]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
+
+	if restore >= 0.0 and _sky != null:
+		_sky.time_of_day = restore
+		_sky.apply()
 
 
 func _wait_for_world() -> void:
