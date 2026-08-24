@@ -7,20 +7,126 @@ pillar is a bug in this file, not a licence to bend the pillar.
 
 ## Setting
 
-Fantasy.
+Fantasy. Cozy but adventurous.
 
-Playable races: human, elf, dwarf, more later. Cosmetic plus one small flavour
-perk each. Not a balance lever - a race must never be the correct answer to a
-fight.
+Playable races are described under Character identity below.
 
-No character classes.
+## Character identity model
 
-## Character progression
+Three layers, each answering a different question.
 
-Skill-by-use. Swing a sword, sword skill grows.
+| Layer | Question | Chosen |
+| --- | --- | --- |
+| **Race** | who you are | once, at creation |
+| **Gear** | what you do | moment to moment |
+| **Skills** | what you've done | never - it accrues |
 
-No skill trees, no allocation screens. Your "class" is what you carry and how
-you behave, not something picked at character creation.
+- **Race = who you are.** Cosmetic plus one small situational perk.
+  **Never stat modifiers.** A race must never be the correct answer to a fight.
+- **Gear = what you do.** No classes, ever. Roles emerge from what you carry:
+  holding the staff makes you the mage today. **Never punish switching** - no
+  proficiency penalties, no lockouts, no respec cost.
+- **Skills = what you've done.** Skill-by-use, growing silently from behaviour.
+  Nothing to allocate, nothing to choose.
+
+## Races
+
+Launch set of four. Fixed proportions per race, and **strong distinct
+silhouettes readable at distance in dim light** - that is a hard art
+requirement, not a preference. Half this game happens at dusk.
+
+| Race | Build | Perk |
+| --- | --- | --- |
+| Human | medium | learns all skills slightly faster |
+| Elf | tall, narrow | sees further at dusk and at night - fog and darkness pushed back a little |
+| Dwarf | broad, low | ore and mineral deposits glint visibly |
+| Lizardfolk | exotic - tail | swimming |
+
+Perk language is **sensory by default** - perks change what you notice, not what
+you can do. Lizardfolk is the deliberate movement exception.
+
+Lizardfolk's swimming ships only when water becomes interactive. Until then the
+placeholder perk is seeing fish shadows in lakes.
+
+### Open on the perk set
+
+Recorded rather than quietly resolved:
+
+- **Human's perk is a stat modifier**, which the rule two paragraphs above
+  forbids. It is also the only perk that is never situational and that compounds
+  across the whole game, which makes it the strongest of the four by some
+  distance. Either the rule bends or the perk changes.
+- **Dwarf's perk needs ore and mineral deposits**, which no design doc defines
+  yet. Gathering is a launch skill so it is plausible, but nothing says what is
+  in the ground or why you would want it.
+- **Lizardfolk's placeholder needs fish**, which also do not exist.
+- **Elf's perk touches a pillar directly.** Pillar 2 makes darkness a danger
+  axis; a race that pushes darkness back is mitigating the game's central
+  tension rather than a side activity. Situational, so it fits the letter of the
+  rule - worth being deliberate about anyway.
+
+Two of the four perks are currently IOUs.
+
+## Character creation
+
+One screen. Race, palette swaps (skin, hair, eyes, from per-race palettes),
+hair and beard picks per race, name.
+
+**No sliders. No stats.**
+
+## Skills
+
+Five at launch: **Blades, Bows, Magic, Mobility, Gathering.**
+
+- XP comes from doing the thing. Diminishing curve. **No decay, ever** - putting
+  a weapon down for a month must never cost you anything.
+- Rewards are two-speed: smooth small bumps every level (swing speed, draw time,
+  stamina cost), plus a chunky unlock roughly every five levels - charged shot, a
+  dodge-roll upgrade, that sort of thing.
+- **Numbers stay small: about +25% total by level 10.** The real power curve is
+  two players getting better at the game together, not their characters getting
+  better at it for them.
+- UI: a character sheet screen from the start, plus a small toast on level-up.
+
+**The sheet is read-only.** The moment it lets you spend anything it becomes the
+skill tree this design rejected, and pillar 3 goes with it.
+
+## Magic (v1)
+
+Two elements, no more.
+
+- **Fire bolt** - small burn over time.
+- **Frost bolt** - brief slow.
+
+Designed as co-op glue: one player slows, the other finishes. No further
+elemental matrix for now - a combination table is a Someday, not a v1.
+
+## Gear
+
+Three slots, **all visible on the character**: weapon, torso armour, trinket.
+
+Visible gear is the cozy progression payoff. Your character sitting at the
+campfire *is* the progress screen - which is pillar 2 doing its job, so keep the
+silhouette legible as gear changes.
+
+## Art pipeline
+
+**Architectural requirement. Expensive to retrofit, so it is settled now.**
+
+Characters are modular voxel models on a simple skeleton - head, torso, arms and
+legs as separate parts.
+
+- **Races** = part sets plus proportions.
+- **Customisation** = palette swaps plus part picks.
+- **Gear** = models attached to bones, or part swaps.
+
+Target height ~24-32 model voxels. *(Unconfirmed - the spec was truncated at
+this number. Verify before building anything on it.)*
+
+Implication worth stating outright: at 4 terrain blocks (2 m) tall, a 24-32
+voxel character means **model voxels are roughly 6-8x finer than world blocks**.
+Characters and terrain therefore do not share a voxel grid, and the chunk mesher
+is not the character mesher. Two systems, not one.
 
 ## Characters and saves
 
