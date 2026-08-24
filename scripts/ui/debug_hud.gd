@@ -91,6 +91,10 @@ var world: Node = null
 var player: Node3D = null
 var sky: SkyCycle = null
 
+## The impostor ring. A sibling of World in the game scene, so it is handed in
+## separately rather than reached for through it.
+var far_trees: Node = null
+
 ## Set false on clients in Stage 11 - a client that retunes its own terrain has
 ## silently left the host's world.
 var tuning_editable := true
@@ -107,6 +111,10 @@ func _ready() -> void:
 	_build_readout()
 	_build_panel()
 	set_process(true)
+
+
+func set_far_trees(p_far_trees: Node) -> void:
+	far_trees = p_far_trees
 
 
 func setup(p_config: WorldgenConfig, p_world: Node, p_player: Node3D,
@@ -171,6 +179,10 @@ func _compose_readout() -> String:
 			var f: Dictionary = world.flora_stats()
 			lines.append("flora     %d in %d cols, %d pending" % [
 				f.get("instances", 0), f.get("columns", 0), f.get("pending", 0)])
+	if far_trees != null and far_trees.has_method("stats"):
+		var t: Dictionary = far_trees.stats()
+		lines.append("far trees %d impostors, %d ms rebuild" % [
+			t.get("impostors", 0), t.get("rebuild_ms", 0)])
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 
