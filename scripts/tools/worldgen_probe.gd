@@ -336,17 +336,23 @@ func _print_object_scale(hm: Heightmap, lakes: Lakes, config: WorldgenConfig) ->
 		lake_w, _largest_lake_span_m(hm, lakes, config),
 		(st["max"] - st["min"]) * bs])
 
+	# References read from the config rather than repeated here, so the numbers
+	# the world is DERIVED from and the numbers it is JUDGED against cannot
+	# drift apart - which is the entire failure this readout exists to catch.
 	var rows := [
-		["player", config.player_height_blocks * bs, 1.75],
-		["tree", (tree_lo + tree_hi) * 0.5, 30.0],
-		["lake", lake_w, 400.0],
-		["mountain", (st["max"] - st["min"]) * bs, 1400.0],
+		["player", config.player_height_blocks * bs, WorldgenConfig.REAL_PLAYER_HEIGHT_M],
+		["tree", (tree_lo + tree_hi) * 0.5,
+			(WorldgenConfig.REAL_TREE_HEIGHT_M.x + WorldgenConfig.REAL_TREE_HEIGHT_M.y) * 0.5],
+		["lake", lake_w, WorldgenConfig.REAL_LAKE_WIDTH_M],
+		["mountain", (st["max"] - st["min"]) * bs, WorldgenConfig.REAL_MOUNTAIN_RELIEF_M],
 	]
 	for row in rows:
 		var game: float = row[1]
 		var real: float = row[2]
 		print("  vs real %-9s %8.2f m vs %7.1f m   1 : %.1f" % [
 			row[0], game, real, real / maxf(game, 0.001)])
+	print("  world_scale is 1 : %.1f, target relief %.0f m" % [
+		config.world_scale, config.target_relief_m()])
 
 
 ## How wide the largest lake is, in metres: the side of the square with the

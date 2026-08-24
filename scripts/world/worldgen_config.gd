@@ -35,6 +35,47 @@ const USER_PATH := "user://worldgen.tres"
 ## Metres per block. 0.5 means a 4-block player is 2 m tall.
 @export var block_size := 0.5
 
+## THE ONE SCALE KNOB. Metres of real world per metre of game world.
+##
+## The world is 1:4 against reality and the value of saying so once is that ONE
+## ratio then has to appear on every line. The eye judges size by comparison,
+## so an object at 1:10 standing next to one at 1:4 does not read as a small
+## world - it reads as a broken one, and that is exactly what the probe found:
+## trees and lakes both at 1:3.5 and mountains at 1:10.5, off by a factor of
+## nearly three from everything they stand next to.
+##
+## Mountain relief, tree height and minimum lake size are all DERIVED from this
+## by apply_world_scale(), so they cannot drift apart again. Set it to 0 or
+## less to hand-tune them instead, the same escape hatch view_distance has.
+@export var world_scale := 4.0
+
+## What the derivation is measured against. These are the v1 values and the
+## relief they actually produced, so at world_scale 4 the shape of the world is
+## unchanged and only its VERTICAL SIZE moves.
+const REFERENCE_RELIEF_BLOCKS := 267.0
+const REF_CONTINENT_AMP := 48.0
+const REF_MOUNTAIN_AMP := 178.0
+const REF_BASE_ALTITUDE := 70.0
+const REF_MAX_ALTITUDE := 318.0
+const REF_ZONE_JITTER_BLOCKS := 12.0
+const REF_ZONE_BLEND_BLOCKS := 6.0
+
+## The real-world sizes everything is measured against, in metres.
+##
+## Swiss pre-Alpine, and chosen so that at world_scale 4 the tree and lake
+## numbers come out EXACTLY as they already were. That is the test of the
+## derivation rather than a coincidence: trees and lakes were already coherent
+## with each other, so a derivation that moved them would be the wrong
+## derivation. Only the mountains were out of line, and only they change.
+const REAL_MOUNTAIN_RELIEF_M := 1400.0
+const REAL_TREE_HEIGHT_M := Vector2(26.0, 42.0)
+const REAL_LAKE_MIN_M2 := 2560.0
+const REAL_LAKE_WIDTH_M := 400.0
+const REAL_PLAYER_HEIGHT_M := 1.75
+
+## How much of a tree is trunk. The rest is canopy, plus one block for the tip.
+const TREE_TRUNK_FRACTION := 0.65
+
 ## World footprint in blocks, centred on the origin: x and z run
 ## -world_blocks_xz/2 .. world_blocks_xz/2 - 1.
 ##
@@ -44,8 +85,11 @@ const USER_PATH := "user://worldgen.tres"
 ## do, whatever the map says.
 @export var world_blocks_xz := 6000
 
-## Vertical extent in blocks. 320 blocks = 160 m.
-@export var world_height_blocks := 320
+## Vertical extent in blocks. 880 blocks = 440 m, which clears the highest
+## possible summit plus the tallest possible tree standing on it. Only chunks
+## the terrain actually passes through are ever built, so a taller world costs
+## nothing but a higher ceiling.
+@export var world_height_blocks := 880
 
 ## Blocks per coarse heightmap cell. 4 blocks = 2 m, giving a 1500x1500 grid.
 @export var coarse_step := 4
@@ -117,15 +161,16 @@ const FOG_START_RATIO := 0.6
 # picture standing in the world.
 
 ## 1200 blocks / 600 m - broad "where is high ground at all" trend.
+## Amplitude is derived from world_scale; see apply_world_scale().
 @export var continent_freq := 0.00083
-@export var continent_amp := 48.0
+@export var continent_amp := 125.8
 
 ## 300 blocks / 150 m - THE feature layer. Ridged, so it makes peaks and
 ## valleys rather than lumps. Mountain footprints land at 100-200 m across,
 ## which is the readability target: big enough to be a landmark, small enough
 ## to walk around before you get bored.
 @export var mountain_freq := 0.00333
-@export var mountain_amp := 178.0
+@export var mountain_amp := 466.7
 
 ## Where mountains are ALLOWED to be, as a window on the continent layer.
 ##
@@ -157,15 +202,15 @@ const FOG_START_RATIO := 0.6
 @export var zone_jitter_freq := 0.0025
 
 ## Blocks of threshold wobble at full jitter, applied +/-.
-@export var zone_jitter_blocks := 12.0
+@export var zone_jitter_blocks := 31.5
 
 ## Altitude the layers build up from, in blocks.
-@export var base_altitude := 70.0
+@export var base_altitude := 183.5
 
 ## Hard clamps. 0 is bedrock and the very top must stay air, or the sky is
 ## solid and the far mesh has nothing to draw against.
 @export var min_altitude := 1.0
-@export var max_altitude := 318.0
+@export var max_altitude := 833.7
 
 ## Domain warp strength in blocks, used by the TODO(marcel) exercise in
 ## TerrainGenerator. Ignored by the fallback.
@@ -208,7 +253,7 @@ const FOG_START_RATIO := 0.6
 @export var share_snow := 0.05
 
 ## Blocks over which two neighbouring zone colours cross-fade.
-@export var zone_blend_blocks := 6.0
+@export var zone_blend_blocks := 15.7
 
 
 # --- Content ----------------------------------------------------------------
@@ -253,7 +298,19 @@ const FOG_START_RATIO := 0.6
 ## Capping the depth puts water in the BOTTOM of a valley instead of filling
 ## the valley up to its lip, which is both what the design asks for and what
 ## Switzerland looks like. Turn it up to see the drowned version.
-@export var lake_max_depth := 10.0
+##
+## NOT DERIVED FROM world_scale, and that was tried first. Scaling it with the
+## relief in Stage 8 took the largest lake from 1:3.5 to 1:1.3 - a lake at very
+## nearly full size in a quarter-scale world - because deeper basins under the
+## cap fill to a much wider water line. This is a shaping knob, not a scale
+## one; what world_scale owns is lake_min_cells, the size below which a basin
+## is a puddle.
+##
+## 11 blocks is TUNED, not chosen: at the new relief it puts the largest lake
+## at 1:4.0 on seed 42 and 1:3.8 on seed 7, which is the coherence the whole
+## stage is about. It is also the main water dial - turn it up for a wetter
+## world, and Plan B's rivers will want a say in it.
+@export var lake_max_depth := 11.0
 
 
 # --- Atmosphere -------------------------------------------------------------
@@ -326,7 +383,8 @@ const FOG_START_RATIO := 0.6
 ## different terrain with the handshake reporting a match. Found by auditing
 ## the list against the @export block; see STATUS.md.
 const PROPERTIES: PackedStringArray = [
-	"block_size", "world_blocks_xz", "world_height_blocks", "coarse_step",
+	"block_size", "world_scale",
+	"world_blocks_xz", "world_height_blocks", "coarse_step",
 	"voxel_depth_chunks",
 	"player_height_blocks", "player_radius_blocks",
 	"continent_freq", "continent_amp", "mountain_freq", "mountain_amp",
@@ -418,6 +476,67 @@ func clone() -> WorldgenConfig:
 	return c
 
 
+## Resolve world_scale into everything it owns.
+##
+## Idempotent - it always computes from the REF_ constants, never from the
+## current values, so calling it twice does not compound. A world_scale of 0 or
+## less means "leave these alone", for hand-tuning.
+##
+## WHAT MOVES AND WHAT DOES NOT. The three noise amplitudes that build relief
+## scale, along with the altitudes that bound them and the two zone-boundary
+## fuzz distances - those last two because they are altitude-space quantities,
+## and a 12-block wobble on a 700-block mountain is a wobble nobody can see.
+##
+## hills_amp and detail_amp deliberately do NOT scale. Hills are 8 m for a real
+## 30 m hill, which is already 1:4; per-block roughness is 1.5 m and is about
+## the size of a block rather than about the size of the world. Scaling those
+## would make the corrugation 2.6 times worse, which is the exact opposite of
+## what Stage 9 is for.
+func apply_world_scale() -> void:
+	if world_scale <= 0.0:
+		return
+
+	# Relief the world should have, in blocks, if a real 1400 m massif is drawn
+	# at 1:world_scale.
+	var relief_blocks := (REAL_MOUNTAIN_RELIEF_M / world_scale) / block_size
+	var k := relief_blocks / REFERENCE_RELIEF_BLOCKS
+
+	continent_amp = REF_CONTINENT_AMP * k
+	mountain_amp = REF_MOUNTAIN_AMP * k
+	base_altitude = REF_BASE_ALTITUDE * k
+	max_altitude = REF_MAX_ALTITUDE * k
+	zone_jitter_blocks = REF_ZONE_JITTER_BLOCKS * k
+	zone_blend_blocks = REF_ZONE_BLEND_BLOCKS * k
+
+	# The ceiling has to clear the highest possible summit plus the tallest
+	# possible tree standing on it, and land on a chunk boundary. Only chunks
+	# terrain passes through are built, so headroom is free.
+	var needed := max_altitude + float(tree_trunk_max + tree_canopy_max + 3) + 16.0
+	world_height_blocks = int(ceil(needed / 16.0)) * 16
+
+	# Trees. Total height is trunk + canopy radius + 1 for the tip, and the
+	# split is TREE_TRUNK_FRACTION. At world_scale 4 this reproduces 8-14 and
+	# 4-6 exactly, which is the point: they were already right.
+	var tree_lo := int(round((REAL_TREE_HEIGHT_M.x / world_scale) / block_size))
+	var tree_hi := int(round((REAL_TREE_HEIGHT_M.y / world_scale) / block_size))
+	tree_trunk_min = maxi(int(round(float(tree_lo) * TREE_TRUNK_FRACTION)), 1)
+	tree_trunk_max = maxi(int(round(float(tree_hi) * TREE_TRUNK_FRACTION)), tree_trunk_min)
+	tree_canopy_min = maxi(tree_lo - tree_trunk_min - 1, 1)
+	tree_canopy_max = maxi(tree_hi - tree_trunk_max - 1, tree_canopy_min)
+
+	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a
+	# puddle. Cells are coarse_step blocks square.
+	var cell_m2 := pow(float(coarse_step) * block_size, 2.0)
+	lake_min_cells = maxi(int(round(
+		(REAL_LAKE_MIN_M2 / (world_scale * world_scale)) / cell_m2)), 1)
+
+
+## What relief this scale asks for, in metres. For the probe's readout, so the
+## target and the measurement come from the same place.
+func target_relief_m() -> float:
+	return REAL_MOUNTAIN_RELIEF_M / maxf(world_scale, 0.001)
+
+
 ## Resolve view_distance into voxel_radius_chunks, fog_end_m and fog_start_m.
 ##
 ## Idempotent, and a no-op at VIEW_CUSTOM. Called after loading and whenever
@@ -461,6 +580,10 @@ static func load_or_default() -> WorldgenConfig:
 	# and comes out with exactly the values it had - which is why High is the
 	# default and not merely the recommendation.
 	cfg.apply_view_preset()
+	# After the preset and before anything reads a terrain number. The two are
+	# independent - one owns how far you can see, the other how big the world
+	# is - but both have to happen before the first generator is built.
+	cfg.apply_world_scale()
 	return cfg
 
 

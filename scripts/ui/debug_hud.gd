@@ -49,6 +49,7 @@ const TUNING_ROWS := [
 	["share_snow", "zone share: snow", 0.0, 1.0, 0.01],
 	["tree_probability", "tree density", 0.0, 1.0, 0.01],
 	["lake_level_offset", "lake level offset (blk)", 0.0, 10.0, 0.5],
+	["lake_max_depth", "lake max depth (blk)", 0.0, 60.0, 1.0],
 	["day_seconds", "day length (s)", 10.0, 3600.0, 10.0],
 ]
 

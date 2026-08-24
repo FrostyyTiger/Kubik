@@ -41,7 +41,37 @@ const REPORT_EVERY := 30.0
 ## Walking into a cliff face forever otherwise looks exactly like a slow
 ## crossing right up until the timeout.
 const STUCK_GAIN_M := 5.0
-const STUCK_WINDOW := 45.0
+const STUCK_WINDOW := 90.0
+
+## How far below the local ground counts as having fallen out of the world.
+##
+## THIS IS NOT HYPOTHETICAL AND IT IS WORTH KNOWING ABOUT. Sprint is 13 m/s
+## and the Low preset has voxels out to 48 m, so a sprinting player reaches
+## unloaded ground in under four seconds. Unloaded ground has no collision
+## mesh, so they fall through it - and then the chunks stream in AROUND them
+## and they are inside solid rock, permanently stuck. The first run of this
+## probe covered 67 m at full speed and then stopped dead for the rest of the
+## run, which is exactly that.
+const FALL_THROUGH_M := 6.0
+
+## GOING ROUND THINGS, which is the difference between measuring the world and
+## measuring a straight line drawn across it.
+##
+## The first working run covered 68 m at full sprint and then stood still for
+## the rest of the run, pushing into a mountainside. That is a true fact about
+## a 4 km straight line through alpine terrain and it is not what the six
+## minute target is asking: a player walks round the mountain. So when progress
+## stalls, the probe turns aside for a few seconds, alternating which way, and
+## it jumps - because voxel terrain is a staircase and a player crossing it
+## presses Space constantly.
+##
+## Crude on purpose. Real pathfinding would measure the pathfinder.
+const DETOUR_ANGLE_DEG := 65.0
+const DETOUR_SECONDS := 4.0
+
+## Progress smaller than this over STALL_WINDOW seconds counts as blocked.
+const STALL_GAIN_M := 2.0
+const STALL_WINDOW := 1.5
 
 var _world: World = null
 var _player: Player = null
@@ -55,6 +85,21 @@ var _last_pos := Vector3.ZERO
 var _best_remaining := INF
 var _best_at := 0.0
 var _running := false
+
+## Sim seconds spent standing still waiting for chunks, kept OUT of _elapsed.
+##
+## The six-minute target is a question about the TERRAIN - how much the shape
+## of the land slows a sprint down. Chunk streaming is a different question
+## with a different answer on every machine, and averaging the two together
+## would produce a number that describes neither. Both are reported.
+var _waited := 0.0
+var _rescues := 0
+
+var _detour_until := -1.0
+var _detour_sign := 1.0
+var _detours := 0
+var _stall_ref := Vector3.ZERO
+var _stall_at := 0.0
 
 
 func run(world: World, player: Player) -> void:
@@ -91,11 +136,45 @@ func _physics_process(delta: float) -> void:
 		return
 
 	var pos := _player.global_position
+
+	# Fell through terrain that had not streamed in yet. Put them back on top
+	# of it; being inside rock is not a fact about traversal.
+	var ground := _world.surface_height_m(
+		int(pos.x / _world.config.block_size), int(pos.z / _world.config.block_size))
+	if pos.y < ground - FALL_THROUGH_M:
+		_player.global_position = Vector3(pos.x, ground + 2.0, pos.z)
+		_player.velocity = Vector3.ZERO
+		_rescues += 1
+		return
+
+	# Wait for the ground rather than sprinting off the edge of it. Time spent
+	# here is not time the terrain cost, so it is counted separately.
+	if not _world.is_idle():
+		_player.wish_override = Vector3.ZERO
+		_waited += delta
+		return
+
 	# Steering is recomputed every tick rather than set once, because sliding
 	# along a hillside turns you off course by degrees at a time and a fixed
 	# heading would arrive somewhere else entirely.
 	var to_target := _target - pos
 	to_target.y = 0.0
+
+	# Blocked? Turn aside, the other way from last time, and keep jumping.
+	if pos.distance_to(_stall_ref) > STALL_GAIN_M:
+		_stall_ref = pos
+		_stall_at = _elapsed
+	elif _elapsed - _stall_at > STALL_WINDOW and _elapsed > _detour_until:
+		_detour_sign = -_detour_sign
+		_detour_until = _elapsed + DETOUR_SECONDS
+		_detours += 1
+		_stall_at = _elapsed
+
+	if _elapsed < _detour_until:
+		to_target = to_target.rotated(
+			Vector3.UP, deg_to_rad(DETOUR_ANGLE_DEG) * _detour_sign)
+		_player.jump_override = true
+
 	_player.wish_override = to_target
 
 	_path_m += Vector2(pos.x - _last_pos.x, pos.z - _last_pos.z).length()
@@ -109,9 +188,10 @@ func _physics_process(delta: float) -> void:
 
 	if _elapsed >= _next_report:
 		_next_report += REPORT_EVERY
-		print("[Traverse] %5.0f s  %6.0f m to go  %6.0f m walked  %.2f m/s made good" % [
+		print("[Traverse] %5.0f s  %6.0f m to go  %6.0f m walked  %.2f m/s made good  (%.0f s waiting)" % [
 			_elapsed, remaining, _path_m,
-			(_start.distance_to(_target) - remaining) / maxf(_elapsed, 0.001)])
+			(_start.distance_to(_target) - remaining) / maxf(_elapsed, 0.001),
+			_waited])
 
 	if remaining <= ARRIVE_M:
 		_finish("arrived", remaining)
@@ -131,6 +211,8 @@ func _finish(why: String, remaining: float) -> void:
 	print("[Traverse] %s" % why)
 	print("[Traverse] %.0f s (%.2f min) for %.0f m of %.0f m" % [
 		_elapsed, _elapsed / 60.0, covered, straight])
+	print("[Traverse] plus %.0f s waiting for chunks, %d detours round obstacles, %d rescues from inside terrain" % [
+		_waited, _detours, _rescues])
 	# Two speeds, because they answer different questions. Ground speed says
 	# how much the terrain slowed the character down; speed made good says how
 	# much of that motion was actually towards the far corner, which is the one

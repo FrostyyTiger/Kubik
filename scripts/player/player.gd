@@ -80,6 +80,11 @@ var wish_override := Vector3.ZERO
 ## Held down by the traversal probe. Same reasoning as wish_override.
 var sprint_override := false
 
+## One-shot jump request from the traversal probe, cleared when it is used.
+## Voxel terrain is a staircase and a player crossing it presses Space a lot;
+## a probe that never jumps measures a world nobody plays in.
+var jump_override := false
+
 var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
 # and then carried by hand - see _ready() for why it cannot stay a child.
@@ -209,7 +214,10 @@ func _walk(delta: float) -> void:
 	velocity.z = wish.z * WALK_SPEED * _speed_multiplier()
 
 	if is_on_floor():
-		if Input.is_physical_key_pressed(KEY_SPACE):
+		if jump_override:
+			jump_override = false
+			velocity.y = sqrt(2.0 * GRAVITY * JUMP_HEIGHT)
+		elif Input.is_physical_key_pressed(KEY_SPACE):
 			# v = sqrt(2gh) - the speed you need to leave the ground at to
 			# reach exactly JUMP_HEIGHT, rather than a number picked by feel
 			# that changes meaning the moment gravity is retuned.
