@@ -115,6 +115,7 @@ func _run() -> void:
 ## entries here as the thing each one photographs comes into existence.
 func _sheets() -> Dictionary:
 	return {
+		"testcube": _sheet_testcube,
 		"lineup-front": _sheet_lineup_front,
 		"lineup-back": _sheet_lineup_back,
 	}
@@ -140,6 +141,34 @@ func _sheet_lineup_back() -> void:
 ## against, and the reason the plan says to shoot it anyway.
 func _lineup_defs() -> Array:
 	return [null]
+
+
+## The part mesher, on the pad, at a distance where you can count the voxels.
+##
+## A 12-voxel cube with a bite out of one corner: the flat faces show the
+## palette arriving linear rather than washed out, and the bite is the only
+## place a concave corner exists, so it is where baked AO either shows up or
+## does not. The self-tests prove the numbers; this proves they reach a screen.
+func _sheet_testcube() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	var n := 12
+	var voxels := []
+	for y in n:
+		for z in n:
+			for x in n:
+				# The bite: a quarter of the cube removed from one top corner.
+				if x >= n / 2 and y >= n / 2 and z >= n / 2:
+					continue
+				voxels.append(Vector4i(x, y, z, VoxelModel.SKIN))
+	var palette := {VoxelModel.SKIN: Color.html("#E0AC7E").srgb_to_linear()}
+	var mi := MeshInstance3D.new()
+	mi.mesh = VoxelModel.build_mesh(voxels, palette, Vector3i(n / 2, 0, n / 2), 0.35)
+	var holder := Node3D.new()
+	holder.add_child(mi)
+	holder.position = Vector3(0.0, 0.0, SUBJECT_Z)
+	_subjects_root.add_child(holder)
+	await _shoot("testcube", 2.4)
 
 
 # --- Subjects ---------------------------------------------------------------
