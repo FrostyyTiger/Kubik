@@ -60,7 +60,22 @@ const PAD_MARGIN := 10
 
 ## Metres between plant models in the 1:1 strip. Wide enough that a 90 cm heath
 ## shrub does not touch its neighbours.
-const PLANT_SPACING_M := 1.2
+const PLANT_SPACING_M := 1.4
+
+## Metres between rows of the plant grid.
+const PLANT_ROW_M := 1.6
+
+## Metres of clear ground between one model and the next, on top of the width
+## of the widest model in that row.
+const PLANT_GAP_M := 0.6
+
+## Models per row before wrapping.
+##
+## NINETEEN MODELS IN ONE LINE IS 27 m, and a camera far enough back to fit
+## that photographs each plant about forty pixels wide - which is no more use
+## than the wide tree shot was. Wrapping into rows of six keeps the strip under
+## nine metres, which is close enough to read a mushroom cap from.
+const PLANTS_PER_ROW := 6
 
 ## Blocks of empty pad in FRONT of the trees, for the 1:1 strip to stand on.
 ##
@@ -106,6 +121,7 @@ var _by_species := {}
 ## built rather than recomputing the layout and drifting from it.
 var _plant_span := Vector3(0.0, 0.0, 0.0)
 var _plant_tallest := 0.0
+var _plant_depth := 0.0
 
 
 func _ready() -> void:
@@ -166,8 +182,14 @@ func _build() -> void:
 
 	_stamp_pad(vol)
 	_publish(vol)
-	_place_scale_figure(_pad_min().x + 4, _pad_min().y + 4)
+	# THE STRIP FIRST, THEN THE RULER. The capsule has to stand at the same
+	# depth as the plants it is there to measure - put four metres in front of
+	# them it is much nearer the camera, and perspective pushes it out of the
+	# frame it is supposed to be the reference in. Its position therefore
+	# depends on where the strip ended up, which is only known once it is
+	# built.
 	_place_plant_models()
+	_place_scale_figure(_pad_min().x + 4)
 
 	var total_blocks := 0
 	for s in _specimens:
@@ -256,7 +278,7 @@ func _publish(vol: ScratchVolume) -> void:
 ## table in the plan has two rows is that those two numbers are easy to mix up
 ## when everything is grey boxes. A capsule of exactly the player's dimensions
 ## standing in the same frame is what makes a 12 cm grass tuft obviously wrong.
-func _place_scale_figure(bx: int, bz: int) -> void:
+func _place_scale_figure(bx: int) -> void:
 	var height_m: float = _config.player_height_blocks * _config.block_size
 	var radius_m: float = _config.player_radius_blocks * _config.block_size
 	var mesh := CapsuleMesh.new()
@@ -272,7 +294,10 @@ func _place_scale_figure(bx: int, bz: int) -> void:
 	var node := MeshInstance3D.new()
 	node.name = "ScaleFigure"
 	node.mesh = mesh
-	node.position = _to_metres(bx, GROUND + 1, bz) + Vector3(0.0, height_m * 0.5, 0.0)
+	var z: float = _plant_span.z if _plant_span.y > _plant_span.x \
+		else float(_pad_min().y + 4) * _config.block_size
+	node.position = Vector3(float(bx) * _config.block_size,
+		float(GROUND + 1) * _config.block_size + height_m * 0.5, z)
 	add_child(node)
 
 
@@ -290,31 +315,73 @@ func _place_plant_models() -> void:
 
 
 ## Fills the 1:1 strip in front of the trees. Stage 6's models land here.
+##
+## SORTED BY SIZE, AND SPACED BY WHAT IS ACTUALLY IN THE ROW.
+##
+## A fixed spacing works only while every model is about the same size, and
+## these are not: an alpine flower is 12 cm and a large boulder is 3 m, a factor
+## of twenty-five. At a spacing that suits the flowers the boulder swallows its
+## neighbours whole - the first version of this hid two models completely - and
+## at a spacing that suits the boulder the flowers are four pixels apart in a
+## field of grass.
+##
+## So the meshes are built FIRST, measured, and sorted; each row is then spaced
+## by the widest thing in it. Small models end up together and tightly packed,
+## large ones together and generously spaced, and the strip stays readable
+## however many models Stage 6 or a later plan adds.
 func _build_plant_strip() -> void:
 	var script := load("res://scripts/world/flora/flora_models.gd")
 	if script == null:
 		return
 	var names: Array = script.gallery_names()
+
+	# Build and measure before placing anything.
+	var built: Array = []
+	for n in names:
+		var mesh: ArrayMesh = script.build_mesh(n)
+		if mesh == null:
+			continue
+		var aabb := mesh.get_aabb()
+		built.append({"name": n, "mesh": mesh, "aabb": aabb,
+			"span": maxf(aabb.size.x, aabb.size.z)})
+	built.sort_custom(func(a, b): return a["span"] < b["span"])
+
 	var root := Node3D.new()
 	root.name = "Plants"
 	add_child(root)
-	# PLANT_SPACING_M apart in a row, at 1:1, along the front edge of the pad.
 	var box := _extent()
-	var z := float(box.position.y + 4) * _config.block_size
+	var ground := float(GROUND + 1) * _config.block_size
 	var x0 := float(box.position.x + 10) * _config.block_size
-	for i in names.size():
-		var node := MeshInstance3D.new()
-		var mesh: ArrayMesh = script.build_mesh(names[i])
-		node.mesh = mesh
-		node.material_override = script.gallery_material()
-		node.position = Vector3(x0 + float(i) * PLANT_SPACING_M,
-			float(GROUND + 1) * _config.block_size, z)
-		root.add_child(node)
-		if mesh != null:
-			_plant_tallest = maxf(_plant_tallest, mesh.get_aabb().size.y)
-	_plant_span = Vector3(x0, x0 + float(names.size() - 1) * PLANT_SPACING_M, z)
-	print("[Gallery] %d plant models in the 1:1 strip, tallest %.2f m" % [
-		names.size(), _plant_tallest])
+	var z := float(box.position.y + 4) * _config.block_size
+
+	var i := 0
+	var widest_row := 0.0
+	while i < built.size():
+		var row: Array = built.slice(i, mini(i + PLANTS_PER_ROW, built.size()))
+		var pitch := 0.0
+		var depth := 0.0
+		for e in row:
+			pitch = maxf(pitch, float(e["span"]))
+			depth = maxf(depth, float(e["aabb"].size.z))
+		pitch += PLANT_GAP_M
+		for c in row.size():
+			var e: Dictionary = row[c]
+			var node := MeshInstance3D.new()
+			node.mesh = e["mesh"]
+			node.material_override = script.gallery_material()
+			node.position = Vector3(x0 + float(c) * pitch, ground, z)
+			root.add_child(node)
+			_plant_tallest = maxf(_plant_tallest, float(e["aabb"].size.y))
+		widest_row = maxf(widest_row, float(row.size() - 1) * pitch)
+		z += depth + PLANT_GAP_M
+		i += PLANTS_PER_ROW
+
+	_plant_span = Vector3(x0, x0 + widest_row,
+		(float(box.position.y + 4) * _config.block_size + z) * 0.5)
+	_plant_depth = z - float(box.position.y + 4) * _config.block_size
+	print("[Gallery] %d plant models, %d rows, tallest %.2f m, strip %.1f x %.1f m" % [
+		built.size(), int(ceil(float(built.size()) / float(PLANTS_PER_ROW))),
+		_plant_tallest, widest_row, _plant_depth])
 
 
 # --- Taking the pictures ----------------------------------------------------
@@ -375,7 +442,12 @@ func _shoot_plants() -> void:
 		return
 	var player_h: float = _config.player_height_blocks * _config.block_size
 	# The capsule stands to the left of the strip; include it.
-	var left := minf(_plant_span.x, float(_pad_min().x + 4) * _config.block_size) - 0.6
+	# 1.8 m of margin on the capsule's side, not 0.6: the capsule is 2 m tall
+	# and 80 cm wide, and a frame that ends exactly at its centre line cuts it
+	# in half - which is what the first version did, leaving its shadow in the
+	# picture and the ruler itself outside it.
+	var left := minf(_plant_span.x,
+		float(_pad_min().x + 4) * _config.block_size) - 1.8
 	var right := _plant_span.y + 0.6
 	var cx := (left + right) * 0.5
 	var ground := float(GROUND + 1) * _config.block_size
@@ -384,12 +456,12 @@ func _shoot_plants() -> void:
 	var aspect := float(get_viewport().get_visible_rect().size.aspect())
 	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
 	var dist := maxf((right - left) * 0.5 / maxf(tan_v * aspect, 0.001),
-		subject_h * 0.5 / maxf(tan_v, 0.001)) * 1.15
+		(subject_h * 0.5 + _plant_depth * 0.3) / maxf(tan_v, 0.001)) * 1.15
 
 	# Low and barely tilted - the angle a standing player looks down at their
 	# own feet from, rather than a plan view.
 	var look := Vector3(cx, ground + subject_h * 0.35, _plant_span.z)
-	var pitch := deg_to_rad(14.0)
+	var pitch := deg_to_rad(20.0)
 	await _capture("plants",
 		look + Vector3(0.0, sin(pitch), -cos(pitch)) * dist, look)
 

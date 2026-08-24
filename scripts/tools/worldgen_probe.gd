@@ -266,11 +266,12 @@ func _print_flora(_gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfi
 	print("flora         %d instances estimated, sampled every %d blocks and scaled" % [
 		int(report.get("total", 0)), stride])
 	for zone in TerrainGenerator.ZONE_NAMES:
-		var n: int = int(report.get(zone, 0))
-		print("  %-11s %9d" % [zone, n])
-	if report.has("build_ms"):
-		print("flora build   %.2f ms per column, %d columns sampled" % [
-			float(report["build_ms"]), int(report.get("columns", 0))])
+		print("  %-13s %11d" % [zone, int(report.get(zone, 0))])
+	print("flora models")
+	for name in FloraModels.NAMES:
+		var n: int = int(report.get("model_" + name, 0))
+		if n > 0:
+			print("  %-13s %11d" % [name, n])
 
 
 # --- Terrain v2 Stage 1: the instruments ------------------------------------

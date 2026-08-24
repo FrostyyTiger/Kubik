@@ -207,7 +207,7 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 	var out := []
 
 	var forest := _find_densest_forest(hm, gen)
-	var forest_eye := _stand_at(forest, cfg, EYE_LEVEL_M)
+	var forest_eye := _stand_in_gap(gen, cfg, forest)
 	# Looking level, lifted a little at the far end so the canopy is in frame.
 	# Straight ahead at eye height photographs trunks and forest floor and cuts
 	# the crowns off at the top of the picture, which answers half the question.
@@ -436,6 +436,69 @@ func _find_densest_forest(hm: Heightmap, gen: TerrainGenerator) -> Vector2i:
 	return best
 
 
+## Stand in the GAP between the trunks, not on one of them.
+##
+## THE FIRST VERSION OF THIS SHOT WAS A WALL OF LEAVES. It stood at the centre
+## of the densest candidate cell, which is very nearly the definition of "where
+## a trunk is" - so the camera was inside a canopy, and the acceptance test for
+## the whole plan came back as a green rectangle.
+##
+## Standing somewhere OPEN is not a compromise, it is the shot: "trunks around
+## you, undergrowth at your feet, canopy overhead" is a description of a gap in
+## a forest. So this searches the dense window for the block furthest from any
+## trunk. Canopies still overhang it - that is wanted - but nothing is growing
+## through the lens.
+func _stand_in_gap(gen: TerrainGenerator, cfg: WorldgenConfig,
+		cell: Vector2i) -> Vector3:
+	var hm := gen.heightmap
+	var bx0 := hm.cell_to_block(cell.x)
+	var bz0 := hm.cell_to_block(cell.y)
+	var cell_blocks: int = cfg.tree_cell_blocks
+	var best := Vector2i(bx0, bz0)
+	var best_clear := -1.0
+	var half := FOREST_WINDOW_BLOCKS / 2
+
+	for dz in range(-half, half + 1):
+		for dx in range(-half, half + 1):
+			var bx := bx0 + dx
+			var bz := bz0 + dz
+			var clear := _nearest_trunk(gen, cfg, bx, bz, cell_blocks)
+			# Ties go to the block nearest the centre of the dense patch, so
+			# the camera does not wander to the sparse edge of the window just
+			# because there is more room out there.
+			var score := clear - 0.02 * sqrt(float(dx * dx + dz * dz))
+			if score > best_clear:
+				best_clear = score
+				best = Vector2i(bx, bz)
+
+	print("[Tour] standing at (%d, %d), %.1f blocks from the nearest trunk" % [
+		best.x, best.y, _nearest_trunk(gen, cfg, best.x, best.y, cell_blocks)])
+	return Vector3(
+		float(best.x) * cfg.block_size,
+		_world.surface_height_m(best.x, best.y) + EYE_LEVEL_M,
+		float(best.y) * cfg.block_size)
+
+
+## Distance in blocks to the nearest trunk, over the cells that could reach.
+func _nearest_trunk(gen: TerrainGenerator, cfg: WorldgenConfig,
+		bx: int, bz: int, cell_blocks: int) -> float:
+	var reach := 8
+	var c0x := Chunk.floor_div(bx - reach, cell_blocks)
+	var c1x := Chunk.floor_div(bx + reach, cell_blocks)
+	var c0z := Chunk.floor_div(bz - reach, cell_blocks)
+	var c1z := Chunk.floor_div(bz + reach, cell_blocks)
+	var nearest := float(reach)
+	for cz in range(c0z, c1z + 1):
+		for cx in range(c0x, c1x + 1):
+			var found := TreePlacement.decide(gen, cx, cz, _forest_masks)
+			if found.is_empty():
+				continue
+			var dx := float(int(found["bx"]) - bx)
+			var dz := float(int(found["bz"]) - bz)
+			nearest = minf(nearest, sqrt(dx * dx + dz * dz))
+	return nearest
+
+
 ## Trees accepted inside a window, using the world's own placement rules.
 func _count_trees_near(gen: TerrainGenerator, bx: int, bz: int, cell: int) -> int:
 	var half := FOREST_WINDOW_BLOCKS / 2
@@ -654,10 +717,37 @@ func _capture(index: int, shot: Dictionary) -> void:
 		push_warning("[Tour] could not write %s: %s" % [path, error_string(err)])
 	else:
 		print("[Tour]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
+	_report_cost(shot["name"])
 
 	if restore >= 0.0 and _sky != null:
 		_sky.time_of_day = restore
 		_sky.apply()
+
+
+## What this frame actually cost, printed beside the picture it belongs to.
+##
+## THE TRIANGLE BUDGET IS A NUMBER ABOUT A VANTAGE, not about a world, and the
+## tour is already standing at eleven of them with the world fully loaded and
+## the camera pointed somewhere deliberate. Measuring here means the budget is
+## reported from the same place the picture was taken, every run, without
+## anybody having to remember to go and stand somewhere and look at the F3
+## panel.
+##
+## RENDER_TOTAL_PRIMITIVES_IN_FRAME counts everything - terrain, far field and
+## flora together - so the flora share is the difference against a run with
+## flora_radius_m at 0. Both numbers go in STATUS.md rather than a subtraction
+## nobody can check.
+func _report_cost(shot_name: String) -> void:
+	var prims := int(Performance.get_monitor(
+		Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+	var line := "[Tour]      %s: %.2f M primitives in frame" % [
+		shot_name, float(prims) / 1000000.0]
+	if _world != null and _world.has_method("flora_stats"):
+		var f: Dictionary = _world.flora_stats()
+		line += ", %d flora in %d columns" % [
+			f.get("instances", 0), f.get("columns", 0)]
+	line += ", %d chunks" % _world.loaded_chunk_count()
+	print(line)
 
 
 func _wait_for_world() -> void:

@@ -31,6 +31,9 @@ const SALT_MODEL := 301
 const SALT_YAW := 302
 const SALT_SCALE := 303
 const SALT_TINT := 304
+const SALT_KIND := 306
+const SALT_PATCH_COLOR := 307
+const SALT_BOULDER_SIZE := 308
 
 ## Steepest ground a plant will stand on, in degrees.
 ##
@@ -46,18 +49,115 @@ const SCALE_RANGE := Vector2(0.85, 1.15)
 const TINT_AMOUNT := 0.06
 
 
-## Density per zone, as the probability that a block column carries one
-## instance.
+# --- The masks --------------------------------------------------------------
+#
+# Three more fbm fields, at three different wavelengths, and they exist for one
+# reason: EVEN DENSITY READS AS TEXTURE, NOT AS GROUND COVER. Ferns scattered
+# uniformly through a forest are a green carpet; ferns in patches with bare
+# floor between them are a forest floor. It is the same argument the grove mask
+# makes about trees, one scale down, and it is why these are separate fields
+# rather than one shared "clumpiness" - a flower patch is 40 m across and a
+# fern stand is 25 m, and at one wavelength they would clump in the same
+# places, which reads as a single feature wearing two costumes.
+
+class Masks extends RefCounted:
+	var flower: FastNoiseLite = null     # ~40 m, where meadow flowers grow
+	var fern: FastNoiseLite = null       # ~25 m, where ferns clump
+	var shrub: FastNoiseLite = null      # ~20 m, where heath thickens
+	var flower_cut := 0.0
+	var fern_cut := 0.0
+	var shrub_cut := 0.0
+	var key := ""
+
+	## Wavelengths in BLOCKS. Blocks are 0.5 m, so 40 m is 80 blocks.
+	const FLOWER_WAVELENGTH := 80.0
+	const FERN_WAVELENGTH := 50.0
+	const SHRUB_WAVELENGTH := 40.0
+
+	## Share of the world above each threshold - the top 30% of the flower
+	## field is a flower patch, and so on.
+	const FLOWER_SHARE := 0.30
+	const FERN_SHARE := 0.45
+	const SHRUB_SHARE := 0.50
+
+	const SAMPLES := 64
+
+	func build(world_seed: int, config: WorldgenConfig) -> void:
+		flower = _noise(world_seed, 901, 1.0 / FLOWER_WAVELENGTH)
+		fern = _noise(world_seed, 902, 1.0 / FERN_WAVELENGTH)
+		shrub = _noise(world_seed, 903, 1.0 / SHRUB_WAVELENGTH)
+		flower_cut = _quantile(flower, config, FLOWER_SHARE)
+		fern_cut = _quantile(fern, config, FERN_SHARE)
+		shrub_cut = _quantile(shrub, config, SHRUB_SHARE)
+		key = "%d|%d" % [world_seed, config.world_blocks_xz]
+
+	static func _noise(world_seed: int, offset: int, freq: float) -> FastNoiseLite:
+		var n := FastNoiseLite.new()
+		n.seed = world_seed + offset
+		n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+		n.frequency = freq
+		n.fractal_type = FastNoiseLite.FRACTAL_FBM
+		n.fractal_octaves = 2
+		return n
+
+	## Measured, not assumed - the same argument TreePlacement.Masks makes.
+	func _quantile(n: FastNoiseLite, config: WorldgenConfig, share: float) -> float:
+		var half := float(config.world_blocks_xz) * 0.5
+		var step := float(config.world_blocks_xz) / float(SAMPLES)
+		var values := PackedFloat32Array()
+		values.resize(SAMPLES * SAMPLES)
+		var i := 0
+		for j in SAMPLES:
+			for k in SAMPLES:
+				values[i] = n.get_noise_2d(
+					-half + float(k) * step, -half + float(j) * step)
+				i += 1
+		values.sort()
+		return values[clampi(int(float(values.size()) * (1.0 - share)),
+			0, values.size() - 1)]
+
+
+static var _masks: Masks = null
+static var _masks_mutex := Mutex.new()
+
+
+static func masks_for(gen: TerrainGenerator, config: WorldgenConfig) -> Masks:
+	var want := "%d|%d" % [gen.world_seed, config.world_blocks_xz]
+	var got := _masks
+	if got != null and got.key == want:
+		return got
+	_masks_mutex.lock()
+	if _masks == null or _masks.key != want:
+		var built := Masks.new()
+		built.build(gen.world_seed, config)
+		_masks = built
+	got = _masks
+	_masks_mutex.unlock()
+	return got
+
+
+# --- The zone rules ---------------------------------------------------------
+
+## Density per zone: the probability that a block column carries one instance.
 ##
-## STAGE 5 SHIPS ONE MODEL DELIBERATELY. The infrastructure - the worker job,
-## the buffer packing, the MultiMesh node, the shader - is the risky half of
-## this feature, and shipping it with a single grass tuft means the first thing
-## judged is whether the LAYER works rather than whether nine models look
-## right. Stage 6 fills the rest of this table in.
-const DENSITY := {
-	TerrainGenerator.ZONE_MEADOW: 0.35,
-	TerrainGenerator.ZONE_FOREST: 0.10,
+## THE TOTAL IS WHAT MATTERS FOR THE BUDGET, and it is why these are stated per
+## zone rather than per model. One roll decides whether a block carries
+## anything at all; a second decides what. That keeps the cost of an empty
+## block to a single hash however many models a zone can grow, and it means
+## raising the variety of a zone never raises its triangle count.
+const ZONE_DENSITY := {
+	TerrainGenerator.ZONE_SHORE: 0.35,
+	TerrainGenerator.ZONE_MEADOW: 0.50,
+	TerrainGenerator.ZONE_FOREST: 0.24,
+	TerrainGenerator.ZONE_ALPINE: 0.24,
+	TerrainGenerator.ZONE_HEATH: 0.26,
+	TerrainGenerator.ZONE_ROCK: 0.075,
+	TerrainGenerator.ZONE_SNOW: 0.005,
 }
+
+## The largest value above, for the early-out. A true upper bound, so it can
+## never reject a block that should have carried something.
+const MAX_DENSITY := 0.50
 
 
 ## Every plant in one chunk column.
@@ -78,6 +178,7 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 	var bz0 := cz * Chunk.SIZE
 	var seed := gen.world_seed
 	var bs: float = config.block_size
+	var masks := masks_for(gen, config)
 
 	for lz in Chunk.SIZE:
 		var bz := bz0 + lz
@@ -96,14 +197,14 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 
 			var surface := gen.surface_at(float(bx), float(bz))
 			var zone := gen.surface_zone_at(bx, bz, surface)
-			var density: float = DENSITY.get(zone, 0.0)
+			var density: float = ZONE_DENSITY.get(zone, 0.0)
 			if density <= 0.0 or roll >= density:
 				continue
 
 			if not _ground_allows(gen, config, bx, bz, surface):
 				continue
 
-			var model := _model_for(zone, bx, bz, seed)
+			var model := _model_for(gen, config, masks, zone, bx, bz, surface)
 			if model < 0:
 				continue
 			if not removed.is_empty() and removed.has(identity(model, bx, bz)):
@@ -128,12 +229,131 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 	return out
 
 
-## The largest value in DENSITY, for the early-out above.
+## Which plant, given the zone and the masks. -1 for none.
 ##
-## A true upper bound, so the early-out can never reject a block that should
-## have carried something - the same argument TreePlacement.max_probability()
-## makes one scale up.
-const MAX_DENSITY := 0.35
+## The second of the two rolls: the first decided that SOMETHING grows here,
+## this decides what. `kind` is one hash reused across the whole function, on
+## its own salt, so the choice cannot correlate with presence - if it did,
+## every densest patch of meadow would also be the flowery one.
+static func _model_for(gen: TerrainGenerator, config: WorldgenConfig,
+		masks: Masks, zone: int, bx: int, bz: int, surface: float) -> int:
+	var seed := gen.world_seed
+	var kind := WorldHash.hash01(bx, bz, seed, SALT_KIND)
+
+	match zone:
+		TerrainGenerator.ZONE_MEADOW:
+			return _meadow(masks, kind, bx, bz, seed)
+
+		TerrainGenerator.ZONE_FOREST:
+			# A GLADE IS MEADOW. The glade mask is what stopped trees growing
+			# here, so the ground is open and the light reaches it - which is
+			# exactly the condition flowers want. Reusing the tree mask rather
+			# than inventing a second one is what keeps the clearing and the
+			# flowers in it in the same place.
+			if TreePlacement.in_glade(gen, bx, bz):
+				return _meadow(masks, kind, bx, bz, seed)
+			# grass 0.10, fern 0.12 damped by its mask, mushrooms 0.02 - and
+			# 0.15 within two blocks of a trunk, which is where they really
+			# grow.
+			var near_trunk := _near_trunk(gen, config, bx, bz)
+			var shroom := 0.15 if near_trunk else 0.02
+			if kind < shroom:
+				return FloraModels.MUSHROOM
+			var fern := 0.0
+			if masks.fern.get_noise_2d(float(bx), float(bz)) >= masks.fern_cut:
+				fern = 0.50
+			if kind < shroom + fern:
+				return FloraModels.FERN
+			return _tuft(bx, bz, seed)
+
+		TerrainGenerator.ZONE_ALPINE:
+			# short grass 0.20, alpine flower 0.04 - so one in six is a flower.
+			return FloraModels.ALPINE_FLOWER if kind < 0.17 \
+				else FloraModels.GRASS_SHORT
+
+		TerrainGenerator.ZONE_HEATH:
+			# shrub 0.25 clumped, boulder 0.01.
+			if kind < 0.04:
+				return _boulder(bx, bz, seed)
+			if masks.shrub.get_noise_2d(float(bx), float(bz)) < masks.shrub_cut:
+				return -1
+			return FloraModels.SHRUB_A if kind < 0.52 else FloraModels.SHRUB_B
+
+		TerrainGenerator.ZONE_ROCK:
+			# scree 0.06, boulder 0.015 - one in five is a boulder.
+			return _boulder(bx, bz, seed) if kind < 0.20 \
+				else (FloraModels.SCREE_A if kind < 0.60 else FloraModels.SCREE_B)
+
+		TerrainGenerator.ZONE_SNOW:
+			return _boulder(bx, bz, seed)
+
+		TerrainGenerator.ZONE_SHORE:
+			# REEDS FOLLOW THE WATER, NOT THE ALTITUDE. A shore band is a fact
+			# about one particular lake, and every lake in the world sits at a
+			# different height - so this asks how far above THIS lake's shore
+			# level the ground is, which Lakes.shore_level was built for.
+			if gen.lakes != null:
+				var level := gen.lakes.shore_level_at_cell(
+					gen._cell_index(float(bx), float(bz)))
+				if not is_nan(level) and surface - level <= 1.0 and kind < 0.57:
+					return FloraModels.REED
+			return FloraModels.GRASS_SHORT
+
+	return -1
+
+
+## Meadow and glade: grass, and flowers inside a patch.
+##
+## EVERY FLOWER IN ONE PATCH IS THE SAME COLOUR, which is the whole reason a
+## patch exists as a concept. Four colours scattered evenly through a meadow
+## read as confetti; a field of yellow with a field of purple beyond it reads
+## as two kinds of flower, which is what a real meadow looks like from a
+## distance. The colour is hashed from the PATCH cell, not the block.
+static func _meadow(masks: Masks, kind: float, bx: int, bz: int,
+		seed: int) -> int:
+	if masks.flower.get_noise_2d(float(bx), float(bz)) >= masks.flower_cut \
+			and kind < 0.30:
+		var cell := int(Masks.FLOWER_WAVELENGTH)
+		var px := Chunk.floor_div(bx, cell)
+		var pz := Chunk.floor_div(bz, cell)
+		return FloraModels.FLOWERS[
+			WorldHash.hash2(px, pz, seed, SALT_PATCH_COLOR) % 4]
+	return _tuft(bx, bz, seed)
+
+
+static func _tuft(bx: int, bz: int, seed: int) -> int:
+	return FloraModels.GRASS_TUFT_A \
+		if WorldHash.hash2(bx, bz, seed, SALT_MODEL) & 1 == 0 \
+		else FloraModels.GRASS_TUFT_B
+
+
+## Three sizes of boulder, the small one commonest.
+static func _boulder(bx: int, bz: int, seed: int) -> int:
+	var r := WorldHash.hash01(bx, bz, seed, SALT_BOULDER_SIZE)
+	if r < 0.62:
+		return FloraModels.BOULDER_S
+	return FloraModels.BOULDER_M if r < 0.92 else FloraModels.BOULDER_L
+
+
+## Is there a trunk within two blocks? Mushrooms crowd them.
+static func _near_trunk(gen: TerrainGenerator, config: WorldgenConfig,
+		bx: int, bz: int) -> bool:
+	var cell: int = config.tree_cell_blocks
+	if cell <= 0:
+		return false
+	var reach := 2 + config.tree_jitter_blocks
+	var c0x := Chunk.floor_div(bx - reach, cell)
+	var c1x := Chunk.floor_div(bx + reach, cell)
+	var c0z := Chunk.floor_div(bz - reach, cell)
+	var c1z := Chunk.floor_div(bz + reach, cell)
+	for cz in range(c0z, c1z + 1):
+		for cx in range(c0x, c1x + 1):
+			var found := TreePlacement.decide(gen, cx, cz)
+			if found.is_empty():
+				continue
+			if absi(int(found["bx"]) - bx) <= 2 and absi(int(found["bz"]) - bz) <= 2:
+				return true
+	return false
 
 
 ## Can anything grow on this block at all?
@@ -191,17 +411,6 @@ static func _tree_occupies(gen: TerrainGenerator, config: WorldgenConfig,
 	return false
 
 
-## Which model, given the zone.
-static func _model_for(zone: int, bx: int, bz: int, seed: int) -> int:
-	match zone:
-		TerrainGenerator.ZONE_MEADOW, TerrainGenerator.ZONE_FOREST:
-			# Two shapes, evenly. The eye stops counting at two.
-			return FloraModels.GRASS_TUFT_A \
-				if WorldHash.hash2(bx, bz, seed, SALT_MODEL) & 1 == 0 \
-				else FloraModels.GRASS_TUFT_B
-	return -1
-
-
 # --- Identity ---------------------------------------------------------------
 
 ## A flora instance's 64-bit name.
@@ -235,9 +444,12 @@ static func probe_counts(gen: TerrainGenerator, config: WorldgenConfig,
 	var out := {"total": 0}
 	for name in TerrainGenerator.ZONE_NAMES:
 		out[name] = 0
+	for name in FloraModels.NAMES:
+		out["model_" + name] = 0
 	var half := int(config.world_blocks_xz / 2)
-	var scale := float(stride * stride)
+	var scale := stride * stride
 	var seed := gen.world_seed
+	var masks := masks_for(gen, config)
 
 	for bz in range(-half, half, stride):
 		for bx in range(-half, half, stride):
@@ -246,11 +458,15 @@ static func probe_counts(gen: TerrainGenerator, config: WorldgenConfig,
 				continue
 			var surface := gen.surface_at(float(bx), float(bz))
 			var zone := gen.surface_zone_at(bx, bz, surface)
-			var density: float = DENSITY.get(zone, 0.0)
+			var density: float = ZONE_DENSITY.get(zone, 0.0)
 			if density <= 0.0 or roll >= density:
 				continue
 			if not _ground_allows(gen, config, bx, bz, surface):
 				continue
-			out[TerrainGenerator.ZONE_NAMES[zone]] += int(scale)
-			out["total"] += int(scale)
+			var model := _model_for(gen, config, masks, zone, bx, bz, surface)
+			if model < 0:
+				continue
+			out[TerrainGenerator.ZONE_NAMES[zone]] += scale
+			out["model_" + FloraModels.NAMES[model]] += scale
+			out["total"] += scale
 	return out

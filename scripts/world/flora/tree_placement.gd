@@ -651,6 +651,16 @@ static func _forest_species(gen: TerrainGenerator, cell_x: int, cell_z: int,
 
 # --- For the probe ----------------------------------------------------------
 
+## Is this block inside a glade - a clearing the tree mask left open?
+##
+## Public because the FLORA placement asks it: a glade is where the light
+## reaches the forest floor, so it grows meadow rather than forest. Reusing the
+## same mask that kept the trees out, rather than inventing a second one, is
+## what keeps the clearing and the flowers in it in the same place.
+static func in_glade(gen: TerrainGenerator, bx: int, bz: int) -> bool:
+	return _glade(masks_for(gen), bx, bz) <= 0.0
+
+
 ## Share of the forest band that is glade, sampled on a stride.
 static func glade_share_measured(gen: TerrainGenerator, stride: int) -> float:
 	var masks := masks_for(gen)

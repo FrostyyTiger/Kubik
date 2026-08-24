@@ -43,12 +43,46 @@ const VOXELS_PER_BLOCK := 8
 enum {
 	GRASS_TUFT_A = 0,
 	GRASS_TUFT_B = 1,
+	GRASS_SHORT = 2,
+	# FOUR FLOWERS, ONE PER HEAD COLOUR, and that is a deliberate answer to a
+	# real constraint. The plan wants a flower's head colour to be a property
+	# of the INSTANCE - a patch of meadow is all one colour - but the only
+	# per-instance channel a MultiMesh has is a colour that multiplies the
+	# WHOLE model, stem included, which would give green-stemmed white flowers
+	# a white stem. Four models is the cheap way out: the placement rule picks
+	# one per patch, a column that has flowers usually has exactly one of them
+	# in it, and the stems stay green.
+	FLOWER_WHITE = 3,
+	FLOWER_YELLOW = 4,
+	FLOWER_PURPLE = 5,
+	FLOWER_RED = 6,
+	FERN = 7,
+	MUSHROOM = 8,
+	SHRUB_A = 9,
+	SHRUB_B = 10,
+	ALPINE_FLOWER = 11,
+	BOULDER_S = 12,
+	BOULDER_M = 13,
+	BOULDER_L = 14,
+	SCREE_A = 15,
+	SCREE_B = 16,
+	REED = 17,
+	FIREFLY = 18,
 }
 
-const COUNT := 2
+const COUNT := 19
 
 ## Names, for the probe, the gallery and STATUS.md.
-const NAMES := ["grass_tuft_a", "grass_tuft_b"]
+const NAMES := [
+	"grass_tuft_a", "grass_tuft_b", "grass_short",
+	"flower_white", "flower_yellow", "flower_purple", "flower_red",
+	"fern", "mushroom", "shrub_a", "shrub_b", "alpine_flower",
+	"boulder_s", "boulder_m", "boulder_l",
+	"scree_a", "scree_b", "reed", "firefly",
+]
+
+## The four flower models, in the order a patch hashes between them.
+const FLOWERS := [FLOWER_WHITE, FLOWER_YELLOW, FLOWER_PURPLE, FLOWER_RED]
 
 
 # --- The palette ------------------------------------------------------------
@@ -64,6 +98,21 @@ const NAMES := ["grass_tuft_a", "grass_tuft_b"]
 enum {
 	C_GRASS_BLADE = 0,
 	C_GRASS_BLADE_DRY = 1,
+	C_GRASS_ALPINE = 2,
+	C_STEM = 3,
+	C_FERN = 4,
+	C_MUSHROOM_STEM = 5,
+	C_MUSHROOM_CAP = 6,
+	C_SHRUB = 7,
+	C_SHRUB_B = 8,
+	C_BOULDER = 9,
+	C_REED = 10,
+	C_FIREFLY = 11,
+	C_FLOWER_WHITE = 12,
+	C_FLOWER_YELLOW = 13,
+	C_FLOWER_PURPLE = 14,
+	C_FLOWER_RED = 15,
+	C_FLOWER_ALPINE = 16,
 }
 
 ## THE TIP IS MUCH LIGHTER THAN THE BASE, and that is the whole readability of
@@ -82,6 +131,29 @@ enum {
 const COLORS := [
 	Color(0.1912, 0.3663, 0.0452),   # GRASS_BLADE      #79A33C  blade, base
 	Color(0.3916, 0.5841, 0.1119),   # GRASS_BLADE_DRY  #A8C95E  blade, sunlit tip
+	Color(0.2918, 0.3763, 0.0844),   # GRASS_ALPINE     #93A552  short turf
+	Color(0.1070, 0.1946, 0.0273),   # STEM             #5C7A2E  flower, reed stem
+	# LIGHTER AND GREENER than the first attempt at #4A7A34, which came back
+	# from the gallery almost black against the forest floor and, with
+	# one-voxel fronds, read as a spider rather than as a plant.
+	Color(0.1170, 0.2918, 0.0578),   # FERN_FROND       #5E9440  fern
+	Color(0.5841, 0.5210, 0.3916),   # MUSHROOM_STEM    #C9BFA8
+	Color(0.6939, 0.1441, 0.0685),   # MUSHROOM_CAP     #D96A4A
+	Color(0.3050, 0.1170, 0.0685),   # SHRUB_HEATH      #96604A  rusty dwarf shrub
+	Color(0.3515, 0.1470, 0.0762),   # SHRUB_HEATH_B    #A06B4E
+	# LIGHTER THAN IT LOOKS IT SHOULD BE. Authored at #8E877A first, which is
+	# a perfectly sensible mid-grey on paper and rendered near-black in the
+	# gallery: a blob has almost no upward-facing surface, so nearly every
+	# face it shows the camera is a side face pointing away from the sun. A
+	# boulder has to be authored bright enough to survive being lit edge-on.
+	Color(0.4397, 0.4072, 0.3467),   # BOULDER          #B4AEA3  boulder and scree
+	Color(0.3325, 0.3005, 0.0844),   # REED             #9C9552
+	Color(1.0000, 0.8148, 0.3515),   # FIREFLY          #FFE9A0
+	Color(0.8879, 0.8632, 0.7605),   # FLOWER_WHITE     #F2EFE2
+	Color(0.8070, 0.5647, 0.0685),   # FLOWER_YELLOW    #E8C64A
+	Color(0.3278, 0.1590, 0.5520),   # FLOWER_PURPLE    #9B6FC4
+	Color(0.5841, 0.0802, 0.0685),   # FLOWER_RED       #C9504A
+	Color(0.6867, 0.7758, 0.8714),   # FLOWER_ALPINE    #D8E4F0
 ]
 
 
@@ -113,12 +185,12 @@ static var _material: ShaderMaterial = null
 static func voxels_for(model: int) -> Array:
 	match model:
 		GRASS_TUFT_A:
-			# Four blades of different heights, leaning apart at the top. The
-			# LEAN IS THE WHOLE MODEL: four straight columns read as a bar
-			# chart, and offsetting only the top voxel of each turns it into a
-			# tuft for four extra voxels.
-			return _blades([
-				[0, 0, 5, 1, 0],     # x, z, height, top dx, top dz
+			# Four blades of different heights, arcing apart at the top. The
+			# ARC IS THE WHOLE MODEL: four straight columns read as a bar
+			# chart, and bending the top two voxels of each turns it into a
+			# tuft for no extra voxels at all.
+			return _blades(C_GRASS_BLADE, C_GRASS_BLADE_DRY, [
+				[0, 0, 5, 1, 0],     # x, z, height, bend dx, bend dz
 				[1, 0, 3, 1, 0],
 				[0, 1, 4, 0, 1],
 				[-1, 1, 2, -1, 0],
@@ -126,12 +198,197 @@ static func voxels_for(model: int) -> Array:
 		GRASS_TUFT_B:
 			# Three blades, shorter and wider apart, so the two variants differ
 			# in outline and not just in detail.
-			return _blades([
+			return _blades(C_GRASS_BLADE, C_GRASS_BLADE_DRY, [
 				[0, 0, 4, 0, 1],
 				[-1, 0, 3, -1, 0],
 				[1, 1, 2, 1, 1],
 			])
+		GRASS_SHORT:
+			# 15 cm. Alpine and shore turf: cropped, not tufted.
+			return _blades(C_GRASS_ALPINE, C_GRASS_ALPINE, [
+				[0, 0, 3, 0, 1],
+				[1, 1, 2, 1, 0],
+				[-1, 0, 2, -1, 0],
+			])
+
+		FLOWER_WHITE:
+			return _flower(C_FLOWER_WHITE)
+		FLOWER_YELLOW:
+			return _flower(C_FLOWER_YELLOW)
+		FLOWER_PURPLE:
+			return _flower(C_FLOWER_PURPLE)
+		FLOWER_RED:
+			return _flower(C_FLOWER_RED)
+
+		ALPINE_FLOWER:
+			# 15 cm, head close to the ground. Everything up there is small and
+			# hugging the rock; a 35 cm stem would blow over.
+			return [
+				[0, 0, 0, C_STEM, 0],
+				[0, 1, 0, C_FLOWER_ALPINE, 0],
+				[1, 1, 0, C_FLOWER_ALPINE, 0],
+				[0, 1, 1, C_FLOWER_ALPINE, 0],
+				[1, 1, 1, C_FLOWER_ALPINE, 0],
+			]
+
+		FERN:
+			return _fern()
+		MUSHROOM:
+			return _mushroom()
+
+		SHRUB_A:
+			# 90 cm across and 50 cm tall - wider than it is tall, which is
+			# what "dwarf shrub" means and why heath reads as a rusty carpet
+			# rather than as a field of bushes.
+			return _blob(7, 8, C_SHRUB, 511)
+		SHRUB_B:
+			return _blob(6, 7, C_SHRUB_B, 733)
+
+		# 1.0, 1.8 and 3.0 m across. The largest is a LANDMARK - one of them in
+		# a scree field is something to walk towards - which is why it is worth
+		# the triangles a 48-voxel-wide blob costs at a density of one block in
+		# seventy.
+		BOULDER_S:
+			return _blob(8, 6, C_BOULDER, 101, true)
+		BOULDER_M:
+			return _blob(14, 11, C_BOULDER, 202, true)
+		BOULDER_L:
+			return _blob(24, 18, C_BOULDER, 303, true)
+
+		SCREE_A:
+			# A flat angular chip, 30-50 cm. Wide and one or two voxels thick,
+			# because scree is broken rock lying where it fell.
+			return _chip(3, 2, 1, C_BOULDER, 404)
+		SCREE_B:
+			return _chip(2, 3, 2, C_BOULDER, 505)
+
+		REED:
+			# 120 cm - the tallest thing on this layer, and taller than the
+			# player is wide. Two or three bare stems, no leaves.
+			return _blades(C_REED, C_REED, [
+				[0, 0, 19, 1, 0],
+				[1, 1, 16, 1, 1],
+				[-1, 0, 12, -1, 0],
+			])
+
+		FIREFLY:
+			# One emissive voxel. Stage 8 gives it its drift and its blink; on
+			# its own it is a 6 cm point of light, and by day the shader scales
+			# it to nothing so there is no alpha to sort and nothing to see.
+			return [[0, 1, 0, C_FIREFLY, 1]]
 	return []
+
+
+## A flower: a green stem with a solid head of one colour.
+##
+## THE HEAD IS A WHOLE MODEL'S WORTH OF COLOUR, which is why there are four of
+## these rather than one tinted four ways - see the note on the model ids.
+static func _flower(head: int) -> Array:
+	var out := []
+	for y in 4:
+		out.append([0, y, 0, C_STEM, 0])
+	# A 2 x 2 x 2 head. Chunky on purpose: at 6.25 cm a voxel is already most
+	# of a real flower head, and anything smaller stops being visible from
+	# standing height at all.
+	for y in range(4, 6):
+		for z in 2:
+			for x in 2:
+				out.append([x, y, z, head, 0])
+	return out
+
+
+## A fern: four fronds arcing up out of a short stem and drooping outward.
+##
+## THE DROOP IS WHAT MAKES IT A FERN. Fronds that only rise read as a palm or a
+## firework; the shape everyone recognises is a fountain - up fast, over, and
+## down past the height it started from.
+static func _fern() -> Array:
+	var out := []
+	for y in 4:
+		out.append([0, y, 0, C_FERN, 0])
+	var dirs := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	# Out from the stem, and the height it reaches at each step.
+	var arc := [5, 7, 8, 7, 5]
+	for d in dirs:
+		# Across the frond, so it has WIDTH. One-voxel fronds were the first
+		# attempt and the gallery was blunt about them: four thin lines
+		# radiating from a stem is not a fern, it is a spider. A frond needs to
+		# read as a leaf, which means being two voxels across where it is
+		# widest and one at the tip.
+		var perp := Vector2i(d.y, -d.x)
+		for i in arc.size():
+			out.append([d.x * (i + 1), arc[i], d.y * (i + 1), C_FERN, 0])
+			if i == 1 or i == 2:
+				out.append([d.x * (i + 1) + perp.x, arc[i],
+					d.y * (i + 1) + perp.y, C_FERN, 0])
+	return out
+
+
+## A mushroom: a pale stem under a wider cap, and the cap GLOWS.
+##
+## Every cap voxel carries emissive = 1, which travels in the vertex colour's
+## alpha and does nothing at all until Stage 8 multiplies it by a global night
+## factor. That is the cheapest possible way to build night into a model: no
+## second material, no second mesh, no branch in the placement rule.
+static func _mushroom() -> Array:
+	var out := [
+		[0, 0, 0, C_MUSHROOM_STEM, 0],
+		[0, 1, 0, C_MUSHROOM_STEM, 0],
+	]
+	# A 3 x 3 cap with the corners knocked off, so it reads as round.
+	for z in range(-1, 2):
+		for x in range(-1, 2):
+			if absi(x) + absi(z) > 1 and not (x == 0 and z == 0):
+				continue
+			out.append([x, 2, z, C_MUSHROOM_CAP, 1])
+	out.append([0, 3, 0, C_MUSHROOM_CAP, 1])
+	return out
+
+
+## A squashed ellipsoid with its surface chewed at - a shrub or a boulder.
+##
+## SOLID, NOT HOLLOW, and that is a rendering decision rather than a modelling
+## one. Face culling removes every face between two filled voxels, so a solid
+## blob draws only its shell; a hollow one would draw its shell twice, inside
+## and out, for the same silhouette and double the triangles.
+##
+## `ragged` chews the surface with a hash so the outline is not a smooth dome.
+## Boulders take it too, at a coarser setting - a perfectly ellipsoidal rock
+## reads as an egg.
+static func _blob(radius: int, height: int, color: int, salt: int,
+		stone: bool = false) -> Array:
+	var out := []
+	var rr := float(radius)
+	var hh := float(maxi(height, 1))
+	for y in range(0, height + 1):
+		for z in range(-radius, radius + 1):
+			for x in range(-radius, radius + 1):
+				var fy := float(y) / hh
+				var d := (float(x * x + z * z) / (rr * rr)) + fy * fy
+				if d > 1.0:
+					continue
+				# Chew only the OUTER shell. Hollowing the middle would cost
+				# nothing visually and everything in triangles, because the
+				# faces facing the new hole would all have to be drawn.
+				if d > 0.55:
+					var keep := WorldHash.hash01(x * 31 + y, z * 17 + y, salt,
+						719)
+					if keep < (0.22 if stone else 0.30):
+						continue
+				out.append([x, y, z, color, 0])
+	return out
+
+
+## A flat angular chip of stone.
+static func _chip(rx: int, rz: int, height: int, color: int, salt: int) -> Array:
+	var out := []
+	for y in height:
+		for z in range(-rz, rz + 1):
+			for x in range(-rx, rx + 1):
+				if WorldHash.hash01(x * 13 + y * 7, z * 29, salt, 720) < 0.25:
+					continue
+				out.append([x, y, z, color, 0])
+	return out
 
 
 ## Turn blade descriptions into voxels.
@@ -144,7 +401,7 @@ static func voxels_for(model: int) -> Array:
 ## The top voxel takes the pale colour. That is what stops a tuft from being
 ## one flat green wedge: real grass catches the light at its tips, and with
 ## only five voxels of height the gradient has to do the work the shape cannot.
-static func _blades(blades: Array) -> Array:
+static func _blades(base: int, tip: int, blades: Array) -> Array:
 	var out := []
 	for b in blades:
 		var x: int = b[0]
@@ -154,10 +411,10 @@ static func _blades(blades: Array) -> Array:
 			# 0 for the lower part of the blade, 1 just below the tip, 2 at it.
 			var bend := maxi(0, y - (h - 3)) if h >= 3 else 0
 			out.append([
-				x + b[3] * bend,
+				x + int(b[3]) * bend,
 				y,
-				z + b[4] * bend,
-				C_GRASS_BLADE_DRY if y == h - 1 else C_GRASS_BLADE,
+				z + int(b[4]) * bend,
+				tip if y == h - 1 else base,
 				0,
 			])
 	return out
