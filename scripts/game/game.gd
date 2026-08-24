@@ -51,6 +51,9 @@ var _build_ms := 0
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
 	_apply_view_arg()
+	# After the preset, so --set can override a value the preset owns; before
+	# everything that reads one.
+	config.apply_cli_overrides(OS.get_cmdline_user_args())
 	_apply_msaa()
 	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
 		config.view_distance_name(), config.voxel_radius_chunks,
@@ -188,7 +191,7 @@ func _start_tour() -> void:
 	var tour := ScreenshotTour.new()
 	tour.name = "ScreenshotTour"
 	add_child(tour)
-	tour.run(_world, _player)
+	tour.run(_world, _player, _sky)
 
 
 # --- Join handshake ---------------------------------------------------------
@@ -416,6 +419,9 @@ func _on_config_changed() -> void:
 func _on_config_reload_requested() -> void:
 	config = WorldgenConfig.load_or_default()
 	_apply_view_arg()
+	# After the preset, so --set can override a value the preset owns; before
+	# everything that reads one.
+	config.apply_cli_overrides(OS.get_cmdline_user_args())
 	_apply_msaa()
 	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
 		config.view_distance_name(), config.voxel_radius_chunks,

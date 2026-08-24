@@ -41,6 +41,7 @@ func _init() -> void:
 	var world_seed: int = args.get("seed", 1)
 
 	var config := WorldgenConfig.load_or_default()
+	config.apply_cli_overrides(OS.get_cmdline_user_args())
 	# The config is half of the determinism contract, so it gets printed next to
 	# the seed rather than being left implicit.
 	print("seed          %d" % world_seed)

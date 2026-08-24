@@ -48,18 +48,27 @@ const EYE_HEIGHT := 26.0
 const SETTLE_FRAMES := 8
 const MAX_WAIT_FRAMES := 5400
 
+## Time of day every shot is taken at, unless --time says otherwise.
+##
+## The config's own day_start, so the tour photographs the world at the light
+## level it was tuned against rather than at a light level of its own.
+const DEFAULT_TOUR_TIME := -1.0
+
 var _world: World = null
 var _player: Player = null
+var _sky: SkyCycle = null
 var _camera: Camera3D = null
 
 ## Resolved from --label at run(). Empty means write straight into OUT_DIR.
 var _out_dir := OUT_DIR
 
 
-func run(world: World, player: Player) -> void:
+func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	_world = world
 	_player = player
+	_sky = sky
 
+	_freeze_time()
 	_out_dir = _resolve_out_dir()
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_out_dir))
 
@@ -359,3 +368,35 @@ func _resolve_out_dir() -> String:
 		push_warning("[Tour] --label %s is not usable as a directory name" % label)
 		return OUT_DIR
 	return "%s/%s" % [OUT_DIR, clean]
+
+
+## Stop the sun where it is, for the whole tour.
+##
+## THE HARNESS WAS BROKEN WITHOUT THIS and it had been since v1. A day is
+## day_seconds long - 480 by default - and a six-shot tour under software
+## rendering takes about five minutes, so the sun set between shot three and
+## shot four and the last of them came back as black rectangles. It never
+## showed up on a real GPU, where the whole tour is over in seconds.
+##
+## The black frames are the obvious half. The half that matters is that a
+## comparison harness whose lighting depends on how long rendering took cannot
+## be used to compare anything - two runs of the same seed would differ in the
+## light before they differed in the terrain.
+##
+## `--time 0.5` overrides it, for deliberately photographing the world at noon
+## or at dusk.
+func _freeze_time() -> void:
+	if _sky == null:
+		push_warning("[Tour] no SkyCycle - the sun will move during the tour")
+		return
+	var t := DEFAULT_TOUR_TIME
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--time")
+	if i >= 0 and i + 1 < argv.size():
+		t = clampf(argv[i + 1].to_float(), 0.0, 1.0)
+	if t < 0.0:
+		t = _world.config.day_start
+	_sky.time_of_day = t
+	_sky.frozen = true
+	_sky.apply()
+	print("[Tour] time of day frozen at %.3f" % t)

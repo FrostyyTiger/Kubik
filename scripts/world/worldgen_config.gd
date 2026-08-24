@@ -437,6 +437,46 @@ static func load_or_default() -> WorldgenConfig:
 	return cfg
 
 
+## Apply `--set name=value` arguments, in order, and report what changed.
+##
+## Every stage of terrain v2 that tunes something by eye has to answer "what
+## did this one knob do", which means two runs that differ in exactly one
+## number. Editing a file between them works and is a good way to leave the
+## file edited, which is how a measurement quietly becomes a measurement of
+## something else. This makes the difference part of the command line, so the
+## command line is the record of what was measured.
+##
+##     godot --headless --path . -- --host --set hills_freq=0.00556
+##     godot --path . -- --tour --label ao-off --set ao_strength=0
+##
+## Shape knobs and local knobs both, because "what does this do" is the same
+## question for either. Unknown names warn rather than fail: a typo should cost
+## a line of output, not a run that looked like it worked.
+func apply_cli_overrides(argv: PackedStringArray) -> void:
+	var i := 0
+	while i < argv.size():
+		if argv[i] != "--set" or i + 1 >= argv.size():
+			i += 1
+			continue
+		var pair := argv[i + 1]
+		i += 2
+		var eq := pair.find("=")
+		if eq <= 0:
+			push_warning("[Worldgen] --set %s is not name=value" % pair)
+			continue
+		var key := pair.substr(0, eq)
+		var text := pair.substr(eq + 1)
+		if not (PROPERTIES.has(key) or LOCAL_PROPERTIES.has(key)):
+			push_warning("[Worldgen] --set %s: no such config field" % key)
+			continue
+		var before = get(key)
+		if typeof(before) == TYPE_INT:
+			set(key, text.to_int())
+		else:
+			set(key, text.to_float())
+		print("[Worldgen] --set %s: %s -> %s" % [key, before, get(key)])
+
+
 ## Write the current values out so there is something to edit. Called by the
 ## tuning panel's save, and once on first run so the file exists to be found.
 func save_to_user() -> void:
