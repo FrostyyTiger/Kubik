@@ -1,0 +1,337 @@
+class_name Lakes
+extends RefCounted
+
+## Finds the basins in the coarse heightmap and fills them with water.
+##
+## THIS IS WHY THE HEIGHTMAP IS GLOBAL. A basin is a depression with a rim all
+## the way around it. You cannot see one by looking at a chunk, or at a
+## kilometre of chunks either - you have to be able to ask "if water fell here,
+## where would it run to, and does it ever reach the edge of the world". That
+## question is about the whole map at once, and answering it is the single
+## thing per-chunk generation can never do.
+##
+##
+## THE ALGORITHM: PRIORITY FLOOD
+##
+## Start with every cell on the border of the map - water there runs off the
+## edge, so its level is simply its own altitude. Put them all in a queue
+## ordered by altitude, lowest first. Then repeatedly:
+##
+##   * take the LOWEST cell in the queue
+##   * for each neighbour not yet reached, its water level is
+##         max(its own altitude, the level of the cell we came from)
+##     because water arriving from a cell at level L cannot sit lower than L
+##   * put that neighbour in the queue at its new level
+##
+## Taking the lowest first is what makes it correct: when a cell is reached, it
+## is reached over the LOWEST possible rim, which is exactly the spill point.
+## Every cell whose water level ends up above its own altitude is under water,
+## and every cell in one basin comes out at the same level - the height of the
+## lip it would pour over.
+##
+## The queue is buckets rather than a heap. A binary heap over 562,500 cells is
+## a few million comparisons in GDScript and takes seconds; priority flood only
+## ever pops in non-decreasing order, so an array of buckets indexed by level
+## with a cursor that never moves backwards does the same job in one pass.
+##
+##
+## DETERMINISM
+##
+## Every loop here runs in a FIXED order - scan order for cells, a fixed
+## neighbour order, and last-in-first-out within a bucket. Nothing iterates a
+## Dictionary. Two machines must find the same lakes from the same seed or they
+## are looking at different worlds, and lakes are large and obvious enough that
+## the players would notice, which makes this one of the few determinism bugs
+## that would actually get reported rather than silently ruining a session.
+
+## Buckets per block of altitude. Finer means a more exact spill point; the
+## error is at most one bucket, so 8 is about 6 cm of water level.
+const BUCKETS_PER_BLOCK := 8.0
+
+## How far above its own altitude a cell's water has to sit before we call it
+## flooded rather than a rounding artefact, in blocks.
+const FLOODED_EPSILON := 0.05
+
+## Fixed neighbour order. Deterministic by construction, and never a Dictionary.
+const NEIGHBOURS := [Vector2i(-1, 0), Vector2i(1, 0), Vector2i(0, -1), Vector2i(0, 1)]
+
+## Water surface altitude per cell, in blocks. Equal to the terrain altitude
+## where there is no water.
+var water := PackedFloat32Array()
+
+## Which lake each cell belongs to, or -1 for none. Index into `lakes`.
+var lake_id := PackedInt32Array()
+
+## One entry per surviving lake:
+##   {"level": float, "cells": int, "area_m2": float}
+var lakes: Array = []
+
+var _cols := 0
+var _elapsed_ms := 0
+
+
+func elapsed_ms() -> int:
+	return _elapsed_ms
+
+
+func lake_count() -> int:
+	return lakes.size()
+
+
+## Find every basin, discard the puddles, and set a level for what is left.
+func compute(heightmap: Heightmap, config: WorldgenConfig) -> void:
+	var started := Time.get_ticks_msec()
+	_cols = heightmap.cols
+	var total := _cols * _cols
+
+	water = PackedFloat32Array()
+	water.resize(total)
+	lake_id = PackedInt32Array()
+	lake_id.resize(total)
+	lakes = []
+
+	_fill_to_spill_points(heightmap, config, total)
+	_find_lakes(heightmap, config, total)
+
+	_elapsed_ms = Time.get_ticks_msec() - started
+
+
+# --- Priority flood ---------------------------------------------------------
+
+func _fill_to_spill_points(heightmap: Heightmap, config: WorldgenConfig, total: int) -> void:
+	var elev := heightmap.cells
+	var visited := PackedByteArray()
+	visited.resize(total)
+
+	var bucket_count := int(config.max_altitude * BUCKETS_PER_BLOCK) + 4
+	# Plain Arrays, not PackedInt32Arrays. Packed arrays are copy-on-write, so
+	# pulling one out of a container to push onto it can quietly operate on a
+	# copy - a bug that shows up as a queue that never empties.
+	var buckets: Array = []
+	buckets.resize(bucket_count)
+	for i in bucket_count:
+		buckets[i] = []
+
+	# Seed: every border cell drains off the edge of the world, so its water
+	# level is its own altitude and nothing can raise it.
+	for i in _cols:
+		_seed_border(i, 0, elev, visited, buckets, bucket_count)
+		_seed_border(i, _cols - 1, elev, visited, buckets, bucket_count)
+	for j in range(1, _cols - 1):
+		_seed_border(0, j, elev, visited, buckets, bucket_count)
+		_seed_border(_cols - 1, j, elev, visited, buckets, bucket_count)
+
+	# The cursor only ever moves forward. That is the property that lets
+	# buckets stand in for a priority queue at all.
+	var cursor := 0
+	while cursor < bucket_count:
+		var bucket: Array = buckets[cursor]
+		if bucket.is_empty():
+			cursor += 1
+			continue
+
+		var idx: int = bucket.pop_back()
+		var level := water[idx]
+		var cx := idx % _cols
+		var cz := idx / _cols
+
+		for offset in NEIGHBOURS:
+			var nx: int = cx + offset.x
+			var nz: int = cz + offset.y
+			if nx < 0 or nz < 0 or nx >= _cols or nz >= _cols:
+				continue
+			var nidx := nx + nz * _cols
+			if visited[nidx] != 0:
+				continue
+			visited[nidx] = 1
+			# Water arriving from a cell at `level` cannot come to rest below
+			# it. This one line is the whole of the flooding.
+			var n_level := maxf(elev[nidx], level)
+			water[nidx] = n_level
+			var b := clampi(int(n_level * BUCKETS_PER_BLOCK), cursor, bucket_count - 1)
+			buckets[b].push_back(nidx)
+
+
+func _seed_border(x: int, z: int, elev: PackedFloat32Array, visited: PackedByteArray,
+		buckets: Array, bucket_count: int) -> void:
+	var idx := x + z * _cols
+	if visited[idx] != 0:
+		return
+	visited[idx] = 1
+	water[idx] = elev[idx]
+	buckets[clampi(int(elev[idx] * BUCKETS_PER_BLOCK), 0, bucket_count - 1)].push_back(idx)
+
+
+# --- Connected components ---------------------------------------------------
+
+## Group flooded cells into lakes, throw away the puddles, and give each
+## survivor a level.
+func _find_lakes(heightmap: Heightmap, config: WorldgenConfig, total: int) -> void:
+	var elev := heightmap.cells
+	for i in total:
+		lake_id[i] = -1
+
+	# -2 marks "flooded, but part of a basin we rejected", so a discarded
+	# puddle is never rescanned.
+	var cell_area := float(config.coarse_step * config.coarse_step) \
+		* config.block_size * config.block_size
+
+	for start in total:
+		if lake_id[start] != -1:
+			continue
+		if water[start] - elev[start] <= FLOODED_EPSILON:
+			continue
+
+		# Flood fill this basin. An explicit stack rather than recursion: a
+		# lake can be tens of thousands of cells and GDScript has no tail
+		# calls.
+		var members: Array[int] = []
+		var stack: Array[int] = [start]
+		lake_id[start] = -2
+		var spill := water[start]
+		var floor_altitude := elev[start]
+
+		while not stack.is_empty():
+			var idx: int = stack.pop_back()
+			members.append(idx)
+			spill = maxf(spill, water[idx])
+			floor_altitude = minf(floor_altitude, elev[idx])
+			var cx := idx % _cols
+			var cz := idx / _cols
+			for offset in NEIGHBOURS:
+				var nx: int = cx + offset.x
+				var nz: int = cz + offset.y
+				if nx < 0 or nz < 0 or nx >= _cols or nz >= _cols:
+					continue
+				var nidx := nx + nz * _cols
+				if lake_id[nidx] != -1:
+					continue
+				if water[nidx] - elev[nidx] <= FLOODED_EPSILON:
+					continue
+				lake_id[nidx] = -2
+				stack.append(nidx)
+
+		if members.size() < config.lake_min_cells:
+			continue  # a puddle; leave the cells marked -2 and move on
+
+		# Sit the surface just below the lip - at exactly the spill point the
+		# water reads as brimming over the edge from any angle looking down at
+		# it - and no deeper than lake_max_depth above the basin floor. See the
+		# note on that setting for why the cap exists at all.
+		var level := minf(
+			spill - config.lake_level_offset,
+			floor_altitude + config.lake_max_depth)
+		level = maxf(level, floor_altitude + 0.2)
+
+		# Capping the level takes the shallow margins of the basin back out of
+		# the water, so membership has to be recomputed against it. A basin can
+		# come apart into several pools this way; they share a level and sit in
+		# the same valley, which is exactly what that looks like in the world.
+		var wet: Array[int] = []
+		var max_depth := 0.0
+		var total_depth := 0.0
+		for idx in members:
+			var d := level - elev[idx]
+			if d <= FLOODED_EPSILON:
+				continue
+			wet.append(idx)
+			max_depth = maxf(max_depth, d)
+			total_depth += d
+
+		if wet.size() < config.lake_min_cells:
+			continue
+
+		var id := lakes.size()
+		for idx in wet:
+			lake_id[idx] = id
+		lakes.append({
+			"level": level,
+			"cells": wet.size(),
+			"area_m2": float(wet.size()) * cell_area,
+			"max_depth": max_depth,
+			"mean_depth": total_depth / float(wet.size()),
+		})
+
+
+# --- Water surface ----------------------------------------------------------
+
+## One mesh for every lake in the world.
+##
+## Quads are merged along each row first: a lake 100 cells across becomes 100
+## quads instead of 10,000, for nothing but a while loop. Merging in two
+## dimensions as the chunk mesher does would do better still, and lakes are
+## flat and few enough that it has not been worth it.
+func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
+	if lakes.is_empty():
+		return []
+
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	var bs: float = config.block_size
+	var step: int = config.coarse_step
+	# Linear, like the rest of the palette - see Block.COLORS.
+	var color := Color(0.0685, 0.2789, 0.3712, 0.65)   # #4A90A4
+
+	for j in _cols:
+		var i := 0
+		while i < _cols:
+			var id := lake_id[i + j * _cols]
+			if id < 0:
+				i += 1
+				continue
+			var run := 1
+			while i + run < _cols and lake_id[i + run + j * _cols] == id:
+				run += 1
+
+			var level: float = lakes[id]["level"]
+			var x0 := float(heightmap.cell_to_block(i)) * bs
+			var x1 := float(heightmap.cell_to_block(i + run)) * bs
+			var z0 := float(heightmap.cell_to_block(j)) * bs
+			var z1 := z0 + float(step) * bs
+			var y := level * bs
+
+			# Same corner order as a +Y face in the chunk mesher, so the water
+			# is wound and culled exactly like the ground it sits in.
+			var first := verts.size()
+			for p in [
+				Vector3(x0, y, z0), Vector3(x1, y, z0),
+				Vector3(x1, y, z1), Vector3(x0, y, z1),
+			]:
+				verts.push_back(p)
+				normals.push_back(Vector3.UP)
+				colors.push_back(color)
+			indices.push_back(first)
+			indices.push_back(first + 1)
+			indices.push_back(first + 2)
+			indices.push_back(first)
+			indices.push_back(first + 2)
+			indices.push_back(first + 3)
+			i += run
+
+	if verts.is_empty():
+		return []
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	return arrays
+
+
+## Translucent, unshaded-ish, and drawn from both sides.
+##
+## Double-sided because the surface is a single plane with nothing underneath
+## it: standing in a lake and looking up at a one-sided surface shows you
+## nothing at all, which reads as a bug rather than as water.
+static func make_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.roughness = 0.15
+	return m

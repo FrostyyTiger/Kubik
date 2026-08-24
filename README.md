@@ -28,12 +28,15 @@ Every feature must serve at least one, and contradict none.
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 
-> **Status: early.** Right now you get generated terrain, a fly camera, and two
-> instances that see each other. There is no player character, no collision, and
-> no way to break or place blocks yet.
+> **Status: early, but walkable.** Terrain v1 has landed: a bounded 1.5 x 1.5 km
+> Swiss pre-Alpine landscape with meadow valleys, forested slopes, bare rock,
+> snow peaks, lakes sitting in real basins, fog and a day/night cycle. You get a
+> third-person character who walks on it, and two instances that see each other.
+> There is still no way to break or place blocks, and no enemies.
 >
-> Verified on Godot 4.7.2: 75 chunks generate and mesh in ~960 ms, the two-peer
-> handshake works, and the world is clean of runtime errors.
+> Verified on Godot 4.7.2: ~1100 chunks build in ~8 s with meshing on worker
+> threads, both peers generate an identical world from the same seed and config,
+> and the world is clean of runtime errors. See `STATUS.md`.
 
 ---
 
@@ -78,10 +81,13 @@ payload.
 
 ### 3. Terrain is never sent, only edits
 
-Both machines generate identical terrain locally from a shared 64-bit seed. The
-host picks it and sends it once during the join handshake. After that, the only
-world data on the wire is the **edit dictionary** — the difference between what
-the seed generates and what the world actually looks like.
+Both machines generate identical terrain locally from a shared 64-bit seed **and
+a shared worldgen config**. The host picks both and sends them once during the
+join handshake — the config matters just as much as the seed, because two
+machines generating with different treelines are in different worlds. After
+that, the only world data on the wire is the **edit dictionary** — the
+difference between what the seed generates and what the world actually looks
+like.
 
 That makes generation determinism a hard requirement. No `randf()` in
 `TerrainGenerator`, no dependence on iteration order, no floats that might round
@@ -100,9 +106,19 @@ Wrapping RPCs in a custom message layer would mean every gameplay system is
 written against the wrapper, and "swap the transport" would quietly become
 "rewrite the game".
 
-### 5. Chunks
+### 5. Chunks and the two-scale world
 
-16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per voxel, one
+Voxels exist only in a disc around the player — real, editable, collidable
+terrain. Everything beyond is one low-poly mesh built from a **global coarse
+heightmap** covering the whole 1.5 km world at 2 m resolution. That global
+heightmap is also what makes lakes possible: a basin is a depression with a rim
+all the way round it, and you cannot see one by looking at a chunk.
+
+This is why the world is bounded rather than infinite. An infinite world could
+not afford a global heightmap, and lakes and a 200 m view distance are worth
+more than infinity is.
+
+Chunks are 16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per voxel, one
 contiguous allocation, serialises as-is. Index order is `x + z*16 + y*256`.
 
 Coordinate conversion floor-divides rather than using integer division.
@@ -146,6 +162,30 @@ Add `--headless` to run with no window at all, which is how the networking is
 smoke-tested — the logs tell you everything. `--quit-after N` stops after N
 frames, though note headless runs far faster than 60 fps, so N is not seconds.
 
+### Looking at the world without playing it
+
+Three offline tools, all headless. They exist because most of what can go wrong
+in worldgen is either invisible from inside the game or only obvious once you
+already know what you are looking at.
+
+```
+# Self-tests: mesher winding, tree chunk borders, determinism, day cycle,
+# and the config half of the join handshake. Exits non-zero on failure.
+godot --headless --path . --script scripts/tools/selftest.gd
+
+# What a given seed actually produced: altitude spread, zone shares,
+# lake count and areas, tree count, and a hash of every altitude.
+godot --headless --path . --script scripts/tools/worldgen_probe.gd -- --seed 42
+
+# Six screenshots - summit, forest, valley, lake, and a postcard framing
+# a mountain, its forest and a lake together. Writes to build/tour/.
+godot --path . -- --tour --seed 42
+```
+
+Run the probe twice with the same seed and every line must match. Run it on the
+other player's machine and it must still match — that is the whole terrain
+contract, checked.
+
 Pressing **F6** on `scenes/game.tscn` also works: with no session, the game
 takes the host role without opening a socket.
 
@@ -153,11 +193,19 @@ takes the host role without opening a socket.
 
 | Input | Action |
 | --- | --- |
-| Mouse | Look |
-| `W` `A` `S` `D` | Fly horizontally, relative to where you are looking |
-| `Space` / `Ctrl` | Fly up / down (world vertical) |
+| Mouse | Orbit the camera |
+| `W` `A` `S` `D` | Walk, relative to where the camera is looking |
+| `Space` | Jump — or fly up, in noclip |
+| `Ctrl` | Fly down, in noclip |
+| `F` | Toggle noclip free-flight. A debug tool, not a mode |
 | `G` | Toggle a test slab of blocks — scaffolding, see below |
+| `F3` | Debug readout: seed, position, zone, fps, chunk timings |
+| `F4` | Worldgen tuning panel |
+| `F5` | Re-read `user://worldgen.tres` and rebuild |
+| `F7` | Reroll the world (host only) |
 | `Esc` | First press frees the cursor, second returns to the menu |
+
+The camera is **third person only**, by design — see `docs/DESIGN.md`.
 
 `G` exists to prove the authority chain works before we have block interaction:
 press it on the **client** and the blocks appear on both machines, because the
@@ -196,13 +244,16 @@ Check `BUILD_INFO.txt` matches before blaming the netcode.
 ## Layout
 
 ```
-assets/textures/     one 16x16 greyscale placeholder, tinted per block type
-scenes/              main_menu, game, remote_player
+assets/textures/     one 16x16 greyscale placeholder, no longer used
+scenes/              main_menu, game, player, remote_player
 scripts/net/         transport seam, ENet implementation, Net autoload
-scripts/world/       block table, chunk, terrain generator, mesher, world
-scripts/player/      fly camera, remote player capsule
-scripts/ui/          main menu
+scripts/world/       worldgen config, heightmap, terrain generator, lakes,
+                     chunk, greedy mesher, mesh job, far field, sky, world
+scripts/player/      player character, remote player capsule
+scripts/ui/          main menu, debug HUD and tuning panel
 scripts/game/        join handshake and player sync
+scripts/tools/       headless self-tests, worldgen probe, screenshot tour
+docs/plans/          implementation plans
 ```
 
 ---
@@ -212,27 +263,37 @@ scripts/game/        join handshake and player sync
 Things that work but are explicitly not final. They are marked in the source at
 the point where they need replacing.
 
-- **Players report position, not input.** A noclip debug camera has no movement
-  rules a host could validate, so clients currently send their camera position.
-  When the player becomes a physics body, `Game._srv_report_state` carries input
-  instead and the host simulates. The shape is already right — the host owns and
-  distributes the table — only the payload is wrong.
-- **Naive meshing, single threaded.** One quad per exposed face, built on the
-  main thread across an 8 ms-per-frame budget. Greedy meshing and a worker
-  thread come once we can measure that this is the bottleneck. **The number to
-  beat is ~960 ms for 75 chunks** (Godot 4.7.2), printed on every run.
-- **Fixed 5x5 chunk area.** No streaming as players move.
-- **No collision.** Nothing to collide with yet.
+- **Players report position, not input.** Still true, and now the largest
+  carried ticket. The player is a physics body, but it is simulated locally and
+  the client sends the result. `Game._srv_report_state` is the function to
+  replace: it should carry input, and the host should simulate. The shape is
+  already right — the host owns and distributes the table — only the payload is
+  wrong.
+- **Chunk generation is on the main thread.** Meshing moved to worker threads in
+  terrain v1 and is now 0.2 ms per chunk; generating the voxels is what the
+  frame budget goes on, at ~3.4 ms per chunk. Threading it too is the single
+  biggest remaining performance win and is not free — chunk data would no
+  longer exist at submit time, which changes how edits are replayed.
+- **The block texture is unused.** Terrain is flat vertex colour, so
+  `assets/textures/block_placeholder.png` and its committed `.import` settings
+  are not read by anything. Both are kept because a texture atlas with per-face
+  UVs is still on the roadmap and the import settings were the fiddly part.
+- **Water is scenery.** Flat, translucent, no physics, no swimming.
+- **The far field is a separate mesh from the voxels**, so there is a visible
+  seam where one gives way to the other. See `STATUS.md`.
 
 ## Roadmap
 
+- Host-authoritative player input (the player exists; the host does not yet
+  simulate it)
 - Block interaction: voxel raycast, break and place, through the existing
   request path
-- Real player: physics body, collision against chunk meshes, input to host
-- Chunk streaming around players
-- Greedy meshing + threaded mesh building
+- Threaded chunk generation
 - Texture atlas with per-face UVs
 - GodotSteam transport
+
+Done in terrain v1: the real player and collision, chunk streaming, greedy
+meshing and threaded mesh building.
 
 ## Licence
 

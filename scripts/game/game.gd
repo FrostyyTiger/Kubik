@@ -6,12 +6,13 @@ extends Node3D
 ## both machines - which is what makes @rpc work: Godot addresses RPCs by node
 ## path, and a mismatch means the call silently lands nowhere.
 
-## Scaffolding: a fixed spot well above the terrain band, so the debug slab is
-## guaranteed to land in open air and be visible from anywhere.
-const DEBUG_SLAB_Y := 47
+## Scaffolding: how far above the ground at spawn the debug slab is placed, in
+## blocks. Relative rather than a fixed altitude, because the terrain at spawn
+## is now anywhere between 25 and 250 blocks up depending on the seed.
+const DEBUG_SLAB_CLEARANCE := 6
 
-## How far above the ground to drop the camera once the world exists.
-const SPAWN_CLEARANCE := 6.0
+## How far above the ground to drop the camera once the world exists, in metres.
+const SPAWN_CLEARANCE := 3.0
 
 ## Position updates per second. 20 is plenty for two players; the smoothing on
 ## the receiving end hides the gaps.
@@ -23,9 +24,16 @@ const JOIN_RETRY_SECONDS := 1.0
 const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 
 @onready var _world: World = $World
-@onready var _camera: FlyCamera = $FlyCamera
+@onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
+@onready var _debug: DebugHUD = $DebugHUD
+@onready var _sky: SkyCycle = $SkyCycle
+
+## Every tunable number. Loaded once here and handed to World, so there is
+## exactly one instance per session and no chance of two halves of the game
+## generating against different values.
+var config: WorldgenConfig = null
 
 ## peer_id -> RemotePlayer. Everyone except us.
 var _players := {}
@@ -41,6 +49,17 @@ var _build_ms := 0
 
 
 func _ready() -> void:
+	config = WorldgenConfig.load_or_default()
+	_sky.setup(config, $Sun, $WorldEnvironment)
+	_debug.setup(config, _world, _player, _sky)
+	# A client retuning its own terrain has silently left the host's world, so
+	# the panel is read-only there. Read-only rather than synced-from-host
+	# because it is the safer of the two and this is a debug tool.
+	_debug.set_tuning_editable(Net.is_host())
+	_debug.reroll_requested.connect(_on_reroll_requested)
+	_debug.config_changed.connect(_on_config_changed)
+	_debug.config_reload_requested.connect(_on_config_reload_requested)
+
 	_world.generation_finished.connect(_on_world_ready)
 	Net.peer_left.connect(_on_peer_left)
 	Net.host_disconnected.connect(_on_host_disconnected)
@@ -50,11 +69,19 @@ func _ready() -> void:
 		# zero clients rather than a separate offline mode.
 		Net.host_offline()
 
+	if "--tour" in OS.get_cmdline_user_args():
+		_start_tour.call_deferred()
+
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
 		# so this differs every session.
 		_status.text = "host - generating world..."
-		_world.setup(randi())
+		# Godot randomises its RNG seed at startup, so a bare host differs every
+		# session; --seed pins it, which is what makes a tour reproducible.
+		_world.setup(_startup_seed(), config)
+		print("[Game] hosting world: seed %d, config %s" % [
+			_world.world_seed, _world.config.hash_key()])
+		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
 		# request plus the reply is the entire world transfer: one integer and
@@ -70,6 +97,11 @@ func _process(delta: float) -> void:
 		_join_retry -= delta
 		if _join_retry <= 0.0:
 			_request_join_state()
+
+	# Voxels exist only near the player.
+	if _world.has_seed():
+		_world.set_center_from_position(_player.global_position)
+	_release_player_when_ground_exists()
 
 	# A session we are no longer part of has nothing to sync, and calling rpc()
 	# without a live peer is an engine error, not a no-op.
@@ -93,11 +125,64 @@ func _process(delta: float) -> void:
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	_chunk_count = chunk_count
 	_build_ms = elapsed_ms
-	# The camera starts above everything so it is never buried mid-generation;
-	# once the terrain exists we drop it to just above the ground.
-	var surface := _world.find_surface_y(0, 0)
-	_camera.position = Vector3(0.5, surface + SPAWN_CLEARANCE, 0.5)
 	_update_status()
+
+
+# --- Spawning ---------------------------------------------------------------
+#
+# The player is frozen until the ground beneath the spawn point exists.
+#
+# Not cosmetic: chunks are built over many frames, and a CharacterBody3D
+# dropped into a world with no collision in it yet does not wait politely - it
+# accelerates downward, and by the time its chunk arrives it is a hundred
+# metres below and still falling. Waiting for one specific chunk rather than
+# for the whole world means the wait is a moment rather than the full load.
+
+var _awaiting_ground := false
+
+
+func _spawn_player() -> void:
+	# In METRES: surface_height_m answers in metres, find_surface_y in blocks,
+	# and the scene graph is metres.
+	_player.global_position = Vector3(
+		0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
+	_player.velocity = Vector3.ZERO
+	_player.set_physics_process(false)
+	_awaiting_ground = true
+
+
+func _release_player_when_ground_exists() -> void:
+	if not _awaiting_ground:
+		return
+	var spawn_block := Vector3i(
+		0, _world.find_surface_y(0, 0), 0)
+	if not _world.has_chunk(Chunk.world_to_chunk(spawn_block)):
+		return
+	_awaiting_ground = false
+	_player.set_physics_process(true)
+	print("[Game] spawn chunk ready, player released at %.1f m" % _player.global_position.y)
+
+
+## Seed for a new world: --seed N if given, otherwise a fresh random one.
+func _startup_seed() -> int:
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--seed")
+	if i != -1 and i + 1 < args.size():
+		return args[i + 1].to_int()
+	return randi()
+
+
+## Hand the session over to the screenshot tour, which drives the camera to six
+## vantage points, photographs each and quits.
+func _start_tour() -> void:
+	# The HUD is for playing, not for photographs - a debug readout across the
+	# corner of every picture makes them useless for judging terrain.
+	$HUD.visible = false
+	_debug.visible = false
+	var tour := ScreenshotTour.new()
+	tour.name = "ScreenshotTour"
+	add_child(tour)
+	tour.run(_world, _player)
 
 
 # --- Join handshake ---------------------------------------------------------
@@ -113,16 +198,27 @@ func _srv_request_join_state() -> void:
 	if not Net.is_host():
 		return
 	var who := multiplayer.get_remote_sender_id()
-	print("[Game] sending world state to peer %d" % who)
-	_cl_receive_join_state.rpc_id(who, _world.world_seed, _world.get_edits())
+	print("[Game] sending world state to peer %d (config %s)" % [
+		who, _world.config.hash_key()])
+	# The config travels WITH the seed, and it is the world's snapshot rather
+	# than the live tuning object - the client has to generate against exactly
+	# what the host generated against, not against whatever the host has since
+	# dragged a slider to.
+	_cl_receive_join_state.rpc_id(
+		who, _world.world_seed, _world.config.to_dict(), _world.get_edits())
 
 
 ## Sent by the host, executed on the joining client.
 @rpc("authority", "call_remote", "reliable")
-func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
+func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
+		edits: Dictionary) -> void:
 	if _world.has_seed():
 		return  # A retry crossed with the reply. Ignore the duplicate.
-	_world.setup(seed_value)
+	_adopt_host_config(config_data)
+	_world.setup(seed_value, config)
+	print("[Game] joined world: seed %d, config %s" % [
+		seed_value, _world.config.hash_key()])
+	_spawn_player()
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
 	_world.apply_edit_snapshot(edits)
@@ -140,8 +236,8 @@ func _cl_receive_join_state(seed_value: int, edits: Dictionary) -> void:
 # the payload changes. _srv_report_state is the function to replace.
 
 func _publish_local_state() -> void:
-	var pos := _camera.position
-	var yaw := _camera.rotation.y
+	var pos := _player.global_position
+	var yaw := _player.rotation.y
 	if Net.is_host():
 		_states[Net.local_peer_id()] = {"p": pos, "y": yaw}
 	else:
@@ -213,12 +309,70 @@ func _on_peer_left(peer_id: int) -> void:
 	_update_status()
 
 
+# --- Tuning loop ------------------------------------------------------------
+#
+# Reroll rebuilds the world in place from a new seed, without leaving the
+# session. Stage 11 makes this host-only and has clients follow, because a
+# client rerolling alone is exactly the silent desync the README warns about.
+
+func _on_reroll_requested(new_seed: int) -> void:
+	# HOST ONLY. A client rerolling on its own would silently walk off into a
+	# different world - no error on either machine, just a friend swimming
+	# through solid rock. Same rule as every other world change: one authority.
+	if not Net.is_host():
+		_status.text = "only the host can reroll the world"
+		return
+	_apply_reroll(new_seed, config.to_dict())
+	if not Net.other_peer_ids().is_empty():
+		_cl_reroll.rpc(new_seed, config.to_dict())
+
+
+## Sent by the host, executed on every client.
+@rpc("authority", "call_remote", "reliable")
+func _cl_reroll(new_seed: int, config_data: Dictionary) -> void:
+	_apply_reroll(new_seed, config_data)
+
+
+func _apply_reroll(new_seed: int, config_data: Dictionary) -> void:
+	_adopt_host_config(config_data)
+	print("[Game] reroll -> seed %d, config %s" % [new_seed, config.hash_key()])
+	_slab_present = false
+	_world.reset()
+	_world.setup(new_seed, config)
+	_spawn_player()
+	_status.text = "regenerating world..."
+
+
+## Take the host's numbers as our own, and tell everything that reads them.
+func _adopt_host_config(config_data: Dictionary) -> void:
+	config.from_dict(config_data)
+	_debug.rebind(config)
+	_sky.rebind(config)
+
+
+## A knob moved in the tuning panel. The config object is shared, so World
+## already sees the new value; what it does NOT have is terrain built with it.
+func _on_config_changed() -> void:
+	# Fog and day length take effect immediately - they cost nothing to change
+	# and are much easier to tune when you can see the result at once. Terrain
+	# shape needs a rebuild, which is what the message is about.
+	_sky.rebind(config)
+	_status.text = "config changed - press F7 to rebuild terrain"
+
+
+func _on_config_reload_requested() -> void:
+	config = WorldgenConfig.load_or_default()
+	_debug.rebind(config)
+	_sky.rebind(config)
+	_on_reroll_requested(_world.world_seed)
+
+
 # --- HUD and debug ----------------------------------------------------------
 
 func _update_status() -> void:
 	if not _world.is_world_ready():
 		return
-	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space/Ctrl, [G] slab, Esc" % [
+	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space jump, [F] fly, [G] slab, [F3] debug, Esc" % [
 		_role_name(), Net.local_peer_id(), _players.size(),
 		_chunk_count, _build_ms, _world.world_seed]
 
@@ -243,10 +397,11 @@ func _unhandled_input(event: InputEvent) -> void:
 func _toggle_debug_slab() -> void:
 	_slab_present = not _slab_present
 	var id := Block.SNOW if _slab_present else Block.AIR
+	var y := _world.find_surface_y(0, 0) + DEBUG_SLAB_CLEARANCE
 	for x in range(-1, 2):
 		for z in range(-1, 2):
 			# Note: a request, not a write. Even the host goes through this.
-			_world.request_set_block(Vector3i(x, DEBUG_SLAB_Y, z), id)
+			_world.request_set_block(Vector3i(x, y, z), id)
 
 
 func _role_name() -> String:
