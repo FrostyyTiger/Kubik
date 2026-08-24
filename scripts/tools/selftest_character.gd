@@ -381,12 +381,24 @@ func _test_part_parsing():
 func _test_eyes_forward():
 	var bad := 0
 
-	var head: Dictionary = PartsHuman.HEAD
+	var total_iris := 0
+	for entry in _every_build():
+		bad += _eyes_forward_for(entry)
+		total_iris += 1
+
+	print("eyes forward: %d builds checked, %d checks failed" % [total_iris, bad])
+	return 1 if bad > 0 else 0
+
+
+## The same two assertions for one race and scheme.
+func _eyes_forward_for(entry: Dictionary) -> int:
+	var bad := 0
+	var head: Dictionary = Races.part_set(entry["race"], entry["build"])["head"]
 	var voxels := VoxelModel.parse(head, "head")
 	var iris := VoxelModel.slot_centroid(voxels, VoxelModel.IRIS)
 	var iris_count := VoxelModel.voxels_with_slot(voxels, VoxelModel.IRIS).size()
 	if iris_count == 0:
-		print("  the head has no iris voxels at all")
+		print("  the %s head has no iris voxels at all" % _build_name(entry))
 		return 1
 
 	var centre := Vector3.ZERO
@@ -395,14 +407,14 @@ func _test_eyes_forward():
 	centre /= float(voxels.size())
 
 	if not (iris.z < centre.z):
-		print("  iris centroid z is %.2f and the head's is %.2f - the face is on the BACK" % [
-			iris.z, centre.z])
+		print("  %s: iris centroid z is %.2f and the head's is %.2f - the face is on the BACK" % [
+			_build_name(entry), iris.z, centre.z])
 		bad += 1
 
 	# ...and the same fact, through the mesher, the anchor, the bone table and
 	# the yaw expression, on a rig that has actually been built.
 	var view := CharacterView.new()
-	view.build(CharacterDef.new())
+	view.build(_def_for(entry))
 	var rig: Rig = view.rig
 	var anchor: Vector3 = head["anchor"]
 	var to_rig := rig.transform_to_rig(rig.bones["head"])
@@ -412,7 +424,7 @@ func _test_eyes_forward():
 	var centre_m: Vector3 = to_rig * ((centre + Vector3(0.5, 0.5, 0.5) - anchor) * VoxelModel.VOXEL_M)
 	var face_dir := Vector3(iris_m.x - centre_m.x, 0.0, iris_m.z - centre_m.z)
 	if face_dir.length() < 0.001:
-		print("  the eyes are directly above the head's centre - nothing to face with")
+		print("  %s: the eyes are directly above the head's centre" % _build_name(entry))
 		bad += 1
 	else:
 		face_dir = face_dir.normalized()
@@ -428,13 +440,12 @@ func _test_eyes_forward():
 			if agreement < 0.999:
 				bad += 1
 				if bad <= 3:
-					print("  %d deg: wish %s but the face points %s" % [degrees, wish, pointed])
-		print("  built rig: worst face-vs-travel agreement %.4f over 10 headings" % worst)
+					print("  %s at %d deg: wish %s but the face points %s" % [
+						_build_name(entry), degrees, wish, pointed])
+		print("  %s: %d iris voxels, worst face-vs-travel agreement %.4f" % [
+			_build_name(entry), iris_count, worst])
 	view.free()
-
-	print("eyes forward: %d iris voxels at z %.2f against a head centre of %.2f, %d checks failed" % [
-		iris_count, iris.z, centre.z, bad])
-	return 1 if bad > 0 else 0
+	return bad
 
 
 ## EVERY BONE HAS A PART OR IS A SOCKET, AND EVERY SOCKET EXISTS.
@@ -445,71 +456,127 @@ func _test_eyes_forward():
 ## whether or not anything will ever hang on them.
 func _test_rig_completeness():
 	var bad := 0
+	var totals := PackedStringArray()
+	for entry in _every_build():
+		bad += _rig_completeness_for(entry, totals)
+	print("rig completeness: %s, %d checks failed" % [String(" ").join(totals), bad])
+	return 1 if bad > 0 else 0
+
+
+func _rig_completeness_for(entry: Dictionary, totals: PackedStringArray) -> int:
+	var bad := 0
 	var view := CharacterView.new()
-	view.build(CharacterDef.new())
+	view.build(_def_for(entry))
 	var rig: Rig = view.rig
 
-	var table := Races.bone_table(Races.HUMAN, Races.STOCKY)
-	var parts := Races.part_set(Races.HUMAN, Races.STOCKY)
+	var table := Races.bone_table(entry["race"], entry["build"])
+	var parts := Races.part_set(entry["race"], entry["build"])
 	var transforms_only := 0
-	for entry in table:
-		var bone_name: String = entry["name"]
+	# `bone_entry`, not `entry` - the parameter is already called that, and
+	# GDScript rejects the shadow rather than quietly picking one.
+	for bone_entry in table:
+		var bone_name: String = bone_entry["name"]
 		if not rig.bones.has(bone_name):
-			print("  bone %s is in the table but not on the rig" % bone_name)
+			print("  %s bone %s is in the table but not on the rig" % [
+				_build_name(entry), bone_name])
 			bad += 1
 			continue
-		if entry.get("socket", false):
+		if bone_entry.get("socket", false):
 			continue
-		var part_name: String = entry.get("part", "")
+		var part_name: String = bone_entry.get("part", "")
 		if part_name.is_empty():
 			# Legal: a race whose stack leaves no room for a pelvis has a hips
 			# bone that is a pure transform with a socket on it.
 			transforms_only += 1
 			continue
 		if not parts.has(part_name):
-			print("  bone %s wants part %s, which the human part set does not have" % [
-				bone_name, part_name])
-			bad += 1
+			# Not a failure for a race that is still borrowing the human's
+			# parts - Stage 8 builds the other three and flips the flag.
+			if Races.has_part_set(entry["race"]):
+				print("  %s bone %s wants part %s, which its part set does not have" % [
+					_build_name(entry), bone_name, part_name])
+				bad += 1
 		elif not rig.meshes.has(bone_name):
-			print("  bone %s has part %s but no mesh was built" % [bone_name, part_name])
+			print("  %s bone %s has part %s but no mesh was built" % [
+				_build_name(entry), bone_name, part_name])
 			bad += 1
 
 	for socket_name in Races.SOCKET_NAMES:
 		if not rig.sockets.has(socket_name):
-			print("  socket %s is missing" % socket_name)
+			print("  %s is missing socket %s" % [_build_name(entry), socket_name])
 			bad += 1
 
-	print("rig completeness: %d bones, %d meshes, %d sockets, %d pure transforms, %d checks failed" % [
-		rig.bones.size(), rig.meshes.size(), rig.sockets.size(), transforms_only, bad])
+	totals.append("%s %db/%dm/%ds" % [
+		_build_name(entry), rig.bones.size(), rig.meshes.size(), rig.sockets.size()])
 	view.free()
-	return 1 if bad > 0 else 0
+	return bad
 
 
-## THE BUILT HUMAN IS 32 VOXELS TALL, within one voxel.
+## EVERY BUILT CHARACTER IS THE HEIGHT ITS TABLE CLAIMS, within one voxel.
 ##
 ## Measured off the mesh AABBs of the rig that was actually built, not summed
 ## from the race table - a height computed from the table would only prove the
 ## table agrees with itself, and the thing that can actually go wrong is an
-## anchor or a rest offset being a voxel out.
+## anchor or a rest offset being a voxel out. That is precisely how a doubled
+## neck offset would show up: the lean human would come out 33 voxels tall.
+##
+## Runs over every race AND both schemes where a race has both, which is what
+## makes it a check on the lean part set rather than on the human's.
 func _test_character_height():
 	var bad := 0
-	var view := CharacterView.new()
-	view.build(CharacterDef.new())
-	var got := view.height_m()
-	var want := Races.height_m(Races.HUMAN)
-	var tris := view.triangle_count()
-	if absf(got - want) > VoxelModel.VOXEL_M:
-		print("  the human is %.4f m, wanted %.4f m (within one voxel)" % [got, want])
-		bad += 1
-	# The budget, reported rather than gated at this stage - hair and beard are
-	# still to come and Stage 14 is where the number is judged.
-	if tris > 6000:
-		print("  the bald human is already %d triangles, over the 6000 budget" % tris)
-		bad += 1
-	print("character height: %.4f m against %.4f m wanted, %d triangles, %d checks failed" % [
-		got, want, tris, bad])
-	view.free()
+	var report := PackedStringArray()
+	for entry in _every_build():
+		var view := CharacterView.new()
+		view.build(_def_for(entry))
+		var got := view.height_m()
+		var want := Races.height_m(entry["race"], entry["build"])
+		var tris := view.triangle_count()
+		# A race still borrowing the human's parts is the wrong height BY
+		# CONSTRUCTION - the elf is missing its two-voxel neck because the
+		# human head has no neck to give it. Reported, not failed, until
+		# Stage 8 gives it its own parts and flips Races.HAS_PART_SET.
+		if not Races.has_part_set(entry["race"]):
+			report.append("%s %.2fm/%d (borrowed parts, wants %.2f)" % [
+				_build_name(entry), got, tris, want])
+			view.free()
+			continue
+		if absf(got - want) > VoxelModel.VOXEL_M:
+			print("  the %s is %.4f m, wanted %.4f m (within one voxel)" % [
+				_build_name(entry), got, want])
+			bad += 1
+		# The budget, reported rather than gated at this stage - hair and beard
+		# are still to come and Stage 14 is where the number is judged.
+		if tris > 6000:
+			print("  the %s is already %d triangles, over the 6000 budget" % [
+				_build_name(entry), tris])
+			bad += 1
+		report.append("%s %.2fm/%d" % [_build_name(entry), got, tris])
+		view.free()
+	print("character height: %s, %d checks failed" % [
+		String(" ").join(report), bad])
 	return 1 if bad > 0 else 0
+
+
+## Every (race, build) pair that has a part set behind it.
+func _every_build() -> Array:
+	var out := []
+	for race in Races.RACE_COUNT:
+		out.append({"race": race, "build": Races.STOCKY})
+		if Races.has_lean(race):
+			out.append({"race": race, "build": Races.LEAN})
+	return out
+
+
+func _def_for(entry: Dictionary) -> CharacterDef:
+	var def := CharacterDef.new()
+	def.race = entry["race"]
+	def.build = entry["build"]
+	def.validate()
+	return def
+
+
+func _build_name(entry: Dictionary) -> String:
+	return "%s %s" % [Races.BUILD_NAMES[entry["build"]], Races.name_of(entry["race"])]
 
 
 ## A DEF SURVIVES BOTH ROUND TRIPS.

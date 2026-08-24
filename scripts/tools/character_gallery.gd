@@ -133,6 +133,8 @@ func _sheets() -> Dictionary:
 		"anim-sprint": _sheet_anim_sprint,
 		"anim-jump": _sheet_anim_jump,
 		"anim-poses": _sheet_anim_poses,
+		"study": _sheet_study,
+		"masks-40": _sheet_masks_40,
 	}
 
 
@@ -174,10 +176,21 @@ func _face(yaw: float) -> void:
 ## build/character/character-baseline.
 func _lineup_defs() -> Array:
 	var out := []
-	var human := CharacterDef.new()
-	human.race = Races.HUMAN
-	human.validate()
-	out.append(human)
+	for race in Races.RACE_COUNT:
+		if not Races.has_part_set(race):
+			continue
+		var def := CharacterDef.new()
+		def.race = race
+		def.validate()
+		out.append(def)
+	# The lean human stands beside the stocky one in every sheet, because the
+	# proportion decision is the first thing Marcel is asked to make and a
+	# comparison you have to open two files for is a comparison nobody makes.
+	var lean := CharacterDef.new()
+	lean.race = Races.HUMAN
+	lean.build = Races.LEAN
+	lean.validate()
+	out.append(lean)
 	return out
 
 
@@ -230,6 +243,19 @@ func _sheet_anim_sprint() -> void:
 	await _phase_strip("anim-%s-sprint", 13.0, LocomotionState.MODE_SPRINT)
 
 
+## The name a per-character sheet is filed under.
+##
+## The BUILD is in it, not just the race. Once the lean human joined the lineup
+## both schemes were writing to anim-human-walk.png and the second was
+## silently overwriting the first - which would have made "nothing about the
+## stocky human changed" impossible to check, since the file with that name
+## was the lean one.
+func _sheet_slug(def: CharacterDef) -> String:
+	if Races.has_lean(def.race):
+		return "%s-%s" % [Races.BUILD_NAMES[def.build], Races.name_of(def.race)]
+	return Races.name_of(def.race)
+
+
 ## One row per race in the lineup, at eight points of its own cycle.
 func _phase_strip(name_format: String, speed: float, mode: int) -> void:
 	for def in _lineup_defs():
@@ -241,7 +267,7 @@ func _phase_strip(name_format: String, speed: float, mode: int) -> void:
 			st.grounded = true
 			states.append({"state": st, "phase": float(k) / float(STRIP_STEPS)})
 		_set_posed_row(def, states)
-		await _shoot_row(name_format % Races.name_of(def.race), states.size())
+		await _shoot_row(name_format % _sheet_slug(def), states.size())
 
 
 ## Takeoff, rising, apex, falling, landing, recovered - the six moments of a
@@ -264,7 +290,7 @@ func _sheet_anim_jump() -> void:
 			st.vertical = m["v"]
 			moments.append({"state": st, "phase": 0.25, "land": m["land"]})
 		_set_posed_row(def, moments)
-		await _shoot_row("anim-%s-jump" % Races.name_of(def.race), moments.size())
+		await _shoot_row("anim-%s-jump" % _sheet_slug(def), moments.size())
 
 
 ## Sit, downed, wave, idle. The four things a character does when it is not
@@ -291,7 +317,7 @@ func _sheet_anim_poses() -> void:
 		# rather than a full 90: side on hides the wave, which is on the right
 		# arm, so the angle is the compromise that shows all four.
 		_set_posed_row(def, poses, 55.0)
-		await _shoot_row("anim-%s-poses" % Races.name_of(def.race), poses.size())
+		await _shoot_row("anim-%s-poses" % _sheet_slug(def), poses.size())
 
 
 ## A row of copies of one character, each frozen in its own pose.
@@ -357,6 +383,8 @@ func _set_lineup(defs: Array) -> void:
 		node.position = Vector3(-span * 0.5 + float(i) * LINEUP_SPACING, 0.0, SUBJECT_Z)
 		node.rotation.y = FACING_CAMERA
 		_subjects_root.add_child(node)
+		if _mask_override:
+			_paint_mask(node)
 
 
 ## One subject. THE ONLY PLACE the gallery decides what a character looks like -
@@ -391,7 +419,7 @@ func _lineup_chest_height() -> float:
 	var tallest := 2.0
 	for def in _lineup_defs():
 		if def != null:
-			tallest = maxf(tallest, Races.height_m(def.race))
+			tallest = maxf(tallest, Races.height_m(def.race, def.build))
 	return tallest * 0.62
 
 
@@ -406,12 +434,18 @@ func _shoot(sheet_name: String, distance: float, suffix := "", eye := -1.0) -> v
 	await _save("%s%s" % [sheet_name, suffix])
 
 
-func _save(file_name: String) -> void:
+## Draw the current scene and hand back the pixels, without writing anything.
+## The mask metric needs the image and not the file.
+func _capture() -> Image:
 	for i in SETTLE_FRAMES:
 		await get_tree().process_frame
 	# The image is only valid once the frame has actually been drawn.
 	await RenderingServer.frame_post_draw
-	var image := get_viewport().get_texture().get_image()
+	return get_viewport().get_texture().get_image()
+
+
+func _save(file_name: String) -> void:
+	var image := await _capture()
 	var path := "%s/%s.png" % [_out_dir, file_name]
 	var err := image.save_png(path)
 	if err != OK:
@@ -419,6 +453,287 @@ func _save(file_name: String) -> void:
 		return
 	_written += 1
 	print("[Gallery]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
+
+
+# --- The proportion study -----------------------------------------------------
+
+## THE SHEET MARCEL DECIDES FROM.
+##
+## Stocky and lean humans side by side, at both distances and both times of
+## day, front and three-quarter. The distance and the time are in the FILENAME
+## rather than burned into the image, so the eight pictures can be flipped
+## between without a caption getting in the way of the comparison.
+##
+## Same animator on both, which is the point: if the two schemes needed two
+## animators the study would be measuring the animator.
+func _sheet_study() -> void:
+	var stocky := CharacterDef.new()
+	stocky.race = Races.HUMAN
+	stocky.build = Races.STOCKY
+	stocky.validate()
+	var lean := CharacterDef.new()
+	lean.race = Races.HUMAN
+	lean.build = Races.LEAN
+	lean.validate()
+
+	# THE DETAIL PAIR FIRST, at four metres. The two distances the plan names
+	# are the ones a character is actually seen at, and that is what makes them
+	# the right test of READABILITY - but a proportion decision is also a
+	# decision about shapes, and at 15 m a 2 m character is sixty pixels tall.
+	# One close pair costs one picture and is where the head-to-torso ratio can
+	# actually be looked at.
+	_set_time(0.5)
+	for angle in [{"deg": 0.0, "name": "front"}, {"deg": 35.0, "name": "three-quarter"}]:
+		_set_lineup([stocky, lean])
+		_face(FACING_CAMERA + deg_to_rad(angle["deg"]))
+		await _shoot("study-detail-4m-%s" % angle["name"], 4.0)
+
+	for time_entry in [{"t": 0.5, "name": "noon"}, {"t": 0.82, "name": "dusk"}]:
+		_set_time(time_entry["t"])
+		for distance in [15.0, 40.0]:
+			for angle in [{"deg": 0.0, "name": "front"},
+					{"deg": 35.0, "name": "three-quarter"}]:
+				_set_lineup([stocky, lean])
+				_face(FACING_CAMERA + deg_to_rad(angle["deg"]))
+				await _shoot("study-%s-%dm-%s" % [
+					time_entry["name"], int(distance), angle["name"]], distance)
+	_set_time(-1.0)
+
+
+## Move the frozen sun. -1 restores whatever --time asked for.
+func _set_time(t: float) -> void:
+	if t < 0.0:
+		_freeze_time()
+		return
+	_sky.time_of_day = t
+	_sky.frozen = true
+	_sky.apply()
+
+
+# --- The silhouette metric ----------------------------------------------------
+#
+# THE TEST THE WHOLE RACE DESIGN HANGS ON. DESIGN.md asks for "strong distinct
+# silhouettes readable at distance in dim light", which is a claim about
+# outlines and not about colours - so it is measured on outlines.
+#
+# Each subject is rendered alone, unshaded black on white at 40 m, cropped to
+# its own bounding box and aligned bottom-centre against every other. The
+# overlap of two aligned masks over their union is the number: 1.0 means two
+# races are the same shape, 0.0 means they share no pixel at all.
+#
+# TARGET: EVERY PAIR UNDER 0.70. A pair over it says which two races to
+# separate, and the fix is to exaggerate the DIFFERENTIATING feature in the
+# race table - ears, beard, tail, width - never the shared ones. Making
+# everything bigger moves every number at once and separates nothing.
+
+## Distance the metric is measured at. The plan's acceptance test is a dusk
+## lineup at 40 m and this is the same distance, so the number and the picture
+## are about the same thing.
+const MASK_DISTANCE := 40.0
+
+## Anything darker than this on the white background is silhouette. Generous,
+## because the edges of an unshaded black mesh are antialiased against white
+## and a threshold at the midpoint would eat a voxel off every outline.
+const MASK_THRESHOLD := 0.75
+
+
+func _sheet_masks_40() -> void:
+	var defs := _lineup_defs()
+	var names := PackedStringArray()
+	var masks := []
+	# The capsule is in the comparison because "is a character more readable
+	# than the capsule it replaced" is a question this run has to answer, and
+	# it is the only baseline that exists.
+	for def in defs:
+		names.append(_mask_name(def))
+		masks.append(await _mask_of(def))
+	names.append("capsule")
+	masks.append(await _mask_of(null))
+
+	# The sheet itself: the whole lineup as masks, for looking at.
+	_enter_mask_mode()
+	_set_lineup(defs)
+	await _shoot("masks-40", MASK_DISTANCE)
+	_leave_mask_mode()
+
+	# THE TARGET IS ABOUT RACE PAIRS, and only about race pairs.
+	#
+	# "A pair over it says which two races to separate" - so the two schemes of
+	# ONE race are not a failing pair, they are two ways of drawing the same
+	# person and are supposed to look alike. Nor is a character against the
+	# capsule: that pair is here because "is a character more readable than the
+	# thing it replaced" is a question worth a number, not because a capsule is
+	# a race anyone has to tell apart from a human at dusk.
+	#
+	# Both are reported. Only race pairs are judged.
+	print("[Gallery] silhouette IoU at %d m, target: every RACE pair under 0.70" % int(MASK_DISTANCE))
+	var worst := 0.0
+	var worst_pair := ""
+	var over := 0
+	var race_pairs := 0
+	for i in masks.size():
+		for j in range(i + 1, masks.size()):
+			var iou := _mask_iou(masks[i], masks[j])
+			var judged := _is_race_pair(defs, i, j)
+			var flag := ""
+			if judged:
+				race_pairs += 1
+				if iou >= 0.70:
+					flag = "  OVER"
+					over += 1
+				if iou > worst:
+					worst = iou
+					worst_pair = "%s vs %s" % [names[i], names[j]]
+			else:
+				flag = "  (reference, not judged)"
+			print("[Gallery]   %-22s vs %-22s  %.3f%s" % [names[i], names[j], iou, flag])
+	if race_pairs == 0:
+		print("[Gallery]   only one race has parts so far - no race pair to judge yet")
+	else:
+		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
+			race_pairs, worst_pair, worst, over])
+
+
+## Is this pair two DIFFERENT races, both of them characters?
+##
+## Index `defs.size()` is the capsule, which is a reference and not a race.
+func _is_race_pair(defs: Array, i: int, j: int) -> bool:
+	if i >= defs.size() or j >= defs.size():
+		return false
+	return (defs[i] as CharacterDef).race != (defs[j] as CharacterDef).race
+
+
+func _mask_name(def) -> String:
+	if def == null:
+		return "capsule"
+	return "%s %s" % [Races.BUILD_NAMES[def.build], Races.name_of(def.race)]
+
+
+## One subject, rendered as a mask and cropped to its own bounding box.
+func _mask_of(def) -> Dictionary:
+	_enter_mask_mode()
+	_set_lineup([def])
+	var image := await _capture()
+	_leave_mask_mode()
+	return _crop_mask(image)
+
+
+## Unshaded black on flat white, with the ground and the sky taken away.
+##
+## The pad and the wall go because a silhouette is measured against nothing;
+## the fog goes because it would grey the mask out at 40 m and move the
+## threshold; and the material override is SHADING_MODE_UNSHADED so the sun's
+## angle cannot make one race's mask thinner than another's.
+var _mask_material: StandardMaterial3D = null
+var _saved_background := 0
+var _saved_fog := true
+
+func _enter_mask_mode() -> void:
+	if _mask_material == null:
+		_mask_material = StandardMaterial3D.new()
+		_mask_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_mask_material.albedo_color = Color.BLACK
+	var env := _env_node.environment
+	_saved_background = env.background_mode
+	_saved_fog = env.fog_enabled
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color.WHITE
+	env.fog_enabled = false
+	_pad.visible = false
+	_wall.visible = false
+	_mask_override = true
+
+
+func _leave_mask_mode() -> void:
+	var env := _env_node.environment
+	env.background_mode = _saved_background
+	env.fog_enabled = _saved_fog
+	_pad.visible = true
+	_mask_override = false
+
+
+## Set while the gallery is photographing masks, so _set_lineup paints
+## whatever it builds. Applied at build time rather than by walking the tree
+## afterwards, because a rig builds its meshes as children of its bones and
+## finding them again is the same walk twice.
+var _mask_override := false
+
+
+func _paint_mask(node: Node) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_override = _mask_material
+	for child in node.get_children():
+		_paint_mask(child)
+
+
+## The non-white pixels of an image, cropped to their bounding box.
+##
+## Returned as a flat byte array rather than an Image so the IoU loop is plain
+## indexing - a 1280 x 720 get_pixel() per comparison would be four hundred
+## thousand engine calls per pair.
+func _crop_mask(image: Image) -> Dictionary:
+	var w := image.get_width()
+	var h := image.get_height()
+	var lo := Vector2i(w, h)
+	var hi := Vector2i(-1, -1)
+	var hit := PackedByteArray()
+	hit.resize(w * h)
+	for y in h:
+		for x in w:
+			var c := image.get_pixel(x, y)
+			var on := (c.r + c.g + c.b) / 3.0 < MASK_THRESHOLD
+			hit[x + y * w] = 1 if on else 0
+			if on:
+				lo = Vector2i(mini(lo.x, x), mini(lo.y, y))
+				hi = Vector2i(maxi(hi.x, x), maxi(hi.y, y))
+	if hi.x < 0:
+		return {"w": 0, "h": 0, "bits": PackedByteArray()}
+
+	var cw := hi.x - lo.x + 1
+	var ch := hi.y - lo.y + 1
+	var bits := PackedByteArray()
+	bits.resize(cw * ch)
+	for y in ch:
+		for x in cw:
+			bits[x + y * cw] = hit[(lo.x + x) + (lo.y + y) * w]
+	return {"w": cw, "h": ch, "bits": bits}
+
+
+## Overlap over union of two masks, aligned BOTTOM-CENTRE.
+##
+## Bottom-centre because two characters compared in the world are standing on
+## the same ground and seen from the same side. Aligning by centroid or by
+## bounding box would let a dwarf and a human overlap perfectly by sliding one
+## up the frame, which is not a thing the eye can do at 40 m.
+func _mask_iou(a: Dictionary, b: Dictionary) -> float:
+	if a["w"] == 0 or b["w"] == 0:
+		return 0.0
+	var w: int = maxi(a["w"], b["w"])
+	var h: int = maxi(a["h"], b["h"])
+	# Offsets that put each mask's bottom edge on the canvas bottom and its
+	# horizontal middle on the canvas middle.
+	var ax: int = (w - int(a["w"])) / 2
+	var ay: int = h - int(a["h"])
+	var bx: int = (w - int(b["w"])) / 2
+	var by: int = h - int(b["h"])
+
+	var both := 0
+	var either := 0
+	for y in h:
+		for x in w:
+			var in_a := _mask_at(a, x - ax, y - ay)
+			var in_b := _mask_at(b, x - bx, y - by)
+			if in_a and in_b:
+				both += 1
+			if in_a or in_b:
+				either += 1
+	return float(both) / float(either) if either > 0 else 0.0
+
+
+func _mask_at(mask: Dictionary, x: int, y: int) -> bool:
+	if x < 0 or y < 0 or x >= int(mask["w"]) or y >= int(mask["h"]):
+		return false
+	return (mask["bits"] as PackedByteArray)[x + y * int(mask["w"])] != 0
 
 
 # --- The set ----------------------------------------------------------------

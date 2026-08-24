@@ -233,17 +233,17 @@ static func beard_count(race: int) -> int:
 
 ## Total height in metres. The number the height self-test checks a built
 ## character against.
-static func height_m(race: int) -> float:
-	return float(table(race)["total"]) * V
+static func height_m(race: int, build := STOCKY) -> float:
+	return float(dims(race, build)["total"]) * V
 
 
 ## Where this race's eyes are, in metres above its feet.
 ##
 ## Derived from its own stack rather than tabled, so a change to leg or torso
 ## height cannot leave the head-look and the gallery camera aiming at a face
-## that has moved. The eyes sit two thirds of the way up the head.
-static func eye_height_m(race: int) -> float:
-	var t := table(race)
+## that has moved. The eyes sit about two thirds of the way up the head.
+static func eye_height_m(race: int, build := STOCKY) -> float:
+	var t := dims(race, build)
 	var head_bottom: int = t["total"] - t["head"]
 	return (float(head_bottom) + float(t["head"]) * 0.62) * V
 
@@ -380,7 +380,12 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 			"part": "pelvis" if pelvis > 0 else ""},
 		{"name": "torso", "parent": "hips", "rest": Vector3(0, pelvis, 0) * V,
 			"part": "torso"},
-		{"name": "head", "parent": "torso", "rest": Vector3(0, torso + neck, 0) * V,
+		# THE NECK IS PART OF THE HEAD PART, not an offset here. A race with a
+		# neck authors it as the bottom slices of its head, so the head bone
+		# sits at the top of the torso and the head rotates about the BASE of
+		# the neck - which is where a head-look should pivot. Offsetting by
+		# `neck` here as well would double-count it and leave a gap.
+		{"name": "head", "parent": "torso", "rest": Vector3(0, torso, 0) * V,
 			"part": "head"},
 		{"name": "arm_r", "parent": "torso", "rest": Vector3(arm_x, shoulder_y, 0) * V,
 			"part": "arm"},
@@ -437,6 +442,19 @@ static func socket_table(race: int, build := STOCKY) -> Array:
 const SOCKET_NAMES := ["hand_r", "hand_l", "neck", "chest", "back", "belt"]
 
 
+## Which races have their OWN parts, rather than borrowing the human's.
+##
+## Stage 8 builds the elf, dwarf and lizardfolk and flips these to true, at
+## which point the height and completeness self-tests start biting on them
+## automatically. A flag rather than a `race == HUMAN` scattered through the
+## tests: there is one place to change when a part set lands, and no way for a
+## test to be left excluding a race that now exists.
+const HAS_PART_SET := [true, false, false, false]
+
+static func has_part_set(race: int) -> bool:
+	return HAS_PART_SET[valid_race(race)]
+
+
 ## The part set for a race and scheme.
 ##
 ## Stage 3 has only the stocky human. Every other race falls back to it WITH A
@@ -445,8 +463,7 @@ const SOCKET_NAMES := ["hand_r", "hand_l", "neck", "chest", "back", "belt"]
 ## half-finished run should still show you something walking around.
 static func part_set(race: int, build := STOCKY) -> Dictionary:
 	if build == LEAN and has_lean(race):
-		_warn_once("lean", "[Races] the lean part set arrives in Stage 7 - using stocky")
-		return PartsHuman.PARTS
+		return PartsHumanLean.PARTS
 	match valid_race(race):
 		HUMAN:
 			return PartsHuman.PARTS
