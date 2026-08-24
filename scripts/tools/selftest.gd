@@ -11,6 +11,7 @@ extends SceneTree
 func _init() -> void:
 	var failures := 0
 	failures += _test_winding()
+	failures += _measure_ao_cost()
 	failures += _test_tree_borders()
 	failures += _test_chunk_determinism()
 	failures += _test_day_cycle()
@@ -38,44 +39,81 @@ func _test_winding() -> int:
 	var checked := 0
 	var quads := 0
 
-	for case in ["single", "slab", "checker"]:
-		var chunk := Chunk.new(Vector3i(0, 0, 0))
-		for y in Chunk.SIZE:
-			for z in Chunk.SIZE:
-				for x in Chunk.SIZE:
-					var solid := false
-					match case:
-						"single": solid = (x == 8 and y == 8 and z == 8)
-						"slab": solid = y < 6
-						"checker": solid = ((x + y + z) % 2 == 0)
-					if solid:
-						chunk.set_voxel(x, y, z, Block.STONE)
+	# Both with AO off and with AO on. Baked AO splits merged quads wherever
+	# the corner shading changes, so it produces a DIFFERENT set of rectangles
+	# out of the same voxels - and the winding of every one of them still has
+	# to be right. Running only the AO-off case would have left the splitting
+	# path completely untested, which is the path that is new.
+	# quads emitted per case, keyed "case@ao", so the AO-off and AO-on runs can
+	# be compared at the end.
+	var per_case := {}
 
-		var arrays := ChunkMesher.build_arrays(chunk, func(_a, _b, _c): return false, 1.0)
-		if arrays.is_empty():
-			print("winding %s: EMPTY - nothing was meshed" % case)
-			bad += 1
-			continue
-		var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-		quads += v.size() / 4
-		var i := 0
-		while i < idx.size():
-			var p0 := v[idx[i]]
-			var p1 := v[idx[i + 1]]
-			var p2 := v[idx[i + 2]]
-			var cross := (p1 - p0).cross(p2 - p0)
-			var want := -n[idx[i]]
-			checked += 1
-			if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+	for ao in [0.0, 0.45]:
+		for case in ["single", "slab", "checker", "ledge"]:
+			var chunk := Chunk.new(Vector3i(0, 0, 0))
+			for y in Chunk.SIZE:
+				for z in Chunk.SIZE:
+					for x in Chunk.SIZE:
+						var solid := false
+						match case:
+							"single": solid = (x == 8 and y == 8 and z == 8)
+							"slab": solid = y < 6
+							"checker": solid = ((x + y + z) % 2 == 0)
+							# A slab with a wall standing on one edge of it.
+							# The top of the slab is one merged quad with AO
+							# off; with AO on the strip against the wall is
+							# darker than the open ground and has to split off.
+							# Without a case like this the whole splitting path
+							# would be untested, because the other three shapes
+							# have nothing to merge in the first place.
+							"ledge": solid = (y < 6) or (x < 3 and y < 10)
+						if solid:
+							chunk.set_voxel(x, y, z, Block.STONE)
+
+			var arrays := ChunkMesher.build_arrays(
+				chunk, func(_a, _b, _c): return false, 1.0, ao)
+			if arrays.is_empty():
+				print("winding %s: EMPTY - nothing was meshed" % case)
 				bad += 1
-				if bad <= 3:
-					print("  BAD %s: cross %s want %s" % [case, cross.normalized(), want])
-			i += 3
-		print("  %-8s %5d verts, %5d tris" % [case, v.size(), idx.size() / 3])
+				continue
+			var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			quads += v.size() / 4
+			var i := 0
+			while i < idx.size():
+				var p0 := v[idx[i]]
+				var p1 := v[idx[i + 1]]
+				var p2 := v[idx[i + 2]]
+				var cross := (p1 - p0).cross(p2 - p0)
+				var want := -n[idx[i]]
+				checked += 1
+				if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+					bad += 1
+					if bad <= 3:
+						print("  BAD %s ao=%.2f: cross %s want %s" % [
+							case, ao, cross.normalized(), want])
+				i += 3
+			per_case["%s@%.2f" % [case, ao]] = v.size() / 4
+			print("  %-8s ao=%.2f %5d verts, %5d tris" % [
+				case, ao, v.size(), idx.size() / 3])
 
 	print("winding: %d triangles checked, %d wrong, %d quads emitted" % [checked, bad, quads])
+
+	# The point of running the AO pass at all is that it emits a DIFFERENT set
+	# of rectangles. If it emitted the same set everywhere, the AO-on half of
+	# this test would be re-checking the AO-off half and proving nothing.
+	var split_seen := false
+	for case in ["single", "slab", "checker", "ledge"]:
+		if per_case.get("%s@0.45" % case, 0) > per_case.get("%s@0.00" % case, 0):
+			split_seen = true
+	if not split_seen:
+		print("  WARNING: AO never split a quad - the splitting path is untested")
+		bad += 1
+	else:
+		print("  ledge: %d quads with AO off -> %d with AO on" % [
+			per_case.get("ledge@0.00", 0), per_case.get("ledge@0.45", 0)])
+
 	return 1 if bad > 0 else 0
 
 
@@ -269,3 +307,60 @@ func _heightmap_hash(world_seed: int, cfg: WorldgenConfig) -> String:
 	var gen := TerrainGenerator.new(world_seed, cfg)
 	gen.build_heightmap()
 	return gen.heightmap.hash_key()
+
+
+## WHAT BAKED AO COSTS, on real terrain rather than on a test shape.
+##
+## AO splits merged quads wherever the corner shading changes, so it buys its
+## look with vertices and with meshing time. Both numbers belong in STATUS.md
+## and neither may be estimated (plan hard rule 6), so they are measured here -
+## same chunks, same order, once with AO off and once with it on.
+##
+## Not a test: it prints and always passes. There is no threshold to assert
+## against that would not be a number invented on the spot.
+func _measure_ao_cost() -> int:
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(31337, cfg)
+	gen.build_heightmap()
+
+	# Chunk columns around the origin, at the altitudes terrain actually passes
+	# through, so this measures surface chunks and not empty sky.
+	var positions: Array[Vector3i] = []
+	for cx in range(-2, 3):
+		for cz in range(-2, 3):
+			var span := gen.column_surface_range(cx, cz)
+			var cy := Chunk.floor_div(int(span.x), Chunk.SIZE)
+			for k in 3:
+				positions.append(Vector3i(cx, cy + k, cz))
+
+	var chunks: Array[Chunk] = []
+	for pos in positions:
+		var c := Chunk.new(pos)
+		gen.generate_into(c)
+		chunks.append(c)
+
+	var solid := func(wx: int, wy: int, wz: int) -> bool:
+		return gen.is_solid_at(wx, wy, wz)
+
+	var results := []
+	for ao in [0.0, cfg.ao_strength]:
+		var quads := 0
+		var started := Time.get_ticks_usec()
+		for c in chunks:
+			var arrays := ChunkMesher.build_arrays(c, solid, cfg.block_size, ao)
+			if not arrays.is_empty():
+				quads += (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 4
+		results.append({
+			"ao": ao,
+			"quads": quads,
+			"ms": float(Time.get_ticks_usec() - started) / 1000.0,
+		})
+
+	var off: Dictionary = results[0]
+	var on: Dictionary = results[1]
+	print("ao cost: %d chunks, %d -> %d quads (%+.1f%%), %.1f -> %.1f ms (%+.1f%%)" % [
+		chunks.size(), off["quads"], on["quads"],
+		(float(on["quads"]) / maxf(float(off["quads"]), 1.0) - 1.0) * 100.0,
+		off["ms"], on["ms"],
+		(on["ms"] / maxf(off["ms"], 0.001) - 1.0) * 100.0])
+	return 0

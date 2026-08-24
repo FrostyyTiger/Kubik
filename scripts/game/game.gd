@@ -50,6 +50,7 @@ var _build_ms := 0
 
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_msaa()
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	# A client retuning its own terrain has silently left the host's world, so
@@ -350,9 +351,32 @@ func _adopt_host_config(config_data: Dictionary) -> void:
 	_sky.rebind(config)
 
 
+## Antialiasing for the 3D viewport.
+##
+## Off by default in Forward+, and terrain is close to the worst case for that:
+## every voxel edge is a hard straight line against a bright sky, which is
+## exactly the geometry aliasing is most visible on. This is half of the answer
+## to "not sharp - maybe missing antialiasing in the distance"; the other half
+## is baked AO, which is what gives a surface something to be sharp ABOUT up
+## close.
+##
+## Read from the config rather than project.godot so it is reachable from the
+## F4 panel, and applied here rather than in World because it is a property of
+## the viewport and there is one of those per game, not per world.
+func _apply_msaa() -> void:
+	var levels := [
+		Viewport.MSAA_DISABLED, Viewport.MSAA_2X,
+		Viewport.MSAA_4X, Viewport.MSAA_8X,
+	]
+	var level := clampi(config.msaa_level, 0, levels.size() - 1)
+	get_viewport().msaa_3d = levels[level]
+	print("[Game] MSAA %s" % ["off", "2x", "4x", "8x"][level])
+
+
 ## A knob moved in the tuning panel. The config object is shared, so World
 ## already sees the new value; what it does NOT have is terrain built with it.
 func _on_config_changed() -> void:
+	_apply_msaa()
 	# Fog and day length take effect immediately - they cost nothing to change
 	# and are much easier to tune when you can see the result at once. Terrain
 	# shape needs a rebuild, which is what the message is about.
@@ -362,6 +386,7 @@ func _on_config_changed() -> void:
 
 func _on_config_reload_requested() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_msaa()
 	_debug.rebind(config)
 	_sky.rebind(config)
 	_on_reroll_requested(_world.world_seed)

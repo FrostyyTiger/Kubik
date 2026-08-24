@@ -30,12 +30,17 @@ var generator: TerrainGenerator = null
 
 var block_size := 1.0
 
+## Baked corner AO strength, 0 to 1. Captured at submit time with everything
+## else the job needs, so a slider moving mid-load cannot change what a chunk
+## already in flight comes back looking like.
+var ao_strength := 0.0
+
 ## The result. Read by the main thread once the task reports completion.
 var arrays: Array = []
 
 
 func run() -> void:
-	arrays = ChunkMesher.build_arrays(chunk, solid_at, block_size)
+	arrays = ChunkMesher.build_arrays(chunk, solid_at, block_size, ao_strength)
 
 
 ## Is there a solid block at this WORLD position? Called only for positions

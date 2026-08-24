@@ -32,6 +32,32 @@ class_name ChunkMesher
 ## repeatedly takes the largest rectangle of equal values out of the mask.
 ## Encoding the direction as the SIGN of the mask value is what lets one pass
 ## handle both facings of a plane at once.
+##
+##
+## BAKED AMBIENT OCCLUSION, AND WHY IT FIGHTS GREEDY MESHING
+##
+## A greedy-meshed hillside in flat vertex colour carries no edge information
+## at all: an entire slope is literally one colour, so the eye has nothing to
+## grab and the world reads as smooth shapes rather than as stacked cubes.
+## Corner AO is the standard fix and it is what makes a voxel world look like
+## one - each vertex is darkened by how many of the three blocks meeting at
+## that corner (two sides and the diagonal) are solid.
+##
+## The two techniques are in direct conflict. Merging assumes every cell in a
+## quad looks identical; AO makes cells next to a wall differ from cells in the
+## open. So the AO code joins the mask, and a run only merges while BOTH the
+## block id and the four corner AO values repeat.
+##
+## That is not merely conservative, it is exactly right, and the reason is
+## worth stating because it is what makes the interpolation across a merged
+## quad correct rather than approximate. Two side-by-side cells SHARE two
+## lattice corners, and a shared corner is computed from the same three blocks
+## by both, so it gets the same value in both. If their AO codes are equal,
+## then each cell's leading corner equals its own trailing corner - the code is
+## constant along the run - and a linear interpolation across the merged quad
+## reproduces every cell it swallowed. A run that would have needed a gradient
+## cannot form in the first place, because its codes would differ and the merge
+## would stop.
 
 ## For each sweep axis d, which axes play the roles of u and v.
 ##
@@ -40,6 +66,22 @@ class_name ChunkMesher
 ## it, and a left-handed triple silently turns the world inside out.
 const AXIS_U := [1, 2, 0]   # d = X -> u = Y ; d = Y -> u = Z ; d = Z -> u = X
 const AXIS_V := [2, 0, 1]   # d = X -> v = Z ; d = Y -> v = X ; d = Z -> v = Y
+
+## Four corner AO levels of 3 (fully open), packed two bits each. The value a
+## face carries when AO is switched off, so the merge test behaves identically
+## to the pre-AO mesher rather than needing a second code path.
+const AO_OPEN := 0xFF
+
+## Corner order inside a packed AO code: index = su + sv * 2, where su and sv
+## are 0 for the u0/v0 side of the cell and 1 for the u1/v1 side.
+##
+## CANONICAL, and deliberately NOT the order the quad's vertices come out in -
+## that order differs between the two facings, and a code whose meaning
+## depended on the facing could not be compared between neighbouring cells.
+const AO_CORNER_U0V0 := 0
+const AO_CORNER_U1V0 := 1
+const AO_CORNER_U0V1 := 2
+const AO_CORNER_U1V1 := 3
 
 static var _material: StandardMaterial3D = null
 
@@ -57,7 +99,8 @@ static var _material: StandardMaterial3D = null
 ## Returns an empty Array for a chunk with nothing to draw. This function
 ## touches no scene state and no rendering API, which is what lets it run on a
 ## worker thread.
-static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: float) -> Array:
+static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: float,
+		ao_strength: float = 0.0) -> Array:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
@@ -74,6 +117,13 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: floa
 	var size := Chunk.SIZE
 	var mask := PackedInt32Array()
 	mask.resize(size * size)
+	# Parallel to `mask`, one packed AO code per face cell. Separate rather than
+	# folded into the mask value because the mask's sign already carries the
+	# facing, and stuffing a third field into one int would make the one line
+	# that decides whether two faces may merge unreadable.
+	var ao_mask := PackedInt32Array()
+	ao_mask.resize(size * size)
+	var want_ao := ao_strength > 0.0
 
 	# A chunk with no air in it can only have faces where it meets the outside
 	# world, so only the two outermost planes of each axis can carry any. The
@@ -136,10 +186,19 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: floa
 					mask[iu + jv * size] = m
 					if m != 0:
 						has_face = true
+						# The air is on the far side of the face from the solid
+						# block, and AO is a question about the air side: which
+						# of the blocks around this corner are in the way of
+						# light arriving.
+						ao_mask[iu + jv * size] = _corner_ao(
+							chunk, origin, solid_outside, d, u, v,
+							slice + 1 if m > 0 else slice, iu, jv) if want_ao else AO_OPEN
+					else:
+						ao_mask[iu + jv * size] = AO_OPEN
 
 			if has_face:
-				_emit_slice(mask, size, d, u, v, slice + 1, block_size,
-					verts, normals, colors, indices)
+				_emit_slice(mask, ao_mask, size, d, u, v, slice + 1, block_size,
+					ao_strength, verts, normals, colors, indices)
 
 	if verts.is_empty():
 		return []
@@ -160,8 +219,8 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable, block_size: floa
 ## clear it. Greedy rather than optimal: finding the genuinely minimal set of
 ## rectangles is expensive, and this gets within a few percent of it for the
 ## shapes terrain actually makes.
-static func _emit_slice(mask: PackedInt32Array, size: int, d: int, u: int, v: int,
-		plane: int, block_size: float,
+static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size: int,
+		d: int, u: int, v: int, plane: int, block_size: float, ao_strength: float,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	for jv in size:
@@ -171,24 +230,31 @@ static func _emit_slice(mask: PackedInt32Array, size: int, d: int, u: int, v: in
 			if value == 0:
 				iu += 1
 				continue
+			# The AO code is part of the identity of a face, so a run stops
+			# where the shading changes even though the blocks are identical.
+			# With AO off every code is AO_OPEN and this reduces exactly to the
+			# pre-AO behaviour.
+			var ao_value := ao_mask[iu + jv * size]
 
 			var w := 1
-			while iu + w < size and mask[iu + w + jv * size] == value:
+			while iu + w < size and mask[iu + w + jv * size] == value \
+					and ao_mask[iu + w + jv * size] == ao_value:
 				w += 1
 
 			var h := 1
 			while jv + h < size:
 				var row_matches := true
 				for k in w:
-					if mask[iu + k + (jv + h) * size] != value:
+					if mask[iu + k + (jv + h) * size] != value \
+							or ao_mask[iu + k + (jv + h) * size] != ao_value:
 						row_matches = false
 						break
 				if not row_matches:
 					break
 				h += 1
 
-			_emit_quad(d, u, v, plane, iu, jv, w, h, value, block_size,
-				verts, normals, colors, indices)
+			_emit_quad(d, u, v, plane, iu, jv, w, h, value, ao_value, block_size,
+				ao_strength, verts, normals, colors, indices)
 
 			for dv in h:
 				for du in w:
@@ -197,7 +263,8 @@ static func _emit_slice(mask: PackedInt32Array, size: int, d: int, u: int, v: in
 
 
 static func _emit_quad(d: int, u: int, v: int, plane: int,
-		u0: int, v0: int, w: int, h: int, value: int, block_size: float,
+		u0: int, v0: int, w: int, h: int, value: int, ao_value: int,
+		block_size: float, ao_strength: float,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	var positive := value > 0
@@ -218,11 +285,18 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 	# (p1 - p0) x (p2 - p0) == -normal, which is the algebraic form of
 	# "clockwise seen from outside". Check any new face against that identity
 	# rather than eyeballing it in-engine.
+	# The second entry of each pair is the CANONICAL AO corner this vertex is,
+	# which is why the two lists are not just reorderings of the same four
+	# points - the winding differs between facings and the AO code does not.
 	var corners: Array
 	if positive:
-		corners = [[u0, v0], [u0, v1], [u1, v1], [u1, v0]]
+		corners = [
+			[u0, v0, AO_CORNER_U0V0], [u0, v1, AO_CORNER_U0V1],
+			[u1, v1, AO_CORNER_U1V1], [u1, v0, AO_CORNER_U1V0]]
 	else:
-		corners = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
+		corners = [
+			[u0, v0, AO_CORNER_U0V0], [u1, v0, AO_CORNER_U1V0],
+			[u1, v1, AO_CORNER_U1V1], [u0, v1, AO_CORNER_U0V1]]
 
 	var first := verts.size()
 	for c in corners:
@@ -232,7 +306,13 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 		p[v] = float(c[1])
 		verts.push_back(p * block_size)
 		normals.push_back(normal)
-		colors.push_back(color)
+		# The palette is stored LINEAR (see Block), and occlusion is a
+		# multiplication in linear space - so this is a plain scale, not a
+		# blend towards a darker colour, and it stays correct if the palette
+		# is re-authored.
+		var level: int = (ao_value >> (int(c[2]) * 2)) & 3
+		var shade := 1.0 - ao_strength * (1.0 - float(level) / 3.0)
+		colors.push_back(Color(color.r * shade, color.g * shade, color.b * shade, color.a))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)
@@ -256,8 +336,9 @@ static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
 
 ## Synchronous build, for the one chunk changed by an edit. Bulk loading goes
 ## through build_arrays() on a worker thread instead.
-static func build(chunk: Chunk, world_solid: Callable, block_size: float) -> ArrayMesh:
-	return arrays_to_mesh(build_arrays(chunk, world_solid, block_size))
+static func build(chunk: Chunk, world_solid: Callable, block_size: float,
+		ao_strength: float = 0.0) -> ArrayMesh:
+	return arrays_to_mesh(build_arrays(chunk, world_solid, block_size, ao_strength))
 
 
 ## One shared material for every chunk. Sharing it means the renderer can batch
@@ -278,3 +359,62 @@ static func get_material() -> StandardMaterial3D:
 		m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 		_material = m
 	return _material
+
+
+# --- Corner ambient occlusion -----------------------------------------------
+
+## The four corner AO levels of one face cell, packed two bits each in
+## canonical (su + sv * 2) order.
+##
+## `air_d` is the d-coordinate of the block on the AIR side of the face. AO is
+## a question about that side and only that side: how much of the sky arriving
+## at this corner is blocked by the blocks standing around it.
+static func _corner_ao(chunk: Chunk, origin: Vector3i, solid_outside: Callable,
+		d: int, u: int, v: int, air_d: int, iu: int, jv: int) -> int:
+	# The eight blocks around the air block, in its own plane. The centre is
+	# the air block itself and is not asked about.
+	var n00 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu - 1, jv - 1)
+	var n10 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu, jv - 1)
+	var n20 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu + 1, jv - 1)
+	var n01 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu - 1, jv)
+	var n21 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu + 1, jv)
+	var n02 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu - 1, jv + 1)
+	var n12 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu, jv + 1)
+	var n22 := _solid_at(chunk, origin, solid_outside, d, u, v, air_d, iu + 1, jv + 1)
+
+	return _vertex_ao(n01, n10, n00) \
+		| (_vertex_ao(n21, n10, n20) << 2) \
+		| (_vertex_ao(n01, n12, n02) << 4) \
+		| (_vertex_ao(n21, n12, n22) << 6)
+
+
+## AO level 0 (darkest) to 3 (fully open) for one corner.
+##
+## THE SPECIAL CASE IS THE WHOLE POINT. When both SIDES are solid the corner is
+## in an interior angle and it makes no difference whether the diagonal block
+## is there too - you cannot see past two walls meeting. Without this test the
+## inside of every corner would come out one step lighter where the diagonal
+## happens to be missing, which reads as a bright seam running up the join
+## between two walls.
+static func _vertex_ao(side1: bool, side2: bool, corner: bool) -> int:
+	if side1 and side2:
+		return 0
+	return 3 - (int(side1) + int(side2) + int(corner))
+
+
+## Is the block at these (d, u, v) chunk-local coordinates solid?
+##
+## Reads the chunk's own array where it can and only falls back to the Callable
+## outside it. That branch is worth writing out: AO asks about eight blocks per
+## face and a Callable invocation in GDScript costs far more than an array
+## index, so routing the interior through the Callable as well would have made
+## meshing several times more expensive for no difference in the result.
+static func _solid_at(chunk: Chunk, origin: Vector3i, solid_outside: Callable,
+		d: int, u: int, v: int, dd: int, uu: int, vv: int) -> bool:
+	var p := Vector3i.ZERO
+	p[d] = dd
+	p[u] = uu
+	p[v] = vv
+	if Chunk.in_bounds(p.x, p.y, p.z):
+		return chunk.voxels[Chunk.index(p.x, p.y, p.z)] != Block.AIR
+	return solid_outside.call(origin.x + p.x, origin.y + p.y, origin.z + p.z)

@@ -270,7 +270,7 @@ func _generate_and_submit(chunk_pos: Vector3i) -> void:
 	# one place: everything downstream can assume a chunk in _chunks has a node
 	# in _chunk_nodes, whether or not its mesh has arrived yet.
 	var node := ChunkNode.new()
-	node.setup(chunk, config.block_size)
+	node.setup(chunk, config.block_size, config.ao_strength)
 	add_child(node)
 	_chunk_nodes[chunk_pos] = node
 
@@ -278,6 +278,7 @@ func _generate_and_submit(chunk_pos: Vector3i) -> void:
 	job.chunk = chunk
 	job.generator = generator
 	job.block_size = config.block_size
+	job.ao_strength = config.ao_strength
 	job.neighbours = _face_neighbour_chunks(chunk_pos)
 	_in_flight[chunk_pos] = {
 		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk mesh"),

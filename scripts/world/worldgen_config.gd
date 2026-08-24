@@ -213,6 +213,41 @@ const USER_PATH := "user://worldgen.tres"
 @export var day_start := 0.38
 
 
+# --- Presentation -----------------------------------------------------------
+#
+# LOOK, NOT SHAPE. Everything above decides where the ground is and what it is
+# made of. Everything in this section decides how that ground is DRAWN, and the
+# distinction is load-bearing:
+#
+#   * a shape knob is part of the determinism contract. Two machines that
+#     disagree about mountain_amp are in different worlds, and edits sent
+#     between them land in the wrong place. That is what PROPERTIES and
+#     hash_key() exist to catch.
+#   * a look knob is not. Two machines that disagree about ao_strength see the
+#     same terrain with slightly different shading on it. Nothing desyncs.
+#
+# So these live in LOCAL_PROPERTIES: saved to the .tres, reachable from the F4
+# panel, and deliberately NOT hashed and NOT sent in the join handshake. Adding
+# them to PROPERTIES would have made a cosmetic preference into a refused join,
+# which is a worse bug than the one the hash prevents.
+#
+# Recorded in STATUS.md as a departure from the plan's hard rule 2.
+
+## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
+## and restores the pre-v2 mesher exactly, including its quad count.
+##
+## TUNED BLIND - this box has no display. 0.45 is the value AO conventionally
+## lands near in voxel games; check it on a real GPU before trusting it.
+@export var ao_strength := 0.45
+
+## Multisample antialiasing for the 3D viewport: 0 off, 1 = 2x, 2 = 4x, 3 = 8x.
+##
+## Off by default in Forward+, and flat voxel edges against a bright sky are
+## about the worst case there is for aliasing - which is the "not sharp in the
+## distance" half of Marcel's report. 4x is the starting point the plan names.
+@export var msaa_level := 2
+
+
 # --- Serialisation ----------------------------------------------------------
 #
 # ORDER MATTERS AND IS FIXED. hash_key() walks this list, and a Dictionary in
@@ -241,6 +276,13 @@ const PROPERTIES: PackedStringArray = [
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
 	"fog_start_m", "fog_end_m", "day_seconds", "day_start",
+]
+
+
+## Per-machine look and quality. NOT hashed, NOT sent - see the Presentation
+## section above for why that is deliberate rather than an oversight.
+const LOCAL_PROPERTIES: PackedStringArray = [
+	"ao_strength", "msaa_level",
 ]
 
 
