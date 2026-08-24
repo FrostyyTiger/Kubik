@@ -50,6 +50,7 @@ func _ready() -> void:
 		"config contract": _test_config_contract,
 		"sky reserve": _test_sky_reserve,
 		"species borders": _test_species_borders,
+		"flora determinism": _test_flora_determinism,
 	}
 	var failures := 0
 	for name in tests:
@@ -233,6 +234,73 @@ func _test_tree_borders():
 		print("  WARNING: no tree blocks in the sample - this test proved nothing")
 		return 1
 	return 1 if bad > 0 else 0
+
+
+## A COLUMN OF GROUND COVER MUST COME BACK THE SAME EVERY TIME IT IS BUILT.
+##
+## This is the determinism contract at the flora scale, and it is worth its own
+## test rather than being assumed from the terrain's, because the decoration
+## layer is rebuilt far more often than a chunk is. A column is rebuilt when
+## the player walks away and returns, when a block in it is edited, and in
+## Stage 9 when an instance is gathered - and if any of those came back with
+## the plants in a different ORDER, the buffers would differ, every plant in
+## the column would jump to a different neighbour's position, and the only
+## symptom would be a meadow that reshuffles itself when you dig a hole in it.
+##
+## Comparing the packed BUFFERS rather than the instance list is deliberate:
+## the buffer is what actually reaches the renderer, and it is where an
+## ordering difference or a float that took a different path would show up.
+func _test_flora_determinism():
+	# A small world, because this test needs a heightmap and does not care how
+	# big it is. At the default 6000 blocks that is seventeen seconds of
+	# heightmap for a question about sixteen columns.
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 512
+	var gen := TerrainGenerator.new(31337, cfg)
+	gen.build_heightmap()
+	var lakes := Lakes.new()
+	lakes.compute(gen.heightmap, cfg)
+	gen.lakes = lakes
+	gen.find_spawn()
+
+	var bad := 0
+	var total := 0
+	var columns := 0
+	for cz in range(-2, 3):
+		for cx in range(-2, 3):
+			var a := _flora_buffers(gen, cfg, cx, cz)
+			var b := _flora_buffers(gen, cfg, cx, cz)
+			columns += 1
+			if a.keys().size() != b.keys().size():
+				bad += 1
+				continue
+			for model in a:
+				if not b.has(model):
+					bad += 1
+					break
+				var pa: PackedFloat32Array = a[model]
+				var pb: PackedFloat32Array = b[model]
+				total += pa.size() / FloraJob.FLOATS_PER_INSTANCE
+				if pa != pb:
+					print("  column (%d, %d) model %d differed" % [cx, cz, model])
+					bad += 1
+
+	print("flora determinism: %d columns, %d instances, %d differed" % [
+		columns, total, bad])
+	if total == 0:
+		print("  WARNING: no flora in the sample - this test proved nothing")
+		return 1
+	return bad
+
+
+func _flora_buffers(gen: TerrainGenerator, cfg: WorldgenConfig,
+		cx: int, cz: int) -> Dictionary:
+	var job := FloraJob.new()
+	job.column = Vector2i(cx, cz)
+	job.generator = gen
+	job.config = cfg
+	job.run()
+	return job.buffers
 
 
 ## EVERY SPECIES MUST SURVIVE BEING CUT UP BY CHUNK BOUNDARIES.

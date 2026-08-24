@@ -76,6 +76,11 @@ const LOCAL_TUNING_ROWS := [
 	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
 	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
 	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
+	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
+	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
+	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
+	["wind_strength", "wind", 0.0, 3.0, 0.1],
+	["night_life", "night life", 0.0, 2.0, 0.1],
 ]
 
 var config: WorldgenConfig = null
@@ -162,6 +167,10 @@ func _compose_readout() -> String:
 			lines.append("worldgen  %d ms heightmap" % t.get("heightmap_ms", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
+		if world.has_method("flora_stats"):
+			var f: Dictionary = world.flora_stats()
+			lines.append("flora     %d in %d cols, %d pending" % [
+				f.get("instances", 0), f.get("columns", 0), f.get("pending", 0)])
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 

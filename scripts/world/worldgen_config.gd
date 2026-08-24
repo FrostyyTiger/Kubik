@@ -868,7 +868,41 @@ const PROPERTIES: PackedStringArray = [
 ## World._edits and replayed when that chunk loads, so two players at different
 ## radii stay in the same world. far_step and the fog are the far mesh and the
 ## atmosphere. None of them can move a block.
+# --- The decoration layer: LOCAL, every one of them --------------------------
+#
+# NOT ONE OF THESE IS A SHAPE KNOB, and the test is the one rule 2 states:
+# would two machines disagreeing about it mean one player could pick a flower
+# the other cannot see? No - flora IDENTITY is a pure function of position and
+# seed, and every knob below decides only how much of it this machine draws or
+# how it looks while drawing it. A laptop at flora_radius_m 32 and a desktop at
+# 96 are standing in the same meadow.
+#
+# That is what makes density a dial rather than a rewrite, which is the whole
+# reason the performance budget can be met by turning something down.
+
+## Columns further than this from the player carry no flora node at all.
+@export var flora_radius_m := 64.0
+
+## An instance is drawn only if its hash falls below this.
+##
+## HASHED, NOT COUNTED, which is what makes it safe to differ between machines:
+## every machine at 0.5 hides the same half, and turning it up reveals the
+## plants that were there rather than reshuffling the ones that are.
+@export var flora_draw_fraction := 1.0
+
+## Outer edge of the far-tree ring, in metres. Stage 7.
+@export var far_tree_m := 300.0
+
+## Sway. 0 disables the wind shader entirely.
+@export var wind_strength := 1.0
+
+## Fireflies and glowing mushrooms. 0 disables them. Stage 8.
+@export var night_life := 1.0
+
+
 const LOCAL_PROPERTIES: PackedStringArray = [
+	"flora_radius_m", "flora_draw_fraction", "far_tree_m",
+	"wind_strength", "night_life",
 	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m",
 	"ao_strength", "msaa_level",

@@ -58,6 +58,21 @@ const SPECIES_PER_ROW := 4
 ## The flat pad every specimen stands on, in blocks beyond the outermost tree.
 const PAD_MARGIN := 10
 
+## Metres between plant models in the 1:1 strip. Wide enough that a 90 cm heath
+## shrub does not touch its neighbours.
+const PLANT_SPACING_M := 1.2
+
+## Blocks of empty pad in FRONT of the trees, for the 1:1 strip to stand on.
+##
+## APRON, NOT MARGIN, and it needs to be this deep for a reason worth stating:
+## the plant close-up is shot from about a metre away at knee height, and at
+## that distance and that angle anything within a few metres behind fills the
+## frame. With the strip tucked against the front row, the first shot came back
+## as a krummholz with two specks of grass in front of it. Ten metres of clear
+## ground puts the trees where they belong - in the background, at background
+## size.
+const PLANT_APRON := 20
+
 ## Altitude of the pad's top surface, in blocks. Well clear of zero so the
 ## scratch chunks below it are ordinary chunks rather than the bottom of the
 ## world.
@@ -85,6 +100,12 @@ var _specimens: Array = []
 
 ## Species name -> the specimens belonging to it, in min/mid/max order.
 var _by_species := {}
+
+## Where the 1:1 plant strip ended up, in metres: x from, x to, and its z.
+## Recorded by _build_plant_strip() so the close-up can frame exactly what was
+## built rather than recomputing the layout and drifting from it.
+var _plant_span := Vector3(0.0, 0.0, 0.0)
+var _plant_tallest := 0.0
 
 
 func _ready() -> void:
@@ -194,7 +215,7 @@ func _extent() -> Rect2i:
 			first = false
 		lo = Vector2i(mini(lo.x, bx), mini(lo.y, bz))
 		hi = Vector2i(maxi(hi.x, bx), maxi(hi.y, bz))
-	lo -= Vector2i(PAD_MARGIN, PAD_MARGIN)
+	lo -= Vector2i(PAD_MARGIN, PAD_MARGIN + PLANT_APRON)
 	hi += Vector2i(PAD_MARGIN, PAD_MARGIN)
 	return Rect2i(lo, hi - lo)
 
@@ -277,17 +298,23 @@ func _build_plant_strip() -> void:
 	var root := Node3D.new()
 	root.name = "Plants"
 	add_child(root)
-	# 1.2 m apart in a row, at 1:1, along the front edge of the pad.
+	# PLANT_SPACING_M apart in a row, at 1:1, along the front edge of the pad.
 	var box := _extent()
 	var z := float(box.position.y + 4) * _config.block_size
 	var x0 := float(box.position.x + 10) * _config.block_size
 	for i in names.size():
 		var node := MeshInstance3D.new()
-		node.mesh = script.build_mesh(names[i])
+		var mesh: ArrayMesh = script.build_mesh(names[i])
+		node.mesh = mesh
 		node.material_override = script.gallery_material()
-		node.position = Vector3(x0 + float(i) * 1.2, float(GROUND + 1) * _config.block_size, z)
+		node.position = Vector3(x0 + float(i) * PLANT_SPACING_M,
+			float(GROUND + 1) * _config.block_size, z)
 		root.add_child(node)
-	print("[Gallery] %d plant models in the 1:1 strip" % names.size())
+		if mesh != null:
+			_plant_tallest = maxf(_plant_tallest, mesh.get_aabb().size.y)
+	_plant_span = Vector3(x0, x0 + float(names.size() - 1) * PLANT_SPACING_M, z)
+	print("[Gallery] %d plant models in the 1:1 strip, tallest %.2f m" % [
+		names.size(), _plant_tallest])
 
 
 # --- Taking the pictures ----------------------------------------------------
@@ -301,7 +328,7 @@ func _shoot() -> void:
 	var all_h := _tallest(_specimens)
 	await _capture("gallery",
 		_fit(0.0, float(box.size.x) * _config.block_size, all_h,
-			float(box.size.y) * _config.block_size, 30.0, all_h),
+			float(box.size.y - PLANT_APRON) * _config.block_size, 30.0, all_h),
 		_look_at(0.0, all_h))
 
 	# ONE CLOSE-UP PER SPECIES. Framed on that species' three sizes only, from
@@ -322,8 +349,49 @@ func _shoot() -> void:
 		await _capture("species-%s" % name,
 			_fit(cx, bay, h, 6.0, 12.0, h), _look_at(cx, h))
 
-	print("[Gallery] done, %d images in %s" % [1 + _by_species.size(), _out_dir])
+	await _shoot_plants()
+
+	print("[Gallery] done, %d images in %s" % [
+		2 + _by_species.size(), _out_dir])
 	get_tree().quit()
+
+
+## THE 1:1 STRIP, CLOSE UP, WITH THE PLAYER IN FRAME.
+##
+## The wide shot cannot serve for this and it is not a framing problem, it is a
+## scale problem: a 30 cm grass tuft photographed from far enough back to fit
+## seven trees is four pixels tall. Ground cover has to be judged from where a
+## player would see it - a metre or two away, at about eye height - and beside
+## something whose size is not in question.
+##
+## THE CAPSULE IS THE WHOLE POINT OF THE SHOT. Plants are the one thing in this
+## world drawn at 1:1 while the landscape around them is at 1:4, so "is this
+## the right size" cannot be answered by looking at the tree behind it. It can
+## only be answered against the player, and this is the only frame the two
+## appear in together.
+func _shoot_plants() -> void:
+	if _plant_span.y <= _plant_span.x:
+		print("[Gallery] no plant strip to photograph yet")
+		return
+	var player_h: float = _config.player_height_blocks * _config.block_size
+	# The capsule stands to the left of the strip; include it.
+	var left := minf(_plant_span.x, float(_pad_min().x + 4) * _config.block_size) - 0.6
+	var right := _plant_span.y + 0.6
+	var cx := (left + right) * 0.5
+	var ground := float(GROUND + 1) * _config.block_size
+	var subject_h := maxf(player_h, _plant_tallest) * 1.15
+
+	var aspect := float(get_viewport().get_visible_rect().size.aspect())
+	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
+	var dist := maxf((right - left) * 0.5 / maxf(tan_v * aspect, 0.001),
+		subject_h * 0.5 / maxf(tan_v, 0.001)) * 1.15
+
+	# Low and barely tilted - the angle a standing player looks down at their
+	# own feet from, rather than a plan view.
+	var look := Vector3(cx, ground + subject_h * 0.35, _plant_span.z)
+	var pitch := deg_to_rad(14.0)
+	await _capture("plants",
+		look + Vector3(0.0, sin(pitch), -cos(pitch)) * dist, look)
 
 
 func _tallest(group: Array) -> float:
