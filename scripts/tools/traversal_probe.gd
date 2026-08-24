@@ -120,10 +120,22 @@ func run(world: World, player: Player) -> void:
 	# One chunk in from the very corner, so the walk is not spent fighting the
 	# world boundary the region loader clips against.
 	var half := int(cfg.world_blocks_xz / 2) - Chunk.SIZE
-	_start = _ground_at(-half, -half, cfg)
-	_target = _ground_at(half, half, cfg)
+	# ...and then the flattest ground NEAR that corner rather than the corner
+	# itself. Since Stage 12 the terrain grows wilder with distance from the
+	# middle of the map, so the four corners are the steepest places in the
+	# world; the first run of this against that terrain started inside a cliff
+	# face and reported 0 m of 4220 m. Standing somewhere walkable is not
+	# making the test easier, it is removing a fact about one arbitrary cell
+	# from a measurement that is about the whole crossing.
+	_start = _walkable_near(-half, -half, cfg)
+	_target = _walkable_near(half, half, cfg)
 
 	_player.global_position = _start + Vector3(0.0, 2.0, 0.0)
+	# Game freezes the player until the ground under SPAWN exists, and this
+	# probe teleports somewhere else entirely. Physics is turned back on here
+	# rather than waited for, or the probe would measure how long a frozen
+	# character takes to cross 4 km.
+	_player.set_physics_process(true)
 	_world.set_center_from_position(_player.global_position)
 	print("[Traverse] corner to corner: %.0f m, walk %.1f m/s, sprint %.1f m/s" % [
 		_start.distance_to(_target), Player.WALK_SPEED,
@@ -238,6 +250,34 @@ func _finish(why: String, remaining: float) -> void:
 		print("[Traverse] implied full diagonal: %.2f min" % [
 			straight / (covered / maxf(_elapsed, 0.001)) / 60.0])
 	get_tree().quit()
+
+
+## The flattest dry cell within SEARCH_BLOCKS of (bx, bz), inward from there.
+##
+## Searches towards the middle of the map only, so it cannot wander out past
+## the world edge, and prefers gentle ground over ground that merely happens to
+## be near the corner.
+const CORNER_SEARCH_BLOCKS := 240
+const CORNER_SEARCH_STEP := 16
+
+
+func _walkable_near(bx: int, bz: int, cfg: WorldgenConfig) -> Vector3:
+	var hm := _world.generator.heightmap
+	var inward_x := -signi(bx)
+	var inward_z := -signi(bz)
+	var best := Vector2i(bx, bz)
+	var best_slope := INF
+	for dz in range(0, CORNER_SEARCH_BLOCKS, CORNER_SEARCH_STEP):
+		for dx in range(0, CORNER_SEARCH_BLOCKS, CORNER_SEARCH_STEP):
+			var x := bx + inward_x * dx
+			var z := bz + inward_z * dz
+			var slope := hm.slope_deg_at(float(x), float(z))
+			if slope < best_slope:
+				best_slope = slope
+				best = Vector2i(x, z)
+	print("[Traverse] corner (%d, %d) -> walkable (%d, %d) at %.1f deg" % [
+		bx, bz, best.x, best.y, best_slope])
+	return _ground_at(best.x, best.y, cfg)
 
 
 func _ground_at(bx: int, bz: int, cfg: WorldgenConfig) -> Vector3:

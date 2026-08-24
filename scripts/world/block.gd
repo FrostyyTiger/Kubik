@@ -148,7 +148,7 @@ static func aspect_shade(color: Color, normal: Vector3,
 		var shade := 1.0 - slope_amount * (1.0 - flatness)
 		out = Color(out.r * shade, out.g * shade, out.b * shade, out.a)
 	if aspect_amount > 0.0:
-		var facing := normal.x * SUN_ASPECT.x + normal.z * SUN_ASPECT.y
+		var facing := aspect_curve(normal.x * SUN_ASPECT.x + normal.z * SUN_ASPECT.y)
 		var warm := 1.0 + aspect_amount * facing
 		var cool := 1.0 - aspect_amount * facing
 		out = Color(out.r * warm, out.g * (1.0 + aspect_amount * facing * 0.35),
@@ -163,3 +163,28 @@ const SUN_ASPECT := Vector2(0.0, -1.0)
 
 const SALT_TINT_VALUE := 301
 const SALT_TINT_HUE := 302
+
+
+## TODO(marcel): make the aspect tint pick a side.
+##
+## `dot` is -1 for a face pointing directly away from the sun, +1 for one
+## pointing straight at it, and 0 for one side-on. Returned unchanged, the tint
+## varies smoothly through every angle - which is physically reasonable and
+## visually weak, because almost every face in a voxel world is side-on and
+## almost every face therefore gets almost no tint at all.
+##
+## What a real Alpine hillside looks like is two kinds of slope, not a gradient
+## between them: the sunny side is dry and brown, the shaded side is dark and
+## green, and the changeover is quick.
+##
+##   Hint:  return smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0
+##   Still -1 to +1, but it spends most of its range near the two ends instead
+##   of in the middle. Push the 0.4 in towards zero to make the changeover
+##   sharper, out towards 1 to make it gentler.
+##
+## Worth doing with aspect_tint turned well up in the F4 panel first, so you
+## can see what the curve is doing, and then turning it back down.
+##
+## Fallback: linear, i.e. the dot product straight through.
+static func aspect_curve(dot: float) -> float:
+	return dot

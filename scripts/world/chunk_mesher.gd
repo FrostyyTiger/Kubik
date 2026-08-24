@@ -325,7 +325,7 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 		# blend towards a darker colour, and it stays correct if the palette
 		# is re-authored.
 		var level: int = (ao_value >> (int(c[2]) * 2)) & 3
-		var shade := 1.0 - ao_strength * (1.0 - float(level) / 3.0)
+		var shade := 1.0 - ao_strength * (1.0 - _ao_curve(level))
 		# Jitter is sampled at the corner's WORLD position, so two quads meeting
 		# at a lattice point agree about it and the field is continuous across
 		# chunk boundaries as well as across quad boundaries.
@@ -440,3 +440,29 @@ static func _solid_at(chunk: Chunk, origin: Vector3i, solid_outside: Callable,
 	if Chunk.in_bounds(p.x, p.y, p.z):
 		return chunk.voxels[Chunk.index(p.x, p.y, p.z)] != Block.AIR
 	return solid_outside.call(origin.x + p.x, origin.y + p.y, origin.z + p.z)
+
+
+## TODO(marcel): the AO curve is a straight line and probably should not be.
+##
+## This maps a corner's occlusion level - 0 for fully enclosed, 3 for fully
+## open - onto how bright it is drawn. Straight-line is the obvious choice and
+## it spreads the darkening evenly over all four levels, which means level 2
+## (one neighbour solid) is already noticeably dark. Most of a voxel world is
+## level 2, so most of the world gets a little dirty and the true corners never
+## get to be dramatic.
+##
+##   Hint: try  var t := float(level) / 3.0  and then  return t * t
+##   Squaring pulls the middle levels back up towards full brightness while
+##   leaving level 0 at zero, so the darkening concentrates where two surfaces
+##   genuinely meet.
+##
+##   pow(t, 0.5) is the other direction and is worth one look, if only to see
+##   what "too much AO" is: it darkens the open ground and reads as grime.
+##
+## Reroll is not needed - AO is baked at mesh time, so F7 or walking away and
+## back is enough to see a change.
+##
+## Fallback: linear, which is what every voxel game does by default and looks
+## perfectly reasonable.
+static func _ao_curve(level: int) -> float:
+	return float(level) / 3.0

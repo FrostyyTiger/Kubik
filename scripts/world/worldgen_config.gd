@@ -458,6 +458,10 @@ const FOG_START_RATIO := 0.6
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
 @export var lake_min_cells := 40
 
+## Shallowest a lake may be at its deepest point, in blocks, before it is
+## discarded as wet ground rather than water. See Lakes for why this exists.
+@export var lake_min_depth := 1.0
+
 ## SHORE FLATS. Blocks of altitude either side of the water line over which
 ## the detail layer is faded out. 0 disables it.
 ##
@@ -664,7 +668,7 @@ const PROPERTIES: PackedStringArray = [
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"spawn_water_m", "spawn_mountain_m", "spawn_max_slope_deg",
 	"spawn_center_fraction", "wildness_relief", "wildness_rock_deg",
-	"lake_min_cells", "lake_level_offset", "lake_max_depth",
+	"lake_min_cells", "lake_level_offset", "lake_max_depth", "lake_min_depth",
 	"shore_flat_blocks", "shore_flat_cells",
 	"day_seconds", "day_start",
 ]

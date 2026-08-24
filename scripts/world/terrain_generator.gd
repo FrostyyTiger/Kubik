@@ -438,9 +438,7 @@ func _masked_terrace(h: float, wx: float, wz: float, mask: FastNoiseLite,
 	if in_band <= 0.0:
 		return h
 
-	# Only the upper half of the mask's range, so these are occasional rather
-	# than the default state of the world.
-	var where := smoothstep(0.1, 0.55, mask.get_noise_2d(wx, wz))
+	var where := _bench_placement(mask.get_noise_2d(wx, wz), wx, wz)
 	var amount := clampf(strength, 0.0, 1.0) * in_band * where
 	if amount <= 0.0:
 		return h
@@ -1199,3 +1197,39 @@ func block_for(depth: int, zone: int) -> int:
 	if zone <= ZONE_HEATH and depth < 5:
 		return Block.DIRT
 	return Block.STONE
+
+
+## TODO(marcel): benches are in the wrong places.
+##
+## This decides where a bench or a plateau is allowed to happen, from a
+## low-frequency noise mask. Noise is a fine way to pick DISTRICTS and a poor
+## way to pick a bench, because a bench is not a random location - it is a
+## place where a slope happens to ease off, and the terrain already knows where
+## those are.
+##
+## The result today is benches that sometimes cut across a slope that was
+## perfectly steep either side of them, which reads as a shelf that was put
+## there rather than one that grew there.
+##
+##   Hint: heightmap.slope_deg_at(wx, wz) is the local steepness in degrees,
+##   and it is already used by the zone code. Something like
+##
+##       var eased := 1.0 - smoothstep(12.0, 30.0, heightmap.slope_deg_at(wx, wz))
+##       return smoothstep(0.1, 0.55, mask_value) * eased
+##
+##   keeps the mask as a "which districts have benches at all" filter and lets
+##   the terrain choose where within them. Watch the mountain shoulders.
+##
+##   Careful, and this is the interesting part: flattening the ground CHANGES
+##   its slope, so a rule that reads the slope it is about to change can chase
+##   its own tail. It does not here, because slope_deg_at reads the coarse
+##   heightmap and this runs while that heightmap is still being built - so it
+##   sees the cell's neighbours from the array, which are zero until they are
+##   written. Decide whether that is a bug or a feature before relying on it.
+##
+## Fallback: the mask alone, which gives benches in plausible districts at
+## implausible spots.
+func _bench_placement(mask_value: float, _wx: float, _wz: float) -> float:
+	# Only the upper half of the mask's range, so these are occasional rather
+	# than the default state of the world.
+	return smoothstep(0.1, 0.55, mask_value)

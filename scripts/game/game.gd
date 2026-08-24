@@ -165,11 +165,23 @@ func _spawn_player() -> void:
 	_awaiting_ground = true
 
 
+## THE CHUNK UNDER SPAWN, not the chunk at the origin.
+##
+## This checked (0, 0) until terrain v2 Stage 12 moved spawn off the origin,
+## and the two are not the same place any more. The world loads chunks around
+## the PLAYER, so if spawn lands further from the origin than the voxel radius
+## - 192 blocks at High, against a spawn search that ranges over 750 - the
+## chunk at (0, 0) never loads, the condition below is never satisfied, and the
+## player stays frozen with physics disabled forever.
+##
+## Seed 42 spawns 131 blocks out and worked by luck. The traversal probe found
+## it by teleporting to a corner and reporting 0 m walked in 90 seconds.
 func _release_player_when_ground_exists() -> void:
 	if not _awaiting_ground:
 		return
+	var spawn := _world.generator.spawn_block
 	var spawn_block := Vector3i(
-		0, _world.find_surface_y(0, 0), 0)
+		spawn.x, _world.find_surface_y(spawn.x, spawn.y), spawn.y)
 	if not _world.has_chunk(Chunk.world_to_chunk(spawn_block)):
 		return
 	_awaiting_ground = false

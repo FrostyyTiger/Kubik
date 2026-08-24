@@ -134,9 +134,17 @@ func _build_shore_field(config: WorldgenConfig, total: int) -> void:
 	shore_near.resize(total)
 
 	for idx in total:
-		if lake_id[idx] < 0:
+		var id := lake_id[idx]
+		if id < 0:
 			continue
-		var level := water[idx]
+		# THE LAKE'S LEVEL, NOT water[idx]. water[] holds the priority flood's
+		# SPILL level - the height of the lip the basin would pour over - and
+		# _find_lakes then caps the actual surface at floor + lake_max_depth,
+		# which for a broad shallow basin is far below it. Reading the spill
+		# here put the whole shore fade in the wrong altitude band, so the
+		# detail layer was never damped anywhere near the real water line and
+		# the shoreline stayed exactly as broken as before the fix.
+		var level: float = lakes[id]["level"]
 		var cx := idx % _cols
 		var cz := idx / _cols
 		var x0 := maxi(cx - reach, 0)
@@ -304,6 +312,16 @@ func _find_lakes(heightmap: Heightmap, config: WorldgenConfig, total: int) -> vo
 			total_depth += d
 
 		if wet.size() < config.lake_min_cells:
+			continue
+
+		# A FILM IS NOT A LAKE. Where the spill point sits barely above the
+		# basin floor the level is forced to floor + 0.2 blocks - ten
+		# centimetres - and terrain v2's terracing made a great many basins
+		# like that, because a perfectly flat shelf with any rim at all holds
+		# water at zero depth. Seed 42 produced 185 lakes of which 138 were
+		# films. They are wet ground, not water, and drawing them as lake
+		# surfaces puts flat blue sheets across the flats.
+		if max_depth < config.lake_min_depth:
 			continue
 
 		var id := lakes.size()
