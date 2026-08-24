@@ -220,11 +220,18 @@ const USER_PATH := "user://worldgen.tres"
 # built the dictionary the same way. Naming the order explicitly means the hash
 # depends on the VALUES and nothing else - which is the entire point of having
 # a hash.
+## Three fields were missing from this list until terrain v2 Stage 1:
+## mountain_mask_lo, mountain_mask_hi and lake_max_depth. All three shape the
+## world - the mask decides where mountains are allowed to exist at all - so a
+## host and a client disagreeing about any of them would have generated
+## different terrain with the handshake reporting a match. Found by auditing
+## the list against the @export block; see STATUS.md.
 const PROPERTIES: PackedStringArray = [
 	"block_size", "world_blocks_xz", "world_height_blocks", "coarse_step",
 	"far_step", "voxel_radius_chunks", "voxel_depth_chunks",
 	"player_height_blocks", "player_radius_blocks",
 	"continent_freq", "continent_amp", "mountain_freq", "mountain_amp",
+	"mountain_mask_lo", "mountain_mask_hi",
 	"hills_freq", "hills_amp", "detail_freq", "detail_amp",
 	"zone_jitter_freq", "zone_jitter_blocks",
 	"base_altitude", "min_altitude", "max_altitude",
@@ -232,7 +239,7 @@ const PROPERTIES: PackedStringArray = [
 	"meadow_max", "forest_max", "rock_max", "zone_blend_blocks",
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
-	"lake_min_cells", "lake_level_offset",
+	"lake_min_cells", "lake_level_offset", "lake_max_depth",
 	"fog_start_m", "fog_end_m", "day_seconds", "day_start",
 ]
 
