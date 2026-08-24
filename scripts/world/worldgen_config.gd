@@ -51,7 +51,7 @@ const USER_PATH := "user://worldgen.tres"
 ## Radius, in chunks, of real editable voxels around the player.
 ## THIS IS THE PERFORMANCE DIAL. If the frame budget cannot be met, turn this
 ## down rather than changing anything else.
-@export var voxel_radius_chunks := 8
+@export var voxel_radius_chunks := 12
 
 ## How many chunks of solid rock to build below the surface. The world is 320
 ## blocks tall but nobody can see the bottom 250 of it, so building a full
@@ -130,7 +130,7 @@ const USER_PATH := "user://worldgen.tres"
 
 ## Exponent for the valley flattening curve, used by the other TODO(marcel)
 ## exercise. Ignored by the fallback.
-@export var valley_curve := 1.6
+@export var valley_curve := 1.25
 
 
 # --- Elevation zones --------------------------------------------------------
@@ -139,9 +139,9 @@ const USER_PATH := "user://worldgen.tres"
 # colours blend across zone_blend_blocks so the transition reads as a gradient
 # rather than a contour line on a map.
 
-@export var meadow_max := 100.0
-@export var forest_max := 165.0
-@export var rock_max := 215.0
+@export var meadow_max := 75.0
+@export var forest_max := 140.0
+@export var rock_max := 195.0
 
 ## Blocks over which two neighbouring zone colours cross-fade.
 @export var zone_blend_blocks := 6.0
@@ -196,8 +196,8 @@ const USER_PATH := "user://worldgen.tres"
 
 ## Metres. Beyond fog_end nothing is visible, which is what makes the far-field
 ## mesh's edge invisible rather than a cliff at the horizon.
-@export var fog_start_m := 120.0
-@export var fog_end_m := 200.0
+@export var fog_start_m := 360.0
+@export var fog_end_m := 600.0
 
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
