@@ -142,6 +142,24 @@ func _exit_tree() -> void:
 	_capture_mouse(false)
 
 
+## What this player looks like, as the eight bytes that travel on the wire.
+##
+## Asked for every sync tick rather than cached, so that cycling the character
+## on the F8 panel is visible to a friend without any plumbing between the
+## panel and the network.
+func appearance_bytes() -> PackedByteArray:
+	return _view.appearance_bytes()
+
+
+## The name to put on this player's tag, sanitised the same way the host will
+## sanitise it. Doing it here as well as on the host is not redundancy for its
+## own sake: it means the local player sees the same name everyone else does,
+## rather than seeing the raw string they typed.
+func display_name() -> String:
+	return CharacterDef.sanitise_name(
+		_view.def.name_text if _view.def != null else "", Net.local_peer_id())
+
+
 ## Where the camera is looking, used by anything that needs a facing.
 func camera_yaw() -> float:
 	return _yaw

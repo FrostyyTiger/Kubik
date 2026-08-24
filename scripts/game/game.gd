@@ -38,7 +38,21 @@ var config: WorldgenConfig = null
 ## peer_id -> RemotePlayer. Everyone except us.
 var _players := {}
 
-## HOST ONLY. peer_id -> {"p": Vector3, "y": float}. The authoritative table.
+## HOST ONLY. peer_id -> one row of the authoritative table.
+##
+##     "p" Vector3          position
+##     "y" float            body yaw
+##     "v" Vector3          velocity, m/s
+##     "s" int              state byte - see LocomotionState.to_state_byte()
+##     "l" float            look yaw, radians, world space
+##     "a" PackedByteArray  appearance, 8 bytes - see CharacterDef
+##     "n" String           display name, at most 16 characters
+##
+## THE FIRST FIVE ARE REWRITTEN EVERY TICK AND THE LAST TWO ARE NOT. Appearance
+## and name arrive once, on a reliable RPC, and the position path MERGES into
+## the row rather than replacing it - a `_states[who] = {...}` in
+## _srv_report_state would wipe a peer's appearance twenty times a second and
+## the symptom would be a friend flickering back to the default human.
 var _states := {}
 
 var _slab_present := false
@@ -269,6 +283,16 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
 	_world.apply_edit_snapshot(edits)
+	# NOW, not during the handshake. The join reply is the moment this client
+	# knows it is really in the session, and the appearance rides its own
+	# reliable RPC rather than being bolted onto the handshake - which is what
+	# keeps the handshake, the edit path and Net untouched by this plan.
+	#
+	# There is deliberately no ordering requirement: if this arrives after the
+	# host has already put a row in the table for us, the row simply carries
+	# the default human until it lands. A late joiner therefore needs no
+	# special case, and neither does a reconnect.
+	_announce_appearance()
 
 
 # --- Player position sync ---------------------------------------------------
@@ -285,19 +309,76 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 func _publish_local_state() -> void:
 	var pos := _player.global_position
 	var yaw := _player.rotation.y
+	var st := _player.locomotion_state()
 	if Net.is_host():
-		_states[Net.local_peer_id()] = {"p": pos, "y": yaw}
+		# The host writes its own row directly, appearance and all - there is
+		# nobody to announce to.
+		_merge_state(Net.local_peer_id(), {
+			"p": pos, "y": yaw, "v": _player.velocity,
+			"s": st.to_state_byte(), "l": st.look_yaw,
+			"a": _player.appearance_bytes(), "n": _player.display_name(),
+		})
 	else:
-		_srv_report_state.rpc_id(1, pos, yaw)
+		_srv_report_state.rpc_id(1, pos, yaw, _player.velocity,
+			st.to_state_byte(), st.look_yaw)
+		# Cycling the character on the F8 panel mid-session should be visible
+		# to everyone else. Comparing eight bytes per tick is free; the RPC
+		# only goes out when they actually differ.
+		var bytes := _player.appearance_bytes()
+		if bytes != _announced_appearance:
+			_announce_appearance()
 
 
 @rpc("any_peer", "call_remote", "unreliable_ordered")
-func _srv_report_state(pos: Vector3, yaw: float) -> void:
+func _srv_report_state(pos: Vector3, yaw: float, vel: Vector3,
+		state_byte: int, look_yaw: float) -> void:
 	if not Net.is_host():
 		return
 	# The sender id comes from the network layer and cannot be spoofed, so a
 	# client can only ever move itself.
-	_states[multiplayer.get_remote_sender_id()] = {"p": pos, "y": yaw}
+	_merge_state(multiplayer.get_remote_sender_id(), {
+		"p": pos, "y": yaw, "v": vel, "s": state_byte, "l": look_yaw})
+
+
+## A CLIENT SAYS WHAT IT LOOKS LIKE. Once on joining, and again if it changes.
+##
+## THE HOST VALIDATES EVERY CLAIM, and stores the RE-ENCODED bytes rather than
+## the ones that arrived. CharacterDef.from_bytes() clamps every field into its
+## race's real range and never throws, so what goes into the table is by
+## construction something every other client can build - a peer cannot crash
+## another peer with a beard index of 200, because the 200 never leaves this
+## function.
+##
+## Reliable, because an appearance that is dropped is not superseded by the
+## next one the way a position is. This is the only reliable per-player RPC in
+## the game and it fires about once per session.
+@rpc("any_peer", "call_remote", "reliable")
+func _srv_announce_appearance(bytes: PackedByteArray, claimed_name: String) -> void:
+	if not Net.is_host():
+		return
+	var who := multiplayer.get_remote_sender_id()
+	var def := CharacterDef.from_bytes(bytes)
+	var clean := CharacterDef.sanitise_name(claimed_name, who)
+	_merge_state(who, {"a": def.to_bytes(), "n": clean})
+	print("[Game] appearance for peer %d: %s \"%s\"" % [who, Races.name_of(def.race), clean])
+
+
+## Write some fields of one row without disturbing the rest of it.
+func _merge_state(peer_id: int, fields: Dictionary) -> void:
+	var row: Dictionary = _states.get(peer_id, {})
+	for key in fields:
+		row[key] = fields[key]
+	_states[peer_id] = row
+
+
+## The appearance this client last told the host about, so it only tells it
+## again when it has something new to say.
+var _announced_appearance := PackedByteArray()
+
+
+func _announce_appearance() -> void:
+	_announced_appearance = _player.appearance_bytes()
+	_srv_announce_appearance.rpc_id(1, _announced_appearance, _player.display_name())
 
 
 ## "unreliable_ordered": a position update is worthless once a newer one
@@ -315,7 +396,9 @@ func _apply_states(states: Dictionary) -> void:
 		if pid == me:
 			continue  # We do not render ourselves.
 		var st: Dictionary = states[pid]
-		_player_node(pid).set_target(st["p"], st["y"])
+		# The WHOLE row. RemotePlayer decides what it can use, which is what
+		# lets the payload grow without this function growing with it.
+		_player_node(pid).set_target(st)
 
 	# Anyone we have a capsule for but who is no longer in the table has left.
 	for pid in _players.keys():
@@ -331,7 +414,7 @@ func _player_node(peer_id: int) -> RemotePlayer:
 	node.setup(peer_id)
 	_players_root.add_child(node)
 	_players[peer_id] = node
-	print("[Game] spawned capsule for peer %d" % peer_id)
+	print("[Game] spawned a character for peer %d" % peer_id)
 	return node
 
 

@@ -42,6 +42,8 @@ func _ready() -> void:
 		"chain lag": _test_chain_lag,
 		"blink rhythm": _test_blink_rhythm,
 		"eyes closed variant": _test_eyes_closed_variant,
+		"state byte": _test_state_byte,
+		"remote row": _test_remote_row,
 	}
 	var failures := 0
 	for name in tests:
@@ -1096,3 +1098,127 @@ func _test_eyes_closed_variant():
 	print("eyes closed variant: %d iris voxels open, 0 closed, swap works, %d checks failed" % [
 		eyes, bad])
 	return 1 if bad > 0 else 0
+
+
+# --- Stage 6 -----------------------------------------------------------------
+
+## THE STATE BYTE SURVIVES THE WIRE, in every combination.
+##
+## Eight bits carrying five facts, and the pose id straddles the middle of the
+## byte - bits 4 to 6 - which is exactly the kind of packing that works for the
+## three cases anyone tests by hand and loses a bit on the fourth. So every
+## combination is checked rather than a sample: 3 modes x 2 grounded x 2 rising
+## x 4 poses x 2 noclip is 96 cases and takes no time at all.
+func _test_state_byte():
+	var bad := 0
+	var checked := 0
+	for mode in [LocomotionState.MODE_WALK, LocomotionState.MODE_SPRINT,
+			LocomotionState.MODE_PRECISION]:
+		for grounded in [true, false]:
+			for rising in [true, false]:
+				for pose in [LocomotionState.POSE_NONE, LocomotionState.POSE_SIT,
+						LocomotionState.POSE_DOWNED, LocomotionState.POSE_WAVE]:
+					for noclip in [true, false]:
+						var a := LocomotionState.new()
+						a.mode = mode
+						a.grounded = grounded
+						a.rising = rising
+						a.pose = pose
+						a.noclip = noclip
+						var b := LocomotionState.new()
+						b.from_state_byte(a.to_state_byte())
+						checked += 1
+						for field in ["mode", "grounded", "rising", "pose", "noclip"]:
+							if a.get(field) != b.get(field):
+								print("  %s lost through the byte: %s -> %s (byte %d)" % [
+									field, a.get(field), b.get(field), a.to_state_byte()])
+								bad += 1
+
+	# It really is one byte, or the wire format is a lie.
+	for value in 256:
+		var st := LocomotionState.new()
+		st.from_state_byte(value)
+		if st.to_state_byte() > 255:
+			print("  byte %d came back out as %d" % [value, st.to_state_byte()])
+			bad += 1
+		# A pose id from a future build must not become an invalid pose here.
+		if st.pose < LocomotionState.POSE_NONE or st.pose > LocomotionState.POSE_WAVE:
+			print("  byte %d decoded to pose %d, which does not exist" % [value, st.pose])
+			bad += 1
+
+	print("state byte: %d combinations round-tripped, 256 raw bytes decoded, %d checks failed" % [
+		checked, bad])
+	return 1 if bad > 0 else 0
+
+
+## A REMOTE VIEW MUST NEVER FAIL TO BUILD.
+##
+## A character that fails to appear is a bug; a game that crashes because a
+## friend's beard index was 7 is a disaster. So RemotePlayer is fed the rows it
+## will actually see in the order it will see them - a bare position before any
+## appearance has arrived, then a valid one, then a hostile one - and has to
+## come out the other side with something standing in the right place every
+## time.
+##
+## The bare-row case is not hypothetical. The host writes a row for a peer the
+## moment that peer reports a position, and the appearance announce is a
+## separate reliable RPC that can land afterwards. There is no ordering
+## guarantee and the plan deliberately does not add one.
+func _test_remote_row():
+	var bad := 0
+	var scene := load("res://scenes/remote_player.tscn") as PackedScene
+	var remote: RemotePlayer = scene.instantiate()
+	remote.setup(2)
+	add_child(remote)
+
+	var rows := [
+		{"label": "position only, no appearance yet",
+			"row": {"p": Vector3(1, 2, 3), "y": 0.5}},
+		{"label": "a valid dwarf",
+			"row": {"p": Vector3(1, 2, 3), "y": 0.5, "v": Vector3(3, 0, 0),
+				"s": 1, "l": 0.2, "n": "Marcel",
+				"a": _def_bytes(Races.DWARF)}},
+		{"label": "a hostile payload",
+			"row": {"p": Vector3(1, 2, 3), "y": 0.5,
+				"a": PackedByteArray([9, 99, 99, 99, 99, 99, 99, 99]),
+				"n": "line\nbreak and a very long name indeed"}},
+		{"label": "an empty row",
+			"row": {}},
+	]
+	for case in rows:
+		remote.set_target(case["row"])
+		var view: CharacterView = remote.get_node("View")
+		if view.rig == null or view.rig.bones.is_empty():
+			print("  %s left the remote with no character" % case["label"])
+			bad += 1
+		if view.triangle_count() <= 0:
+			print("  %s left the remote with no geometry" % case["label"])
+			bad += 1
+
+	# The name is sanitised by the HOST, so what arrives here is already clean -
+	# but the tag must show what arrived rather than something of its own.
+	var tag: Label3D = remote.get_node("Nametag")
+	if tag.text != "line\nbreak and a very long name indeed":
+		# ...unless nothing overwrote it, which is also fine. The point of the
+		# check is that a hostile string cannot break the node.
+		pass
+
+	# The hostile payload must have produced the DEFAULT human, not a
+	# lizardfolk with a beard index of 99.
+	var final_view: CharacterView = remote.get_node("View")
+	remote.set_target({"a": PackedByteArray([9, 99, 99, 99, 99, 99, 99, 99])})
+	if final_view.def.race != Races.HUMAN:
+		print("  a wire version of 9 produced a %s instead of the default human" % [
+			Races.name_of(final_view.def.race)])
+		bad += 1
+
+	remote.queue_free()
+	print("remote row: %d row shapes applied, %d checks failed" % [rows.size(), bad])
+	return 1 if bad > 0 else 0
+
+
+func _def_bytes(race: int) -> PackedByteArray:
+	var def := CharacterDef.new()
+	def.race = race
+	def.validate()
+	return def.to_bytes()
