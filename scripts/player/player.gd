@@ -106,6 +106,9 @@ func _ready() -> void:
 	# never opened the creation screen. `--race` and friends override it for
 	# one run - see CharacterDef.load_or_default().
 	_view.build(CharacterDef.load_or_default())
+	# This is the player's own character, so it is the one that has to get out
+	# of the way when the camera ends up inside its head.
+	_view.local = true
 	# Terrain is a staircase of half-metre steps and the capsule must stay
 	# glued to it going downhill, or walking down any slope turns into a
 	# sequence of small hops.
@@ -174,6 +177,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_noclip(not noclip)
 			get_viewport().set_input_as_handled()
 			return
+		if _pose_key(event.physical_keycode):
+			get_viewport().set_input_as_handled()
+			return
 
 	if event.is_action_pressed("ui_cancel") and _mouse_captured():
 		# First Escape frees the cursor and is consumed here. A second one is
@@ -198,6 +204,11 @@ func _physics_process(delta: float) -> void:
 	# Carried by hand because the pivot is top_level. One frame behind the
 	# body, which the spring arm smooths away.
 	_pivot.global_position = global_position + _pivot_offset
+
+	if _wave_left > 0.0:
+		_wave_left -= delta
+		if _wave_left <= 0.0 and pose == LocomotionState.POSE_WAVE:
+			pose = LocomotionState.POSE_NONE
 
 	if not _mouse_captured() and wish_override == Vector3.ZERO:
 		# Cursor released means a menu or a panel has focus. Walking on while
@@ -374,6 +385,39 @@ func _locomotion_mode() -> int:
 	if Input.is_physical_key_pressed(KEY_ALT):
 		return LocomotionState.MODE_PRECISION
 	return LocomotionState.MODE_WALK
+
+
+## SCAFFOLDING, AND IT SAYS SO. X sits, B goes down, V waves.
+##
+## THE CAMPFIRE PLAN OWNS `sit` AND THE DEATH DESIGN OWNS `downed`. Neither
+## system exists yet, and a pose with nothing to trigger it is a pose nobody
+## finds the bugs in - so these three keys exist to drive the state byte until
+## the systems that own them arrive, and they are the first thing those plans
+## should delete.
+##
+## Local only in the sense that the KEY is local; the pose itself rides the
+## state byte from Stage 6, so a friend sees you sit.
+func _pose_key(keycode: int) -> bool:
+	match keycode:
+		KEY_X:
+			pose = LocomotionState.POSE_NONE if pose == LocomotionState.POSE_SIT \
+				else LocomotionState.POSE_SIT
+		KEY_B:
+			pose = LocomotionState.POSE_NONE if pose == LocomotionState.POSE_DOWNED \
+				else LocomotionState.POSE_DOWNED
+		KEY_V:
+			# The wave ends by itself, so it is a press rather than a toggle.
+			pose = LocomotionState.POSE_WAVE
+			_wave_left = Animator.WAVE_SECONDS
+		_:
+			return false
+	print("[Player] pose %d" % pose)
+	return true
+
+
+## Counts the wave down, because the wave is the one pose that stops on its
+## own and the animator must not be the thing that decides a player's state.
+var _wave_left := 0.0
 
 
 ## Multiplier applied to the base speed this frame. Applies to walking and to

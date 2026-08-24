@@ -63,10 +63,22 @@ var _look_pitch := 0.0
 ## by itself.
 var _wave_remaining := 0.0
 
+## Seconds until the eyes change state, and which state they are in.
+##
+## REAL RANDOMNESS, DELIBERATELY. Hard rule 13: determinism is not required
+## here, because nothing about a blink generates the world or is sent to
+## anyone. Two players watching the same character will see it blink at
+## different moments, which is exactly as visible as it sounds - not at all.
+var _blink_timer := 0.0
+var _blinking := false
+
 
 func setup(p_config: CharacterConfig, p_dims: Dictionary) -> void:
 	config = p_config
 	dims = p_dims
+	# Staggered from the start, so four players who joined together do not
+	# blink in unison - which reads as a scripted event rather than as life.
+	_blink_timer = randf_range(config.blink_min_s, config.blink_max_s)
 
 
 ## Advance the cycle and the smoothing. Call once per frame with the frame's
@@ -101,6 +113,8 @@ func update(state: LocomotionState, dt: float) -> void:
 		-deg_to_rad(config.look_yaw_deg), deg_to_rad(config.look_yaw_deg)), look_t)
 	_look_pitch = lerpf(_look_pitch, clampf(state.look_pitch,
 		-deg_to_rad(config.look_pitch_deg), deg_to_rad(config.look_pitch_deg)), look_t)
+
+	_update_blink(dt)
 
 	var target := pose_for(state, phase, time, config, dims, {
 		"look_yaw": _look_yaw,
@@ -138,6 +152,48 @@ func snap_to(state: LocomotionState) -> void:
 		"look_yaw": _look_yaw, "look_pitch": _look_pitch,
 		"land": 0.0, "wave": 0.0,
 	}))
+
+
+## Are the eyes shut this frame?
+func blinking() -> bool:
+	return _blinking
+
+
+## Eyes shut for blink_ms, then open for a uniform gap between blink_min_s and
+## blink_max_s.
+##
+## The gap is measured from the eyes OPENING, so two blinks are always at least
+## blink_min_s apart plus the blink itself. A gap measured from the blink's
+## start could in principle schedule the next one inside the current one, which
+## is the failure the self-test looks for.
+func _update_blink(dt: float) -> void:
+	_blink_timer -= dt
+	if _blink_timer > 0.0:
+		return
+	if _blinking:
+		_blinking = false
+		_blink_timer = randf_range(config.blink_min_s, config.blink_max_s)
+	else:
+		_blinking = true
+		_blink_timer = config.blink_ms / 1000.0
+
+
+## TODO(marcel): make the blinks cluster.
+##
+## Real blinking is not a uniform random gap. People blink in bursts, and they
+## blink just before they turn their head or start to speak - which is why a
+## character with perfectly even blinks reads as a machine imitating one.
+##
+##   Hint: keep a small "burst" counter. When it is zero, draw the gap the way
+##   this does; when it is not, draw a much shorter one and decrement it. Set
+##   the counter to two or three whenever the head look yaw changes by more
+##   than about 20 degrees in a frame.
+##
+## The head-look yaw is already in this class as `_look_yaw`, so the trigger
+## costs nothing to detect. Watch it on the F8 panel with blink_min_s turned
+## right down, where the rhythm is visible in a few seconds.
+##
+## Fallback: uniform between min and max, which is what is here.
 
 
 ## How much of the landing dip is still owed, 0 to 1.

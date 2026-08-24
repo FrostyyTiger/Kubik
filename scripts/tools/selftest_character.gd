@@ -39,6 +39,9 @@ func _ready() -> void:
 		"poses differ": _test_poses_differ,
 		"sprint lean": _test_sprint_lean,
 		"animator cost": _measure_animator_cost,
+		"chain lag": _test_chain_lag,
+		"blink rhythm": _test_blink_rhythm,
+		"eyes closed variant": _test_eyes_closed_variant,
 	}
 	var failures := 0
 	for name in tests:
@@ -930,3 +933,166 @@ func _measure_animator_cost():
 		per_frame, frames])
 	view.free()
 	return 0
+
+
+# --- Stage 5 -----------------------------------------------------------------
+
+## A CHAIN LAGS LINK BY LINK, which is the whole difference between a tail and
+## a stick with a hinge in it.
+##
+## Tested on a SYNTHETIC chain rather than on the lizardfolk, because the rule
+## is generic and has to be: the lizardfolk needs it in Stage 8 and the critter
+## needs it in Stage 13, and a rule designed twice is a rule that differs in
+## the second place. The animator does not know that a tail is a tail - it
+## knows that bones named `<chain>_1..n` follow their parent late.
+func _test_chain_lag():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var dims := Races.dims(Races.LIZARDFOLK)
+	var idle := _state(0.0)
+
+	# One full sway period, finely enough sampled that a 0.15 s lag is many
+	# samples wide.
+	var period := 1.0 / config.tail_hz
+	var steps := 600
+	var peak_at: Array[float] = []
+	var peak_value: Array[float] = []
+	for i in Animator.MAX_CHAIN_LINKS:
+		peak_at.append(-1.0)
+		peak_value.append(-INF)
+
+	for k in steps:
+		var t := period * float(k) / float(steps)
+		var pose := Animator.pose_for(idle, 0.0, t, config, dims)
+		for i in Animator.MAX_CHAIN_LINKS:
+			var bone := "tail_%d" % (i + 1)
+			if not pose.has(bone):
+				continue
+			var value: float = (pose[bone]["rot"] as Vector3).y
+			# Normalised by this link's own amplitude, so the comparison is
+			# about WHEN each link peaks and not about how far it swings.
+			if value > peak_value[i]:
+				peak_value[i] = value
+				peak_at[i] = t
+
+	for i in range(1, Animator.MAX_CHAIN_LINKS):
+		if peak_at[i] <= peak_at[i - 1]:
+			print("  tail_%d peaked at %.4f s, not after tail_%d at %.4f s" % [
+				i + 1, peak_at[i], i, peak_at[i - 1]])
+			bad += 1
+
+	# And the lag is the configured one, within a sample.
+	var want := config.tail_lag
+	var got: float = peak_at[1] - peak_at[0]
+	if absf(got - want) > period / float(steps) * 2.0:
+		print("  the lag between links is %.4f s, wanted %.4f" % [got, want])
+		bad += 1
+
+	print("chain lag: peaks at %s s, %.3f s between links, %d checks failed" % [
+		str(peak_at).replace(", ", " "), got, bad])
+	return 1 if bad > 0 else 0
+
+
+## TWO BLINKS ARE NEVER CLOSER THAN blink_min_s.
+##
+## The gap is measured from the eyes OPENING rather than from the blink's
+## start, so this is really asking whether the timer can ever schedule the next
+## blink inside the current one. Sixty seconds of sampling is a dozen or so
+## blinks at the default rate, which is enough for a scheduling bug to show up
+## and cheap enough to run every time.
+func _test_blink_rhythm():
+	var bad := 0
+	var config := CharacterConfig.new()
+	var anim := Animator.new()
+	anim.setup(config, Races.dims(Races.HUMAN))
+	var idle := _state(0.0)
+
+	var dt := 1.0 / 60.0
+	var starts := []
+	var was := anim.blinking()
+	var closed_frames := 0
+	var total_closed := 0
+	for k in int(60.0 / dt):
+		anim.update(idle, dt)
+		var now := anim.blinking()
+		if now and not was:
+			starts.append(float(k) * dt)
+		if now:
+			closed_frames += 1
+			total_closed += 1
+		was = now
+
+	if starts.size() < 5:
+		print("  only %d blinks in a minute - the timer is not running" % starts.size())
+		bad += 1
+	for i in range(1, starts.size()):
+		var gap: float = starts[i] - starts[i - 1]
+		if gap < config.blink_min_s:
+			print("  two blinks %.3f s apart, under the %.1f s minimum" % [
+				gap, config.blink_min_s])
+			bad += 1
+
+	# ...and a blink is short. An eyes-closed character is a character with no
+	# face, so the fraction of the time the eyes are shut is worth knowing.
+	var shut_fraction := float(total_closed) * dt / 60.0
+	if shut_fraction > 0.15:
+		print("  the eyes are shut %.1f%% of the time" % (shut_fraction * 100.0))
+		bad += 1
+
+	print("blink rhythm: %d blinks in 60 s, eyes shut %.1f%% of the time, %d checks failed" % [
+		starts.size(), shut_fraction * 100.0, bad])
+	return 1 if bad > 0 else 0
+
+
+## THE EYES-CLOSED HEAD HAS NO EYES IN IT.
+##
+## One part, two meshes: the closed variant is the same voxel list with IRIS
+## and EYE_WHITE resolved to SKIN, so there is no second head file to forget to
+## update when the first one changes. This checks both halves - that the remap
+## leaves nothing behind, and that the rig actually built the variant.
+func _test_eyes_closed_variant():
+	var bad := 0
+	var open_voxels := VoxelModel.parse(PartsHuman.HEAD, "head")
+	var closed := VoxelModel.remap_slots(open_voxels, {
+		VoxelModel.IRIS: VoxelModel.SKIN,
+		VoxelModel.EYE_WHITE: VoxelModel.SKIN,
+	})
+	if closed.size() != open_voxels.size():
+		print("  the remap changed the voxel count: %d -> %d" % [
+			open_voxels.size(), closed.size()])
+		bad += 1
+	for slot in [VoxelModel.IRIS, VoxelModel.EYE_WHITE]:
+		var left := VoxelModel.voxels_with_slot(closed, slot).size()
+		if left > 0:
+			print("  %d %s voxels survived the eyes-closed remap" % [
+				left, VoxelModel.SLOT_NAMES[slot]])
+			bad += 1
+	# The open head must still have its eyes, or this test would pass on a head
+	# that never had any.
+	var eyes := VoxelModel.voxels_with_slot(open_voxels, VoxelModel.IRIS).size()
+	if eyes == 0:
+		print("  the open head has no iris voxels either")
+		bad += 1
+
+	var view := CharacterView.new()
+	view.build(CharacterDef.new())
+	if not view.rig.blink_meshes.has("head"):
+		print("  the rig built no eyes-closed variant for the head")
+		bad += 1
+	else:
+		view.rig.set_blinking(true)
+		if (view.rig.meshes["head"] as MeshInstance3D).visible:
+			print("  set_blinking(true) left the open-eyed head visible")
+			bad += 1
+		if not (view.rig.blink_meshes["head"] as MeshInstance3D).visible:
+			print("  set_blinking(true) did not show the closed-eyed head")
+			bad += 1
+		view.rig.set_blinking(false)
+		if not (view.rig.meshes["head"] as MeshInstance3D).visible:
+			print("  set_blinking(false) did not put the eyes back")
+			bad += 1
+	view.free()
+
+	print("eyes closed variant: %d iris voxels open, 0 closed, swap works, %d checks failed" % [
+		eyes, bad])
+	return 1 if bad > 0 else 0

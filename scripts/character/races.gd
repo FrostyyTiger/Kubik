@@ -445,14 +445,29 @@ const SOCKET_NAMES := ["hand_r", "hand_l", "neck", "chest", "back", "belt"]
 ## half-finished run should still show you something walking around.
 static func part_set(race: int, build := STOCKY) -> Dictionary:
 	if build == LEAN and has_lean(race):
-		push_warning("[Races] the lean part set arrives in Stage 7 - using stocky")
+		_warn_once("lean", "[Races] the lean part set arrives in Stage 7 - using stocky")
 		return PartsHuman.PARTS
 	match valid_race(race):
 		HUMAN:
 			return PartsHuman.PARTS
 		_:
-			push_warning("[Races] no part set for %s yet - using the human's" % name_of(race))
+			_warn_once(name_of(race),
+				"[Races] no part set for %s yet - using the human's" % name_of(race))
 			return PartsHuman.PARTS
+
+
+## Warn about a missing part set ONCE per key, not once per build.
+##
+## The 100-random-appearance self-test builds a character per payload, most of
+## them not human, and one warning each buried the suite's own output under
+## four hundred lines of backtrace. A warning nobody can read is not a warning.
+static var _warned := {}
+
+static func _warn_once(key: String, message: String) -> void:
+	if _warned.has(key):
+		return
+	_warned[key] = true
+	push_warning(message)
 
 
 ## The 8 degree forward lean baked into the lizardfolk's hips.

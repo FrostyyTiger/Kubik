@@ -36,6 +36,10 @@ var rest := {}
 ## triangle count.
 var meshes := {}
 
+## bone name -> the eyes-closed MeshInstance3D, for any part that has eyes.
+## Hidden until a blink swaps it in.
+var blink_meshes := {}
+
 
 ## Build the whole skeleton. Parents must appear before their children in the
 ## table, which Races.bone_table guarantees.
@@ -68,7 +72,11 @@ func build(bone_table: Array, part_set: Dictionary, palette: Dictionary,
 		if part_name.is_empty():
 			continue  # a bone that is only a transform, like a pelvis-less hips
 		if not part_set.has(part_name):
-			push_warning("[Rig] no part named %s for bone %s" % [part_name, bone_name])
+			# Once per part name: a lizardfolk built from the human part set
+			# is missing three tail parts, and rebuilding it a hundred times in
+			# a test is not three hundred pieces of news.
+			Races._warn_once("rig:" + part_name,
+				"[Rig] no part named %s for bone %s" % [part_name, bone_name])
 			continue
 		_attach_part(node, bone_name, part_set[part_name], part_name,
 			entry.get("mirror", false), palette, ao_strength)
@@ -88,6 +96,7 @@ func clear() -> void:
 	sockets.clear()
 	rest.clear()
 	meshes.clear()
+	blink_meshes.clear()
 
 
 func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
@@ -114,6 +123,47 @@ func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
 	mi.mesh = mesh
 	bone.add_child(mi)
 	meshes[bone_name] = mi
+	_attach_blink_variant(bone, bone_name, voxels, anchor, palette, ao_strength)
+
+
+## The same part with its eyes resolved to skin, if it had any.
+##
+## ONE PART, TWO MESHES. The blink is a mesh swap and not a shader - hard rule
+## 7 - and building the closed variant from the SAME voxel list is what stops
+## the two heads drifting apart: there is no second head file to forget to
+## update when the first one changes. Any part with eyes gets one, so a
+## lizardfolk blinks for the same reason a human does and nothing has to know
+## which races have eyelids.
+func _attach_blink_variant(bone: Node3D, bone_name: String, voxels: Array,
+		anchor: Vector3, palette: Dictionary, ao_strength: float) -> void:
+	var has_eyes := false
+	for v in voxels:
+		if v.w == VoxelModel.IRIS or v.w == VoxelModel.EYE_WHITE:
+			has_eyes = true
+			break
+	if not has_eyes:
+		return
+	var closed := VoxelModel.remap_slots(voxels, {
+		VoxelModel.IRIS: VoxelModel.SKIN,
+		VoxelModel.EYE_WHITE: VoxelModel.SKIN,
+	})
+	var mesh := VoxelModel.build_mesh(closed, palette, anchor, ao_strength)
+	if mesh == null:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "MeshBlink"
+	mi.mesh = mesh
+	mi.visible = false
+	bone.add_child(mi)
+	blink_meshes[bone_name] = mi
+
+
+## Eyes open or eyes closed. Cheap enough to call every frame; it sets two
+## booleans that are usually already what they are being set to.
+func set_blinking(on: bool) -> void:
+	for bone_name in blink_meshes:
+		(meshes[bone_name] as MeshInstance3D).visible = not on
+		(blink_meshes[bone_name] as MeshInstance3D).visible = on
 
 
 # --- Posing ------------------------------------------------------------------

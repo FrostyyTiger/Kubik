@@ -89,6 +89,32 @@ func _process(delta: float) -> void:
 		return
 	animator.update(_state, delta)
 	animator.apply(rig)
+	rig.set_blinking(animator.blinking())
+	_update_close_hide()
+
+
+## Hide the character when the camera is inside its head.
+##
+## TWO THINGS NEED THIS AND NEITHER OF THEM IS A SPECIAL CASE. The spring arm
+## collapses toward the player when it hits a wall, and at full collapse the
+## camera is inside the skull looking at the back of a face. And the screenshot
+## tour parks the PLAYER at each vantage point because the player is what
+## streams chunks - so without this, every one of the tour's six terrain shots
+## would have a character's head filling it. This covers the tour without
+## touching screenshot_tour.gd, which this branch may not edit.
+##
+## It hides the RIG rather than the view, because `visible` on the view belongs
+## to noclip - Player._set_noclip() sets it - and two owners of one flag is a
+## bug waiting for the day both are true.
+func _update_close_hide() -> void:
+	if not local:
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or not rig.bones.has("head"):
+		return
+	var head: Node3D = rig.bones["head"]
+	var head_pos: Vector3 = rig.global_transform * rig.transform_to_rig(head).origin
+	rig.visible = cam.global_position.distance_to(head_pos) > _config.view_hide_m
 
 
 ## The appearance this view was built from, as bytes. Used to decide whether a
