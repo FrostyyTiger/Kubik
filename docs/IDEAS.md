@@ -18,8 +18,13 @@ here on this list is filled by what a playtest taught us.
    *Answers:* the postcard test - can I frame a mountain, its forest and a lake
    in one view within two minutes of walking from spawn?
 
-   **Plan B - water, rivers and foliage** is the sequel and is not written yet.
-   What v2 left ready for it is listed at the end of `STATUS.md`.
+   **Plan B** splits in two. **Foliage v1 - what grows on the land** is
+   written and queued for an overnight run: seven tree species, dense forest
+   with glades, ground cover in every zone on a decoration layer, far trees
+   to 300 m, fireflies and glowing mushrooms after dark.
+   [plans/foliage-v1.md](plans/foliage-v1.md). **Water and rivers** is the
+   other half and is not written yet. What v2 left ready for both is listed
+   at the end of `STATUS.md`.
 
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
