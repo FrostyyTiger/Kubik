@@ -367,7 +367,11 @@ func height_at_block(bx: float, bz: float) -> float:
 	# The feature layer. _ridge() is what turns rolling lumps into peaks with
 	# valleys between them, and it is the single biggest lever on how the
 	# skyline reads.
-	h += _ridge(_mountain.get_noise_2d(wx, wz)) * config.mountain_amp * massif
+	# ...and how tall they are depends on how far out you are. Pillar 3 makes
+	# distance the difficulty and content axis, and this is the terrain saying
+	# so before anything dangerous is there to say it.
+	h += _ridge(_mountain.get_noise_2d(wx, wz)) * config.mountain_amp * massif \
+		* (1.0 + config.wildness_relief * wildness_at(bx, bz))
 
 	# Rolling country, gated the same way the mountains are.
 	#
@@ -530,6 +534,24 @@ func _cell_index(bx: float, bz: float) -> int:
 	return i + j * heightmap.cols
 
 
+## How far out you are, 0 at the middle of the map and 1 at the edge.
+##
+## MEASURED FROM THE CENTRE OF THE WORLD, NOT FROM SPAWN, and the reason is an
+## ordering one. Spawn is chosen by looking at the finished heightmap - it has
+## to be, since it needs to know where the flat ground and the water are - so a
+## terrain that varied with distance from spawn would need the heightmap to
+## exist before itself. The two are kept interchangeable instead, by requiring
+## spawn to land near the middle of the map (spawn_center_fraction).
+##
+## Chebyshev distance rather than Euclidean, so the ramp follows the square
+## world and the corners are not a third wilder than the edges next to them.
+func wildness_at(bx: float, bz: float) -> float:
+	var half := float(config.world_blocks_xz) * 0.5
+	if half <= 0.0:
+		return 0.0
+	return clampf(maxf(absf(bx), absf(bz)) / half, 0.0, 1.0)
+
+
 ## Wobble applied to the elevation zone boundaries, in blocks. Without it every
 ## treeline in the world is the same perfectly flat contour and the place looks
 ## like a topographic map.
@@ -670,7 +692,12 @@ func _slope_zone(bx: int, bz: int, zone: int) -> int:
 		return ZONE_ROCK
 	# Shore is left alone: a steep lake margin is still a lake margin, and
 	# turning it to rock would put scree at the waterline everywhere.
-	if zone > ZONE_SHORE and zone < ZONE_ROCK and slope >= config.rock_slope_deg:
+	# Further out, less of a slope is needed before the soil gives up. Same
+	# hook as the relief ramp, and the threshold solver absorbs whatever it
+	# does to the shares.
+	var rock_at := config.rock_slope_deg \
+		- config.wildness_rock_deg * wildness_at(float(bx), float(bz))
+	if zone > ZONE_SHORE and zone < ZONE_ROCK and slope >= rock_at:
 		return ZONE_ROCK
 	return zone
 
@@ -804,6 +831,171 @@ func _flatten_valleys(h: float) -> float:
 	t = pow(t, config.valley_curve)
 
 	return lo + t * (hi - lo)
+
+
+# --- Spawn ------------------------------------------------------------------
+
+## Where the player starts, in blocks. Found by find_spawn(), (0, 0) until then.
+var spawn_block := Vector2i.ZERO
+
+## Why the chosen spawn was chosen, and which criteria the world could not
+## satisfy. Read by the probe and printed at boot.
+var spawn_report := {}
+
+## Coarse cells per tile in the summed-area tables the search uses.
+const SPAWN_TILE_CELLS := 8
+
+
+## Choose a spawn that satisfies the acceptance test BY CONSTRUCTION.
+##
+##   flat enough to stand on, not in a lake, in meadow or forest,
+##   a mountain visible within spawn_mountain_m,
+##   water within spawn_water_m,
+##   and near the middle of the map.
+##
+## The naive search is unaffordable and it is worth saying why, because the
+## affordable one looks like overkill until you cost the naive one. "Is there a
+## mountain within 600 m" over a 300-cell radius is 280,000 cells per
+## candidate, and there are tens of thousands of candidates. So the map is
+## reduced to tiles of 8 cells, each carrying a count of mountain cells and a
+## count of water cells, and those two grids get SUMMED-AREA TABLES - after
+## which any rectangular query is four array reads whatever its size. The whole
+## search then costs one pass to build the tiles and one pass over candidates.
+##
+## Called after lakes are computed, because it needs to know where water is.
+func find_spawn() -> Vector2i:
+	var cols := heightmap.cols
+	var tiles := (cols + SPAWN_TILE_CELLS - 1) / SPAWN_TILE_CELLS
+
+	# Mountain means rock or snow: the two zones you can see from a long way
+	# off and read as a mountain rather than as a hill.
+	var rock_altitude: float = zone_thresholds[ZONE_ROCK - 1] \
+		if zone_thresholds.size() >= ZONE_ROCK else config.max_altitude
+
+	var mountain_tiles := PackedInt32Array()
+	mountain_tiles.resize(tiles * tiles)
+	var water_tiles := PackedInt32Array()
+	water_tiles.resize(tiles * tiles)
+
+	for j in cols:
+		var row := j * cols
+		var tj := j / SPAWN_TILE_CELLS
+		for i in cols:
+			var t := tj * tiles + i / SPAWN_TILE_CELLS
+			if heightmap.cells[row + i] >= rock_altitude:
+				mountain_tiles[t] += 1
+			if lakes != null and not lakes.lake_id.is_empty() \
+					and lakes.lake_id[row + i] >= 0:
+				water_tiles[t] += 1
+
+	var mountain_sat := _summed_area(mountain_tiles, tiles)
+	var water_sat := _summed_area(water_tiles, tiles)
+
+	var cell_blocks := float(heightmap.step)
+	var view_tiles := int(ceil(config.spawn_mountain_m / config.block_size
+		/ cell_blocks / float(SPAWN_TILE_CELLS)))
+	var walk_tiles := int(ceil(config.spawn_water_m / config.block_size
+		/ cell_blocks / float(SPAWN_TILE_CELLS)))
+	var centre_cells := int(float(cols) * 0.5 * config.spawn_center_fraction)
+	var mid := cols / 2
+
+	var best := Vector2i.ZERO
+	var best_score := -INF
+	var failed := {"slope": 0, "zone": 0, "water": 0, "mountain": 0, "wet": 0}
+	var considered := 0
+
+	# Every fourth cell on each axis. Finer buys nothing: the criteria are all
+	# neighbourhood questions and neighbours a few metres apart answer them the
+	# same way.
+	for j in range(mid - centre_cells, mid + centre_cells, 4):
+		if j < 1 or j >= cols - 1:
+			continue
+		for i in range(mid - centre_cells, mid + centre_cells, 4):
+			if i < 1 or i >= cols - 1:
+				continue
+			considered += 1
+			var idx := i + j * cols
+			var bx := heightmap.cell_to_block(i)
+			var bz := heightmap.cell_to_block(j)
+			var altitude := heightmap.cells[idx]
+
+			if lakes != null and not lakes.lake_id.is_empty() and lakes.lake_id[idx] >= 0:
+				failed["wet"] += 1
+				continue
+			var slope := heightmap.slope_deg_at(float(bx), float(bz))
+			if slope > config.spawn_max_slope_deg:
+				failed["slope"] += 1
+				continue
+			var zone := surface_zone_at(bx, bz, altitude)
+			if zone != ZONE_MEADOW and zone != ZONE_FOREST:
+				failed["zone"] += 1
+				continue
+			var ti := i / SPAWN_TILE_CELLS
+			var tj := j / SPAWN_TILE_CELLS
+			if _sat_query(water_sat, tiles, ti, tj, walk_tiles) <= 0:
+				failed["water"] += 1
+				continue
+			if _sat_query(mountain_sat, tiles, ti, tj, view_tiles) <= 0:
+				failed["mountain"] += 1
+				continue
+
+			# Everything from here is preference rather than requirement:
+			# flatter is better, nearer the middle is better, and a little
+			# water close by is better than water at the limit of the walk.
+			var to_centre := Vector2(float(i - mid), float(j - mid)).length()
+			var near_water := float(_sat_query(water_sat, tiles, ti, tj, maxi(walk_tiles / 3, 1)))
+			var score := -slope * 2.0 - to_centre * 0.05 + minf(near_water, 60.0) * 0.1
+			if score > best_score:
+				best_score = score
+				best = Vector2i(bx, bz)
+
+	spawn_report = {
+		"ok": best_score > -INF,
+		"considered": considered,
+		"failed": failed,
+		"slope": heightmap.slope_deg_at(float(best.x), float(best.y)),
+		"altitude": heightmap.height_at(float(best.x), float(best.y)),
+	}
+	spawn_block = best
+	return best
+
+
+## Inclusive prefix sums, one row and column larger than the grid so a query
+## never has to special-case the edge.
+func _summed_area(grid: PackedInt32Array, n: int) -> PackedInt32Array:
+	var sat := PackedInt32Array()
+	sat.resize((n + 1) * (n + 1))
+	for j in n:
+		var row_sum := 0
+		for i in n:
+			row_sum += grid[i + j * n]
+			sat[(i + 1) + (j + 1) * (n + 1)] = sat[(i + 1) + j * (n + 1)] + row_sum
+	return sat
+
+
+## Total inside the square of `radius` tiles around (ti, tj). Four reads.
+func _sat_query(sat: PackedInt32Array, n: int, ti: int, tj: int, radius: int) -> int:
+	var x0 := clampi(ti - radius, 0, n)
+	var x1 := clampi(ti + radius + 1, 0, n)
+	var z0 := clampi(tj - radius, 0, n)
+	var z1 := clampi(tj + radius + 1, 0, n)
+	var w := n + 1
+	return sat[x1 + z1 * w] - sat[x0 + z1 * w] - sat[x1 + z0 * w] + sat[x0 + z0 * w]
+
+
+## Normalised danger, 0 at spawn and 1 at the furthest corner of the world.
+##
+## NOTHING CONSUMES THIS YET, and that is deliberate. The first enemy is Plan B
+## territory, but Pillar 3 makes distance the difficulty and content axis and
+## this is the hook it will hang on - so it exists now, with the terrain
+## already agreeing with it, rather than being retrofitted later against a
+## world that was built without it in mind.
+func danger_at(bx: float, bz: float) -> float:
+	var half := float(config.world_blocks_xz) * 0.5
+	var furthest := Vector2(half, half).distance_to(Vector2(spawn_block))
+	if furthest <= 0.0:
+		return 0.0
+	return clampf(Vector2(bx, bz).distance_to(Vector2(spawn_block)) / furthest, 0.0, 1.0)
 
 
 # --- Voxels -----------------------------------------------------------------

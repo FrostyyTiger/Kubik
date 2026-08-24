@@ -89,6 +89,13 @@ func _init() -> void:
 	_print_lakes(lakes, hm)
 	_print_object_scale(hm, lakes, config)
 	_print_trees(gen, hm, config)
+	# The same call World makes, in the same place: after the heightmap and
+	# after the lakes, because every criterion is a question about terrain that
+	# already exists.
+	var spawn_ms := Time.get_ticks_msec()
+	gen.find_spawn()
+	spawn_ms = Time.get_ticks_msec() - spawn_ms
+	_print_spawn(gen, config, spawn_ms)
 	quit()
 
 
@@ -412,3 +419,27 @@ func _largest_lake_span_m(hm: Heightmap, lakes: Lakes, config: WorldgenConfig) -
 		return 0.0
 	var cells := maxi(max_i - min_i, max_j - min_j) + 1
 	return float(cells * hm.step) * config.block_size
+
+
+## Whether this seed produced a spawn that meets every criterion, and if not,
+## which one it could not meet.
+##
+## Reported rather than asserted, and the criteria are never loosened to make
+## it pass. A seed with no valid spawn is a fact about the world generator that
+## somebody has to know, and a criterion quietly relaxed until it passes is the
+## same fact with the evidence removed.
+func _print_spawn(gen: TerrainGenerator, config: WorldgenConfig, ms: int) -> void:
+	var report := gen.spawn_report
+	var b := gen.spawn_block
+	if report.get("ok", false):
+		print("spawn         OK at (%d, %d) = (%.0f m, %.0f m), altitude %.0f m, slope %.1f deg" % [
+			b.x, b.y, float(b.x) * config.block_size, float(b.y) * config.block_size,
+			report["altitude"] * config.block_size, report["slope"]])
+	else:
+		print("spawn         FAILED - no candidate met every criterion")
+	print("              %d candidates in %d ms, rejected: %s" % [
+		report.get("considered", 0), ms, report.get("failed", {})])
+	# The danger field, sampled at the two places it is defined to be 0 and 1.
+	print("danger        %.2f at spawn, %.2f at the far corner" % [
+		gen.danger_at(float(b.x), float(b.y)),
+		gen.danger_at(float(config.world_blocks_xz / 2), float(config.world_blocks_xz / 2))])

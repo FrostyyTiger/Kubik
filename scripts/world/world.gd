@@ -406,6 +406,18 @@ func _build_lakes() -> void:
 	# them or the two would be defined in terms of each other.
 	generator.lakes = lakes
 
+	# Spawn is chosen from the finished world, because every criterion it has
+	# to satisfy - flat, dry, mountain in view, water within a walk - is a
+	# question about terrain that already exists.
+	var spawn := generator.find_spawn()
+	var report := generator.spawn_report
+	if report.get("ok", false):
+		print("[World] spawn at (%d, %d), altitude %.1f blk, slope %.1f deg" % [
+			spawn.x, spawn.y, report["altitude"], report["slope"]])
+	else:
+		push_warning("[World] NO SPAWN met every criterion - falling back to the origin. %s"
+			% [report.get("failed", {})])
+
 	if _water == null:
 		_water = MeshInstance3D.new()
 		_water.name = "Water"
@@ -748,6 +760,15 @@ func _remesh(cpos: Vector3i) -> void:
 ## loaded yet - which is exactly the case at spawn.
 func find_surface_y(wx: int, wz: int) -> int:
 	return int(floor(generator.surface_at(float(wx), float(wz))))
+
+
+## Where the player starts, in METRES, already clear of the ground.
+func spawn_position_m(clearance_m: float) -> Vector3:
+	var b := generator.spawn_block
+	return Vector3(
+		float(b.x) * config.block_size,
+		surface_height_m(b.x, b.y) + clearance_m,
+		float(b.y) * config.block_size)
 
 
 ## Same thing in metres, which is what anything outside worldgen wants.

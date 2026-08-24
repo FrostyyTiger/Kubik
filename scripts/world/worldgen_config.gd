@@ -507,6 +507,43 @@ const FOG_START_RATIO := 0.6
 @export var lake_max_depth := 2.0
 
 
+# --- Spawn, and distance as the difficulty axis -----------------------------
+
+## How far from spawn a player may have to walk to reach water, in metres.
+## Two minutes at the walking speed of 5 m/s.
+@export var spawn_water_m := 600.0
+
+## How far from spawn a mountain has to be visible, in metres. The High
+## preset's fog ends at 600, so a peak further than this is a peak you cannot
+## see - and "a mountain in view" has to mean in view.
+@export var spawn_mountain_m := 600.0
+
+## Steepest ground, in degrees, that counts as a place to stand up in.
+@export var spawn_max_slope_deg := 8.0
+
+## How far from the centre of the map spawn may be, as a fraction of the half
+## width.
+##
+## Not cosmetic. Pillar 3 makes distance from spawn the difficulty axis, and
+## the terrain's own wildness ramp is computed from the centre of the world -
+## which is only the same thing as distance from spawn if spawn is near the
+## centre. Keeping it there is what lets one cheap field stand in for the
+## other. See TerrainGenerator.wildness_at().
+@export var spawn_center_fraction := 0.25
+
+## DISTANCE READS AS WILDNESS. How much taller the mountain layer grows at the
+## edge of the world than at the centre, as a fraction. 0 disables it.
+##
+## Visual only, and deliberately subtle: it is the hook Pillar 3 will hang
+## enemies on, and the first thing it must not do is fight the zone shares.
+@export var wildness_relief := 0.35
+
+## How far the rock/scree zone reaches down at the edge of the world, in
+## degrees of slope threshold. Subtracted from rock_slope_deg at full wildness,
+## so the far country shows more bare stone.
+@export var wildness_rock_deg := 12.0
+
+
 # --- Atmosphere -------------------------------------------------------------
 
 ## Metres. Beyond fog_end nothing is visible, which is what makes the far-field
@@ -625,6 +662,8 @@ const PROPERTIES: PackedStringArray = [
 	"zone_blend_blocks", "zone_dither_blocks",
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
+	"spawn_water_m", "spawn_mountain_m", "spawn_max_slope_deg",
+	"spawn_center_fraction", "wildness_relief", "wildness_rock_deg",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
 	"shore_flat_blocks", "shore_flat_cells",
 	"day_seconds", "day_start",

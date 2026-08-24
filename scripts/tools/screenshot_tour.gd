@@ -111,10 +111,11 @@ func _choose_vantages() -> Array:
 	var postcard := _find_postcard(hm)
 
 	var shots := []
+	var spawn := gen.spawn_block
 	shots.append({
 		"name": "1-spawn",
 		"note": "where the player starts",
-		"target": _to_metres(Vector2i(0, 0), gen.surface_at(0.0, 0.0), cfg),
+		"target": _to_metres(spawn, gen.surface_at(float(spawn.x), float(spawn.y)), cfg),
 		"distance": 46.0, "height": 9.0,
 	})
 	shots.append({

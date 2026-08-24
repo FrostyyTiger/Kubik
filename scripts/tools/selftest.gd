@@ -45,6 +45,7 @@ func _ready() -> void:
 		"tree borders": _test_tree_borders,
 		"chunk determinism": _test_chunk_determinism,
 		"edit during generation": _test_edit_during_generation,
+		"facing": _test_facing,
 		"day cycle": _test_day_cycle,
 		"config contract": _test_config_contract,
 	}
@@ -511,4 +512,50 @@ func _test_edit_during_generation():
 	world.free()
 
 	print("edit during generation: %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
+## THE CHARACTER FACES WHERE IT IS GOING, and not the other way round.
+##
+## Player._face_movement() turns the body toward its travel direction. For the
+## whole of terrain v1 it computed atan2(wish.x, wish.z), which is the yaw that
+## points local +Z along travel - and Godot's forward is -Z, so the character
+## was 180 degrees out in every direction, every frame.
+##
+## Nobody saw it because Body is a CapsuleMesh and a capsule is rotationally
+## symmetric. It would have appeared the moment a character with a front and a
+## back arrived, and it would have looked like a bug in the new character.
+##
+## The assertion is against Vector3.FORWARD rather than against a hand-written
+## (0, 0, -1), because FORWARD is the engine's own definition of the thing this
+## has to agree with. If Godot ever changed its convention this test would
+## change with it, which is the behaviour you want from a test of a convention.
+func _test_facing():
+	var bad := 0
+	var checked := 0
+	# Eight compass directions plus two off-axis ones, so a sign error on one
+	# axis alone cannot hide.
+	for degrees in [0, 45, 90, 135, 180, 225, 270, 315, 23, 197]:
+		var a := deg_to_rad(float(degrees))
+		var wish := Vector3(sin(a), 0.0, cos(a))
+		# The expression from Player._face_movement().
+		var yaw := atan2(-wish.x, -wish.z)
+		var facing := (Basis(Vector3.UP, yaw) * Vector3.FORWARD).normalized()
+		checked += 1
+		if facing.distance_to(wish.normalized()) > 0.0001:
+			bad += 1
+			if bad <= 3:
+				print("  %d deg: wish %s but forward points %s" % [degrees, wish, facing])
+
+	# ...and the old expression must FAIL the same test, or this proves nothing
+	# about the bug having been real.
+	var wish_check := Vector3(1.0, 0.0, 0.0)
+	var old_yaw := atan2(wish_check.x, wish_check.z)
+	var old_facing := (Basis(Vector3.UP, old_yaw) * Vector3.FORWARD).normalized()
+	var old_was_wrong: bool = old_facing.distance_to(wish_check) > 1.0
+    
+	print("facing: %d directions checked, %d wrong; the old expression was %s" % [
+		checked, bad, "180 degrees out as described" if old_was_wrong else "FINE - the fix may be wrong"])
+	if not old_was_wrong:
+		bad += 1
 	return 1 if bad > 0 else 0

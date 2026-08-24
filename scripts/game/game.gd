@@ -155,8 +155,11 @@ var _awaiting_ground := false
 func _spawn_player() -> void:
 	# In METRES: surface_height_m answers in metres, find_surface_y in blocks,
 	# and the scene graph is metres.
-	_player.global_position = Vector3(
-		0.0, _world.surface_height_m(0, 0) + SPAWN_CLEARANCE, 0.0)
+	# Not the origin any more. Since terrain v2 Stage 12 the world chooses a
+	# spawn that satisfies the acceptance test by construction - flat, dry, a
+	# mountain in view and water within a two-minute walk - rather than
+	# dropping the player at (0, 0) and hoping.
+	_player.global_position = _world.spawn_position_m(SPAWN_CLEARANCE)
 	_player.velocity = Vector3.ZERO
 	_player.set_physics_process(false)
 	_awaiting_ground = true

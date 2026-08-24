@@ -300,7 +300,22 @@ func _wish_direction() -> Vector3:
 func _face_movement(wish: Vector3, delta: float) -> void:
 	if wish.length_squared() < 0.01:
 		return
-	var target := atan2(wish.x, wish.z)
+	# NEGATED, and this was wrong for the whole of terrain v1.
+	#
+	# atan2(wish.x, wish.z) is the yaw that points local +Z along the travel
+	# direction. Godot's forward is -Z, so that yaw pointed the character
+	# BACKWARDS - exactly 180 degrees out, every frame, in every direction.
+	#
+	# It was invisible because Body is a CapsuleMesh, which is rotationally
+	# symmetric and looks identical either way round. It would have become very
+	# visible indeed the first time a character with a face on it arrived.
+	#
+	# The claim is checked rather than assumed: see the facing self-test, which
+	# asserts against Godot's own Vector3.FORWARD that this yaw sends forward
+	# along the wish direction. A visual check with a marker mesh was the other
+	# option and is a weaker one - it confirms the same identity by eye, and
+	# only for the handful of directions you happen to try.
+	var target := atan2(-wish.x, -wish.z)
 	# Frame-rate independent smoothing - see RemotePlayer for why this shape
 	# rather than lerp(current, target, 0.1).
 	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
