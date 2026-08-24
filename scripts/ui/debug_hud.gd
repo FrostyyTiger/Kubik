@@ -43,9 +43,22 @@ const TUNING_ROWS := [
 	["forest_max", "treeline altitude (blk)", 0.0, 320.0, 1.0],
 	["tree_probability", "tree density", 0.0, 1.0, 0.01],
 	["lake_level_offset", "lake level offset (blk)", 0.0, 10.0, 0.5],
-	["fog_start_m", "fog start (m)", 0.0, 400.0, 5.0],
-	["fog_end_m", "fog end (m)", 0.0, 600.0, 5.0],
 	["day_seconds", "day length (s)", 10.0, 3600.0, 10.0],
+]
+
+## The same, for knobs that are LOCAL to this machine - see
+## WorldgenConfig.LOCAL_PROPERTIES. Kept as a second list rather than merged in
+## because the two halves obey different rules: the shape knobs above are
+## read-only on a client, and these are not.
+##
+## fog_start_m and fog_end_m are deliberately absent now. They are owned by the
+## view_distance preset, and a spinbox that silently loses its value on the
+## next load is worse than no spinbox. Set view distance to -1 to hand-tune
+## them in the .tres.
+const LOCAL_TUNING_ROWS := [
+	["view_distance", "view distance (-1..3)", -1.0, 3.0, 1.0],
+	["ao_strength", "baked AO strength", 0.0, 1.0, 0.05],
+	["msaa_level", "MSAA (0 off, 3 = 8x)", 0.0, 3.0, 1.0],
 ]
 
 var config: WorldgenConfig = null
@@ -231,6 +244,13 @@ func _build_panel() -> void:
 		box.add_child(_spin_row(row[0], row[1], row[2], row[3], row[4]))
 
 	box.add_child(HSeparator.new())
+	var local_title := Label.new()
+	local_title.text = "this machine only - not sent to the host"
+	box.add_child(local_title)
+	for row in LOCAL_TUNING_ROWS:
+		box.add_child(_spin_row(row[0], row[1], row[2], row[3], row[4]))
+
+	box.add_child(HSeparator.new())
 	var save := Button.new()
 	save.text = "save to user://worldgen.tres"
 	save.pressed.connect(_on_save_pressed)
@@ -291,16 +311,37 @@ func _refresh_panel() -> void:
 	for prop in _spins:
 		var spin: SpinBox = _spins[prop]
 		spin.value = float(config.get(prop))
-		spin.editable = tuning_editable
+		# Shape knobs are read-only on a client, because a client that retunes
+		# its own terrain has silently left the host's world. Local knobs are
+		# not: view distance and AO belong to whoever is looking at the screen,
+		# and locking them to the host would be the bug rather than the guard.
+		spin.editable = tuning_editable or WorldgenConfig.LOCAL_PROPERTIES.has(prop)
 	_suppress = false
 	if _seed_edit != null and world != null and "world_seed" in world:
 		_seed_edit.text = str(world.world_seed)
 
 
 func _on_spin_changed(value: float, prop: String) -> void:
-	if _suppress or config == null or not tuning_editable:
+	if _suppress or config == null:
 		return
-	config.set(prop, value)
+	var is_local := WorldgenConfig.LOCAL_PROPERTIES.has(prop)
+	if not tuning_editable and not is_local:
+		return
+	# int-typed properties: a SpinBox only ever hands out floats, and assigning
+	# 2.0 to an int export works but assigning 2.5 to one silently truncates in
+	# a different place than the user is looking at.
+	if typeof(config.get(prop)) == TYPE_INT:
+		config.set(prop, int(round(value)))
+	else:
+		config.set(prop, value)
+
+	# The preset owns voxel_radius_chunks and the fog, so moving it has to
+	# resolve them immediately - otherwise the panel would show the new preset
+	# beside the old radius until something else happened to reload the config.
+	if prop == "view_distance":
+		config.apply_view_preset()
+		_refresh_panel()
+
 	config_changed.emit()
 
 

@@ -48,9 +48,47 @@ const USER_PATH := "user://worldgen.tres"
 ## Blocks per far-field mesh vertex. 8 blocks = 4 m, giving 375x375.
 @export var far_step := 8
 
+## VIEW DISTANCE, as one setting. -1 means custom; 0-3 index VIEW_PRESETS.
+##
+## Two numbers decide how far you can see and they cost completely different
+## things, which is why they used to drift apart:
+##
+##   fog_end_m costs GPU vertices and NOTHING at load. Since Stage 4 the far
+##   field is built in LOD rings, so its cost is roughly logarithmic in
+##   distance rather than quadratic. Fog can be generous on any machine.
+##
+##   voxel_radius_chunks is quadratic and it is CPU work - 1201 chunks at
+##   radius 8, 2653 at 12, 4829 at 16. This is the real quality dial and the
+##   thing to turn down when a machine cannot keep up.
+##
+## Binding them into one setting is what stops someone turning fog down to fix
+## a frame rate problem that fog was not causing.
+@export var view_distance := 2
+
+## radius in chunks, fog end in metres. Ultra is 800 and not a round 1000
+## because at 1:4 a 350 m mountain frames from about 750 m: the view distance
+## and the scale of the terrain are matched on purpose.
+const VIEW_PRESETS := [
+	{"name": "low", "radius": 6, "fog_end": 400.0},
+	{"name": "medium", "radius": 8, "fog_end": 500.0},
+	{"name": "high", "radius": 12, "fog_end": 600.0},
+	{"name": "ultra", "radius": 16, "fog_end": 800.0},
+]
+
+## view_distance value meaning "leave the numbers below exactly as they are".
+## The escape hatch for hand-tuning: without it, editing voxel_radius_chunks in
+## the .tres would be silently overwritten by the preset on the next load.
+const VIEW_CUSTOM := -1
+
+## Fog starts this far into its own range. Fog that begins at zero is haze on
+## your boots; fog that begins at fog_end is a wall.
+const FOG_START_RATIO := 0.6
+
 ## Radius, in chunks, of real editable voxels around the player.
 ## THIS IS THE PERFORMANCE DIAL. If the frame budget cannot be met, turn this
 ## down rather than changing anything else.
+##
+## Driven by view_distance unless that is VIEW_CUSTOM.
 @export var voxel_radius_chunks := 12
 
 ## How many chunks of solid rock to build below the surface. The world is 320
@@ -263,7 +301,7 @@ const USER_PATH := "user://worldgen.tres"
 ## the list against the @export block; see STATUS.md.
 const PROPERTIES: PackedStringArray = [
 	"block_size", "world_blocks_xz", "world_height_blocks", "coarse_step",
-	"far_step", "voxel_radius_chunks", "voxel_depth_chunks",
+	"voxel_depth_chunks",
 	"player_height_blocks", "player_radius_blocks",
 	"continent_freq", "continent_amp", "mountain_freq", "mountain_amp",
 	"mountain_mask_lo", "mountain_mask_hi",
@@ -275,13 +313,29 @@ const PROPERTIES: PackedStringArray = [
 	"tree_cell_blocks", "tree_probability",
 	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth",
-	"fog_start_m", "fog_end_m", "day_seconds", "day_start",
+	"day_seconds", "day_start",
 ]
 
 
 ## Per-machine look and quality. NOT hashed, NOT sent - see the Presentation
 ## section above for why that is deliberate rather than an oversight.
+##
+## THE VIEW-DISTANCE KNOBS MOVED HERE IN STAGE 4, and that is a bigger change
+## than it looks. They were in PROPERTIES, which meant two things at once:
+## a player on a laptop could not join a player on a desktop, because their
+## config hashes differed - and worse, if they somehow did, from_dict() would
+## overwrite the joiner's view distance with the host's. The preset the plan
+## asks for would have been a setting that breaks multiplayer the moment
+## anyone touches it.
+##
+## Nothing about them shapes the world. voxel_radius_chunks decides which
+## chunks exist on THIS machine; an edit outside it is still recorded in
+## World._edits and replayed when that chunk loads, so two players at different
+## radii stay in the same world. far_step and the fog are the far mesh and the
+## atmosphere. None of them can move a block.
 const LOCAL_PROPERTIES: PackedStringArray = [
+	"view_distance", "voxel_radius_chunks", "far_step",
+	"fog_start_m", "fog_end_m",
 	"ao_strength", "msaa_level",
 ]
 
@@ -321,10 +375,41 @@ func hash_key() -> String:
 	return String.num_uint64(hash(String("|").join(parts)), 16)
 
 
+## A full copy, LOCAL_PROPERTIES included.
+##
+## Deliberately not to_dict()/from_dict(), which carry only the half that
+## crosses the network. World.setup() clones the config, and a clone that
+## dropped the local half would hand the world a default view distance and a
+## default AO strength no matter what the player had chosen - silently, because
+## every value it dropped has a plausible default.
 func clone() -> WorldgenConfig:
 	var c := WorldgenConfig.new()
-	c.from_dict(to_dict())
+	for key in PROPERTIES:
+		c.set(key, get(key))
+	for key in LOCAL_PROPERTIES:
+		c.set(key, get(key))
 	return c
+
+
+## Resolve view_distance into voxel_radius_chunks, fog_end_m and fog_start_m.
+##
+## Idempotent, and a no-op at VIEW_CUSTOM. Called after loading and whenever
+## the preset changes, which is the only time these three are allowed to move
+## as a group.
+func apply_view_preset() -> void:
+	if view_distance < 0 or view_distance >= VIEW_PRESETS.size():
+		return
+	var preset: Dictionary = VIEW_PRESETS[view_distance]
+	voxel_radius_chunks = preset["radius"]
+	fog_end_m = preset["fog_end"]
+	fog_start_m = fog_end_m * FOG_START_RATIO
+
+
+## Name of the current preset, for the debug readout and the boot log.
+func view_distance_name() -> String:
+	if view_distance < 0 or view_distance >= VIEW_PRESETS.size():
+		return "custom"
+	return VIEW_PRESETS[view_distance]["name"]
 
 
 # --- Loading ----------------------------------------------------------------
@@ -335,14 +420,21 @@ func clone() -> WorldgenConfig:
 ## of the file is that Marcel edits it by hand at 1 a.m. So a failed load is a
 ## warning and the defaults, never an error.
 static func load_or_default() -> WorldgenConfig:
-	if not ResourceLoader.exists(USER_PATH):
-		return WorldgenConfig.new()
-	var res := ResourceLoader.load(USER_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
-	if res is WorldgenConfig:
-		print("[Worldgen] loaded config from %s" % USER_PATH)
-		return res
-	push_warning("[Worldgen] %s is not a WorldgenConfig, using defaults" % USER_PATH)
-	return WorldgenConfig.new()
+	var cfg := WorldgenConfig.new()
+	if ResourceLoader.exists(USER_PATH):
+		var res := ResourceLoader.load(USER_PATH, "", ResourceLoader.CACHE_MODE_IGNORE)
+		if res is WorldgenConfig:
+			print("[Worldgen] loaded config from %s" % USER_PATH)
+			cfg = res
+		else:
+			push_warning("[Worldgen] %s is not a WorldgenConfig, using defaults" % USER_PATH)
+	# The preset is the authority over the three numbers it owns, so it is
+	# resolved once here rather than every time one of them is read. A .tres
+	# saved before Stage 4 has no view_distance in it, gets the default High,
+	# and comes out with exactly the values it had - which is why High is the
+	# default and not merely the recommendation.
+	cfg.apply_view_preset()
+	return cfg
 
 
 ## Write the current values out so there is something to edit. Called by the

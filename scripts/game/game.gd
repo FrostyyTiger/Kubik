@@ -50,7 +50,12 @@ var _build_ms := 0
 
 func _ready() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_view_arg()
 	_apply_msaa()
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+		config.view_distance_name(), config.voxel_radius_chunks,
+		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
+		int(config.fog_end_m)])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	# A client retuning its own terrain has silently left the host's world, so
@@ -351,6 +356,30 @@ func _adopt_host_config(config_data: Dictionary) -> void:
 	_sky.rebind(config)
 
 
+## `--view low|medium|high|ultra|custom` overrides the saved preset.
+##
+## Exists so the four presets can be measured without editing a file between
+## runs - the plan asks for chunk and vertex counts per preset, and a
+## measurement you have to hand-edit the config for is a measurement nobody
+## repeats. Also the fastest way to answer "is it my machine or the settings".
+func _apply_view_arg() -> void:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--view")
+	if i < 0 or i + 1 >= argv.size():
+		return
+	var wanted := argv[i + 1].strip_edges().to_lower()
+	if wanted == "custom":
+		config.view_distance = WorldgenConfig.VIEW_CUSTOM
+		return
+	for p in WorldgenConfig.VIEW_PRESETS.size():
+		if WorldgenConfig.VIEW_PRESETS[p]["name"] == wanted:
+			config.view_distance = p
+			config.apply_view_preset()
+			return
+	push_warning("[Game] --view %s is not a preset, keeping %s" % [
+		wanted, config.view_distance_name()])
+
+
 ## Antialiasing for the 3D viewport.
 ##
 ## Off by default in Forward+, and terrain is close to the worst case for that:
@@ -386,7 +415,12 @@ func _on_config_changed() -> void:
 
 func _on_config_reload_requested() -> void:
 	config = WorldgenConfig.load_or_default()
+	_apply_view_arg()
 	_apply_msaa()
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+		config.view_distance_name(), config.voxel_radius_chunks,
+		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
+		int(config.fog_end_m)])
 	_debug.rebind(config)
 	_sky.rebind(config)
 	_on_reroll_requested(_world.world_seed)
