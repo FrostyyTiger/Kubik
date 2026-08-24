@@ -33,6 +33,13 @@ const UNLOAD_MARGIN_CHUNKS := 2
 ## rendering and physics servers.
 const BUILD_BUDGET_MS := 8
 
+## The same budget while the FIRST load is still arriving. The player is
+## frozen at spawn until the ground exists, so nobody is looking at the frame
+## rate - they are looking at a world that is not there yet. Doubling the
+## slice halves the time until it is, and once the initial load has reported
+## the budget drops back to BUILD_BUDGET_MS for good.
+const INITIAL_BUILD_BUDGET_MS := 16
+
 ## How many chunks may be out at the worker pool at once.
 ##
 ## Not unbounded: each job holds its chunk and six neighbours alive, and a
@@ -42,7 +49,16 @@ const BUILD_BUDGET_MS := 8
 ## Counted across BOTH phases together. A chunk generating and a chunk meshing
 ## each occupy one worker, so splitting the cap in two would either starve one
 ## phase or double the real ceiling by accident.
-const MAX_JOBS_IN_FLIGHT := 12
+##
+## NOT SIZED FROM THE CORE COUNT, and that was tried. "One thread per core,
+## so feed every core" is the obvious model and it is wrong for GDScript in
+## this engine build: measured on a 20-thread machine, a worker-pool fill took
+## exactly as long on two workers as on one, 1.2x longer on four and 4x longer
+## on sixteen. GDScript execution is serialised across threads, and every
+## extra job in flight only adds contention. So the cap is a per-machine dial
+## in the config, and a small one - see WorldgenConfig.max_jobs_in_flight for
+## the load times at each value.
+var _max_jobs_in_flight := 4
 
 var world_seed := 0
 var generator: TerrainGenerator = null
@@ -54,6 +70,13 @@ var config: WorldgenConfig = null
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
 var _build_queue: Array[Vector3i] = []
+
+## Mirror of _build_queue, for membership tests only. refresh_region() asks
+## "is this already queued" once per wanted chunk, and Array.has() is a linear
+## scan - the two together were O(n^2) over thousands of chunks, which was a
+## visible hitch on the main thread every time the player crossed a chunk
+## boundary. Every write to _build_queue keeps this in step.
+var _queued := {}
 
 ## Chunk-space column the loaded region is centred on. Stage 4's player drives
 ## it; until then it stays at the spawn column.
@@ -115,6 +138,7 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	# along a line you cannot see. Terrain changes on reroll and at no other
 	# time, which is exactly what the panel says it does.
 	config = (p_config if p_config != null else WorldgenConfig.new()).clone()
+	_max_jobs_in_flight = maxi(config.max_jobs_in_flight, 1)
 	generator = TerrainGenerator.new(p_seed, config)
 
 	# The whole world's surface, once, before any chunk exists. Everything
@@ -154,11 +178,9 @@ func _process(_delta: float) -> void:
 	# Spend a bounded slice of this frame on chunk work. Doing it all at once
 	# would freeze the window for seconds with no sign of life.
 	var started := Time.get_ticks_msec()
-	# Collect first, then submit: finished work is what the player can actually
-	# see, and a frame that spends its whole budget starting new jobs shows
-	# nothing for it.
-	_collect_finished(started)
-	_submit_jobs(started)
+	var budget := BUILD_BUDGET_MS if _initial_load_reported else INITIAL_BUILD_BUDGET_MS
+	_collect_finished(started, budget)
+	_submit_jobs()
 	_total_ms += Time.get_ticks_msec() - started
 
 	if is_idle() and not _initial_load_reported:
@@ -207,6 +229,15 @@ func is_chunk_pending(chunk_pos: Vector3i) -> bool:
 	return _gen_in_flight.has(chunk_pos)
 
 
+## Is there something to STAND ON in this chunk yet? Stricter than has_chunk():
+## the voxels arrive first and the mesh with its trimesh arrives with the
+## upload, frames later. Anything that means to put a body on the ground has
+## to ask this one, or it puts the body in the ground.
+func is_chunk_collidable(chunk_pos: Vector3i) -> bool:
+	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
+	return node != null and node.collision_applied
+
+
 func is_world_ready() -> bool:
 	return generator != null and _build_queue.is_empty()
 
@@ -227,6 +258,7 @@ func reset() -> void:
 	_chunks.clear()
 	_gen_in_flight.clear()
 	_build_queue.clear()
+	_queued.clear()
 	_edits.clear()
 	_total_ms = 0
 	_built = 0
@@ -267,13 +299,18 @@ func last_timings() -> Dictionary:
 
 # --- Internals --------------------------------------------------------------
 
-## Generate voxels for as many queued chunks as the budget allows, and hand
-## each one's meshing to the worker pool.
-func _submit_jobs(started: int) -> void:
-	while not _build_queue.is_empty() and _jobs_in_flight() < MAX_JOBS_IN_FLIGHT:
-		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
-			return
+## Hand queued chunks to the worker pool until it is full.
+##
+## NO TIME BUDGET HERE, deliberately. It used to share the frame budget with
+## _collect_finished(), which runs first - so on upload-heavy frames collection
+## spent the whole 8 ms, nothing was submitted, and the pool sat idle with a
+## full queue behind it. A submission is two allocations and an add_task -
+## microseconds - and the in-flight cap already bounds the loop, so the budget
+## was protecting the frame from nothing and stalling the pipeline to do it.
+func _submit_jobs() -> void:
+	while not _build_queue.is_empty() and _jobs_in_flight() < _max_jobs_in_flight:
 		var chunk_pos: Vector3i = _build_queue.pop_front()
+		_queued.erase(chunk_pos)
 		if _chunks.has(chunk_pos) or _gen_in_flight.has(chunk_pos):
 			continue
 		_submit_generation(chunk_pos)
@@ -329,17 +366,27 @@ func _submit_mesh(chunk: Chunk) -> void:
 ## is why walking a Dictionary is acceptable here and is not anywhere in
 ## worldgen: this decides which chunk appears a frame earlier, not what is in
 ## it.
-func _collect_finished(started: int) -> void:
-	_collect_generated(started)
-	_collect_meshed(started)
+##
+## MESHES BEFORE VOXELS, and the order is load-bearing. Both phases draw on
+## one budget, and an uploaded mesh is the only output the player can see or
+## stand on; a published chunk is a promise of one. Generated-first let a
+## busy pool fill the whole budget with publishing and node creation, frame
+## after frame, while finished meshes queued behind it unseen - the world
+## arrived slowly however fast the workers were, and the spawn chunk's
+## collision arrived late enough to drop the player through it. Meshes-first
+## cannot starve generation the same way: when no upload is waiting the
+## first pass costs nothing and the budget falls through to the second.
+func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
+	_collect_meshed(started, budget)
+	_collect_generated(started, budget)
 
 
 ## Chunks whose voxels have arrived. Publish them, replay their edits, and
 ## hand them straight on to phase two.
-func _collect_generated(started: int) -> void:
+func _collect_generated(started: int, budget: int) -> void:
 	var done: Array[Vector3i] = []
 	for chunk_pos in _gen_in_flight:
-		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
+		if Time.get_ticks_msec() - started >= budget:
 			break
 		var entry: Dictionary = _gen_in_flight[chunk_pos]
 		if not WorkerThreadPool.is_task_completed(entry["task"]):
@@ -369,10 +416,10 @@ func _collect_generated(started: int) -> void:
 		_mesh_ms += Time.get_ticks_usec() - t_upload
 
 
-func _collect_meshed(started: int) -> void:
+func _collect_meshed(started: int, budget: int) -> void:
 	var done: Array[Vector3i] = []
 	for chunk_pos in _in_flight:
-		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
+		if Time.get_ticks_msec() - started >= budget:
 			break
 		var entry: Dictionary = _in_flight[chunk_pos]
 		if not WorkerThreadPool.is_task_completed(entry["task"]):
@@ -535,8 +582,9 @@ func refresh_region() -> void:
 		# would queue a second copy of every chunk currently generating, and
 		# the two would race to install a node under the same key.
 		if not _chunks.has(pos) and not _gen_in_flight.has(pos) \
-				and not _build_queue.has(pos):
+				and not _queued.has(pos):
 			_build_queue.append(pos)
+			_queued[pos] = true
 
 	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
 
@@ -586,6 +634,8 @@ func _free_distant_chunks(keep_radius: int) -> void:
 			var dz: int = pos.z - _center.y
 			if dx * dx + dz * dz <= keep_sq:
 				still.append(pos)
+			else:
+				_queued.erase(pos)
 		_build_queue = still
 
 

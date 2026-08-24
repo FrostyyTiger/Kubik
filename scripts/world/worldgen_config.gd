@@ -147,6 +147,22 @@ const FOG_START_RATIO := 0.6
 ## vertical column would be ~4x the chunks for no visible difference.
 @export var voxel_depth_chunks := 3
 
+## How many chunks may be out at the worker pool at once, generating and
+## meshing counted together. Per machine, like the view distance, and NOT a
+## "more is faster" dial: GDScript on the pool is serialised across threads in
+## this engine build, so past a handful of jobs every extra one only adds
+## contention and the whole pipeline slows down.
+##
+## Measured on the 20-thread target machine, headless, 3043 chunks, one seed:
+##
+##   1 job   51.5 s      4 jobs  20.1 s     12 jobs  65.2 s
+##   2 jobs  29.3 s      6 jobs  28.3 s     24 jobs  78.0 s
+##
+## One job starves the pool between frames; twelve - the old constant - is
+## three times slower than four. Four covers a 60 fps frame at the measured
+## 5-7 ms per chunk, which is all the depth the queue needs.
+@export var max_jobs_in_flight := 4
+
 ## Player capsule, in blocks. 4 blocks tall = 2.0 m.
 @export var player_height_blocks := 4.0
 @export var player_radius_blocks := 0.8
@@ -351,6 +367,29 @@ const FOG_START_RATIO := 0.6
 ## and a 3-block bump must never be able to invent or drain a lake.
 @export var detail_freq := 0.08333
 @export var detail_amp := 3.0
+
+## DETAIL LIVES ON SLOPES. How completely the detail layer fades out on flat
+## ground, 0 to 1; 0 disables the fade and restores uniform roughness.
+##
+## Terracing and hill gating exist to carve genuinely flat districts out of
+## the coarse map - and then this layer put up to 3 blocks of bump back on
+## top of every one of them, at a wavelength short enough to read as
+## scattered single protruding blocks rather than as ground. A plain that is
+## flat in the coarse map and lumpy in the voxels is the worst of both.
+##
+## Damping by the COARSE map's slope keeps the roughness where it reads as
+## broken ground - on the slopes - and leaves the flats being what they are
+## for. Same pattern as the shore fade next to it in detail_at(), and safe
+## for the same reason: it can only REDUCE detail, so it cannot move a lake.
+@export var detail_flat_damp := 1.0
+
+## The fade window, in degrees of coarse-map slope. At or below _flat_deg the
+## detail layer contributes nothing; from _full_deg up it contributes in
+## full. 5 covers the terraced shelves and the gated-flat districts; 20 is
+## far under the mountain layer's 67 degree characteristic slope, so
+## mountainsides keep every bit of their texture.
+@export var detail_flat_deg := 5.0
+@export var detail_full_deg := 20.0
 
 ## 1048 blocks / 524 m - wobbles the elevation zone thresholds so the treeline
 ## is not a ruler-straight contour line.
@@ -658,6 +697,7 @@ const PROPERTIES: PackedStringArray = [
 	"plateau_strength", "plateau_height", "plateau_freq",
 	"slope_zone_strength", "rock_slope_deg", "snow_max_slope_deg",
 	"detail_freq", "detail_amp",
+	"detail_flat_damp", "detail_flat_deg", "detail_full_deg",
 	"zone_jitter_freq", "zone_jitter_blocks",
 	"base_altitude", "min_altitude", "max_altitude",
 	"warp_strength", "valley_curve",
@@ -691,7 +731,7 @@ const PROPERTIES: PackedStringArray = [
 ## radii stay in the same world. far_step and the fog are the far mesh and the
 ## atmosphere. None of them can move a block.
 const LOCAL_PROPERTIES: PackedStringArray = [
-	"view_distance", "voxel_radius_chunks", "far_step",
+	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",

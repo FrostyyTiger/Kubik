@@ -9,6 +9,12 @@ extends MeshInstance3D
 
 var chunk: Chunk
 
+## True once a mesh AND its collision have been installed. The node exists
+## from the moment its chunk's voxels are published, but until the upload
+## lands there is nothing to see and nothing to stand on - and the gap between
+## the two is the upload queue, which can be many frames deep during a load.
+var collision_applied := false
+
 var _block_size := 1.0
 var _config: WorldgenConfig = null
 var _world_seed := 0
@@ -53,6 +59,7 @@ func apply_arrays(arrays: Array) -> void:
 	mesh = ChunkMesher.arrays_to_mesh(arrays)
 	_apply_collision()
 	chunk.dirty = false
+	collision_applied = true
 
 
 func rebuild(world_solid: Callable) -> void:
@@ -61,6 +68,7 @@ func rebuild(world_solid: Callable) -> void:
 	mesh = ChunkMesher.build(chunk, world_solid, _config, _world_seed)
 	_apply_collision()
 	chunk.dirty = false
+	collision_applied = true
 
 
 ## The collision shape is generated FROM the visible mesh, so the two can never

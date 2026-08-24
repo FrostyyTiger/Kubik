@@ -176,13 +176,20 @@ func _spawn_player() -> void:
 ##
 ## Seed 42 spawns 131 blocks out and worked by luck. The traversal probe found
 ## it by teleporting to a corner and reporting 0 m walked in 90 seconds.
+##
+## AND ITS COLLISION, NOT JUST ITS VOXELS. has_chunk() answers true the moment
+## the voxels are published, but the trimesh the body actually lands on is
+## installed by the mesh upload, frames later, and a body released in between
+## falls straight through the world. That gap was a frame or two while
+## generation trickled, and became many frames the day generation stopped
+## trickling - which is when the spawn started dropping the player into rock.
 func _release_player_when_ground_exists() -> void:
 	if not _awaiting_ground:
 		return
 	var spawn := _world.generator.spawn_block
 	var spawn_block := Vector3i(
 		spawn.x, _world.find_surface_y(spawn.x, spawn.y), spawn.y)
-	if not _world.has_chunk(Chunk.world_to_chunk(spawn_block)):
+	if not _world.is_chunk_collidable(Chunk.world_to_chunk(spawn_block)):
 		return
 	_awaiting_ground = false
 	_player.set_physics_process(true)

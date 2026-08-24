@@ -211,6 +211,15 @@ func _make_noise(seed_offset: int, freq: float, octaves: int) -> FastNoiseLite:
 ## bounded world - an infinite one could never afford a global heightmap, and
 ## lakes and the far field are worth more than infinity is.
 ##
+## AT 3 KM IT IS 10.8 S, AND IT STAYS ON ONE THREAD because there is no other
+## option, not because nobody tried. Handing the rows to the worker pool was
+## measured on a 20-thread machine: two workers took exactly as long as one,
+## four took 1.2x longer, sixteen took 4x longer - and the same again with a
+## private generator and config per worker, so it is not shared state. GDScript
+## execution is serialised across threads in this build and every extra worker
+## only adds contention. The wait can be hidden behind a loading state or cut
+## with cheaper per-cell maths; it cannot be parallelised from GDScript.
+##
 ## Note that Heightmap does not call back into here. It is a plain data
 ## structure that knows how to interpolate itself, and the generator fills it -
 ## the two referring to each other by type is a cycle GDScript cannot resolve.
@@ -506,8 +515,20 @@ func _terrace(h: float) -> float:
 ##
 ## Note this cannot move a lake. The coarse map decides where water is; this
 ## only decides how rough the ground is once that is settled.
+##
+## ALSO FADED OUT ON FLAT GROUND. The flats exist because terracing and hill
+## gating carved them out of the coarse map, and a uniform +/-3 blocks of
+## roughness on top of one reads as scattered single protruding blocks, not
+## as ground - which is what the first walk across a Stage 9 plain showed.
+## The damp keys on the COARSE map's slope, so it cannot react to the bumps
+## it is itself removing, and past detail_full_deg it does nothing at all -
+## a mountain face keeps every bit of its texture.
 func detail_at(bx: float, bz: float) -> float:
 	var d := _detail.get_noise_2d(bx, bz) * config.detail_amp
+	if config.detail_flat_damp > 0.0 and heightmap != null:
+		var on_slope := smoothstep(config.detail_flat_deg, config.detail_full_deg,
+			heightmap.slope_deg_at(bx, bz))
+		d *= lerpf(1.0, on_slope, clampf(config.detail_flat_damp, 0.0, 1.0))
 	if lakes == null or config.shore_flat_blocks <= 0.0:
 		return d
 	var level := lakes.shore_level_at_cell(_cell_index(bx, bz))
@@ -1006,8 +1027,28 @@ func danger_at(bx: float, bz: float) -> float:
 ## one per voxel. At 16 blocks tall that is a 16x saving on the hot path.
 func generate_into(chunk: Chunk) -> void:
 	var origin := chunk.origin()
+
+	# MOST CHUNKS ARE SOLID ROCK. A column is built from the tree tops down to
+	# voxel_depth_chunks below the ground, so of its five or six chunks one or
+	# two cross the surface and the rest are buried. The range is the same
+	# bound World queued the column from, and its low end is a true minimum of
+	# the surface over the footprint (the coarse samples sit on the cell
+	# corners, and bilinear never leaves the corners' range) less the most the
+	# detail layer can subtract - so a chunk whose top is SOIL_DEPTH below it
+	# would have come out of the loop below as stone in every voxel. Trees
+	# cannot reach it either: a trunk stands on its own column, which is inside
+	# the footprint or not in this chunk, and a canopy only ever writes over air.
+	var span := column_surface_range(chunk.chunk_pos.x, chunk.chunk_pos.z)
+	if span.x >= float(origin.y + Chunk.SIZE - 1 + SOIL_DEPTH):
+		chunk.voxels.fill(Block.STONE)
+		chunk.has_air = false
+		chunk.has_solid = true
+		chunk.dirty = true
+		return
+
 	var has_air := false
 	var has_solid := false
+	var voxels := chunk.voxels
 
 	for lz in Chunk.SIZE:
 		for lx in Chunk.SIZE:
@@ -1022,16 +1063,29 @@ func generate_into(chunk: Chunk) -> void:
 			# voxel: a block three deep is soil because of what grows above it,
 			# not because of its own altitude.
 			var zone := surface_zone_at(bx, bz, surface)
+			# block_for() is a function of depth in three bands, so ask it once
+			# per band per column rather than once per voxel. On a worker thread
+			# that GDScript can only run one of at a time, 4096 calls a chunk
+			# was a third of the whole generation cost.
+			var turf := block_for(0, zone)
+			var soil := block_for(SURFACE_DEPTH, zone)
+			var column := Chunk.index(lx, 0, lz)
 
 			for ly in Chunk.SIZE:
 				var by := origin.y + ly
 				var id := Block.AIR
 				if by <= top:
-					id = block_for(top - by, zone)
+					var depth := top - by
+					if depth < SURFACE_DEPTH:
+						id = turf
+					elif depth < SOIL_DEPTH:
+						id = soil
+					else:
+						id = Block.STONE
 					has_solid = true
 				else:
 					has_air = true
-				chunk.voxels[Chunk.index(lx, ly, lz)] = id
+				voxels[column + ly * Chunk.SIZE_SQ] = id
 
 	chunk.has_air = has_air
 	chunk.has_solid = has_solid
@@ -1168,6 +1222,25 @@ func _set_if_inside(chunk: Chunk, origin: Vector3i, bx: int, by: int, bz: int,
 	chunk.set_voxel(lx, ly, lz, id)
 
 
+## The three depth bands block_for() answers in. Named so generate_into() can
+## sample the rule at its boundaries instead of restating it.
+##
+## TWO blocks of surface, not one.
+##
+## The detail layer puts a one-block step every few blocks, and with a
+## single-block skin every one of those steps exposes the soil beneath it.
+## On screen that is a haze of dark brown flecks over every hillside -
+## clearly visible in the first screenshot tour, and confirmed as soil
+## rather than tree trunks by re-shooting the same seed with trees off.
+## A second block of turf covers the one-block risers and leaves soil
+## showing only where the ground is genuinely steep, which is where you
+## want to see it.
+const SURFACE_DEPTH := 2
+
+## Soil reaches this deep; from here down it is stone in every zone.
+const SOIL_DEPTH := 5
+
+
 ## Block type for a solid voxel.
 ##
 ## `depth` is how far below the surface this voxel is - 0 is the surface block
@@ -1179,22 +1252,12 @@ func _set_if_inside(chunk: Chunk, origin: Vector3i, bx: int, by: int, bz: int,
 ## from a long way off. Rock and snow are stone all the way down; recorded as a
 ## deliberate departure.
 func block_for(depth: int, zone: int) -> int:
-	# TWO blocks of surface, not one.
-	#
-	# The detail layer puts a one-block step every few blocks, and with a
-	# single-block skin every one of those steps exposes the soil beneath it.
-	# On screen that is a haze of dark brown flecks over every hillside -
-	# clearly visible in the first screenshot tour, and confirmed as soil
-	# rather than tree trunks by re-shooting the same seed with trees off.
-	# A second block of turf covers the one-block risers and leaves soil
-	# showing only where the ground is genuinely steep, which is where you
-	# want to see it.
-	if depth <= 1:
+	if depth < SURFACE_DEPTH:
 		return ZONE_SURFACE[zone]
 	# Everything up to and including heath grows on soil; rock and snow are
 	# stone all the way down. A cliff face in the bare-rock zone with a brown
 	# stripe three blocks below its top reads as wrong from a long way off.
-	if zone <= ZONE_HEATH and depth < 5:
+	if zone <= ZONE_HEATH and depth < SOIL_DEPTH:
 		return Block.DIRT
 	return Block.STONE
 
