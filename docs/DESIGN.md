@@ -431,6 +431,51 @@ silhouette-first, readable as flat bold shapes at distance, restricted
 palette, and the same voxel-part modularity as characters where possible -
 the critter rig and `tools/parts_author`.
 
+### Behaviour: the technical stance
+
+Settled 2026-08-25, for the creature plans to inherit. The game's theme is a
+world that is smart, so its animals and NPCs must *appear* smart - and the
+impressive part is never the decision library. It is perception,
+communication, memory and terrain use, designed on top of whatever runs the
+decisions.
+
+**The seconds layer** - creatures decide on the host, and only on the host, so
+nothing here needs to be deterministic; clients see positions and a state
+byte.
+
+| Need | Tool | Why |
+| --- | --- | --- |
+| Decision structure | **LimboAI** (MIT, C++ GDExtension: behaviour trees, hierarchical state machines, blackboards, a visual editor) | The best-maintained option for Godot 4 and fast enough for dozens of active creatures. Wolves, the mimic reveal, the storm-scholar. Beehave (pure GDScript) is the fallback if the extension fights the build. |
+| Ground pathfinding | Godot's built-in **`AStarGrid2D` over the coarse heightmap**, with per-species slope-cost weights | Not the navmesh: `NavigationServer3D` wants navmeshes re-baked per chunk on voxel terrain. The heightmap is already the 2 m grid the lakes and zones live on; a path over it is deterministic and cheap. Ibex flee uphill because uphill is cheap in their table and dear in a wolf's - terrain use as one weight table. |
+| Herds, flocks, birds, fish | Boids / steering, written here (a few dozen lines) | Eagle orbits, chough flocks, fish shadows, the cow herd's drift. |
+| Needs-driven animals | Utility AI, written here: score actions by hunger, fear, curiosity | Marmot, deer, fox. The same animal does different things on different days, which is what "alive" reads as. |
+| Planning NPCs | GOAP, written here or a small open implementation | The fourth pillar on the seconds timescale: authored goals, planned path. The storm-scholar first. |
+| Learning agents | Not used | Non-deterministic, opaque, impressive in a demo and nowhere else. |
+
+**The five rules that make them look smart.** Every creature plan states
+which of these it delivers.
+
+1. **Perception with senses, not radius checks.** Sight cones, noise events
+   with a loudness, scent carried downhill on the wind. A wolf that only
+   notices you upwind is a wolf players *learn*.
+2. **Communication.** One marmot whistles and every marmot on the bench
+   dives. One wolf finds you and the pack converges from different
+   directions - pillar 1's flanking, mirrored back at the players.
+3. **Memory.** A fled deer returns cautiously to the same patch; a hurt wolf
+   keeps its distance. A blackboard entry, not a system.
+4. **Terrain use.** Ibex on ledges you cannot reach, wolves out of the dark
+   side of a slope, burrows placed at spawn. The environment-interacting
+   behaviour above, made mechanical.
+5. **Smart objects.** Burrows, crags, carrion and carcasses *advertise* what
+   can be done at them (the affordance pattern). Animals then look purposeful
+   for free, and the eagle circling over carrion falls out of it.
+
+**Where the director does not go.** Nowhere near this. The director owns
+minutes and acts through the verb list in `DIRECTOR.md`; behaviour trees,
+utility scores and planners own seconds. The seam is a verb: the director may
+`mark_site` a carcass as interesting; the wolves' tree decides what to do
+about it.
+
 ### The first combat playtest: a trio
 
 One creature per layer of the world: the **wolf** (threat - the rusher), the
