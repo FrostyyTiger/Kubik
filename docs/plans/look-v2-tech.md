@@ -34,7 +34,7 @@ rewrites history, never reverts anyone else's commit.** If `origin/main` has
 moved, `git pull --rebase` before pushing; a conflict in a file this plan does
 not touch is not the agent's to resolve - stop and record it.
 
-**Delivered by morning.** The branch, pushed; `docs/status/look-v2.md`
+**Delivered by morning.** `main`, pushed; `docs/status/look-v2.md`
 updated at the end of every stage (so a run that dies at 04:00 still leaves a
 record); tour and gallery sets per stage on both renderers; comparison
 strips in `build/tour/compare/`; a final message in the shape of section 6.

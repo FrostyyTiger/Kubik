@@ -33,7 +33,7 @@ Ranked in the research document, section 5. In this plan:
 4. Grain in the fragment shader, the contact band, the material split -
    Stage 3.
 5. The palette pass, boulders, water - Stage 4.
-6. Characters (only on Marcel's yes) - Stage 5.
+6. Characters - Stage 5 (approved 2026-08-25; eyes, hair and palettes, bodies untouched).
 7. UI - Stage 6.
 8. Docs - Stage 7.
 
@@ -124,36 +124,37 @@ Make the authored colour the on-screen colour. Nothing after this can be
 judged before it.
 
 **The swatch sheet.** A new gallery sheet, `swatches`, beside `testcube` in
-`scripts/tools/character_gallery.gd`: eight flat quads facing the camera and
-the sun (n.l well over `BAND_LIT`), each a known authored colour through
-`Look.opaque_material()` - `#FFFFFF`, `#808080`, `#202020`, `#86B04A`,
-`#4E7A32`, `#BFB48C`, `#E0AC7E`, `#4C8FBF` - plus the same eight on a second
-row turned into full shade, and a strip of `SNOW` beside `GRASS`. The sun
-frozen at the tour's `day_start`. Beside the sheet a small Python script,
-`tools/swatch_check.py` (no dependencies beyond PIL), that reads the PNG,
-samples each swatch and prints authored / predicted / measured / delta, where
-predicted is `linear_to_srgb(srgb_to_linear(authored) * sun_linear * energy)`
-for the lit row and `... * shade_ink` (Stage 1's formula once it lands; the
-multiply until then). Delta over 6 units on any channel fails. Run on both
-renderers.
+`scripts/tools/character_gallery.gd`: eight 1.2 m quads through
+`Look.opaque_material()` in a lit row (normal up; at the frozen `day_start`
+the sun's elevation 0.688 is over `BAND_LIT`) and the same eight in a shade
+row (normal toward the camera, n.l < 0) - `#FFFFFF`, `#808080`, `#202020`,
+`#86B04A`, `#4E7A32`, `#BFB48C`, `#E0AC7E`, `#4C8FBF`. The gallery samples its
+own viewport after the shot, compares each swatch with `Look.predict()` (a
+static function that mirrors `RAMP` line for line, so the sheet and the
+shader cannot drift), prints `authored | predicted | measured | delta`,
+writes `swatches.json`, and with `--strict` exits non-zero on any channel
+delta over 6. The pad and wall switch to the poster material too. Run on
+both renderers.
 
 **The fix.** Two errors, both measured in the research (section 0):
 
 - `LIGHT_COLOR` carries PI. In `Look.RAMP`, `vec3 L = LIGHT_COLOR / PI;` and
   use `L` where `LIGHT_COLOR` was. Then `SkyCycle.sun_energy()`: day 0.70 ->
   **1.0**, night 0.32 -> **0.75** (starting; Stage 1 sets the full set).
-- The vertex colour is linearised twice. Find where. Candidates, in order:
-  Godot 4.7's `ARRAY_COLOR` path treating 8-bit vertex colours as sRGB for a
-  `ShaderMaterial` (check the 4.7 changelog and the mesh storage flags; if so
-  the fix is to author the palettes in sRGB - drop the manual
-  `srgb_to_linear()` in `Block`, `FloraModels`, `Races`, `VoxLoader`, the
-  critter and the test cube - and say so in every header comment that
-  currently says "stored linear"); or something in `ChunkMesher` /
-  `VoxelModel` / `FarFieldJob` / `FarTreeMeshes` / `Lakes` / `FloraModels`. The
-  swatch sheet decides: the fix is the one that makes the prediction hold to
-  within 6 units on both renderers with no per-renderer branch. If the two
-  renderers disagree after the fix, that is the finding - record it and stop
-  the stage; do not add a renderer branch to a palette.
+- The vertex colour is linearised twice, downstream of the mesh push (our
+  own code converts once at authoring and only multiplies after that). The
+  fix is **linear maths, sRGB on the wire**: every palette and every
+  multiplier (AO, skirt, band, aspect) stays linear exactly as today, and
+  each mesh builder converts its final colour once with `linear_to_srgb()`
+  at `push_back` - `ChunkMesher`, `VoxelModel`, `FarFieldJob`,
+  `FarTreeMeshes`, `FloraModels`, `Lakes`, the gallery's own quads. The
+  palette literals are not rewritten. The swatch sheet decides: the fix
+  holds when the prediction is met to within 6 units on both renderers with
+  no per-renderer branch. `docs/plans/look-v2-tech.md` Stage 0 is the
+  procedure, including the experiment that confirms where the conversion
+  sits before the push is changed. If the two renderers disagree after the
+  fix, that is a recorded blocking finding for Marcel; the run continues on
+  Forward+.
 - `_env.fog_sky_affect` 0.6 -> **0.0** and `fog_aerial_perspective` -> 0. The
   poster sky owns its horizon. Then `SKY_TOP_DAY` `#4D80D4` -> **`#89A1CB`** so
   what is on screen today stays on screen.
@@ -387,9 +388,11 @@ boulders in two tones). Lit snow lighter than the sky in `2-summit`.
 **Evidence:** tour `look2-4-palette` (both renderers), gallery `swatches`
 (the predictions for the NEW hexes must hold).
 
-## Stage 5 - Characters (on Marcel's yes only)
+## Stage 5 - Characters
 
-Revises look v1's face spec, which Marcel decided; runs only if he says so.
+Revises look v1's face spec, which Marcel decided and re-decided for v2 on
+2026-08-25. Scope: eyes, brow, mouth, hair and beard masses, race palettes.
+Bodies, torsos, stances and heights are not touched.
 `tools/parts_author/` and a re-author of the seven `parts_*.gd`:
 
 - **Eyes:** 2 wide x 4 tall, solid `E` iris colour, no `W` white, one 1x1
@@ -469,8 +472,8 @@ Revises look v1's face spec, which Marcel decided; runs only if he says so.
    shore's width and where any block goes are worldgen and are not touched.
 6. **No trees are built.** The tree vocabulary in the research is a spec for
    a later plan.
-7. Parts are data; the generator writes them. Stage 5 runs on Marcel's yes
-   and not otherwise.
+7. Parts are data; the generator writes them. Stage 5 changes faces, hair
+   and palettes and nothing below the neck.
 8. `player.gd` reads no number from `Races`. Still.
 9. Nothing on the Next 3 gets built here. The campfire's light, its smoke
    and the marker are specs in the research document; the ramp's point-light
