@@ -34,15 +34,20 @@ Four. Every feature serves at least one, and contradicts none.
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 
-> **Status: early, but walkable.** Terrain v1 has landed: a bounded 1.5 x 1.5 km
-> Swiss pre-Alpine landscape with meadow valleys, forested slopes, bare rock,
-> snow peaks, lakes sitting in real basins, fog and a day/night cycle. You get a
-> third-person character who walks on it, and two instances that see each other.
-> There is still no way to break or place blocks, and no enemies.
+> **Status: early, walkable, and it has a look.** A bounded 3 x 3 km Swiss
+> pre-Alpine landscape at 1:4 scale - meadow valleys, seven tree species that
+> clump and leave clearings, bare rock, snow peaks, lakes in real basins, 8.7 M
+> pieces of ground cover, fireflies after dark - drawn as an Art Deco travel
+> poster: one three-tone lighting ramp under everything, banded fog, a sky with
+> rays. Four playable races in stocky voxel bodies with a creation screen, seen
+> by every other player. Nothing lives in the world yet, nothing can be broken
+> or placed, and the director does not exist: the next playtest is the wolf,
+> the marmot and the eagle.
 >
-> Verified on Godot 4.7.2: ~1100 chunks build in ~8 s with meshing on worker
-> threads, both peers generate an identical world from the same seed and config,
-> and the world is clean of runtime errors. See `STATUS.md`.
+> Verified on Godot 4.7.2: both peers generate an identical world from the same
+> seed and config (heightmap hash `76cccdb6`, 73,675 trees on seed 42), the
+> world and character self-tests pass, and the world is clean of runtime
+> errors. See `STATUS.md` for the latest run.
 
 ---
 
@@ -116,7 +121,7 @@ written against the wrapper, and "swap the transport" would quietly become
 
 Voxels exist only in a disc around the player — real, editable, collidable
 terrain. Everything beyond is one low-poly mesh built from a **global coarse
-heightmap** covering the whole 1.5 km world at 2 m resolution. That global
+heightmap** covering the whole 3 km world at 2 m resolution. That global
 heightmap is also what makes lakes possible: a basin is a depression with a rim
 all the way round it, and you cannot see one by looking at a chunk.
 

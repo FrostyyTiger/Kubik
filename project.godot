@@ -15,7 +15,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 [application]
 
 config/name="Kubik"
-config/description="Two-player co-op voxel exploration game. Host-authoritative."
+config/description="2-4 player co-op voxel exploration in a cozy-but-eerie fantasy Alps. Built for pairs. Host-authoritative; an authored world with a generative director."
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"
