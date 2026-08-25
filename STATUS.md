@@ -41,7 +41,7 @@ godot --path . scenes/gallery.tscn -- --label some-name
 
 **`build/` is gitignored, so none of those images are in the repo.** Run them.
 
-### The four things that want your judgement, in order
+### The five things that want your judgement, in order
 
 1. **Is the ground cover too dense, or not dense enough?** A meadow block
    carries something with probability 0.50. On a software renderer that reads
@@ -56,7 +56,15 @@ godot --path . scenes/gallery.tscn -- --label some-name
 3. **Are the colours right?** Eleven new leaf and bark colours and seventeen
    plant colours, every one chosen on the wrong renderer. The whole list is in
    "Tuned blind" below.
-4. **Is a snag every seventh tree too many?** 14.7% of the world's trees are
+4. **Nights are very dark, and this run is the first thing that has cared.**
+   Not a foliage change — `sun_energy` has floored at 0.04 since terrain v1 —
+   but glowing mushrooms and fireflies are the first content that only exists
+   after dark, and putting them in made it obvious. Under a forest canopy at
+   night the frame is genuinely black; in the open meadow it reads beautifully
+   (`12-meadow-night.png`). There is still no torch. Worth deciding whether
+   that is the intended "tense out" register or whether the floor wants
+   raising, before the enemy makes it a gameplay question.
+5. **Is a snag every seventh tree too many?** 14.7% of the world's trees are
    dead ones. That is what the plan's weight table plus its wildness bonus
    produce, and it is more than it sounds like when you are standing in it.
    `wildness_snag` is the dial.
@@ -501,7 +509,15 @@ everything a player crouches next to stays at 8.
 
 Large boulder: 35,964 → **1,156** triangles. Shrub: 2,184 → **480**.
 
-**10. Stages 8 and 9 are one commit.** Both touch `flora_placement.gd`.
+**10. `11-forest-dusk` is shot at 0.74, not the 0.85 the plan names.** In this
+game's light curve `sun_energy` bottoms out the instant the sun crosses the
+horizon — `day_amount()` is `clamp(elevation * 3)`, so it is already zero at
+elevation zero — and 0.85 is a long way past that. Shot at 0.85 the forest
+interior is a black rectangle with one glowing mushroom in it, which proves the
+mushroom works and proves nothing about the forest. 0.74 is the last moment
+there is enough light to see a forest by. Night proper is `12-meadow-night`.
+
+**11. Stages 8 and 9 are one commit.** Both touch `flora_placement.gd`.
 
 ---
 

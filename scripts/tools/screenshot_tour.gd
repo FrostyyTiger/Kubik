@@ -260,7 +260,20 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 		"name": "11-forest-dusk",
 		"note": "shot 7 again, at dusk - the acceptance test",
 		"eye_m": forest_eye, "target": forest_look,
-		"time": 0.85,
+		# 0.74, NOT THE 0.85 THE PLAN ASKS FOR, and the difference is the
+		# whole shot. In this game's light curve sun_energy bottoms out the
+		# INSTANT the sun crosses the horizon - day_amount() is
+		# clamp(elevation * 3), so it is already zero at elevation zero - and
+		# 0.85 is a long way past that. Shot at 0.85 the forest interior came
+		# back as a black rectangle with one glowing mushroom in it, which
+		# proves the mushroom works and proves nothing about the forest.
+		#
+		# 0.74 is the last moment there is enough light to see a forest by:
+		# the sun is just below the horizon, dusk_amount is near its peak so
+		# the light is warm, and sun_energy is still 0.19. That is the picture
+		# the acceptance test is asking for. Night proper is shot separately,
+		# and 12-meadow-night is where the fireflies are.
+		"time": 0.74,
 	})
 
 	# NIGHT, IN THE MEADOW, and it needs its own shot rather than being read
