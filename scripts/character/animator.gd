@@ -245,6 +245,66 @@ static func _stride_capped(base: float, speed: float, cycle_hz_max: float) -> fl
 	return speed / cycle_hz_max
 
 
+# --- Rig shapes ---------------------------------------------------------------
+#
+# WHICH BONES ARE LEGS, WHICH ARE ARMS, AND WHICH OF THEM SHARE A PHASE.
+#
+# The humanoid walk is not a special case here - it is the two-leg entry in the
+# same table a trot is the four-leg entry of. That is the whole reason Stage 13
+# builds a critter: an animator that could only do bipeds would look identical
+# to this one right up until the first enemy that is not a person.
+#
+# `root` takes the hip bob and the landing dip; `lean` takes the sprint pitch
+# and the breath. On a person those are two bones and on a dog they are the
+# same one, which is a fact about dogs and not a branch in the animator.
+
+const RIG_SHAPES := {
+	"biped": {
+		"root": "hips",
+		"lean": "torso",
+		# Opposite ends of the cycle: one leg forward while the other is back.
+		"legs": [
+			{"bone": "leg_r", "phase": 0.0},
+			{"bone": "leg_l", "phase": 0.5},
+		],
+		# Arms in antiphase with the leg on their OWN side, which is what a
+		# person does and what makes a walk read as a walk.
+		"arms": [
+			{"bone": "arm_r", "phase": 0.5},
+			{"bone": "arm_l", "phase": 0.0},
+		],
+	},
+	"trot": {
+		"root": "body",
+		"lean": "body",
+		# DIAGONAL PAIRS. Front-left with back-right, front-right with
+		# back-left - the gait a dog uses at anything above a walk, and the one
+		# that keeps the animal balanced on two feet at every instant.
+		"legs": [
+			{"bone": "leg_fl", "phase": 0.0},
+			{"bone": "leg_br", "phase": 0.0},
+			{"bone": "leg_fr", "phase": 0.5},
+			{"bone": "leg_bl", "phase": 0.5},
+		],
+		"arms": [],
+	},
+}
+
+
+## The rig shape for a dimension table, falling back to the biped.
+##
+## A WARNING AND A FALLBACK, NOT A CRASH. A rig with a gait this build has
+## never heard of is a rig from a newer part file or a typo, and in both cases
+## an animal that walks like a person is a better outcome than one that does
+## not appear.
+static func rig_shape(dims: Dictionary) -> Dictionary:
+	var gait: String = dims.get("gait", "biped")
+	if not RIG_SHAPES.has(gait):
+		push_warning("[Animator] unknown gait '%s' - walking it like a biped" % gait)
+		return RIG_SHAPES["biped"]
+	return RIG_SHAPES[gait]
+
+
 # --- The pose -----------------------------------------------------------------
 
 ## Seconds a wave lasts before the pose returns to none.
@@ -275,19 +335,20 @@ static func pose_for(state: LocomotionState, phase: float, t: float,
 		LocomotionState.POSE_DOWNED:
 			return _pose_downed(config, legs_m)
 		LocomotionState.POSE_WAVE:
-			pose = _pose_locomotion(state, phase, t, config, legs_m, extra)
+			pose = _pose_locomotion(state, phase, t, config, dims, legs_m, extra)
 			_apply_wave(pose, config, t, float(extra.get("wave", 0.0)))
 			_apply_head_look(pose, extra)
 			return pose
 
-	pose = _pose_locomotion(state, phase, t, config, legs_m, extra)
+	pose = _pose_locomotion(state, phase, t, config, dims, legs_m, extra)
 	_apply_head_look(pose, extra)
 	return pose
 
 
 ## Walk, sprint, precision, idle, jump, fall, land - the whole ground game.
 static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
-		config: CharacterConfig, legs_m: float, extra: Dictionary) -> Dictionary:
+		config: CharacterConfig, dims: Dictionary, legs_m: float,
+		extra: Dictionary) -> Dictionary:
 	var v := VoxelModel.VOXEL_M
 	var pose := {}
 
@@ -307,20 +368,14 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 
 	var swing := deg_to_rad(swing_deg) * moving
 	var arm_swing := swing * config.arm_swing_ratio
-	var cycle := TAU * phase
-	var leg_wave := sin(cycle)
 
-	# A positive rotation about X swings a downward-hanging bone's tip toward
-	# -Z, which is forward. Arms are in antiphase with the leg on their own
-	# side, which is what a person does and what makes a walk read as a walk.
-	var leg_r := swing * leg_wave
-	var leg_l := -swing * leg_wave
-	var arm_r := -arm_swing * leg_wave
-	var arm_l := arm_swing * leg_wave
+	var shape := rig_shape(dims)
+	var root_bone: String = shape["root"]
+	var lean_bone: String = shape["lean"]
 
 	# Hips rise and fall twice per cycle - once per step - about their rest
 	# height, so the character does not float upward at speed.
-	var bob := bob_vox * v * 0.5 * sin(2.0 * cycle) * moving
+	var bob := bob_vox * v * 0.5 * sin(2.0 * TAU * phase) * moving
 
 	# Breathing. Small and slow: a character that visibly pumps while standing
 	# still reads as panting. Fades out as soon as it is walking, where the bob
@@ -332,33 +387,47 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 		# Negative pitches the top of the torso toward -Z, which is forward.
 		torso_pitch = -deg_to_rad(config.sprint_lean_deg) * moving
 
+	# A positive rotation about X swings a downward-hanging bone's tip toward
+	# -Z, which is forward. Every leg is the same expression at its own point
+	# in the cycle, so a trot is four entries in a table rather than a branch.
+	var tuck := deg_to_rad(config.jump_tuck_deg)
+	var rising := not state.grounded and state.rising
+	for entry in (shape["legs"] as Array):
+		var angle: float = tuck if rising else swing * sin(TAU * (phase + float(entry["phase"])))
+		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, 0.0)}
+
+	var falling := not state.grounded and not state.rising
+	# Arms out while falling. Positive Z rotation swings the right arm's tip
+	# toward +X, away from the body; the left is mirrored, so both go outward.
+	var out := deg_to_rad(config.fall_arms_deg) if falling else 0.0
+	var arms: Array = shape["arms"]
+	for i in arms.size():
+		var entry: Dictionary = arms[i]
+		var angle := arm_swing * sin(TAU * (phase + float(entry["phase"])))
+		# The first arm in the list is the right one, and outward is +Z for it
+		# and -Z for its mirror.
+		var side := 1.0 if i % 2 == 0 else -1.0
+		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, out * side)}
+
 	if not state.grounded:
-		if state.rising:
-			# Both legs tucked up in front while rising.
-			var tuck := deg_to_rad(config.jump_tuck_deg)
-			leg_r = tuck
-			leg_l = tuck
-			bob = 0.0
-		else:
-			# Arms out while falling. Positive Z rotation swings the right
-			# arm's tip toward +X, which is away from the body; the left is
-			# mirrored, so both go outward.
-			var out := deg_to_rad(config.fall_arms_deg)
-			pose["arm_r"] = {"rot": Vector3(arm_r, 0.0, out)}
-			pose["arm_l"] = {"rot": Vector3(arm_l, 0.0, -out)}
-			bob = 0.0
+		bob = 0.0
 
 	# The landing dip, decaying over land_squash_ms.
 	var land: float = float(extra.get("land", 0.0))
 	var dip := -config.land_squash_vox * v * land
 
-	pose["hips"] = {"pos": Vector3(0.0, bob + dip, 0.0)}
-	pose["torso"] = {"rot": Vector3(torso_pitch, 0.0, 0.0), "pos": Vector3(0.0, breath, 0.0)}
-	pose["leg_r"] = {"rot": Vector3(leg_r, 0.0, 0.0)}
-	pose["leg_l"] = {"rot": Vector3(leg_l, 0.0, 0.0)}
-	if not pose.has("arm_r"):
-		pose["arm_r"] = {"rot": Vector3(arm_r, 0.0, 0.0)}
-		pose["arm_l"] = {"rot": Vector3(arm_l, 0.0, 0.0)}
+	# On a person the root and the lean are two bones; on a quadruped they are
+	# the same one, so the two writes are merged rather than one overwriting
+	# the other.
+	var root_entry := {"pos": Vector3(0.0, bob + dip, 0.0)}
+	if lean_bone == root_bone:
+		root_entry["rot"] = Vector3(torso_pitch, 0.0, 0.0)
+		root_entry["pos"] = Vector3(0.0, bob + dip + breath, 0.0)
+		pose[root_bone] = root_entry
+	else:
+		pose[root_bone] = root_entry
+		pose[lean_bone] = {"rot": Vector3(torso_pitch, 0.0, 0.0),
+			"pos": Vector3(0.0, breath, 0.0)}
 
 	_apply_chains(pose, config, t, state.speed)
 	return pose
@@ -370,6 +439,11 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 ## carry it for a friend to see you sit, and because a pose with nowhere to be
 ## triggered from is a pose nobody finds the bugs in. The debug key is
 ## scaffolding and says so.
+## BIPED ONLY, and it names `hips` and `torso` directly. Sitting, going down
+## and waving are things people do, the campfire and the death design own them,
+## and a quadruped that needs to lie down can have its own entry when something
+## asks for one. The gait table is about LOCOMOTION, which is the part every
+## skeleton has.
 static func _pose_sit(config: CharacterConfig, legs_m: float, t: float,
 		extra: Dictionary) -> Dictionary:
 	var v := VoxelModel.VOXEL_M

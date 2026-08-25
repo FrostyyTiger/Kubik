@@ -139,6 +139,7 @@ func _sheets() -> Dictionary:
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
 		"gear": _sheet_gear,
+		"critter": _sheet_critter,
 	}
 
 
@@ -541,6 +542,54 @@ func _sheet_silhouettes() -> void:
 		await _shoot("silhouettes-%d-hill" % int(distance), distance)
 	_wall.visible = false
 	_set_time(-1.0)
+
+
+# --- The critter ---------------------------------------------------------------
+
+## Eight phases of a trot, in a row.
+##
+## THE SHEET IS THE PROOF that the pipeline is not humanoid-only. The critter
+## has no torso, no hips and four legs, and it is meshed by the same mesher,
+## rigged by the same Rig, animated by the same Animator and photographed by
+## the same camera as a person. Its legs move in DIAGONAL PAIRS, which is one
+## entry in Animator.RIG_SHAPES rather than a branch anywhere.
+##
+## Gallery only. No AI, no scene, no spawning - it is what the first-enemy plan
+## starts from.
+func _sheet_critter() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+
+	var config := CharacterConfig.load_or_default()
+	var span := float(STRIP_STEPS - 1) * LINEUP_SPACING
+	for k in STRIP_STEPS:
+		var holder := Node3D.new()
+		var rig := Rig.new()
+		rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+			PartsCritter.palette(), config.ao_strength)
+		var st := LocomotionState.new()
+		st.speed = 4.0
+		st.grounded = true
+		rig.apply_pose(Animator.pose_for(st, float(k) / float(STRIP_STEPS), 0.0,
+			config, PartsCritter.DIMS))
+		holder.add_child(rig)
+		holder.position = Vector3(-span * 0.5 + float(k) * LINEUP_SPACING, 0.0, SUBJECT_Z)
+		# Nearly side on: a trot is a statement about which legs are forward,
+		# and from the front all four are foreshortened into one.
+		holder.rotation.y = FACING_CAMERA + deg_to_rad(70.0)
+		_subjects_root.add_child(holder)
+
+	# Framed from its own shoulder height rather than a person's - a 0.69 m
+	# animal photographed at a human's chest height is a row of dots.
+	var span_m := float(STRIP_STEPS - 1) * LINEUP_SPACING + 2.0
+	var aspect := float(get_viewport().size.x) / float(get_viewport().size.y)
+	var half := atan(tan(deg_to_rad(FOV) * 0.5) * aspect)
+	var distance := (span_m * 0.5) / tan(half)
+	var eye := 0.5
+	var look_at := Vector3(0.0, 0.45, SUBJECT_Z)
+	_camera.global_position = Vector3(0.0, eye, SUBJECT_Z + distance)
+	_camera.look_at(look_at, Vector3.UP)
+	await _save("critter-walk")
 
 
 # --- Gear ---------------------------------------------------------------------

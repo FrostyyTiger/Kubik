@@ -49,6 +49,8 @@ func _ready() -> void:
 		"gear sockets": _test_gear_sockets,
 		"vox fixture": _test_vox_fixture,
 		"vox garbage": _test_vox_garbage,
+		"critter": _test_critter,
+		"unknown gait": _test_unknown_gait,
 	}
 	var failures := 0
 	for name in tests:
@@ -1695,3 +1697,116 @@ func _lying_vox() -> PackedByteArray:
 	out.append_array(_vox_chunk("SIZE", _pack_ints([2, 2, 2])))
 	out.append_array(_vox_chunk("XYZI", _pack_ints([9999])))
 	return out
+
+
+# --- Stage 13 ----------------------------------------------------------------
+
+## THE CRITTER PROVES NONE OF THIS IS SECRETLY HUMANOID.
+##
+## It has no `torso`, no `hips`, no arms and four legs, so every place in the
+## pipeline that quietly assumed a two-legged skeleton either works on it or
+## does not. Nothing else in this plan could have found those assumptions,
+## because everything else in this plan is a person.
+func _test_critter():
+	var bad := 0
+	var rig := Rig.new()
+	rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+		PartsCritter.palette(), 0.35)
+
+	# The bones a person has and this animal does not.
+	for absent in ["torso", "hips", "arm_r", "arm_l", "leg_r", "leg_l"]:
+		if rig.bones.has(absent):
+			print("  the critter has a %s - it is not proving anything" % absent)
+			bad += 1
+	for present in ["body", "head", "leg_fl", "leg_fr", "leg_bl", "leg_br",
+			"tail_1", "tail_2"]:
+		if not rig.bones.has(present):
+			print("  the critter is missing %s" % present)
+			bad += 1
+		elif present != "back" and not rig.meshes.has(present):
+			print("  the critter's %s has no mesh" % present)
+			bad += 1
+	if not rig.sockets.has("back"):
+		print("  the critter has no back socket - sockets are not a humanoid idea")
+		bad += 1
+
+	# pose_for returns finite transforms for EVERY bone, in every state.
+	var config := CharacterConfig.new()
+	var anim := Animator.new()
+	anim.setup(config, PartsCritter.DIMS)
+	var checked := 0
+	for st in _every_state():
+		for step in 120:
+			anim.update(st, 1.0 / 60.0)
+		anim.apply(rig)
+		for bone in anim.current_pose():
+			var entry: Dictionary = anim.current_pose()[bone]
+			checked += 1
+			if not _finite(entry["rot"]) or not _finite(entry["pos"]):
+				print("  critter bone %s went non-finite in %s" % [bone, entry])
+				bad += 1
+				break
+
+	# THE TROT: diagonal pairs share a phase, and the two pairs are opposite.
+	var walk := _state(3.0)
+	var pose := Animator.pose_for(walk, 0.13, 0.0, config, PartsCritter.DIMS)
+	var fl: float = (pose["leg_fl"]["rot"] as Vector3).x
+	var br: float = (pose["leg_br"]["rot"] as Vector3).x
+	var fr: float = (pose["leg_fr"]["rot"] as Vector3).x
+	var bl: float = (pose["leg_bl"]["rot"] as Vector3).x
+	if absf(fl - br) > 0.0001:
+		print("  front-left %.4f and back-right %.4f are not in phase" % [fl, br])
+		bad += 1
+	if absf(fr - bl) > 0.0001:
+		print("  front-right %.4f and back-left %.4f are not in phase" % [fr, bl])
+		bad += 1
+	if absf(fl + fr) > 0.0001:
+		print("  the two diagonal pairs are not opposite: %.4f and %.4f" % [fl, fr])
+		bad += 1
+	if absf(fl) < 0.01:
+		print("  the legs are not swinging at all at 3 m/s")
+		bad += 1
+
+	# ...and its tail lags on the SAME generic chain rule the lizardfolk uses.
+	var t1: float = (pose.get("tail_1", {}).get("rot", Vector3.ZERO) as Vector3).y
+	var t2: float = (pose.get("tail_2", {}).get("rot", Vector3.ZERO) as Vector3).y
+	if is_equal_approx(t1, t2):
+		print("  the critter's two tail links move together - the chain lag is gone")
+		bad += 1
+
+	print("critter: %d bones, %d pose samples, diagonal pairs in phase at %.3f/%.3f rad, %d checks failed" % [
+		rig.bones.size(), checked, fl, fr, bad])
+	rig.free()
+	return 1 if bad > 0 else 0
+
+
+## AN UNKNOWN GAIT WALKS LIKE A BIPED AND SAYS SO. It does not crash.
+##
+## A gait this build has never heard of is a rig from a newer part file or a
+## typo, and in both cases an animal that walks like a person is a better
+## outcome than one that does not appear at all.
+func _test_unknown_gait():
+	var bad := 0
+	print("  (the warning below is expected - a deliberately unknown gait)")
+	var dims := PartsCritter.DIMS.duplicate()
+	dims["gait"] = "hovering"
+	var shape := Animator.rig_shape(dims)
+	if shape != Animator.RIG_SHAPES["biped"]:
+		print("  an unknown gait did not fall back to the biped")
+		bad += 1
+
+	# And it still produces a pose rather than dying.
+	var config := CharacterConfig.new()
+	var got := Animator.pose_for(_state(4.0), 0.25, 0.0, config, dims)
+	if got.is_empty():
+		print("  an unknown gait produced no pose at all")
+		bad += 1
+	for bone in got:
+		var entry: Dictionary = got[bone]
+		if not _finite(entry.get("rot", Vector3.ZERO)) or not _finite(entry.get("pos", Vector3.ZERO)):
+			print("  the fallback pose has a non-finite %s" % bone)
+			bad += 1
+
+	print("unknown gait: fell back to the biped and posed %d bones, %d checks failed" % [
+		got.size(), bad])
+	return 1 if bad > 0 else 0
