@@ -49,10 +49,11 @@ class_name VoxelModel
 ## below is deliberately the most boring one that can hold a voxel: an array of
 ## strings you can read in a terminal.
 
-## Metres per model voxel. 8 per 0.5 m block, which is what foliage v1 fixed
-## for plants citing the character scale, and what this plan confirms for
-## characters: a 2 m human is 32 voxels tall.
-const VOXEL_M := 0.0625
+## Metres per model voxel. 16 per 0.5 m block since look v1: a 2 m human is
+## 64 voxels tall. Character v1 built at 8 per block, the scale foliage v1
+## fixed for plants; the look plan halved it for characters alone, because a
+## face needs the resolution and a grass tuft does not. Plants stay at 1/8.
+const VOXEL_M := 0.03125
 
 ## Semantic slots. A part is authored in these, never in colours - the same
 ## voxels resolved through a different palette are a different-looking
