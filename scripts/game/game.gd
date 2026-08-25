@@ -30,6 +30,12 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _debug: DebugHUD = $DebugHUD
 @onready var _sky: SkyCycle = $SkyCycle
 
+## The forest beyond the voxel radius. A sibling of World rather than a child
+## of it, exactly as FarField is not: the plan for this stage says the ring is
+## a node in the game scene, and it keeps World's edits down to the four flora
+## hooks the plan allows.
+@onready var _far_trees: FarTrees = $FarTrees
+
 ## Every tunable number. Loaded once here and handed to World, so there is
 ## exactly one instance per session and no chance of two halves of the game
 ## generating against different values.
@@ -61,6 +67,10 @@ func _ready() -> void:
 		int(config.fog_end_m)])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	_debug.set_far_trees(_far_trees)
+	# Wind and night are LOCAL knobs and live on the shared flora materials, so
+	# they are pushed once here and again whenever the F4 panel moves.
+	FloraModels.apply_local_knobs(config)
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -92,6 +102,8 @@ func _ready() -> void:
 		_world.setup(_startup_seed(), config)
 		print("[Game] hosting world: seed %d, config %s" % [
 			_world.world_seed, _world.config.hash_key()])
+		_far_trees.setup(_world.generator, _world.config)
+		_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
 		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
@@ -112,6 +124,10 @@ func _process(delta: float) -> void:
 	# Voxels exist only near the player.
 	if _world.has_seed():
 		_world.set_center_from_position(_player.global_position)
+		# And impostor trees exist only beyond them. Asked every frame and
+		# cheap when nothing has moved - FarTrees decides for itself whether
+		# the player has gone far enough to be worth a rebuild.
+		_far_trees.update(_player.global_position)
 	_release_player_when_ground_exists()
 
 	# A session we are no longer part of has nothing to sync, and calling rpc()
@@ -131,6 +147,12 @@ func _process(delta: float) -> void:
 		if not Net.other_peer_ids().is_empty():
 			_cl_sync_players.rpc(_states)
 		_apply_states(_states)
+
+
+## Reported once per rebuild rather than every frame - a ring is rebuilt every
+## sixteen metres of walking, and its cost is the number Stage 7 is judged on.
+func _on_far_trees_rebuilt(count: int, elapsed_ms: int) -> void:
+	print("[FarTrees] %d impostors in %d ms" % [count, elapsed_ms])
 
 
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
@@ -265,6 +287,8 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 	_world.setup(seed_value, config)
 	print("[Game] joined world: seed %d, config %s" % [
 		seed_value, _world.config.hash_key()])
+	_far_trees.setup(_world.generator, _world.config)
+	_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
 	_spawn_player()
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
@@ -451,6 +475,12 @@ func _on_config_changed() -> void:
 	# and are much easier to tune when you can see the result at once. Terrain
 	# shape needs a rebuild, which is what the message is about.
 	_sky.rebind(config)
+	# Wind and night-life are the same kind of knob - they live on the shared
+	# flora materials and take effect on the next frame, with nothing to
+	# rebuild. flora_radius_m and flora_draw_fraction are NOT: they change what
+	# a column contains, so they land with the next column the player walks
+	# into rather than immediately.
+	FloraModels.apply_local_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
 
 

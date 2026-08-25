@@ -47,7 +47,12 @@ const TUNING_ROWS := [
 	["share_heath", "zone share: heath", 0.0, 1.0, 0.01],
 	["share_rock", "zone share: rock", 0.0, 1.0, 0.01],
 	["share_snow", "zone share: snow", 0.0, 1.0, 0.01],
-	["tree_probability", "tree density", 0.0, 1.0, 0.01],
+	["tree_density_scale", "tree density x", 0.0, 3.0, 0.05],
+	["tree_base_forest", "forest peak p", 0.0, 1.0, 0.01],
+	["grove_share", "grove share", 0.0, 1.0, 0.01],
+	["glade_share", "glade share", 0.0, 0.5, 0.01],
+	["tree_max_slope_deg", "tree max slope", 0.0, 90.0, 1.0],
+	["tree_size_scale", "tree size x", 0.1, 3.0, 0.05],
 	["lake_level_offset", "lake level offset (blk)", 0.0, 10.0, 0.5],
 	["lake_max_depth", "lake max depth (blk)", 0.0, 60.0, 1.0],
 	["day_seconds", "day length (s)", 10.0, 3600.0, 10.0],
@@ -71,6 +76,11 @@ const LOCAL_TUNING_ROWS := [
 	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
 	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
 	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
+	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
+	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
+	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
+	["wind_strength", "wind", 0.0, 3.0, 0.1],
+	["night_life", "night life", 0.0, 2.0, 0.1],
 ]
 
 var config: WorldgenConfig = null
@@ -80,6 +90,10 @@ var config: WorldgenConfig = null
 var world: Node = null
 var player: Node3D = null
 var sky: SkyCycle = null
+
+## The impostor ring. A sibling of World in the game scene, so it is handed in
+## separately rather than reached for through it.
+var far_trees: Node = null
 
 ## Set false on clients in Stage 11 - a client that retunes its own terrain has
 ## silently left the host's world.
@@ -97,6 +111,10 @@ func _ready() -> void:
 	_build_readout()
 	_build_panel()
 	set_process(true)
+
+
+func set_far_trees(p_far_trees: Node) -> void:
+	far_trees = p_far_trees
 
 
 func setup(p_config: WorldgenConfig, p_world: Node, p_player: Node3D,
@@ -157,6 +175,15 @@ func _compose_readout() -> String:
 			lines.append("worldgen  %d ms heightmap" % t.get("heightmap_ms", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
+		if world.has_method("flora_stats"):
+			var f: Dictionary = world.flora_stats()
+			lines.append("flora     %d inst, %.2f M tris, %d cols, %d pending" % [
+				f.get("instances", 0), float(f.get("triangles", 0)) / 1000000.0,
+				f.get("columns", 0), f.get("pending", 0)])
+	if far_trees != null and far_trees.has_method("stats"):
+		var t: Dictionary = far_trees.stats()
+		lines.append("far trees %d impostors, %d ms rebuild" % [
+			t.get("impostors", 0), t.get("rebuild_ms", 0)])
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 

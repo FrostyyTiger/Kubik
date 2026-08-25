@@ -18,13 +18,25 @@ here on this list is filled by what a playtest taught us.
    *Answers:* the postcard test - can I frame a mountain, its forest and a lake
    in one view within two minutes of walking from spawn?
 
-   **Plan B** splits in two. **Foliage v1 - what grows on the land** is
-   written and queued for an overnight run: seven tree species, dense forest
-   with glades, ground cover in every zone on a decoration layer, far trees
-   to 300 m, fireflies and glowing mushrooms after dark.
-   [plans/foliage-v1.md](plans/foliage-v1.md). **Water and rivers** is the
-   other half and is not written yet. What v2 left ready for both is listed
-   at the end of `STATUS.md`.
+   **Plan B** splits in two, and the first half is done.
+
+   **Foliage v1 - what grows on the land** ran overnight on 2026-08-24/25 and
+   landed on `feat/foliage-v1`, all eleven stages.
+   [plans/foliage-v1.md](plans/foliage-v1.md). Seven tree species instead of
+   one, a forest that clumps and leaves clearings, 8.7 M pieces of ground cover
+   on a decoration layer that never touches a chunk, an impostor ring so the
+   forest does not stop at 96 m, and fireflies and glowing mushrooms after
+   dark. Trees went from 34,925 to 73,675 on seed 42 and the terrain under them
+   did not move - same heightmap hash, same zone shares, same spawn.
+   `STATUS.md` has every number and the list of things tuned on the wrong
+   renderer.
+
+   **Water and rivers** is the other half and is still not written. What
+   foliage v1 leaves ready for it is at the end of `STATUS.md`: the placement
+   product takes another `base` case and another binary gate almost for free,
+   the decoration layer takes water plants without changing, and reeds already
+   follow `Lakes.shore_level_at_cell()` - which is the same question a river
+   would have to answer.
 
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
@@ -53,8 +65,16 @@ host-authoritative input path is a carried ticket, not done.
 
 Deliberately not here:
 
+- **Gathering.** Foliage v1 built the identity and the removal path for it and
+  stopped short of the RPC, deliberately - the comment at
+  `World.remove_flora_local()` writes out the call it is waiting for. Gathering
+  is a launch skill in `DESIGN.md`, but it is a SKILL, and skills are not on
+  this list until something is worth gathering for.
 - **Day/night as a danger axis.** The cycle shipped in terrain v1, but visual
   only. Pillar 2 wants darkness to mean something; that needs the enemy first.
+  Foliage v1 added the first thing that exists only after dark - fireflies and
+  glowing mushrooms - and they are deliberately on the cozy side of the
+  register, not the tense one.
 - **Breaking terrain.** Unsettled in DESIGN.md. Settle it before building it.
 
 ## Someday

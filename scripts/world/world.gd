@@ -101,6 +101,40 @@ var _in_flight := {}
 ## but not touch.
 var _far_field: FarField = null
 
+# --- The decoration layer (foliage v1 Stage 5) ------------------------------
+#
+# Ground cover does not live in chunks, in the mesher, or in the edit
+# dictionary - see FloraModels for why it cannot. It is a parallel set of nodes
+# keyed by chunk COLUMN, built by the same worker pool under the same in-flight
+# cap, and freed by the same distance rule.
+#
+# Deliberately NOT a second worker pool. GDScript execution is serialised
+# across threads in this engine build - the note on _max_jobs_in_flight has the
+# measurements - so a second pool would add contention rather than throughput,
+# and flora would compete with the terrain the player is standing on.
+
+var _flora_nodes := {}       # Vector2i -> FloraColumn
+var _flora_in_flight := {}   # Vector2i -> {"task": int, "job": FloraJob}
+var _flora_queue: Array[Vector2i] = []
+var _flora_queued := {}
+var _flora_instances := 0
+var _flora_triangles := 0
+var _flora_ms := 0
+
+## Flora instances that have been taken out of the world, as a set of 64-bit
+## identities. Host-owned, in the same spirit as _edits.
+##
+## THE DIFFERENCE FROM THE WORLD, NOT THE WORLD. There are nearly nine million
+## flora instances on seed 42 and this dictionary holds none of them: an
+## instance's identity is a pure function of its position, so placement can
+## recompute it and ask "was this one taken" for the cost of one lookup.
+## Gathering a thousand plants therefore costs a thousand integers, and
+## gathering none costs nothing at all.
+##
+## NOT YET WIRED TO ANYTHING. Stage 9 builds the identity and the removal path
+## up to but not including the RPC - see remove_flora_local().
+var _flora_removed := {}
+
 ## Every basin in the world, and the water sitting in it.
 var lakes: Lakes = null
 var _water: MeshInstance3D = null
@@ -172,7 +206,9 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 
 
 func _process(_delta: float) -> void:
-	if _build_queue.is_empty() and _in_flight.is_empty() and _gen_in_flight.is_empty():
+	if _build_queue.is_empty() and _in_flight.is_empty() \
+			and _gen_in_flight.is_empty() and _flora_queue.is_empty() \
+			and _flora_in_flight.is_empty():
 		return
 
 	# Spend a bounded slice of this frame on chunk work. Doing it all at once
@@ -181,6 +217,7 @@ func _process(_delta: float) -> void:
 	var budget := BUILD_BUDGET_MS if _initial_load_reported else INITIAL_BUILD_BUDGET_MS
 	_collect_finished(started, budget)
 	_submit_jobs()
+	_submit_flora()
 	_total_ms += Time.get_ticks_msec() - started
 
 	if is_idle() and not _initial_load_reported:
@@ -191,6 +228,10 @@ func _process(_delta: float) -> void:
 			_built, wall, _total_ms, float(_gen_ms) / 1000.0 / n,
 			float(_mesh_ms) / 1000.0 / n])
 		print("[World] far field %d vertices" % _far_vertices)
+		print("[World] flora %d instances, %.2f M triangles, %d columns, %.2f ms per column on workers" % [
+			_flora_instances, float(_flora_triangles) / 1000000.0,
+			_flora_nodes.size(),
+			float(_flora_ms) / 1000.0 / float(maxi(_flora_nodes.size(), 1))])
 		generation_finished.emit(_built, wall)
 
 
@@ -256,6 +297,14 @@ func reset() -> void:
 		_chunk_nodes[pos].queue_free()
 	_chunk_nodes.clear()
 	_chunks.clear()
+	for col in _flora_nodes:
+		_flora_nodes[col].queue_free()
+	_flora_nodes.clear()
+	_flora_queue.clear()
+	_flora_queued.clear()
+	_flora_instances = 0
+	_flora_triangles = 0
+	_flora_ms = 0
 	_gen_in_flight.clear()
 	_build_queue.clear()
 	_queued.clear()
@@ -274,7 +323,8 @@ func reset() -> void:
 ## before it takes a picture of it.
 func is_idle() -> bool:
 	return generator != null and _build_queue.is_empty() \
-		and _in_flight.is_empty() and _gen_in_flight.is_empty()
+		and _in_flight.is_empty() and _gen_in_flight.is_empty() \
+		and _flora_queue.is_empty() and _flora_in_flight.is_empty()
 
 
 func loaded_chunk_count() -> int:
@@ -317,7 +367,51 @@ func _submit_jobs() -> void:
 
 
 func _jobs_in_flight() -> int:
-	return _gen_in_flight.size() + _in_flight.size()
+	return _gen_in_flight.size() + _in_flight.size() + _flora_in_flight.size()
+
+
+## HOOK 1 OF 4: submit. Hand queued flora columns to the worker pool.
+##
+## AFTER the terrain, and sharing its cap, which is the whole of the priority
+## policy: a column of grass matters only if there is ground under it, so
+## terrain jobs are offered the pool first and flora takes what is left. On a
+## busy load that means flora arrives a moment behind the ground, which is
+## exactly the order a player notices things in.
+func _submit_flora() -> void:
+	while not _flora_queue.is_empty() and _jobs_in_flight() < _max_jobs_in_flight:
+		var col: Vector2i = _flora_queue.pop_front()
+		_flora_queued.erase(col)
+		if _flora_in_flight.has(col):
+			continue
+		var job := FloraJob.new()
+		job.column = col
+		job.generator = generator
+		job.config = config
+		job.draw_fraction = config.flora_draw_fraction
+		# A SNAPSHOT, not the live dictionary. The job reads it on a worker
+		# thread and the main thread may be inserting into it at the same
+		# moment. Duplicated only when it has anything in it, which for now is
+		# never - so the common case costs one is_empty().
+		job.removed = {} if _flora_removed.is_empty() else _flora_removed.duplicate()
+		job.edited = _edited_blocks_in(col)
+		_flora_in_flight[col] = {
+			"task": WorkerThreadPool.add_task(job.run, false, "kubik flora"),
+			"job": job,
+		}
+
+
+## HOOK 4 OF 4: rebuild one column's flora.
+##
+## Called when something under the plants has changed - a block edit, or a
+## gathered instance in Stage 9. The node is left alone until the new buffers
+## arrive, so the plants do not blink out and back.
+func _flora_dirty(col: Vector2i) -> void:
+	if not _flora_nodes.has(col) and not _flora_in_flight.has(col):
+		return
+	if _flora_queued.has(col) or _flora_in_flight.has(col):
+		return
+	_flora_queue.append(col)
+	_flora_queued[col] = true
 
 
 ## PHASE ONE. Hand a chunk's voxels to the worker pool.
@@ -379,6 +473,46 @@ func _submit_mesh(chunk: Chunk) -> void:
 func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
 	_collect_meshed(started, budget)
 	_collect_generated(started, budget)
+	_collect_flora(started, budget)
+
+
+## HOOK 2 OF 4: collect. Install flora buffers the pool has finished with.
+##
+## LAST of the three, and sharing their budget, for the same reason flora is
+## submitted last: ground the player can stand on outranks grass growing on it.
+## When the terrain has nothing waiting this costs nothing and the whole budget
+## falls through to here.
+func _collect_flora(started: int, budget: int) -> void:
+	var done: Array[Vector2i] = []
+	for col in _flora_in_flight:
+		if Time.get_ticks_msec() - started >= budget:
+			break
+		var entry: Dictionary = _flora_in_flight[col]
+		if not WorkerThreadPool.is_task_completed(entry["task"]):
+			continue
+		WorkerThreadPool.wait_for_task_completion(entry["task"])
+		done.append(col)
+
+	for col in done:
+		var job: FloraJob = _flora_in_flight[col]["job"]
+		_flora_in_flight.erase(col)
+		_flora_ms += job.elapsed_usec
+		# The column may have walked out of range while its job was in flight.
+		# Dropping the result is right: nothing is drawing it, and the job will
+		# be resubmitted if the player comes back.
+		if not _wants_flora(col):
+			continue
+		var node: FloraColumn = _flora_nodes.get(col)
+		if node == null:
+			node = FloraColumn.new()
+			node.setup(col)
+			add_child(node)
+			_flora_nodes[col] = node
+		_flora_instances -= node.instance_count
+		_flora_triangles -= node.triangle_count
+		node.apply_buffers(job.buffers, config)
+		_flora_instances += node.instance_count
+		_flora_triangles += node.triangle_count
 
 
 ## Chunks whose voxels have arrived. Publish them, replay their edits, and
@@ -522,6 +656,9 @@ func _drain_jobs() -> void:
 	for chunk_pos in _in_flight:
 		WorkerThreadPool.wait_for_task_completion(_in_flight[chunk_pos]["task"])
 	_in_flight.clear()
+	for col in _flora_in_flight:
+		WorkerThreadPool.wait_for_task_completion(_flora_in_flight[col]["task"])
+	_flora_in_flight.clear()
 
 
 func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
@@ -587,10 +724,84 @@ func refresh_region() -> void:
 			_queued[pos] = true
 
 	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
+	_refresh_flora()
 
 	# Nearest-first, so the world grows outward from the player rather than
 	# popping in in some arbitrary order.
 	_build_queue.sort_custom(Callable(self, "_nearer_to_centre"))
+
+
+## HOOK 3 OF 4: free, and queue. Bring the flora columns in line with where the
+## player is.
+##
+## flora_radius_m IS MUCH SMALLER THAN THE VOXEL RADIUS - 64 m against 96 - and
+## that is the point of it being a separate radius rather than the same one.
+## Ground cover is 30 cm tall: past about 60 m it is a green haze that costs
+## its full triangle count and adds nothing you could describe. Trees are 10 m
+## and carry on being trees to the horizon, which is what Stage 7's impostor
+## ring is for.
+func _refresh_flora() -> void:
+	var radius := _flora_radius_chunks()
+	var radius_sq := radius * radius
+
+	var wanted := {}
+	for dz in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			if dx * dx + dz * dz > radius_sq:
+				continue
+			var col := Vector2i(_center.x + dx, _center.y + dz)
+			wanted[col] = true
+			if not _flora_nodes.has(col) and not _flora_in_flight.has(col) \
+					and not _flora_queued.has(col):
+				_flora_queue.append(col)
+				_flora_queued[col] = true
+
+	var doomed: Array[Vector2i] = []
+	for col in _flora_nodes:
+		if not wanted.has(col):
+			doomed.append(col)
+	for col in doomed:
+		var node: FloraColumn = _flora_nodes[col]
+		_flora_instances -= node.instance_count
+		_flora_triangles -= node.triangle_count
+		node.queue_free()
+		_flora_nodes.erase(col)
+
+	# Anything still queued but no longer wanted is dropped before it costs a
+	# worker. A job already in flight is left to finish and discarded on
+	# arrival - cancelling it is not worth the bookkeeping.
+	if not _flora_queue.is_empty():
+		var still: Array[Vector2i] = []
+		for col in _flora_queue:
+			if wanted.has(col):
+				still.append(col)
+			else:
+				_flora_queued.erase(col)
+		_flora_queue = still
+
+
+func _flora_radius_chunks() -> int:
+	if config.flora_radius_m <= 0.0:
+		return -1
+	var per_chunk := float(Chunk.SIZE) * config.block_size
+	return int(ceil(config.flora_radius_m / maxf(per_chunk, 0.001)))
+
+
+func _wants_flora(col: Vector2i) -> bool:
+	var radius := _flora_radius_chunks()
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	return dx * dx + dz * dz <= radius * radius
+
+
+## Instances currently drawn, and columns holding them. For the F3 readout.
+func flora_stats() -> Dictionary:
+	return {
+		"instances": _flora_instances,
+		"triangles": _flora_triangles,
+		"columns": _flora_nodes.size(),
+		"pending": _flora_queue.size() + _flora_in_flight.size(),
+	}
 
 
 ## Which chunks of one column terrain actually passes through.
@@ -775,6 +986,10 @@ func _apply_edit_locally(world_block_pos: Vector3i, block_id: int) -> bool:
 	# holes along chunk seams whenever someone digs near one.
 	for neighbour in _boundary_neighbours(cpos, l):
 		_remesh(neighbour)
+	# And the plants standing on it. The G test slab exercises this: drop a
+	# slab of stone on a meadow and the grass that was there is now growing
+	# through it.
+	_flora_dirty_at_block(world_block_pos)
 	return true
 
 
@@ -794,6 +1009,89 @@ func _boundary_neighbours(cpos: Vector3i, local: Vector3i) -> Array[Vector3i]:
 	elif local.z == last:
 		out.append(cpos + Vector3i(0, 0, 1))
 	return out
+
+
+## Which block columns inside this chunk column have been edited.
+##
+## EDITED GROUND CARRIES NO PLANTS, and that is the whole rule. Flora is placed
+## from the GENERATOR's surface, not from the voxels - which is what lets a
+## column be built on a worker with no chunk in hand, and is right for every
+## block nobody has touched. It is wrong for the ones they have: dig the
+## surface block out and the generator still says the ground is where it was,
+## so the grass on it hangs in the air over the hole.
+##
+## Recomputing the true surface from the edits would be the thorough answer and
+## it is not the right one. A block somebody has dug or built on is disturbed
+## ground, and disturbed ground having no grass on it is both cheap and what a
+## player expects - drop the debug slab on a meadow and the grass under it is
+## gone, not poking through.
+##
+## Returns a set keyed by Vector2i(bx, bz) - the COLUMN of the edit, not the
+## block - because an edit at any altitude disturbs the whole column under it.
+func _edited_blocks_in(col: Vector2i) -> Dictionary:
+	var out := {}
+	if _edits.is_empty():
+		return out
+	var x0 := col.x * Chunk.SIZE
+	var z0 := col.y * Chunk.SIZE
+	for pos in _edits:
+		var bx: int = pos.x
+		var bz: int = pos.z
+		if bx < x0 or bx >= x0 + Chunk.SIZE:
+			continue
+		if bz < z0 or bz >= z0 + Chunk.SIZE:
+			continue
+		out[Vector2i(bx, bz)] = true
+	return out
+
+
+## Take one flora instance out of the world.
+##
+## `id` is a FloraPlacement.identity() - the model, a sub-index, and the block
+## it stands on, packed into 64 bits. Nothing else about the instance is
+## recorded, because nothing else has to be: everything it was is a function of
+## where it was.
+##
+## THE RPC THIS IS WAITING FOR, and it is deliberately NOT here. Gathering is a
+## launch skill in DESIGN.md; foliage v1 builds the identity and the removal
+## path and stops. When it arrives it mirrors request_set_block() exactly:
+##
+##     func request_gather(id: int) -> void:
+##         if Net.is_host():
+##             _host_apply_gather(Net.local_peer_id(), id)
+##         else:
+##             _srv_request_gather.rpc_id(1, id)
+##
+##     @rpc("any_peer", "call_remote", "reliable")
+##     func _srv_request_gather(id: int) -> void:
+##         # host validates - is the player near it, does it still exist -
+##         # then _cl_apply_gather.rpc(id) to everyone and applies locally.
+##
+## and the join handshake gains _flora_removed beside get_edits(), which is one
+## more dictionary of integers and no change to the wire format of anything
+## already there. NONE OF THAT IS IN THIS STAGE: the plan is explicit that the
+## net protocol is not to be touched, and the point of stopping here is that
+## when the RPC is written there is nothing left to design.
+func remove_flora_local(id: int) -> void:
+	if _flora_removed.has(id):
+		return
+	_flora_removed[id] = true
+	_flora_dirty(FloraPlacement.column_of(id))
+
+
+## Everything gathered so far, for a joining client. The counterpart of
+## get_edits(), and not yet sent by anything.
+func get_flora_removed() -> Dictionary:
+	return _flora_removed.duplicate()
+
+
+## Flora sits on the surface, so a changed block can leave a tuft of grass
+## floating over a hole. Rebuilding the column is the whole fix, and it is one
+## call because the column is the unit flora is built in.
+func _flora_dirty_at_block(world_block_pos: Vector3i) -> void:
+	_flora_dirty(Vector2i(
+		Chunk.floor_div(world_block_pos.x, Chunk.SIZE),
+		Chunk.floor_div(world_block_pos.z, Chunk.SIZE)))
 
 
 func _remesh(cpos: Vector3i) -> void:

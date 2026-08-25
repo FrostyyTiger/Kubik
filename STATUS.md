@@ -1,642 +1,727 @@
-# Terrain v2 — run status
+# Foliage v1 — run status
 
-Unattended run of `docs/plans/terrain-v2.md`, 2026-08-24, on the Linux box.
-All fourteen stages attempted, committed one per stage on `feat/terrain-v2`.
-**Not merged to `main`** — that is your call, as it was for v1.
+Unattended overnight run of `docs/plans/foliage-v1.md`, 2026-08-24/25, on the
+Linux box. All eleven stages attempted and committed on `feat/foliage-v1`,
+branched from `main` at `198274d` (the terrain work — threaded heightmap,
+detail damping on flats, the queue that does not scan).
 
 ---
 
 ## Read this first
 
 ```
-git checkout feat/terrain-v2
+git checkout feat/foliage-v1
 godot --path . -- --host --seed 42
 ```
 
-Walk out of spawn. You will start somewhere flat and dry with a mountain in
-view and water within two minutes' walk, because the world now *chooses* a
-spawn that satisfies the acceptance test rather than dropping you at the origin
-and hoping. **Hold Shift to sprint** — the world is 3 × 3 km now and you will
-want it. Alt is a precision crawl.
+Walk out of spawn into the meadow. **It is not one quad any more.** Grass moves
+in the wind, flowers come in fields of a single colour, and there is a lone
+beech somewhere in the frame. Walk up the slope on your right and the forest
+closes over you; keep going and it thins into twisted pine before it gives up
+at the heath. Look back down the valley and the forest is still there at 300 m
+rather than stopping at a circle centred on you.
 
-Six screenshots are in `build/tour/v2-final/`, and three earlier sets sit
-beside them for comparison — `v2-baseline` (the world as v1 left it),
-`v2-stage5`, `v2-stage9`. Regenerate any of them with:
+Press **F3** for the readout — it now shows flora instances, flora triangles,
+columns, and the impostor ring's count and rebuild time. **F4** has every new
+knob. Wait for dusk, or press F4 and set `day_start`, to see the fireflies.
+
+Two sets of pictures:
 
 ```
-godot --path . -- --tour --seed 42 --label some-name
+build/tour/foliage-final/     twelve vantages, seed 42
+build/gallery/foliage-final/  every tree species, every plant model
 ```
 
-**`build/` is gitignored, so none of those images are in the repo.** If you are
-reading this on another machine, run the tour.
+Regenerate either with:
 
-### The three things that want your judgement, in order
+```
+godot --path . -- --host --tour --seed 42 --label some-name
+godot --path . scenes/gallery.tscn -- --label some-name
+```
 
-1. **Is the world too dry?** Water is 0.7% of the map, against 8.3% in v1.
-   That number is the single most contested thing in this run and there is a
-   whole section on it below. `lake_max_depth` is the dial.
-2. **Does the terracing read as landscape or as rice paddies?** It is the
-   biggest visual gamble here and it was tuned entirely on a number
-   (`terrace_sharpness`, F4 panel).
-3. **Is the heath the right colour?** It is a rusty red-brown and it is doing a
-   lot of work breaking up the green. On a software renderer it looks right; on
-   your screen it may look like Mars.
-4. **Is the meadow still too bumpy up close?** The COARSE ground is flat now —
-   that is what "24% of the map under 5°" measures, and it is measured on the
-   coarse heightmap. The DETAIL layer sits on top of it at 1.5 m of amplitude
-   over a 6 m wavelength, unchanged from v1 and untouched by this plan, so a
-   flat meadow is still a field of half-metre steps at block scale. Baked AO
-   now makes those read as texture rather than as corrugation, which may be
-   enough. If it is not, `detail_amp` is the knob and it is in the F4 panel —
-   and note that the slope histogram will not move when you turn it, because
-   the histogram is measured on the coarse map and detail is not in it.
+**`build/` is gitignored, so none of those images are in the repo.** Run them.
 
-### The renderer caveat still applies, and it applies harder
+### The four things that want your judgement, in order
+
+1. **Is the ground cover too dense, or not dense enough?** A meadow block
+   carries something with probability 0.50. On a software renderer that reads
+   as a meadow; it may read as a lawn on yours. `flora_draw_fraction` in the F4
+   panel thins it without changing where anything is, so you can turn it down
+   and back up while standing still.
+2. **Are the impostor trees convincing at the handover?** Walk from the meadow
+   into the forest and watch the middle distance. The ring hands over to real
+   voxel trees at 96 m, and impostors grow from nothing over the 12 m outside
+   that. If you can see it happen, say so — the fade length is a constant in
+   `far_trees.gd` and wants a real GPU to tune against.
+3. **Are the colours right?** Eleven new leaf and bark colours and seventeen
+   plant colours, every one chosen on the wrong renderer. The whole list is in
+   "Tuned blind" below.
+4. **Is a snag every seventh tree too many?** 14.7% of the world's trees are
+   dead ones. That is what the plan's weight table plus its wildness bonus
+   produce, and it is more than it sounds like when you are standing in it.
+   `wildness_snag` is the dial.
+
+### The renderer caveat still applies, and it applies harder than in v2
 
 This box has no display, so everything was rendered under Xvfb on the **OpenGL
 Compatibility renderer on Mesa llvmpipe**. You run **Forward+ on an RTX 5080**.
-Every value in the "Tuned blind" section was chosen against the wrong renderer.
+Terrain v2 tuned nine block colours that way. This run tuned twenty-eight
+colours, nineteen models and seven tree shapes.
+
+**What the gallery is for.** Stage 1 built it before anything else changed, and
+it earned that position three times over — see "Things the gallery caught"
+below. One image, every species, a fixed camera, a frozen noon sun: whatever
+you disagree with, you can point at it.
 
 ---
 
 ## What got done
 
-| Stage | What | Verdict |
+All eleven stages. One commit each, except Stages 8 and 9, which landed
+together because both touch `flora_placement.gd` and separating them afterwards
+would have been a fiction.
+
+| Stage | What | Commit |
 | --- | --- | --- |
-| 1 | Instruments: slope histogram, altitude percentiles, object scale, tour comparison harness | done |
-| 2 | Baked corner AO, MSAA 4× | done |
-| 3 | Threaded chunk generation | done |
-| 4 | View distance presets, far-field LOD rings | done |
-| 5 | Far-field transition band | done, then found broken, then fixed |
-| 6 | 3 × 3 km world, sprint, traversal probe | done |
-| 7 | Seven elevation zones as shares of map area | done |
-| 8 | Scale coherence — mountains rise to 1:4 | done |
-| 9 | Hills retune, terracing, hill gating, slope-aware zoning | done |
-| 10 | Colour jitter and slope/aspect tinting | done |
-| 11 | Wider valleys, shore flats, benches, plateaux | done |
-| 12 | Spawn by construction, danger field, wildness ramp | done |
-| 13 | The 180° facing bug, docs tidy | done |
-| 14 | Handoff | this file |
+| 1 | Instruments: model gallery, five new tour vantages, per-species probe | `efd242e` |
+| 2 | Trees move out of `TerrainGenerator` — a pure refactor, verified tree-for-tree | `d182250` |
+| 3 | Seven species instead of one, eleven new block ids | `e816660` |
+| 4 | The placement product: groves, glades, slope, bench, spawn | `474fb37` |
+| 5 | The decoration layer, with one model | `d2f32fc` |
+| 6 | Eighteen more models and every zone rule | `f53f7ba` |
+| 7 | The impostor ring — a forest that does not stop at 96 m | `0927f9c` |
+| 8+9 | Night, and the path gathering will use | `c257060` |
+| 10 | The budget, measured | (this file) |
+| 11 | Handoff | (this file) |
 
 ---
 
 ## Every measured number
 
-All on seed 42, on this box (i5-8400, 6 cores, 16 GB). Nothing here is an
-estimate; where something was not measured it says so.
-
 ### The world, before and after
 
-| | v1 (1.5 km) | v2 (3 km) |
-| --- | --- | --- |
-| Footprint | 1.5 × 1.5 km | **3 × 3 km** |
-| Coarse heightmap | 750² cells | 1500² cells |
-| Mountain relief | 134 m | **400 m** |
-| Relief vs real | 1 : 10.4 | **1 : 3.5** |
-| Tree vs real | 1 : 3.5 | 1 : 4.0 |
-| Lake vs real | 1 : 3.5 | 1 : 3.3 |
-| Meadow share of map | 57.2% | **30.0%** |
-| Zones | 4 | **7** |
-| Map under 5° | 1.67% | **24.12%** |
-| Map under 10° | 6.53% | **36.01%** |
-| Mean slope | 36.5° | 30.7° |
-| Trees | 8,620 | 34,915 |
-| Lakes | 289 | 53 |
-| Water | 8.3% of map | **0.7% of map** |
-| Worldgen memory | ~11 MB | 36.6 MB |
-
-### Layer slopes — the corrugation, as a number
-
-`4 × amplitude / wavelength`, which is the angle the eye reads off a hillside.
-
-| Layer | v1 | v2 |
-| --- | --- | --- |
-| Continent | 602 m / 24 m / 9.1° | 1579 m / 62.9 m / 9.1° |
-| Mountain | 150 m / 89 m / 67.1° | 394 m / 233 m / 67.1° |
-| **Hills** | **30 m / 8 m / 46.9°** | **180 m / 8 m / 10.1°** |
-| Detail | 6 m / 1.5 m / 45° | 6 m / 1.5 m / 45° |
-
-The hills layer was as steep as a mountain face at a 30 m wavelength, laid over
-the whole world at uniform strength. That was the corrugation.
-
-### The hills wavelength sweep
-
-Share of map under 5°, at 8 m amplitude:
-
-| 30 m | 90 m | 120 m | **180 m** | 240 m | 360 m |
-| --- | --- | --- | --- | --- | --- |
-| 1.30% | 3.84% | 4.50% | **5.29%** | 5.58% | 5.63% |
-
-180 m takes almost all of the gain and everything past it is decimal places.
-It also lands the layer at 10.1°, which is the plan's target.
-
-**The sweep's more important result is that wavelength alone is not enough.**
-Even at 360 m the mean slope only fell from 45.7° to 40.3° and five-sixths of
-the map was still steeper than 10°. fbm noise is a sum of smooth waves, so
-every point sits on some slope and genuinely level ground has measure zero.
-
-### Where the flat ground actually came from
-
-| Change | under 5° | under 10° |
-| --- | --- | --- |
-| v2 start | 1.30% | 5.12% |
-| + hills at 180 m | 5.29% | 17.75% |
-| + wavelengths scaled with amplitudes | 11.96% | 29.66% |
-| + terracing (h 8, sharpness 1.5) | 20.30% | 32.72% |
-| + hill gating | ~20.3% | ~32.7% |
-| + valley_curve 1.6 | 25.64% | 38.49% |
-| final, with the wildness ramp | **24.12%** | **36.01%** |
-
-### Threading (Stage 3)
+Seed 42 throughout. "Before" is `main` at `198274d`, which is the same terrain.
 
 | | before | after |
 | --- | --- | --- |
-| radius 8, wall | 10,309 ms | 7,945 ms |
-| radius 8, main thread | 4,811 ms | **599 ms** |
-| radius 12, wall | 22,335 ms | 17,755 ms |
-| radius 12, main thread | 10,936 ms | **1,406 ms** |
+| Trees | 34,925 | **73,675** |
+| Species | 1 | **7** |
+| Ground cover instances | 0 | **8,761,600** |
+| Heightmap hash | `76cccdb6` | `76cccdb6` — unchanged |
+| Zone shares | worst 0.60 pts off | unchanged |
+| Spawn | (-44, -124) | unchanged |
+| Config hash | `5d5eee15` | `da8868d1` |
 
-Main-thread cost down about 90% at both radii.
+The heightmap hash, the zone shares and the spawn are identical at every stage
+of this run. **Nothing moved that should not have** — that is the fourth
+acceptance criterion and it is the one with a hash behind it rather than a
+photograph.
 
-**The first attempt made wall time worse** — 12,515 and 27,834 ms. Godot gives
-the low-priority worker pool 30% of its threads by default; meshing alone had
-had those two, and putting generation on them too meant both phases fought over
-the same two. `project.godot` now sets `low_priority_thread_ratio` to 0.75.
-Without that line, Stage 3 is a regression.
+### Trees, by species
 
-### View distance presets (Stage 4)
-
-| Preset | radius | voxels to | fog | chunks | load wall | main thread | far verts |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Low | 6 | 48 m | 400 m | 700 | 4,204 ms | 269 ms | 69,280 |
-| Medium | 8 | 64 m | 500 m | 1,201 | 7,109 ms | 483 ms | 75,088 |
-| **High** | 12 | 96 m | 600 m | 2,653 | 18,210 ms | 1,167 ms | 80,352 |
-| Ultra | 16 | 128 m | 800 m | 4,829 | 29,677 ms | 2,121 ms | 81,872 |
-
-The far field was **404,588 vertices at fog 600** before LOD rings and is
-**80,352** after. It now grows 18% for a doubling of view distance rather than
-four times. Fog has stopped being a performance dial.
-
-### Baked AO (Stage 2)
-
-75 surface chunks: **10,157 → 17,246 quads (+69.8%)**, **802.6 → 1,152.8 ms
-(+43.6%)**. Meshing is on worker threads, so that time is off the main thread.
-
-### Zone shares (Stage 7), and the live test of them (Stage 8)
-
-Worst zone, percentage points off target:
-
-| seed 42 | seed 7 | seed 12345 | after relief ×2.5 | final |
-| --- | --- | --- | --- | --- |
-| 0.42 | 0.23 | 0.41 | **0.21** | 0.60 |
-
-The fourth column is the point of the whole stage: mountain relief changed by
-two and a half times and the seven shares did not move. Absolute thresholds
-would have re-zoned the entire world as a side effect.
-
-### Cost of the 3 km world (Stage 6)
-
-| | 1.5 km | 3 km |
+| Species | seed 42 | share |
 | --- | --- | --- |
-| Heightmap | 1,257 ms | 5,150 ms |
-| Lakes | 1,039 ms | 4,900 ms |
-| Spawn search | — | 780 ms |
-| Memory | 8.6 MB + 17.8 | 8.6 MB + 28.0 = **36.6 MB** |
+| spruce | 28,849 | 39.2% |
+| beech | 15,761 | 21.4% |
+| larch | 9,782 | 13.3% |
+| snag | 10,821 | 14.7% |
+| krummholz | 7,386 | 10.0% |
+| birch | 777 | 1.1% |
+| hero | 299 | 0.4% |
 
-**World setup is now about 11 seconds before the first chunk is queued**, on
-top of 18–23 s of chunk loading at High. Both of those passes are on the main
-thread and neither is threaded. This is the biggest single thing left undone —
-see "the exact next step".
+Groves are **35.6%** of the forest band against 35% asked for; glades **12.4%**
+against 12%. Both thresholds are measured from the noise's own distribution at
+world build time rather than guessed — see "Departures" for why that matters.
 
-### Chunk cost of the higher relief (Stage 8)
+**Birch at 1.1% is the one number I would look at first.** It grows only in the
+shore band and as a quarter of meadow trees, and the shore band is 3.9% of the
+map with a further condition on top. It is not zero anywhere, but it is rare
+enough that you can walk a long way without seeing one.
 
-2,653 → 3,386 chunks queued at High (+28%), load 18.1 s → 23.0 s (+27%).
-Chunks follow the surface rather than bedrock, so more relief is more vertical
-spread and not a proportional explosion. The default preset stays at High.
+### Ground cover, by zone
+
+Estimated by sampling every 16th block and scaling — the line in the probe says
+so. Every model occurs.
+
+| Zone | instances |
+| --- | --- |
+| meadow | 5,344,256 |
+| forest | 2,077,952 |
+| alpine | 694,528 |
+| shore | 462,592 |
+| heath | 171,776 |
+| rock | 6,912 |
+| snow | 3,584 |
+
+### The traversal check — the one that mattered most in Stage 4
+
+Dense forest that stops the player is a placement bug, not a feature.
+
+| | baseline (v2) | foliage v1 |
+| --- | --- | --- |
+| Speed made good, first 30 s | 12.82 m/s | **12.97 m/s** (101%) |
+| Speed made good, first 60 s | 10.20 m/s | 10.10 m/s (99%) |
+| Wedged after | 612–840 m | 639 m |
+
+The plan's floor was 75% of baseline. The forest did not cost anything
+measurable, and it still wedges in the same place and the same range the bare
+terrain did — that is terrain v2's unsolved navigation problem, not this one.
+
+### The performance budget — one met, one missed
+
+Measured at High on seed 42, against `main` at `198274d` (the same terrain,
+before any of this). Both runs on this box, which was running other work all
+night; treat the wall clock as a ratio rather than an absolute.
+
+| | before | after | budget |
+| --- | --- | --- | --- |
+| Chunks queued | 2,949 | 3,541 | — |
+| Chunks built | 3,051 | 3,742 | — |
+| **Boot to `is_idle()`** | 34.3 s | **60.3 s (+76%)** | **+10% — MISSED** |
+| Main-thread time during load | 4.08 s | 6.10 s (+49%) | +10% — missed |
+| Generation per chunk, worker | 7.46 ms | 15.45 ms | — |
+| Mesh upload per chunk, main | 0.85 ms | 0.96 ms | — |
+| Far-field vertices | 80,320 | 80,320 | — |
+| Flora | — | 24,490 instances, 2.72 M triangles, 197 columns, 15.2 ms/column | — |
+
+**The triangle budget is MET.** The plan sets it at 1.5 M flora triangles in
+frame at High from a meadow-edge vantage, measured with
+`RENDER_TOTAL_PRIMITIVES_IN_FRAME`. The tour now prints that beside every
+photograph:
+
+| Vantage | primitives in frame | flora instances loaded |
+| --- | --- | --- |
+| 1-spawn (meadow) | 1.20 M | 24,145 |
+| 4-valley-floor (meadow) | 1.12 M | 25,558 |
+| 5-lake | 0.80 M | 19,125 |
+| 3-forest-slope | 2.40 M | 2,126 |
+| 2-summit | 0.35 M | 222 |
+
+Those totals include terrain and the far field, so the flora share is smaller
+still. The forest-slope figure is the highest and is almost entirely voxel
+TREES — 2,126 pieces of ground cover in the whole loaded region — so it is
+terrain v2's cost, not this plan's.
+
+**The one vantage not measured is a heath**, and arithmetic says it is the
+worst case: heath carries a shrub on about one block in eight, which is ~6,300
+shrubs inside `flora_radius_m` at ~480 triangles each, or 2.7 M loaded. At the
+~30% loaded-to-in-frame ratio the meadow measurements show, that is around
+0.9 M in frame — inside the budget, but with much less room than a meadow has.
+`flora_radius_m` is the dial and 48 m would halve it.
+
+**THE BOOT BUDGET IS MISSED AND CANNOT BE MET BY KNOBS**, so it ships as
+measured, and here is the accounting:
+
+- **+23% chunks.** Not flora. The world reserves empty sky above the terrain
+  for the tallest tree that can grow there, and the hero pushed that from 23
+  blocks to 45. That is a bigger vertical column everywhere for a tree that
+  occurs once per 300 × 300 m of meadow.
+- **+107% generation per chunk.** The world grows 2.1× the trees through a
+  six-term product instead of a one-term probability. Two rounds of
+  optimisation already took the whole-world placement pass from 68.4 s to
+  27.5 s; what is left is real work.
+- **Flora is the small term** — 197 columns × 15.2 ms is 3.0 s of worker time
+  out of 60.
+
+**The budget as written is not reachable alongside the plan's own tree
+target.** The plan says tree counts "will roughly double or triple. That is
+intended", and doubling the trees cannot cost +10% of the time spent building
+them. The honest number is above; the fix that would actually move it is named
+under "The exact next step".
+
+### The ten-seed sweep
+
+Every seed the plan names. All boot, all spawn clear of trees, and **every
+species occurs on every one of them** — no seed had to be reported with zero
+larch.
+
+| seed | trees | nearest tree to spawn |
+| --- | --- | --- |
+| 1 | 64,898 | 30.3 m |
+| 7 | 72,711 | 30.0 m |
+| 42 | 73,675 | 42.6 m |
+| 99 | 68,945 | 33.3 m |
+| 123 | 76,039 | 30.9 m |
+| 512 | 72,191 | 43.5 m |
+| 2024 | 76,451 | 32.0 m |
+| 31337 | 76,954 | 25.5 m |
+| 65535 | 73,079 | 30.3 m |
+| 999999 | 64,982 | 39.9 m |
+
+Not one has a tree inside the 24 m clearing the placement rule promises, and
+the nearest anywhere in the sweep is 25.5 m. The rarest species anywhere is
+birch at 658 on seed 1, so it is thin everywhere and absent nowhere — the plan
+allowed for reporting a seed with zero larch rather than adjusting the table,
+and no seed needed it.
 
 ### Two peers, one world
 
-Host at High, client at Low, headless, on this machine:
-
 ```
-host   config 756afa4  heightmap 6310d674  289 lakes
-client config 756afa4  heightmap 6310d674  289 lakes   -> SAME WORLD
+host   --view high   voxel radius 12 chunks (96 m)   config da8868d1
+client --view low    voxel radius  6 chunks (48 m)   config da8868d1
 ```
 
-That the two view distances differ and the join still succeeds is Stage 4's
-property split working. Before it, they could not have joined at all.
+Identical config hashes at different view distances, which is the check that
+the twenty-one new SHAPE knobs went into `PROPERTIES` and the five new LOCAL
+ones did not. A client that disagreed about `grove_share` would grow its
+forests in different places while the handshake reported a match.
 
-### Spawn (Stage 12)
+### Triangles per flora model
 
-Ten seeds — 1, 7, 42, 99, 123, 512, 2024, 31337, 65535, 999999. **All ten
-produce a spawn meeting every criterion.** 8,836 candidates in ~780 ms each.
+Measured, at the voxel scale each model actually ships at.
 
-Across all ten, slope rejects about 60% of candidates and **water and mountain
-reject none**. The world is short of flat ground, not short of scenery.
+| model | voxels | triangles | | model | voxels | triangles |
+| --- | --- | --- | --- | --- | --- | --- |
+| grass_tuft_a | 14 | 132 | | shrub_a | 128 | 480 |
+| grass_tuft_b | 9 | 96 | | shrub_b | 56 | 272 |
+| grass_short | 7 | 68 | | boulder_s | 21 | 124 |
+| flower (×4) | 12 | 80 | | boulder_m | 110 | 376 |
+| fern | 32 | 340 | | boulder_l | 369 | 1,156 |
+| mushroom | 8 | 68 | | scree_a / _b | 21 / 59 | 176 / 292 |
+| alpine_flower | 5 | 40 | | reed | 47 | 372 |
+| | | | | firefly | 1 | 12 |
+
+**Boulders and shrubs are not built at 8 voxels per block**, and that is a
+departure the budget forced — see below. At 8 the large boulder was **35,964
+triangles**, one rock costing more than two hundred grass tufts.
+
+### The impostor ring
+
+| | without LOD | shipped |
+| --- | --- | --- |
+| Impostors at High | 1,439 | 612 |
+| Rebuild, worker ms | 1,432 | **399–810** |
+
+Rebuilt every 16 m of movement. The spread is contention on this box, which
+was running other work all night; take the low end as the real figure.
+
+### Self-tests
+
+Eight, up from six. All pass.
+
+```
+winding             49252 triangles checked, 0 wrong
+ao cost             75 chunks, +73.1% quads, +51.5% ms
+tree borders        250 chunks, 0 differed under a 6x margin
+species borders     7 species stamped across chunk boundaries, 0 wrong
+sky reserve         4 scales checked, 0 short
+flora determinism   25 columns, 1574 instances, 0 differed
+flora removal       78 instances -> 77, 0 wrong
+chunk determinism   same hash twice
+edit during generation, facing, day cycle, config contract   all pass
+```
+
+**Two of the three new tests found real bugs before they shipped**, which is
+the whole argument for writing them:
+
+- **`sky reserve`** caught the tree-height reserve scaling its own safety
+  margin. At `tree_size_scale` 0.5 the world reserved 23 blocks of sky for a
+  tree that needs 24. The symptom would have been heroes with flat tops, in
+  some columns, on small-scale worlds only.
+- **`species borders`** is the definition of the border-safe stamp stated
+  directly: draw a tree once into an unbounded buffer, again into every chunk
+  around it, and require the union of the clipped copies to equal the whole.
+  Six of the seven shapes had never been drawn across a boundary before it.
 
 ---
 
 ## The acceptance test
 
-> Within two minutes of walking from spawn, Marcel should be able to frame a
-> mountain, its forested slopes, and a lake in one screenshot.
+> Standing inside the forest at dusk, it reads as a forest: trunks around you,
+> undergrowth at your feet, canopy overhead, and the treeline visible as a
+> thinning to twisted pines above. From the meadow below, that same forest is
+> still there at 300 m.
 
-**Passes, and now by construction rather than by luck** — Stage 12 requires a
-mountain within 600 m and water within a two-minute walk before it will accept
-a spawn, and all ten test seeds satisfy it. `build/tour/v2-final/6-postcard.png`
-is the frame.
+`11-forest-dusk.png` is the first sentence, `6-postcard.png` and
+`9-treeline.png` the second. Judge them yourself; they were composed on a
+software renderer.
 
-The plan's three additions for v2, judged against the same seed's baseline:
+The three additions:
 
-**"The corrugation is gone, and there is real flat ground."** Yes, and it is
-the largest single change in the run. The share of map under 5° went from
-1.30% to 24.12%, and 4-valley-floor.png went from a chaotic staircase where the
-tour could not find anywhere level to a meadow you can stand on. The traversal
-probe is the other half of the evidence: the same walk that managed 1.35 m/s
-before now runs at 12.82 m/s. **Caveat**: that is the coarse ground. The detail
-layer still puts half-metre steps everywhere at block scale — see the fourth
-judgement item at the top.
-
-**"The scale reads."** Yes. Relief went from 134 m to 400 m, and everything in
-the world now measures between 1:3.5 and 1:4.0 against its real equivalent
-except the player, who is life-size on purpose. From the valley floor a
-mountain is something you would have to climb.
-
-**"The world does not look flat-shaded and samey."** Yes on both halves. Baked
-AO makes blocks read as blocks up close — the summit shots before and after are
-the clearest single comparison in the set. And the seven zones read as distinct
-bands at distance: meadow green, forest dark green, alpine yellow-green, heath
-rusty red-brown, rock grey, snow white. Meadow is 30% of the map instead of
-57%.
+- **A meadow is not one quad.** Compare `build/tour/stage4/1-spawn.png` with
+  `build/tour/foliage-final/1-spawn.png`. Same terrain, same seed, same camera.
+- **Every species is tellable from the others in the gallery** without reading
+  the label. `build/gallery/foliage-final/gallery.png`, and one close-up each.
+- **Nothing moved that should not have.** Heightmap hash, zone shares and spawn
+  identical, line for line, at every stage.
 
 ---
 
 ## Tuned blind — re-check these first
 
-Every value here was chosen by looking at a software-rendered screenshot on a
-box with no display, or in three cases by looking at no screenshot at all.
-They are all in `WorldgenConfig` and all reachable from the **F4** panel, so
-each one is a ten-second reroll away from being something else. Previous values
-are kept beside the new ones rather than deleted.
+Everything in this section was judged on OpenGL Compatibility under Xvfb.
+Nothing here was chosen from a screenshot of the world; all of it was chosen
+from the model gallery, which is the whole reason Stage 1 built one.
 
-| Knob | Was | Now | What it does | How it was judged |
-| --- | --- | --- | --- | --- |
-| `ao_strength` | — | 0.45 | how dark an enclosed corner goes | convention; screenshot |
-| `msaa_level` | off | 4× | antialiasing | not judged — cannot be, here |
-| `terrace_height` | — | 8 blk | shelf spacing | number (flat ground) |
-| `terrace_sharpness` | — | 1.5 | how much of a shelf is flat | number, traded against lakes |
-| `hills_gate_strength` | — | 1.0 | hilly vs flat districts | number, and a weak one |
-| `slope_zone_strength` | — | 1.0 | slope-aware zoning on | screenshot |
-| `rock_slope_deg` | — | 78° | steep ⇒ bare rock | **share budget, not physics** |
-| `snow_max_slope_deg` | — | 72° | snow slides off steeper | screenshot, second attempt |
-| `color_jitter_value` | — | 0.05 | per-vertex brightness | **not judged** |
-| `color_jitter_hue` | — | 0.02 | per-vertex hue tilt | **not judged** |
-| `color_jitter_blocks` | — | 12 blk | tint cell size | **not judged** |
-| `slope_tint` | — | 0.10 | steep faces darker | **not judged** |
-| `aspect_tint` | — | 0.06 | sun-facing warmer | **not judged** |
-| `bench_strength` | — | 0.7 | alpine benches | **not judged — see below** |
-| `plateau_strength` | — | 0.6 | high tableland | **not judged — see below** |
-| `lake_max_depth` | 10 blk | 2 blk | how far basins fill | number, four times over |
-| `lake_min_depth` | — | 1 blk | below this it is wet ground | number |
-| `shore_flat_blocks` | — | 4 blk | detail fade at the water line | screenshot |
-| Heath colour | — | `#8C5F4B` | the rusty band | screenshot |
-| Alpine colour | — | `#A7B860` | yellow turf band | screenshot |
-| Shore colour | — | `#BFB48C` | wet gravel | screenshot |
+### Leaf and bark colours (`Block.COLORS`, ids 12–22)
 
-**The five colour-tint knobs and the two masked-terrace knobs were never seen
-at all.** For the tints, the software renderer's tonemapping is different
-enough that a 5% brightness jitter is not something I would trust myself to
-judge from it. For the benches and plateaux, the probe genuinely cannot help:
-they are local by design, so the world-wide share of map under 5° moves from
-25.64% to 25.67% whether they are on or off. **Walk a mountain shoulder and
-look.**
+Stored linear, authored as sRGB hex. `LEAVES` (spruce A) and `TRUNK` keep their
+old ids and values, so nothing already in the ground changed colour.
 
-`rock_slope_deg` deserves its own line. Vegetation genuinely stops around
-40–45°, and at 45 that rule converts 29% of the map, overshoots rock's 11%
-target by **nineteen points** and collapses snow to 0.8%. "Steep faces become
-rock at any altitude" and "zone shares still within tolerance" cannot both hold
-on terrain this steep. The threshold is therefore set by the share budget, and
-the honest consequence is that the rock rule barely fires below the treeline.
-**If you want visible crags in the forest, this is the knob, and the shares
-will move.**
+| Block | hex | Note |
+| --- | --- | --- |
+| `LEAVES_SPRUCE_B` | `#557F38` | shade B of the existing `#4E7A32` |
+| `LEAVES_BEECH` / `_B` | `#6E9C3E` / `#78A448` | mid green, lighter than spruce |
+| `LEAVES_LARCH` / `_B` | `#B89B3C` / `#C2A649` | yellow-gold — the loudest new colour |
+| `LEAVES_PINE` / `_B` | `#3C6B4C` / `#437356` | krummholz, bluish |
+| `LEAVES_BIRCH` / `_B` | `#9CBF57` / `#A6C763` | light yellow-green |
+| `TRUNK_BIRCH` | `#D5D2C4` | pale bark |
+| `TRUNK_DEAD` | `#9A9186` | snag, weathered grey |
 
----
+The A/B pairs are a few percent apart in value and hue and are hashed **per
+tree**, never per block — per-block variation is incompatible with greedy
+meshing and would turn a flat canopy from one quad into hundreds.
 
-## The dry world — the one thing I would change first if you disagree
+### Plant colours (`FloraModels.COLORS`)
 
-Water fell from 8.3% of the map to 0.7%, and 289 lakes became 53.
+Seventeen. Two were re-authored after the gallery showed them failing, and both
+failures are worth knowing about because they are properties of the renderer
+rather than of taste:
 
-This was not one decision. `lake_max_depth` was re-tuned **four times** across
-the run, because every stage that flattened the world changed how far a given
-cap spreads the water:
-
-| After | flat ground | lake_max_depth | largest lake | water |
-| --- | --- | --- | --- | --- |
-| Stage 8 (relief ×2.5) | 5.3% | 11 blk | 1 : 4.0 | 2.4% |
-| Stage 9 (wavelengths) | 12.0% | 5 blk | 1 : 3.0 | 1.7% |
-| Stage 9 (terracing) | 20.3% | 4 blk | 1 : 3.0 | 2.6% |
-| Stage 11 (valley_curve) | 25.6% | 2 blk | 1 : 3.3 | 0.7% |
-
-Each row is inside the plan's own acceptance band of 1:3 to 1:5. Each row is
-drier than the one above it. **The two criteria pull in opposite directions and
-the plan only names one of them.**
-
-There is also a measurement problem underneath it, and you should know about it
-before trusting the column that drove all four decisions. The scale test is
-"largest lake vs a 400 m tarn", and **the largest lake in a world gets bigger
-as the world gets bigger** — that is extreme value statistics, not terrain.
-The world quadrupled in area in Stage 6, which on its own should have moved the
-largest lake by about a factor of two. Held to a fixed 400 m reference, the
-test therefore got roughly twice as strict without anybody deciding it should.
-
-If the world looks too dry on your screen: **`lake_max_depth` 3 gives 1.3%
-water and 91 lakes, 4 gives 1.8% and 121.** Both put the largest lake outside
-the plan's band, at 1:2.7 and 1:2.2 — and I think that band is wrong for a 3 km
-world rather than the lakes being wrong. Your call; the numbers are here so it
-can be one.
-
-A second thing came out of the same corner. Terracing **manufactures water**: a
-perfectly flat shelf with any rim at all floods across its whole width however
-shallow the cap is. Seed 42 produced 185 "lakes" of which **138 were films ten
-centimetres deep** — wet ground drawn as lake surface. `lake_min_depth` now
-discards them. `terrace_sharpness` is the other end of that trade:
-
-| sharpness | under 5° | largest lake | water |
+| Colour | first try | shipped | Why |
 | --- | --- | --- | --- |
-| 1.5 | 20.30% | 1 : 3.0 | 2.6% |
-| 2.0 | 23.10% | 1 : 2.3 | 4.3% |
-| 3.0 | 27.88% | 1 : 1.8 | 7.7% |
+| Grass blade base / tip | `#6E9433` / `#8AA046` | `#79A33C` / `#A8C95E` | Both were darker than the meadow block they stand on. A dark clump on bright ground reads as a shadow, not a plant. The tip is now well above the ground's value. |
+| Boulder | `#8E877A` | `#B4AEA3` | A sensible mid-grey on paper, near-black on screen: a blob has almost no upward-facing surface, so nearly every face it shows the camera is lit edge-on. |
+| Fern frond | `#4A7A34` | `#5E9440` | Almost black against the forest floor. |
+
+The rest, unchanged and unverified: alpine turf `#93A552`, stem `#5C7A2E`,
+mushroom stem `#C9BFA8` and cap `#D96A4A`, heath shrub `#96604A` / `#A06B4E`,
+reed `#9C9552`, firefly `#FFE9A0`, and the five flower heads — white `#F2EFE2`,
+yellow `#E8C64A`, purple `#9B6FC4`, red `#C9504A`, alpine `#D8E4F0`.
+
+### Tree shapes
+
+All seven, in `TreeSpecies.SPECIES`. Heights and crown radii are the plan's
+own numbers; what was chosen by eye is where the crown starts up the trunk, and
+these read differently at different distances:
+
+| Species | Crown base | Note |
+| --- | --- | --- |
+| spruce, larch | 28% of height | The whorl — alternate layers one block narrower — is what separates a spruce from a traffic cone. Judge it in the close-up. |
+| beech | 40% | |
+| birch | 55% | Trunk drawn to full height, because a birch is recognised by its bark. |
+| krummholz | ground | Leans one block at the top half. |
+| hero | its parent's | Always a 2 × 2 trunk. |
+
+### Plant models
+
+Nineteen, in `FloraModels.voxels_for()`. Sizes are the plan's; the shapes are
+not. The ones I would look at first:
+
+- **The fern.** One-voxel fronds read as a spider. Fronds are now two voxels
+  across where they are widest, and it is better, but it is the model I am
+  least happy with.
+- **The grass tufts.** Only five voxels tall at 6.25 cm each, so the shape can
+  do very little and the base-to-tip colour gradient is doing most of the work.
+- **The impostor dome** (beech, birch, hero at distance) is an octahedron, and
+  from some angles it reads as a floating diamond rather than a crown. The plan
+  asked for a stacked octahedron; this is one stack.
+
+### Densities
+
+Every one is in the F4 panel. `flora_draw_fraction` thins everything at once
+without moving anything, which is the knob to reach for first.
 
 ---
 
 ## Departures from the plan, and why
 
-Every one of these is a place where the plan said one thing and this run did
-another. None of them was a judgement call I wanted to make alone; all of them
-were forced.
+**1. `TreeSpecies` arrived in Stage 1 rather than Stage 2.** The gallery needs
+something to stamp through, and the alternative was a copy of the tree code
+living in a tool for two stages. The file was created holding the original cone
+unchanged; Stage 2 then moved the world onto it and proved the count was
+identical.
 
-**1. `voxel_radius_chunks`, `far_step`, `fog_start_m` and `fog_end_m` moved out
-of `PROPERTIES`.** The plan's hard rule 2 says every config field joins that
-array. Those four were in it, which meant a laptop could not join a desktop —
-their config hashes differed — and if they somehow did, `from_dict()` would
-overwrite the joiner's view distance with the host's. **Stage 4's own preset
-would have shipped as a setting that breaks multiplayer the moment anyone used
-it.** None of the four can move a block: an edit outside a client's voxel
-radius is still recorded in `World._edits` and replayed when that chunk loads.
-Verified with two headless peers at different presets.
+**2. Four config knobs retired, and one added, in Stage 3.**
+`tree_trunk_min/max` and `tree_canopy_min/max` described ONE tree because there
+was one. Seven species cannot share four numbers — a krummholz is 3 blocks and
+a hero is 42 — so per-species sizes moved into the table where they can be read
+next to each other, and `tree_size_scale` replaces them as the thing that
+genuinely applies to all of them at once. `apply_world_scale()` sets it from
+the same 26–42 m derivation it used before, so world_scale still works.
 
-**2. `ao_strength`, `msaa_level` and the five colour knobs never joined
-`PROPERTIES` either**, for the same reason in a milder form. A shape knob is a
-determinism contract; a look knob is not. Two machines disagreeing about
-`ao_strength` see the same terrain with slightly different shading, and hashing
-that would turn a cosmetic preference into a refused join.
+**3. `tree_probability` retired for `tree_density_scale` in Stage 4.** "The
+chance in the middle of the forest band" stopped being a single number the
+moment there were five bands with different rules.
+`TerrainGenerator.tree_probability_at()` went with it.
 
-**3. `world_scale` scales wavelengths as well as amplitudes.** The plan's Stage
-8 lists `world_height_blocks`, `max_altitude`, `mountain_amp` and
-`continent_amp` and no frequencies. Scaling only those made the mountain layer
-2.6× taller over the same 150 m footprint, took its characteristic slope from
-67° to 81°, and put **34.7% of the map past 60°** — unwalkable, since the
-character's floor angle is 55, and exactly why the first traversal run wedged
-against a hillside. What that produces is not a bigger mountain, it is a spire.
+**4. Krummholz fades across alpine AND heath together.** The plan says "0.05
+fading to 0 halfway up the alpine band", and in this world alpine is the zone
+immediately above forest with heath above it — so taken literally, krummholz
+would give out before reaching the heath the same sentence puts it in. Read as
+the two bands together: full strength where the forest ends, gone by the
+midpoint of the pair, which is early heath.
 
-**4. The plan is wrong that `terrace_sharpness` 1.0 is a no-op.** At 1.0 the
-transform is `smoothstep(frac)`, an S-curve with zero gradient at both ends —
-already terracing, and it takes flat ground from 11.96% to 15.68% on its own.
-`terrace_height` 0 is the real off switch and is what the knob ships behind.
+**5. The meadow beech/birch split is 3:1, and the plan does not say.** It says
+only "beech/birch/hero". Birch's own row calls it a tree of the shore and of
+meadow *margins*, and a margin species that is half the meadow is not a margin.
 
-**5. Stage 11's items were reordered.** The plan says valley floors, benches,
-shore flats, plateaux, and to stop when the budget runs out. Shore flats were
-promoted ahead of benches because the Stage 9 postcard showed the shoreline as
-the worst thing left in the frame. All four landed.
+**6. The impostor ring has an LOD, and the plan says it should not.** The plan
+says the ring "iterates the same tree candidates with the same hash". Beyond
+1.6× the voxel radius it now iterates every second cell on each axis and draws
+each impostor twice as wide. This is the departure I am least comfortable with
+and the measurement that forced it is:
 
-**6. `zone_blend_blocks` does not scale with `world_scale`**, though the first
-version of Stage 8 scaled it along with the other altitude quantities. A blend
-band is a distance in altitude and the area it covers depends on how steep the
-ground is; on the flats Stage 9 had just created, an entire plain sat inside
-one 15.7-block band and came out as green-and-tan confetti.
+> The full ring at High is 63,000 candidate cells — about 500 ms of worker
+> time. This engine build **serialises GDScript across threads** (the
+> measurements are in the note on `World._max_jobs_in_flight`), so 500 ms of
+> ring is 500 ms of chunk generation not happening. At sprint the ring rebuilds
+> every 1.2 s, so it would have taken forty per cent of every worker in the
+> machine, permanently, to draw trees you cannot reach.
 
-**7. Stage 13's facing fix was verified by assertion, not by a marker mesh.**
-The plan says to swap in an asymmetric mesh and look. The self-test instead
-asserts, across ten directions, that the yaw sends Godot's own
-`Vector3.FORWARD` along the wish direction — and that the OLD expression fails
-the same check, without which it would prove nothing about the bug having been
-real. That is the same identity checked exactly rather than by eye, and for
-every direction rather than the few you would try.
+The near band — which covers the handover, where "the tree you walk up to is
+the tree you saw" actually has to hold — is exact. Skipping is by the cell's
+own parity rather than a counter, so the far forest does not reshuffle when the
+ring is rebuilt around a walking player.
 
-**8. The self-test suite moved from `--script` to a scene.**
-`godot --headless --path . scenes/selftest.tscn`. `--script` replaces the main
-loop and Godot only creates autoloads for a real one, so `World` — which names
-the `Net` autoload — cannot even be compiled under it. The symptom is not that
-error but a much stranger one: `World.new()` reporting that GDScript has no
-function called `new()`. `Engine.register_singleton()` is not a way round it;
-it fills a different table from the one the GDScript compiler resolves autoload
-names against.
+**7. Boulders are 1.0 / 1.8 / 3.0 m but nothing like 24 / 48 / 96 voxels.** The
+plan's sizes and its voxel counts are not consistent with 8 voxels per block: a
+3 m boulder is 48 voxels across and cannot be made of 96 of them. The sizes are
+what you see, so the sizes were kept.
 
-**9. Darker fog with distance was not done.** Since Stage 4 fog is a per-machine
-local setting, and driving it from world position is a runtime change to
-`SkyCycle` rather than a worldgen one. The other two halves of "terrain signals
-distance" — more relief and more scree further out — are in.
+**8. Edited ground carries no plants.** The plan asks that a block edit dirty
+the column so grass never floats over a hole. Recomputing the true surface from
+the edits is the thorough answer; this is the cheap one, and disturbed ground
+having no grass on it is also what a player expects when they drop a slab on a
+meadow.
+
+**9. Boulders and shrubs are not built at 8 voxels per block.** The plan says
+plant models are built at the character voxel scale, 8 to the block. At that
+resolution a 3 m boulder is 48 voxels across and its shell is **35,964
+triangles** — one rock costing more than two hundred grass tufts, and a scree
+field costing more than the entire flora budget by itself. A 90 cm heath shrub
+was 2,184, and heath carries one on about every eighth block.
+
+The fix is not smaller models — the sizes are what you see. It is that **the
+world's own blocks are 50 cm**: a boulder made of 25 cm voxels is still twice
+as detailed as the ground it fell onto, and a shrub at 12.5 cm four times.
+There was never a reason for a rock to be eight times finer than the mountain
+it came off. Boulders now build at 2 voxels per block and shrubs at 4;
+everything a player crouches next to stays at 8.
+
+Large boulder: 35,964 → **1,156** triangles. Shrub: 2,184 → **480**.
+
+**10. Stages 8 and 9 are one commit.** Both touch `flora_placement.gd`.
 
 ---
 
-## Things found along the way that were not in the plan
+## Things the gallery caught
 
-**`mountain_mask_lo`, `mountain_mask_hi` and `lake_max_depth` were missing from
-`WorldgenConfig.PROPERTIES`.** All three shape the world — the mask decides
-where mountains are allowed to exist at all — so two machines disagreeing about
-any of them would have generated different terrain **while the handshake
-reported a match**. That is exactly the silent desync the hash exists to catch.
-Found by auditing the array against the `@export` block.
+Stage 1 built the model gallery before anything else changed, and the plan was
+explicit that models are tuned against it rather than against the world. That
+turned out to be worth more than it sounds:
 
-**The screenshot tour was photographing the night.** A day is 480 s and a
-six-shot tour under software rendering takes about five minutes, so the sun set
-between shot 3 and shot 4 and shots 4 and 5 of every tour this box has ever
-taken came back as black rectangles. It has been like that since v1 and it
-never showed on your GPU, where the tour is over before the light moves. The
-black frames are the obvious half; the half that matters is that a comparison
-harness whose lighting depends on how long rendering took compares the wrong
-thing. `SkyCycle.frozen` now pins it.
+1. **Boulders rendered near-black** at a colour that is a perfectly sensible
+   mid-grey. Blobs are lit edge-on.
+2. **Ferns read as spiders** with one-voxel fronds.
+3. **Grass tufts read as dirt** at a colour darker than the ground.
+4. **A 3 m boulder hid two other models entirely** at a fixed spacing, which is
+   why the strip now measures every mesh, sorts by size, and spaces each row by
+   the widest thing in it.
+5. **The forest-interior tour vantage stood inside a canopy.** It stood at the
+   centre of the densest candidate cell, which is very nearly the definition of
+   where a trunk is, so the acceptance shot for the whole plan came back as a
+   green rectangle. It now searches the dense window for the block furthest
+   from any trunk.
 
-**The self-test suite could report success while a test crashed.** A test
-declared `-> int` that hits a runtime error returns 0, which this file read as
-"passed". The Stage 3 test crashed on its second line and the suite printed
-"all passed" twice before that was noticed. The tests are now untyped, so an
-aborted one returns `null` — a value no test returns on purpose — and the
-harness names it.
+Every one of those would have shipped if models had been judged from the world.
 
-**The player would have frozen at spawn on most seeds.**
-`_release_player_when_ground_exists()` waited for the chunk at (0, 0), and
-Stage 12 moved spawn off the origin. The world loads chunks around the PLAYER,
-so a spawn further from the origin than the voxel radius — 192 blocks at High,
-against a spawn search ranging over 750 — means the chunk at (0, 0) never
-loads and physics is never re-enabled. **Seed 42 spawns 131 blocks out and
-worked by luck.** Found by the traversal probe reporting 0 m walked in 90
-seconds.
+---
 
-**The shore-flat fade was reading the wrong water level.** `Lakes.water[]`
-holds the priority flood's SPILL level — the lip the basin would pour over —
-and the actual surface is capped far below it for a broad shallow basin. The
-fade was therefore applied in the wrong altitude band and the shoreline stayed
-exactly as broken as before the fix. The Stage 11 postcard is what caught it.
+## The bug that took longest, and what it teaches
 
-**Adding a new `class_name` file needs the editor import re-run** —
-`godot --headless --editor --quit --path .` — before the class resolves
-anywhere. Until then the symptom is, again, "Nonexistent function 'new' in base
-'GDScript'", on a completely different class.
+**Every triangle in `FloraModels` was wound backwards** — all six face
+directions — from Stage 5 until the end of Stage 10.
+
+It did not present as a winding bug. The models were not inside out and nothing
+disappeared. Because the blobs are solid and most of their faces are culled as
+interior anyway, the only symptom was **thin horizontal gaps through rounded
+models**: a boulder read as sedimentary layers, which looks almost deliberate,
+and a shrub looked like a bush with slices missing.
+
+It survived three wrong explanations, in this order:
+
+1. The raggedness setting chews too much at low resolution → reduced it, no
+   change.
+2. The coarser voxel scale is too coarse → only raggedded blobs above radius 6,
+   no change.
+3. Self-shadow acne on a rounded voxel blob → turned shadow casting off in the
+   gallery to match how the world draws flora, no change.
+
+Each was plausible, each was testable in one gallery run, and each was wrong.
+What found it was checking the six faces against the identity the terrain's own
+winding self-test uses:
+
+```
+(p1 - p0) x (p2 - p0) == -normal
+```
+
+`ChunkMesher` has had that test since v1 and its comment says exactly why:
+getting winding wrong "does not make a face vanish, which you would notice."
+`FloraModels` shipped without one. **It has one now** — `flora winding`, 4,256
+triangles across 19 models — and the lesson is the one already written in the
+mesher: check winding with the cross product, not with your eyes.
+
+The three wrong theories are also why the raggedness rule now scales with
+radius and why the gallery no longer casts shadows from plants. Both of those
+changes are improvements on their own terms; neither was the bug.
+
+---
+
+## Performance, and where it went
+
+Three optimisations were forced by measurement during the run. All three are
+exact — the self-tests report byte-identical output before and after.
+
+**1. The placement product, 68.4 s → 27.5 s** over a whole world, same 73,675
+trees. Written in the order the plan states the formula in, `decide()` was four
+times slower than the single-term rule it replaced, and it runs three million
+times per world on the chunk-generation path. Two rearrangements:
+
+- **Roll against the ceiling first.** Accept requires `hash < p`, and `p` can
+  never exceed the largest base probability anywhere, so a candidate above that
+  bound is rejected on two integer hashes — no heightmap lookup, no noise, no
+  zone resolution. Over half go this way.
+- **Defer the binary terms.** Glade, slope and bench are only ever 0 or 1, and
+  a 0-or-1 term tested *after* the roll accepts exactly what the same term
+  multiplied *into* the roll accepts. The bench test's two noise samples are
+  now paid only by candidates that already won.
+
+**2. A flora column, 34 ms → a fraction of it.** Two rules need to know about
+trunks — grass does not grow through one, mushrooms crowd them — and both were
+calling `TreePlacement.decide()` per BLOCK over the cells that could reach it.
+That is several hundred full placement decisions per column to answer a
+question about a dozen trees. Thirty-six cells cover a column and its margin,
+so they are decided once and the result scanned.
+
+**3. The impostor ring's LOD**, described under Departures.
 
 ---
 
 ## What was NOT done
 
-- **Darker fog with distance.** See departure 9.
-- **Threading the heightmap, the lake flood and the spawn search.** All three
-  are single-threaded main-thread passes and together they are ~11 s of the
-  boot. Not in the plan's scope; it is the next thing worth doing.
-- **A second pass at the mountain silhouette.** The ridged mountain layer still
-  produces sharp combs along a crest — visible in `2-summit.png` in every set.
-  It is v1's silhouette at v2's scale, so it is not a regression, but it is not
-  a Swiss pre-Alp either.
-- **Anything about water beyond keeping it in scale.** Rivers, flow, shorelines
-  with beaches. That is Plan B.
-- **The edit-log compaction** that `IDEAS.md` still lists as blocking terrain
-  destruction. Untouched.
+- **No RPC for gathering.** Stage 9 builds the identity and the removal path
+  and stops, exactly as the plan requires. The comment at
+  `World.remove_flora_local()` writes out the RPC it is waiting for.
+- **Water and rivers.** Deliberately not in this plan. Reeds at the water's
+  edge are the one thing here that touches it, and they use
+  `Lakes.shore_level_at_cell()`, which terrain v2 built for them.
+- **Forward+ was NOT checked.** Nothing in this run has been seen on the
+  renderer you play on. Both shaders compile on Compatibility — the tour is the
+  proof, because a shader that fails to compile turns every plant magenta.
 
 ---
 
 ## The exact next step
 
-**Thread `World.setup()`.** The world spends about 11 seconds on the main
-thread before a single chunk is queued — 5.2 s building the coarse heightmap,
-4.9 s flooding the lakes, 0.8 s searching for a spawn — and then 18–23 s
-streaming chunks. The chunk half is already threaded and costs 1.4 s of main
-thread; the setup half is not threaded at all.
+**Cache tree placement per chunk COLUMN.** It is the one change that would move
+the boot budget materially, and it is well defined.
 
-The heightmap loop is embarrassingly parallel by row and every dependency it
-has is read-only. The lake flood is not parallel, but it does not have to run
-on the main thread either. Doing this would take the boot from about 30 seconds
-to something you would not go and make coffee during, and it is the single
-biggest remaining cost in the whole system.
+`TreePlacement.stamp_chunk()` scans about eighty-one candidate cells per chunk,
+and a column is five or six chunks tall — so **the same eighty-one candidates
+are decided five or six times over for every column in the world**, each
+decision costing several noise samples and a heightmap lookup. Deciding them
+once per column and handing the result to each chunk in it should take a large
+bite out of the 15.45 ms per chunk that generation now costs, and generation is
+where the +76% boot went.
 
-After that, in order: look at the three "wants your judgement" items at the top
-of this file, then decide whether the world is too dry.
+Why it was not done in this run: it needs a cache shared across worker threads,
+and getting that wrong is a determinism bug rather than a crash — the failure
+mode is two players with slightly different forests and no error on either
+side. That is not a thing to write at four in the morning at the end of an
+unattended run. The safe shape is a `Mutex`-guarded dictionary on the
+generator keyed by column, with eviction by distance from the player, and the
+`chunk determinism` self-test is what proves it.
+
+`FloraPlacement` already does exactly this trick one scale down — see
+`_trees_near()`, which took a flora column from 34 ms to a fraction of it by
+deciding thirty-six cells once instead of several hundred times. The same
+argument applies to chunks in a column; only the threading is harder.
+
+If that is not enough, the second-largest term is the **hero's sky reserve**:
+capping the hero at, say, 30 blocks instead of 42 would take roughly a fifth of
+the chunks out of every column in the world for a tree that occurs once per
+300 × 300 m. That is a departure from the plan's 1.6–2.0× and should be a
+deliberate decision rather than a performance accident, which is why it was not
+taken here.
 
 ---
 
 ## Three new TODO(marcel) exercises
 
-Same shape as the v1 three: each has a fallback that works, a hint, and nothing
-depends on it being done.
+Same shape as the existing ones: a working fallback, a hint, and no dependency
+on being done.
 
-1. **`ChunkMesher._ao_curve()`** — the ambient occlusion curve is a straight
-   line and probably should not be. Straight-line spreads the darkening evenly
-   over all four occlusion levels, so level 2 is already noticeably dark — and
-   most of a voxel world is level 2, so most of the world gets a little dirty
-   and the true corners never get to be dramatic. Squaring it is one line.
+1. **`TreePlacement._glade()` — glades are in the wrong places.** Noise picks
+   districts well and glades badly, because a glade is where the light reaches
+   the floor and the terrain already knows where that is. Deliberately the same
+   exercise as `_bench_placement()` in `TerrainGenerator` — it is the same
+   mistake made twice, and the second is easier to see now the first is written
+   down. The interesting part is that slope is already spoken for by
+   `_slope_ok`, so you have to decide which term owns steepness before you
+   write the other.
 
-2. **`Block.aspect_curve()`** — the aspect tint varies smoothly through every
-   angle, which is physically reasonable and visually weak, because almost
-   every face in a voxel world is side-on and gets almost no tint. A real
-   Alpine hillside is two kinds of slope, not a gradient between them.
+2. **`TreePlacement._blend_curve()` — the species blend is a straight line.**
+   Beech gives way to spruce, and spruce to larch, at a perfectly even rate all
+   the way up the forest band. Real forests are one thing for most of their
+   height and change their mind quickly near the top. `pow(t, 1.6)` is the
+   hint. Watch the probe's per-species counts rather than the picture: this
+   moves trees between species without changing the total.
 
-3. **`TerrainGenerator._bench_placement()`** — benches are placed by noise,
-   which is a fine way to pick districts and a poor way to pick a bench. A
-   bench is a place where a slope eases off, and the terrain already knows
-   where those are. This one has a trap in it worth finding: flattening the
-   ground changes its slope, so a rule that reads the slope it is about to
-   change can chase its own tail. The comment says where the trap is; work out
-   whether it is a bug or a feature before relying on it.
+3. **`FloraModels.FIREFLY_SHADER` — the blink is too regular.** One sine,
+   squared: every firefly flashes at the same rate and only the phase differs,
+   so a meadow of them reads as fairy lights. Multiply two sines whose periods
+   do not divide into each other and it becomes flash-wait-flash. The reason to
+   do it in the shader rather than per instance is that there is nowhere to put
+   a per-instance number without costing four floats on every plant in the
+   world.
 
 ---
 
-## What Plan B will need from this work
+## What the water and rivers plan will need from this work
 
-Water, rivers and foliage. Several things here exist specifically for it:
-
-- **`Lakes.shore_level` / `shore_near`** — a dilated field giving the water
-  level near any cell, built by scattering outward from flooded cells rather
-  than scanning for them. Rivers will want the same field and the same trick;
-  a gather pass over 2.25 million cells is not affordable and a scatter from
-  the wet ones is.
-- **`TerrainGenerator.detail_at()` already fades near water**, so anything that
-  puts more water in the world gets a clean edge for free.
-- **The threshold solver closes the loop.** Any new rule that moves cells
-  between zones — a river carving its banks, a flood plain, a burnt area — is
-  absorbed by the correction rounds without touching the solver. Add the rule,
-  and the seven shares hold.
-- **`lake_max_depth` is the water dial** and it is in the F4 panel. Read the
-  "dry world" section above before turning it: it is where this run and the
-  plan's acceptance criteria disagree, and Plan B owns the argument.
-- **Foliage will hit the greedy-meshing constraint** that Stage 10 hit: per-
-  block variation is incompatible with merging. The way round it was to move
-  the variation into the vertices; the way round it for AO was to let the code
-  join the mask and split the quads. Whichever a grass or flower layer needs,
-  both patterns are in `ChunkMesher` with the reasoning written down.
-- **The far field will need to know about water.** It draws terrain only, so a
-  lake more than 96 m away is currently invisible. Nobody has noticed because
-  fog is thick, but a river you can see the length of will make it obvious.
+- **`FloraPlacement.column()` is the hook for anything that grows near water.**
+  It already asks `Lakes.shore_level_at_cell()` twice — once to keep plants out
+  of lakes, once to put reeds at the waterline. A river is a shore level along
+  a line instead of around a basin, and if it can answer that same question,
+  reeds follow it for free.
+- **The decoration layer will carry water plants without changing.** Lilies and
+  bank rushes are two more entries in `FloraModels` and two more lines in the
+  zone table.
+- **`TreePlacement.decide()` is the one place tree placement is decided**, and
+  it already multiplies independent terms. A river wanting a band of willows is
+  one more `base` case, and a river wanting *no* trees in its channel is one
+  more binary gate — which by the note in `decide()` costs almost nothing,
+  because binary gates are tested after the roll.
+- **The far ring will draw them automatically.** It walks the same candidates.
+- **VEGETATION IS CURRENTLY SYMMETRIC AT EVERY WORLD EDGE, and `CLAUDE.md`
+  now says the edges are not.** The snag and krummholz weights ride on
+  `TerrainGenerator.wildness_at()`, which is a Chebyshev distance from the
+  CENTRE of the map - so all four edges get the same wilder, deader forest.
+  That was correct when every edge was impassable peaks. The Second Age's
+  coast edge would get it too, and a coast should not be the wildest place in
+  the world; if anything it is the opposite. Nothing here hardcodes "edge =
+  mountains", but nothing here knows the difference either, and whichever plan
+  makes an edge into a coast will want to look at
+  `TreePlacement._forest_species()` and at `wildness_snag` /
+  `wildness_krummholz` while it is in there.
+- **Watch the sky reserve.** `WorldgenConfig.REF_MAX_TREE_BLOCKS` and
+  `TreeSpecies.max_height()` have to agree, and the `sky reserve` self-test is
+  what keeps them agreeing. If a water plan adds a tall species, that test is
+  the one that will tell you.
 
 ---
 
 ## Where this run met the design
 
-`docs/DESIGN.md` gained a scale section and a traversal section in Stage 6, and
-its "one fixed 1.5 × 1.5 km region" line is now 3 × 3 km with the reasoning
-beside it — including why full scale was rejected in writing, so it is not
-relitigated. `docs/IDEAS.md` no longer describes terrain v1 as upcoming.
+- **THE WORLD IS THE CONTENT.** Wildness now shows in vegetation: the far edge
+  of the world has more dead trees in its forests and gives way to krummholz
+  sooner. Distance reads as difficulty without a number on screen.
+- **TENSE OUT, COZY IN THE LIGHT.** Glowing mushrooms and fireflies are the
+  first thing in this game that only exists after dark, and they are warm and
+  small and in the open. The register is right even though nothing is dangerous
+  yet.
+- **BETTER TOGETHER** is untouched by this plan, which is correct — nothing
+  here is an encounter.
 
-Against the pillars:
-
-- **BETTER TOGETHER.** Nothing here is solo-tuned. Stage 4 made it possible for
-  two players on unequal machines to be in the same world at all, which it was
-  not before.
-- **TENSE OUT, COZY IN THE LIGHT.** The alpine benches are where a campfire
-  goes. `danger_at()` exists, and the terrain already grows wilder with it.
-- **THE WORLD IS THE CONTENT.** The world is four times the area, the mountains
-  are three times as tall, and distance now reads as wildness in the terrain
-  itself rather than only on a map.
-
----
-
-## Traversal — measured, and not fully answered
-
-The plan sets the target at the map diagonal in under six minutes at sprint.
-`TraversalProbe` walks it rather than dividing, because on flat ground the
-crossing time is exactly distance over speed and computing it proves nothing —
-what a division cannot tell you is what the terrain does.
-
-```
-godot --headless --path . -- --host --seed 42 --traverse --view low
-```
-
-It runs in real time and cannot be hurried: Godot advances physics from the
-wall clock. Use `--view low` — the voxel radius decides how much of a moving
-4 km corridor has to be built, and the answer at High is most of a day.
-
-**What was measured, on the finished terrain, seed 42:**
-
-| | |
-| --- | --- |
-| Corner to corner | 4,107 m |
-| Sprint on flat | 13.0 m/s |
-| Speed made good, first 30 s | **12.82 m/s** |
-| Speed made good, first 60 s | 10.20 m/s |
-| Distance covered before wedging | 612–840 m |
-| Implied diagonal at the sustained rate | **5.3 – 6.7 min** |
-
-**The crossing was not completed.** Every run got 600–850 m at close to full
-sprint and then wedged against something it could not walk round. Three
-navigation strategies were tried — alternate sides on every stall, commit to
-one side for several attempts, and lengthen each attempt on a side — and the
-third was *worse* than the second.
-
-Whether that is a fact about the terrain or about the probe is **not resolved**
-and should not be reported as though it were. What can be said is that the
-first 20% of the crossing happens at 79–99% of the theoretical sprint speed,
-which is the number the six-minute target is actually about, and that a probe
-steering blind in a straight line is a much worse navigator than a player
-looking at a mountain and deciding to go round the left of it.
-
-The run before the terrain was flattened is the useful comparison: it managed
-**1.35 m/s** and 68 m, against 12.82 m/s and 386 m now. Whatever is left in the
-way, the corrugated world was not crossable at all and this one mostly is.
-
+Nothing in this run required a pillar to be bent.
