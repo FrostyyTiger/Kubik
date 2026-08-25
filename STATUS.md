@@ -5,6 +5,9 @@ The latest run is **look v1 — the poster**, 2026-08-25, on `feat/look-v1`:
 `docs/status/look-v1-characters.md` and the UI half in
 `docs/status/look-v1-ui.md`.
 
+Since then: `docs/status/flora-streaming.md` — the grass keeps up with the
+player (2026-08-25, `feat/flora-streaming`).
+
 Earlier runs, newest first:
 
 - `docs/status/foliage-v1.md` — foliage v1, 2026-08-24/25

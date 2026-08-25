@@ -234,6 +234,11 @@ godot --headless --path . scenes/selftest.tscn
 # hash of every altitude.
 godot --headless --path . --script scripts/tools/worldgen_probe.gd -- --seed 42
 
+# How the grass keeps up with a moving player: jumps 48 m six times and
+# back, times the terrain and the flora separately after each jump, and
+# reports columns built - which is where the flora cache shows up as zero.
+godot --headless --path . -- --host --seed 42 --flora-probe
+
 # Six screenshots - summit, forest, valley, lake, and a postcard framing
 # a mountain, its forest and a lake together. Writes to build/tour/, or to
 # build/tour/<label>/ with --label, so before and after sets can sit side
