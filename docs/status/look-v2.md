@@ -745,3 +745,81 @@ mount steps three times - ink, gold, paper.
 **Gates, Stage 6:** self-test all passed; character self-test 28 all passed;
 swatches worst delta **2** (no shader or palette touched, and it stayed green);
 probe `76cccdb6` / `da8868d1` / 73,675 trees / spawn `(-44, -124)`.
+
+---
+
+## Stage 7 - Docs
+
+- `docs/DESIGN.md` "Art direction": the three sharpened rules and the new
+  fourth, the shade ink and its `kubik_shade_desat` values, where the keyframe
+  table lives, and a new "the pipeline: linear maths, sRGB on the wire"
+  paragraph covering `Look.to_wire()`, the sky's own conversion, and why
+  `light()` writes the light with `ALBEDO` left white.
+- `README.md`: a "Both renderers" section with the `--rendering-driver opengl3`
+  line, and a "The swatch check" section - what the gate is, the 6-unit
+  tolerance, and `--sheet swatch-ramp` as the instrument one level down.
+- `docs/IDEAS.md`: a look v2 note under Next 3 in the shape of the foliage v1
+  one; the shore's width and meadow patches under Someday.
+- `STATUS.md` replaced by the look v2 status, with the BLOCKING finding named
+  in it so nobody has to open the status doc to learn it exists.
+
+---
+
+# The morning message
+
+**1. Where it is.** Branch `feat/look-v2`, seven commits, **not merged**.
+`main` is untouched. All eight stages ran; none was wrapped early; nothing was
+reverted.
+
+**2. The three things to look at first.**
+
+- `build/tour/look2-4-palette/5-lake.png` - the tarn, the drawn rim, and the
+  whole argument for `LIT_BLEACH = 0`.
+- `build/tour/look2-2-sky/9-treeline.png` - the red zigzag is gone and the far
+  ranges are stacked planes.
+- `build/ui/look2-6/main-menu.png` - the title band, the tapered burst, the
+  paper disc in its gold ring.
+
+Comparison strips: `tools/compare_sheets.py look2-1-light look2-2-sky
+look2-3-ground look2-4-palette` (PIL; on ganymede `~/.venvs/kubik/bin/python`).
+
+**3. BLOCKING.** Forward+ was never exercised - see the top of this document.
+The single command that resolves most of it:
+`<godot> --path . scenes/character/gallery.tscn -- --sheet swatches --strict`.
+Green there and the transfer is right on both. Not green and the one line to
+look at is `Look.OPAQUE_SHADER`'s `kubik_to_linear(COLOR.rgb)`.
+
+**4. For Marcel, one line each.**
+
+- The noon clouds are close to invisible: a correctly encoded sky is pale and
+  `cloud_lit #F2E8D0` has three points of contrast against the `#EBDFC8`
+  horizon. Needs a decision, not a tuning (Stage 2).
+- All four tunics went near-black to satisfy the cloth-to-skin value rule for
+  every selectable skin; it costs race-against-race contrast at 40 m (Stage 5).
+- `masks-40` human vs lizardfolk is **0.913**, unchanged. Hair cannot reach
+  0.75; it needs a body, which was out of scope (Stage 5, Q17).
+- The grain is subtler than the plan's window implies: `grain_amount` 0.065
+  gives sd 0.89 where the plan wants 3-9; sd 3 needs about 0.15 (Stage 3).
+- The contact band gives an 8-point riser step where the plan wants 15; 15
+  needs `contact_band` about 0.47 against a range of 0.65-0.80 (Stage 3).
+- The boulder lit share is 16-25% of surface voxels where the plan wants
+  30-35%; dropping the y cut from 0.4 to 0.25 of the height would do it
+  (Stage 4).
+- Meadow tufts went back to 0.50 on the plan's instruction, undoing a look v1
+  decision; the close-up is busy (Stage 4).
+- The plan asks for the title both inside the sun's ring and on an ink band;
+  the band won and the disc moved up (Stage 6).
+- `dusk_amount()` is non-zero only for `|elevation| < 0.222`, so the character
+  gallery's `--time 0.82` "dusk" sheets have never been shot at dusk. Not this
+  plan's to change; recommend 0.74 for a later one (Stage 1).
+
+**5. The one tunable moved off its start.** `LIT_BLEACH` 0.10 -> **0.00**,
+inside its 0-0.15 range, decided by the table in Stage 4 and judged on
+`5-lake` and `1-spawn`.
+
+**6. What is left.**
+
+- Forward+ verification of everything, and of Stage 0 first.
+- The eight decisions in section 4.
+- No worldgen moved: `76cccdb6` / `da8868d1` / 73,675 trees / spawn
+  `(-44, -124)` after every one of the eight stages.

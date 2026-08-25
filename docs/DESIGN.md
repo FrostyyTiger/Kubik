@@ -51,14 +51,56 @@ differently.
    chamfer, shoulders step, hair is a geometric mass. Trees are cones and
    ziggurats (not yet - see IDEAS).
 5. **One accent.** Gold `#C9A24A`: UI rules, the sun disc, later the
-   campfire's light. Nothing else in the world is gold.
+   campfire's light. Nothing else in the world is gold. The gold has an hour:
+   `Look.accent_color()` reads the keyframe table, dawn `#F2A80D` through noon
+   `#C9A24A` to night `#E8892E`.
+
+**Look v2 (2026-08-25) sharpened three of those and added a fourth.** The five
+stand; these bind on top of them.
+
+1. **Shade is an INK, not a darkness and not merely a colour.** The shade side
+   keeps the surface's *luminance* and takes the ink's *hue*. A multiply cannot
+   do that - it darkens and desaturates together - so the ramp desaturates the
+   albedo toward its own luminance by `kubik_shade_desat` (0.55 by day, 0.75 at
+   night) and then colours the result with the ink. Sharpens rule 1.
+2. **The horizon is not the fog.** Distance bands go to a fog colour a step
+   *darker* than the sky's lowest band, so a far range is a cut-out against the
+   sky and never glass over it. The sky owns its own horizon row; the
+   environment's fog no longer tints it at all. Sharpens rule 3.
+3. **Warmth is in the light, coolness is in the shade, and the albedo has
+   neither.** A palette entry is the thing's colour in flat noon light. The sun
+   makes it warm and the ink makes it cool; nothing bakes a cast into an
+   albedo. Sharpens rule 2.
+4. **What is authored is what is on screen.** An authored hex, lit, at noon,
+   lands at `authored * sun * energy` and nowhere else. Any stage that changes
+   a colour path proves it with the swatch sheet before anyone judges a colour
+   through it: `godot --path . scenes/character/gallery.tscn -- --sheet
+   swatches --strict`. Every swatch within 6 sRGB units of `Look.predict()`, or
+   the stage is not done.
+
+### The pipeline: linear maths, sRGB on the wire
+
+Every palette in the game is stored **linear** and every multiplier that acts
+on one - baked AO, the far field's skirt and altitude band, the aspect tint -
+is a linear multiplication. The **one** conversion is `Look.to_wire()`, called
+by each mesh builder on its final colour at `push_back`, because the renderer
+decodes an 8-bit vertex colour on the way to the shader; push linear and it is
+decoded twice. The sky is converted once on the way out of its own shader,
+which does not get the conversion other surfaces do.
+
+`light()` writes the LIGHT, and `ALBEDO` is white: the albedo travels to it in
+a varying, so it is applied exactly once whatever the renderer does after
+`light()` returns.
 
 Where it lives: `scripts/world/look.gd` holds the one lighting ramp every
-shader in the game is built from, the banded fog and the sky; `SkyCycle`
-publishes the shade and fog colours by time of day; the UI theme is
-`assets/ui/deco_theme.tres` (paper `#F2E8D0`, ink `#1E2430`, gold, alpine blue
-`#2F5D8A`, sun `#E8863A`; Limelight for titles, Josefin Sans for body).
-`docs/plans/look-v1.md` is the full argument.
+shader in the game is built from, the banded fog, the sky, `Look.to_wire()` and
+`Look.predict()`; `SkyCycle.KEYFRAMES` is the time-of-day table - four
+keyframes (dawn, noon, dusk, night) x eleven rows, blended by
+`keyframe_at(elevation, morning)`, and it is the only place an hour's colour is
+decided; the UI theme is `assets/ui/deco_theme.tres` (paper `#F2E8D0`, ink
+`#1E2430`, gold, alpine blue `#2F5D8A`, sun `#E8863A`, pale ink `#7D7C78`;
+Limelight for titles, Josefin Sans for body). `docs/plans/look-v1.md` is the
+first argument and `docs/plans/look-v2.md` the second.
 
 ## Character identity model
 

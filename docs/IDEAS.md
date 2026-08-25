@@ -39,6 +39,21 @@ here on this list is filled by what a playtest taught us.
    follow `Lakes.shore_level_at_cell()` - which is the same question a river
    would have to answer.
 
+   **Look v1 - the poster** put the art direction on screen, and **look v2 -
+   the poster, refined** ran on 2026-08-25 on `feat/look-v2`, all eight stages.
+   [plans/look-v2.md](plans/look-v2.md). Its first stage is the one that
+   matters most: the colour transfer was measured rather than assumed, and it
+   was two bugs - the albedo applied twice, and Lambert's PI in the lit band -
+   so every constant look v1 tuned had been chosen to cancel an error nobody
+   had written down. An authored hex now lands on screen at `authored * sun *
+   energy`, proved by a swatch sheet that runs as a gate every stage. On top of
+   that: the time-of-day sets as a table with dawn and a dusk that is actually
+   reached, shade as an ink, fog that holds hue, monotonic far-field bands,
+   grain instead of jitter, the re-authored palette, solid eyes and hair that
+   breaks the head box, and a UI with a title band. `docs/status/look-v2.md`
+   has every number, every check that failed and why, and one BLOCKING finding
+   for the Windows box.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or
@@ -112,6 +127,19 @@ Deliberately not here:
 
 Not rejected, not queued. Nothing moves up from here without a playtest saying
 it should.
+
+- **The shore's width.** `SHORE` is one block of grey gravel round every lake,
+  and look v2 made it a colour that reads (`#91948E`) rather than a sandy tan -
+  which showed that the *width* is the real problem: a one-block rim reads as a
+  drawn line at 20 m and as nothing at 60 m. A shore that widened with the
+  lake's size would give the postcard shot a foreground. Worldgen, so not look
+  v2's to touch.
+
+- **Meadow patches.** Look v2 put the meadow tuft density back to 0.50 and the
+  close-up is busy with it - the "confetti" look v1 named. The interesting
+  version is not a density number at all: drifts, the way `_meadow()` already
+  clusters flowers, so a meadow is patches of tall grass in a shorter field
+  rather than an even scatter at any density.
 
 - Explosions that destroy terrain. Wanted, but it drags two roadmap items
   forward with it: the edit log grows without bound and is sent in full to
