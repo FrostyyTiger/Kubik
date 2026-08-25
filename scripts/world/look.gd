@@ -549,6 +549,19 @@ static func _make(code: String) -> ShaderMaterial:
 	return m
 
 
+## THE HOUR'S GOLD, in sRGB, for anything that is drawn rather than lit.
+##
+## The sun disc, a nametag's rule, and later the campfire: things that are the
+## poster's ACCENT rather than a surface the ramp lights. It reads the same
+## keyframe table SkyCycle publishes from, so the UI's gold and the world's
+## gold are the same decision - dawn #F2A80D, noon #C9A24A, dusk #E8A02E,
+## night #E8892E.
+##
+## sRGB out, because its callers are Controls and Label3Ds, which take sRGB.
+static func accent_color(elevation: float, morning := false) -> Color:
+	return (SkyCycle.keyframe_at(elevation, morning)["accent"] as Color).linear_to_srgb()
+
+
 # --- The wire ------------------------------------------------------------------
 
 ## THE ONE CONVERSION, and the only one in the whole colour path.

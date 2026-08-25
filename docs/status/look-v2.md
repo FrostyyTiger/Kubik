@@ -691,3 +691,57 @@ is the gear placeholder, not geometry; the 4 m sheet shows the head clean.
 **Gates, Stage 5:** self-test all passed; character self-test 28 all passed;
 swatches worst delta **2**; probe `76cccdb6` / `da8868d1` / 73,675 trees /
 spawn `(-44, -124)`.
+
+---
+
+## Stage 6 - UI
+
+**Shipped.**
+
+- **Sunburst**: `RAY_PAIRS` 24 - 48 rays, long and short alternating, each a
+  tapered 4-gon narrowing to 0.15 of its base by the tip. Look v1 drew 14
+  undifferentiated wedges of constant width, which is a pie chart.
+- **The disc** is paper inside a 4 px gold ring, not solid gold.
+- **Title band**: a full-width ink band with the double rule along its top
+  edge, the title in paper caps on it, the subtitle in gold.
+- `DecoRule` inset 8 px with 5x5 gold terminals at each end.
+- `DecoPanel.stepped()`: ink r14, gold r10 inset 5, paper r6 inset 10, applied
+  to the creation screen's preview mount. Also `DecoPanel.draw_stepped()` for a
+  Control that is not a panel.
+- `Deco.INK_PALE = #7D7C78`, and `Deco.dots()`, `Deco.chevron()`,
+  `Deco.roundel()`, `Deco.frame()` - four drawn ornaments, one `_Ornament`
+  Control behind them.
+- `Look.accent_color(elevation, morning)` reads the keyframe table's `accent`
+  row, so the UI's gold and the world's gold are one decision.
+
+### The band is positioned from the type, not from a fraction
+
+`PosterBackdrop.set_title_band(rect)` takes the Title label's real global rect;
+`main_menu.gd` calls it deferred and on every resize. A band placed at "0.16 of
+the window" would be right at 1280x720 and wrong everywhere else, and a band
+that misses the type it is meant to carry is worse than no band. Zero height
+means no band, which is what the creation screen wants.
+
+### Two instructions that cannot both be true
+
+The plan's sunburst note says *"paper disc with a 4 px gold ring; the title is
+ink on paper inside the ring"*. Its title-band note says *"a full-width ink band
+0.16 h ... title in paper caps"*. The title cannot be ink-on-paper inside a disc
+and paper-on-ink on a band at once.
+
+**The band won**, because it is the more specific instruction - it carries
+sizes, a tracking and a colour for the subtitle - and because it is what makes
+the title read. The disc moved up (`SUN_Y` 0.21 -> 0.055, radius 78 -> 62) so
+it reads as a sun **rising behind** the title band rather than as the sliver of
+gold it became when the band was first drawn over it. Recorded rather than
+guessed at; one line to move it back.
+
+**Eye**, on `build/ui/look2-6/main-menu.png`: rays alternate long and short and
+taper; the disc is paper in a gold ring; a full-width ink band carries KUBIK in
+paper caps with the double rule on its top edge and the subtitle in gold under
+it; the rules have square terminals. On `character-creation.png`: the preview
+mount steps three times - ink, gold, paper.
+
+**Gates, Stage 6:** self-test all passed; character self-test 28 all passed;
+swatches worst delta **2** (no shader or palette touched, and it stayed green);
+probe `76cccdb6` / `da8868d1` / 73,675 trees / spawn `(-44, -124)`.
