@@ -805,11 +805,11 @@ const FOG_START_RATIO := 0.4
 ## across them as soft blotches, and doubling it doubled the blotches. 0.07
 ## is where it reads as ground again. Grain would need per-block colour, which
 ## greedy meshing rules out - see Block.jitter().
-@export var color_jitter_value := 0.07
+@export var color_jitter_value := 0.0
 
 ## Red-against-blue tilt, as a fraction. Smaller than the value jitter: a hue
 ## shift is much more visible than a brightness shift at the same magnitude.
-@export var color_jitter_hue := 0.03
+@export var color_jitter_hue := 0.0
 
 ## Blocks per tint cell. 6 blocks is 3 m - about a player and a half, so the
 ## grain is a texture on the ground rather than a patchwork of fields. Was 12
@@ -823,6 +823,20 @@ const FOG_START_RATIO := 0.4
 ## aspect, not lighting - see Block.aspect_shade(). Look v1 doubled it and
 ## made the curve pick a side, so a slope is two tones meeting at the ridge.
 @export var aspect_tint := 0.18
+
+## THE GRAIN, look v2 Stage 3. The tooth of the paper: a hash of the world-space
+## half-metre cell, offsetting value by grain_amount and hue by grain_hue. Not a
+## texture - hard rule 3 - and not per-vertex jitter either, which is what this
+## replaces: jitter varied a whole QUAD and read as blotches, this varies a cell
+## and reads as a surface. Terrain only; figures never take it.
+@export var grain_amount := 0.065
+@export var grain_hue := 0.03
+## Gate the grain to the top share of cells at a fixed step, for materials flat
+## enough that an even grain reads as noise. 0 is off, and it is off.
+@export var grain_sparse := 0.0
+## How dark the bottom half-metre of a vertical face goes, so a terrace riser
+## has a line under it. 1.0 is off.
+@export var contact_band := 0.72
 
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
@@ -947,6 +961,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
+	"grain_amount", "grain_hue", "grain_sparse", "contact_band",
 ]
 
 

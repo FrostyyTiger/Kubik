@@ -424,3 +424,86 @@ protocol 5 rather than invented.
 **Gates, Stage 2:** self-test all passed; character self-test 28 all passed;
 swatches worst channel delta **1**; probe `76cccdb6` / `da8868d1` / 73,675
 trees / spawn `(-44, -124)`.
+
+---
+
+## Stage 3 - Ground: grain, the contact band, the material split
+
+**Shipped.**
+
+- `Look.OPAQUE_SHADER` grows a `vertex()` writing `world_pos` and
+  `world_normal`, a 3-integer hash, and four per-material uniforms:
+  `grain_amount` 0.065, `grain_hue` 0.03, `grain_sparse` 0 (off),
+  `contact_band` 0.72. `mod(floor(world_pos / 0.5), 1024.0)` before the hash
+  (Q11); grain fades to nothing between 20 m and 45 m of depth whatever the
+  fog is doing (Q12), so the far field never shimmers.
+- `Look.figure_material()` sets `grain_amount 0` and `contact_band 1.0`: a
+  character is printed flat, and a line under its feet would follow it around.
+- `Look.apply_local_knobs(config)`, called from `game.gd` beside
+  `FloraModels.apply_local_knobs()` - the existing path (Q21). Four new F4
+  entries under "poster:".
+- `color_jitter_value` 0.07 -> **0.0**, `color_jitter_hue` 0.03 -> **0.0**.
+  `Block.jitter()` stays; it is a no-op at 0.
+- The swatch sheet forces `grain_amount` and `grain_hue` to 0 for its own shot
+  and records `grain_forced_off: true` in `swatches.json`. A 1.2 m swatch is
+  two grain cells across, and a 9x9 sample would otherwise measure whichever
+  cell it landed in.
+
+### A bug this stage introduced and fixed: NORMAL is view-space
+
+`fragment()`'s `NORMAL` is in **view** space. The contact band was written
+against `abs(NORMAL.y)`, which therefore meant "how much this face points at
+the top of the screen", not "how much it points up" - so flat ground took a
+contact band whenever the camera was pitched. It cost the swatch gate: two lit
+swatches came back 8 units dark, which is over tolerance, on a stage that does
+not touch the transfer at all.
+
+Fixed with a `world_normal` varying set in `vertex()` from
+`MODEL_MATRIX * vec4(NORMAL, 0.0)`. The swatch sheet went straight back to a
+worst delta of 2. **This is the only thing in the run that the swatch gate
+caught that no other check would have**, which is the argument for the gate.
+
+### Sampled checks
+
+| check | shot, px | measured | window | verdict |
+| --- | --- | --- | --- | --- |
+| grain on flat ground | `8-meadow-closeup` (150,430) 30x30 | V sd **0.89** (Stage 2 at the same spot: 0.01) | sd 3-9 | **fail, see below** |
+| terrace riser, top vs bottom | `3-forest-slope` (400,500) vs (400,512) | V 49.5 -> 41.4, **8.1 below** | >= 15 below | **fail, see below** |
+| no grain on figures | gallery `lineup-front` | clean; the pad under them is not | - | **pass** |
+
+**Both failures are the plan's own numbers, not a mis-implementation, and both
+are arithmetic that can be checked without rendering anything.**
+
+*The grain.* `grain_amount` 0.065 is +-6.5% in LINEAR albedo. At the meadow's
+V 68 that is about +-1.3 points of sRGB value, so a region spanning many cells
+lands near sd 0.9 - not 3-9. Reaching sd 3 needs `grain_amount` around 0.15;
+the tunable's range is 0.04-0.08. Left at the plan's 0.065.
+
+The 30x30 window is also not measurable as written on this shot: near the
+camera a half-metre cell is about 40 px, so a 30x30 region sits INSIDE one cell
+and reads sd 0; further out the same window catches flora and terrace edges,
+which dominate the variance (Stage 2 and Stage 3 both measure sd 3.5 at
+(300,240), and Stage 2 has no grain at all). The isolated number above is from
+a genuinely flat patch, and it is the honest one.
+
+*The contact band.* 0.72 is a linear multiply. At a riser measuring V 49.5
+(linear 0.2095), 0.72 gives linear 0.1508 = **V 42.5**, and it measured 41.4.
+The band is doing exactly what the constant says. A 15-point drop needs
+`contact_band` about **0.47**; the tunable's range is 0.65-0.80.
+
+**Eye.** `8-meadow-closeup` - the grain is there, one block across, a faint
+half-metre checker rather than blotches, and terrace edges are lines. Gallery
+`lineup-front` - the pad is grained, the four characters are not, and the edge
+between a figure and the ground is clean.
+
+**FOR MARCEL.** Both numbers above are one-line decisions: if the grain should
+be as strong as the plan's sd window implies, `grain_amount` wants to roughly
+double to 0.13-0.15 and its F4 range go with it; if the contact band should be
+the 15-point line the plan describes, it wants about 0.47 rather than 0.72.
+Neither was changed, because both sit outside the ranges section 4 allows the
+agent to move inside.
+
+**Gates, Stage 3:** swatches worst delta **2**; self-test all passed;
+character self-test 28 all passed; probe `76cccdb6` / `da8868d1` / 73,675
+trees / spawn `(-44, -124)` - unchanged, which also proves the jitter knobs are
+not hashed.

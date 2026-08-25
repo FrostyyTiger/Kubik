@@ -179,10 +179,65 @@ const OPAQUE_SHADER := """
 shader_type spatial;
 render_mode cull_back, ambient_light_disabled, specular_disabled;
 """ + HEADER + FOG_FN + """
+// GRAIN, AND IT IS NOT A TEXTURE. Hard rule 3: no new textures, ever. This is
+// a hash of the world-space half-metre cell the fragment falls in, which gives
+// every block face its own small offset in value and a smaller one in hue -
+// the tooth of the paper a poster is printed on. Off on figures.
+uniform float grain_amount = 0.065;
+uniform float grain_hue = 0.03;
+// Optional: gate the grain to the top `grain_sparse` share of cells at a fixed
+// step, for materials so flat that an even grain reads as noise. 0 is off.
+uniform float grain_sparse = 0.0;
+// How dark the bottom half-metre of a vertical face goes. A printed block has
+// a line where it meets the ground; this is that line, and it is arithmetic.
+uniform float contact_band = 0.72;
+
+varying vec3 world_pos;
+// THE NORMAL IN WORLD SPACE. fragment()'s NORMAL is in VIEW space, so
+// abs(NORMAL.y) there is "how much the face points at the top of the screen",
+// not "how much it points up" - which quietly put a contact band on flat
+// ground whenever the camera was pitched, and cost this stage a swatch gate.
+varying vec3 world_normal;
+
+float hash3(vec3 c) {
+	return fract(sin(dot(c, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+void vertex() {
+	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+}
+
 void fragment() {
 	// The vertex colour IS the albedo. There are no textures in this world.
 	// It arrives sRGB on the wire (Look.to_wire) and is decoded here, once.
 	v_albedo = kubik_to_linear(COLOR.rgb);
+
+	// THE GRAIN. mod() before the hash keeps the argument small: at +-1500
+	// blocks a raw world coordinate loses enough mantissa on a highp float
+	// that the hash starts banding into stripes.
+	vec3 cell = mod(floor(world_pos / 0.5), 1024.0);
+	float h = hash3(cell);
+	float amount = grain_amount;
+	if (grain_sparse > 0.0) {
+		amount = h > 1.0 - grain_sparse ? 0.12 : 0.0;
+	}
+	float g = (h * 2.0 - 1.0) * amount;
+	float t = (hash3(cell + vec3(17.0)) * 2.0 - 1.0) * grain_hue;
+	vec3 grained = v_albedo * (1.0 + g) * vec3(1.0 + t, 1.0, 1.0 - t);
+	// GONE BY 45 m, whatever the fog is doing. Cube World's grain is invisible
+	// by 30 m; past that it stops being a surface and becomes a shimmer, and
+	// the far field - which shares this material - must never show it.
+	float near = 1.0 - smoothstep(20.0, 45.0, length(VERTEX));
+	v_albedo = mix(v_albedo, grained, near);
+
+	// THE CONTACT BAND. Only on vertical faces, and only the bottom half of a
+	// half-metre cell - so a terrace riser has a line under it and a flat
+	// field does not.
+	float up = abs(world_normal.y);
+	float fy = fract(world_pos.y / 0.5);
+	v_albedo *= mix(1.0, mix(contact_band, 1.0, step(0.25, fy)), 1.0 - up);
+
 	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
@@ -456,6 +511,10 @@ static func figure_material() -> ShaderMaterial:
 	if _figure == null:
 		_figure = _make(OPAQUE_SHADER)
 		_figure.set_shader_parameter("fog_dark_mix", 1.0)
+		# No grain and no contact band on a figure: a character is printed
+		# flat, and a line under its feet would follow it around.
+		_figure.set_shader_parameter("grain_amount", 0.0)
+		_figure.set_shader_parameter("contact_band", 1.0)
 	_mutex.unlock()
 	return _figure
 
@@ -510,6 +569,21 @@ static func publish(kf: Dictionary,
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_start", fog_start_m)
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_end", fog_end_m)
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_bands", float(maxi(fog_bands, 1)))
+
+
+## Push the terrain's local knobs into its material. Called from the main thread
+## at startup and whenever the F4 panel moves, exactly as
+## FloraModels.apply_local_knobs() is.
+##
+## The FIGURE material deliberately does not take them: its grain is off and
+## its contact band is 1.0 by construction, and an F4 slider that quietly put
+## grain back on the characters would be a bug nobody would look for.
+static func apply_local_knobs(config: WorldgenConfig) -> void:
+	var m := opaque_material()
+	m.set_shader_parameter("grain_amount", config.grain_amount)
+	m.set_shader_parameter("grain_hue", config.grain_hue)
+	m.set_shader_parameter("grain_sparse", config.grain_sparse)
+	m.set_shader_parameter("contact_band", config.contact_band)
 
 
 static func _set_color(name: StringName, c: Color) -> void:

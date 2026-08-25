@@ -442,10 +442,22 @@ func _sheet_swatches() -> void:
 			"name": "%s shade" % SWATCHES[i], "authored": SWATCHES[i],
 			"linear": linear, "lit": false, "centre": sh_c})
 
+	# GRAIN OFF, FOR THIS SHEET ONLY. The grain is +-6.5% of value per half-metre
+	# cell, and a 1.2 m swatch is two cells across - so with it on, a 9x9 sample
+	# of a flat quad measures whichever cell it landed in and misses the
+	# prediction by more than the tolerance for reasons that have nothing to do
+	# with the transfer. Restored afterwards so any later sheet sees the real
+	# ground. Recorded in swatches.json as `grain_forced_off`.
+	var mat := Look.opaque_material()
+	mat.set_shader_parameter("grain_amount", 0.0)
+	mat.set_shader_parameter("grain_hue", 0.0)
+
 	_aim_at_swatches()
 	var image := await _capture()
 	_save_image(image, "swatches")
 	_report_swatches(image)
+
+	Look.apply_local_knobs(config)
 
 
 ## One swatch quad: the poster material, and nothing thrown on its neighbours.
@@ -525,6 +537,7 @@ func _report_swatches(image: Image) -> void:
 		"renderer": RenderingServer.get_video_adapter_name(),
 		"driver": ProjectSettings.get_setting("rendering/renderer/rendering_method", ""),
 		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
+		"grain_forced_off": true,
 	}
 	var path := "%s/swatches.json" % _out_dir
 	var f := FileAccess.open(path, FileAccess.WRITE)
