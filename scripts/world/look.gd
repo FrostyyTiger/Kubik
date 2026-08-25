@@ -104,7 +104,17 @@ const float BAND_HALF_LEVEL = 0.55;
 const float BAND_EDGE = 0.03;
 // The lit band pushed toward white. 0 turns it off. Mirrored by Look.LIT_BLEACH
 // for Look.predict(); change one, change both.
-const float LIT_BLEACH = 0.10;
+//
+// TUNED TO 0 IN STAGE 4, from the plan's starting 0.10 and inside its 0-0.15
+// range. The mix is toward white in LINEAR, so it lifts a dark colour far
+// harder than a light one: at 0.10 it raised the lake's red channel from 0.068
+// to 0.162 and took the water from H 197 S 36 to H 187 S 13 - a grey-teal
+// sheet where the plan asks for a dark tarn. Every dark colour in the game
+// paid the same: the spruce, the heath, the deep leaf.
+//
+// At 0 the lit branch is exactly albedo * sun * energy, which is also the
+// plainest possible statement of "what is authored is what is on screen".
+const float LIT_BLEACH = 0.0;
 
 float poster_band(float ndl) {
 	float lit = smoothstep(BAND_LIT - BAND_EDGE, BAND_LIT + BAND_EDGE, ndl);
@@ -257,7 +267,9 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_disabled, ambient_light_disabled, specular_disabled;
 """ + HEADER + FOG_FN + """
 void fragment() {
-	v_albedo = kubik_to_linear(COLOR.rgb);
+	// The vertex colour is a DARKENING FACTOR per ring, not a colour; the
+	// colour is the hour's, published as kubik_water. See lakes.gd.
+	v_albedo = kubik_to_linear(COLOR.rgb) * kubik_water.rgb;
 	ALBEDO = vec3(1.0);
 	ALPHA = COLOR.a;
 	ROUGHNESS = 1.0;
@@ -564,7 +576,11 @@ static func publish(kf: Dictionary,
 	_set_color(&"kubik_shade", kf["shade"])
 	_set_color(&"kubik_fog_color", kf["fog"])
 	_set_color(&"kubik_fog_dark", kf["fog_dark"])
-	_set_color(&"kubik_water", kf["water"])
+	# THE RIM'S COLOUR, not the body's. The lake mesh carries a darkening factor
+	# per ring (1.0 / 0.915 / 0.847) and the lightest of the three is the rim,
+	# so the published colour is the row lifted by 18% - which lands the BODY
+	# on the authored row and keeps every factor at or below 1.0 in eight bits.
+	_set_color(&"kubik_water", (kf["water"] as Color) * 1.18)
 	RenderingServer.global_shader_parameter_set(&"kubik_shade_desat", kf["shade_desat"])
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_start", fog_start_m)
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_end", fog_end_m)
@@ -593,7 +609,7 @@ static func _set_color(name: StringName, c: Color) -> void:
 ## Mirrors RAMP's LIT_BLEACH. Change one, change both - Look.predict() reads
 ## this and the shader reads the constant in RAMP, and the swatch sheet is what
 ## catches them drifting apart.
-const LIT_BLEACH := 0.10
+const LIT_BLEACH := 0.0
 
 
 # --- The prediction -----------------------------------------------------------

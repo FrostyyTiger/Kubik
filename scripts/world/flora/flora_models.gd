@@ -121,6 +121,14 @@ const FLOWERS := [FLOWER_WHITE, FLOWER_YELLOW, FLOWER_PURPLE, FLOWER_RED]
 # the conversion here rather than with vertex_color_is_srgb on the material,
 # because that flag does nothing under the Compatibility renderer and the tour
 # runs on Compatibility while Marcel plays on Forward+.
+#
+# ... AND sRGB ON THE WIRE since look v2 Stage 0. These entries are still
+# LINEAR and every multiplier that acts on them - baked AO, the far field's
+# skirt and band, the aspect tint - is still a linear multiplication. What
+# changed is the last step: each mesh builder calls Look.to_wire() on its final
+# colour at push_back, because the renderer decodes an 8-bit vertex colour on
+# the way to the shader. Push linear and it is decoded twice. The swatch sheet
+# (`--sheet swatches`) proves the round trip every stage.
 
 enum {
 	C_GRASS_BLADE = 0,
@@ -140,6 +148,9 @@ enum {
 	C_FLOWER_PURPLE = 14,
 	C_FLOWER_RED = 15,
 	C_FLOWER_ALPINE = 16,
+	## Look v2 Stage 4: the sun side of a boulder. Two tones and one straight
+	## edge is the whole of how a poster draws a rock.
+	C_BOULDER_LIT = 17,
 }
 
 ## THE TIP IS MUCH LIGHTER THAN THE BASE, and that is the whole readability of
@@ -164,35 +175,36 @@ enum {
 ## tone lighter than the ground's, its far face a tone darker - which is what
 ## makes the field read as ground with grass in it rather than as confetti.
 const COLORS := [
-	Color(0.1878, 0.3613, 0.0578),   # GRASS_BLADE      #78A244  blade, base
-	Color(0.3278, 0.5395, 0.0976),   # GRASS_BLADE_DRY  #9BC258  blade, sunlit tip
-	Color(0.3372, 0.4342, 0.1022),   # GRASS_ALPINE     #9DB05A  short turf, on #A7B860
+	Color(0.0762, 0.1559, 0.0296),   # GRASS_BLADE      #4E6E30  blade, base
+	Color(0.3278, 0.4678, 0.1022),   # GRASS_BLADE_DRY  #9BB65A  blade, sunlit tip
+	Color(0.4125, 0.4452, 0.1812),   # GRASS_ALPINE     #ACB276  short turf, on #A7B860
 	# LIGHTENED from #5C7A2E, which was half the meadow block's value and read
 	# as a black stick with a white brick on top. A stem is thinner than one
 	# voxel in reality, so at 6.25 cm it is already too wide - making it dark
 	# as well turned a field of flowers into a field of nails.
-	Color(0.2384, 0.3916, 0.0595),   # STEM             #86A845  flower, reed stem
+	Color(0.1559, 0.2623, 0.0630),   # STEM             #6E8C47  flower, reed stem
 	# LIGHTER AND GREENER than the first attempt at #4A7A34, which came back
 	# from the gallery almost black against the forest floor and, with
 	# one-voxel fronds, read as a spider rather than as a plant.
-	Color(0.1170, 0.2918, 0.0578),   # FERN_FROND       #5E9440  fern
+	Color(0.0742, 0.1946, 0.0437),   # FERN_FROND       #4D7A3B  fern
 	Color(0.5841, 0.5210, 0.3916),   # MUSHROOM_STEM    #C9BFA8
-	Color(0.6939, 0.1441, 0.0685),   # MUSHROOM_CAP     #D96A4A
-	Color(0.3050, 0.1170, 0.0685),   # SHRUB_HEATH      #96604A  rusty dwarf shrub
-	Color(0.3515, 0.1470, 0.0762),   # SHRUB_HEATH_B    #A06B4E
+	Color(0.6038, 0.0802, 0.0467),   # MUSHROOM_CAP     #CC503D
+	Color(0.2159, 0.0844, 0.0595),   # SHRUB_HEATH      #805245  rusty dwarf shrub
+	Color(0.2747, 0.1195, 0.0865),   # SHRUB_HEATH_B    #8F6153
 	# LIGHTER THAN IT LOOKS IT SHOULD BE. Authored at #8E877A first, which is
 	# a perfectly sensible mid-grey on paper and rendered near-black in the
 	# gallery: a blob has almost no upward-facing surface, so nearly every
 	# face it shows the camera is a side face pointing away from the sun. A
 	# boulder has to be authored bright enough to survive being lit edge-on.
-	Color(0.4397, 0.4072, 0.3467),   # BOULDER          #B4AEA3  boulder and scree
-	Color(0.3325, 0.3005, 0.0844),   # REED             #9C9552
+	Color(0.4452, 0.4342, 0.3916),   # BOULDER          #B2B0A8  boulder and scree
+	Color(0.2747, 0.2462, 0.0999),   # REED             #8F8859
 	Color(1.0000, 0.8148, 0.3515),   # FIREFLY          #FFE9A0
 	Color(0.8879, 0.8632, 0.7605),   # FLOWER_WHITE     #F2EFE2
-	Color(0.8070, 0.5647, 0.0685),   # FLOWER_YELLOW    #E8C64A
-	Color(0.3278, 0.1590, 0.5520),   # FLOWER_PURPLE    #9B6FC4
-	Color(0.5841, 0.0802, 0.0685),   # FLOWER_RED       #C9504A
+	Color(0.8469, 0.5776, 0.0343),   # FLOWER_YELLOW    #EDC834
+	Color(0.1356, 0.0630, 0.3419),   # FLOWER_PURPLE    #67479E
+	Color(0.5395, 0.0648, 0.1981),   # FLOWER_RED       #C2487B
 	Color(0.6867, 0.7758, 0.8714),   # FLOWER_ALPINE    #D8E4F0
+	Color(0.6308, 0.6038, 0.5395),   # BOULDER_LIT      #D0CCC2  the sun side
 ]
 
 
@@ -297,11 +309,11 @@ static func voxels_for(model: int) -> Array:
 		# 1.0, 2.0 and 3.0 m across. The largest is a LANDMARK - one of them in
 		# a scree field is something to walk towards.
 		BOULDER_S:
-			return _blob(2, 2, C_BOULDER, 101, true)
+			return _blob(2, 2, C_BOULDER, 101, true, C_BOULDER_LIT)
 		BOULDER_M:
-			return _blob(4, 3, C_BOULDER, 202, true)
+			return _blob(4, 3, C_BOULDER, 202, true, C_BOULDER_LIT)
 		BOULDER_L:
-			return _blob(6, 5, C_BOULDER, 303, true)
+			return _blob(6, 5, C_BOULDER, 303, true, C_BOULDER_LIT)
 
 		SCREE_A:
 			# A flat angular chip, 30-50 cm. Wide and one or two voxels thick,
@@ -408,11 +420,23 @@ static func _mushroom() -> Array:
 ## `ragged` chews the surface with a hash so the outline is not a smooth dome.
 ## Boulders take it too, at a coarser setting - a perfectly ellipsoidal rock
 ## reads as an egg.
+##
+## TWO TONES AND ONE STRAIGHT EDGE, and that is the whole of how a poster draws
+## a rock (look v2 Stage 4). `lit_color` < 0 leaves the blob one colour, which
+## is what the shrubs want; a boulder passes BOULDER_LIT and gets a sun side.
+##
+## The edge is a PLANE through the blob's centre, oriented at Block.SUN_ASPECT
+## and tilted up, and only surface voxels in the upper 60% take the light tone.
+## A per-voxel lighting rule would give a rock a soft shoulder, which is the one
+## thing the direction forbids: the poster's rock has a line down it.
 static func _blob(radius: int, height: int, color: int, salt: int,
-		stone: bool = false) -> Array:
+		stone: bool = false, lit_color: int = -1) -> Array:
 	var out := []
 	var rr := float(radius)
 	var hh := float(maxi(height, 1))
+	var plane := Vector3(Block.SUN_ASPECT.x, 0.6, Block.SUN_ASPECT.y).normalized()
+	# Occupancy, so the second pass can ask whether a voxel is on the surface.
+	var filled := {}
 	for y in range(0, height + 1):
 		for z in range(-radius, radius + 1):
 			for x in range(-radius, radius + 1):
@@ -444,6 +468,28 @@ static func _blob(radius: int, height: int, color: int, salt: int,
 							< (0.22 if stone else 0.30):
 						continue
 				out.append([x, y, z, color, 0])
+				filled[Vector3i(x, y, z)] = true
+
+	# THE SUN SIDE, in a second pass, because "surface voxel" is only knowable
+	# once the blob exists: a voxel is on the surface when one of its six
+	# neighbours is missing. Doing it inline against a distance threshold
+	# instead counted interior voxels and put the lit share at 10-17% where the
+	# plan asks for a third of the visible face.
+	if lit_color >= 0:
+		for v in out:
+			if float(v[1]) < 0.4 * float(height):
+				continue
+			if Vector3(float(v[0]), float(v[1]) - hh * 0.5, float(v[2])).dot(plane) <= 0.0:
+				continue
+			var here := Vector3i(v[0], v[1], v[2])
+			var surface := false
+			for n in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0),
+					Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+				if not filled.has(here + n):
+					surface = true
+					break
+			if surface:
+				v[3] = lit_color
 	return out
 
 

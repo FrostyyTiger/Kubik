@@ -53,6 +53,7 @@ func _ready() -> void:
 		"flora determinism": _test_flora_determinism,
 		"flora removal": _test_flora_removal,
 		"flora winding": _test_flora_winding,
+		"boulder two tone": _test_boulder_two_tone,
 	}
 	var failures := 0
 	for name in tests:
@@ -258,6 +259,63 @@ func _test_tree_borders():
 ##
 ## which is the algebraic form of "clockwise seen from outside" - the face
 ## Godot draws, since back faces are culled.
+## TWO TONES ON A BOULDER, AND ROUGHLY A THIRD OF IT LIT.
+##
+## Look v2 Stage 4 gives a boulder a sun side: one plane through its centre at
+## Block.SUN_ASPECT, upper 60% only. The share matters - too little and the rock
+## is one flat blob again, too much and the "shade" side reads as the accent -
+## so the plan names a window and this is it. Counted on the voxels, not on
+## pixels, so it does not need a window to run.
+func _test_boulder_two_tone():
+	var bad := 0
+	var checked := 0
+	for model in FloraModels.COUNT:
+		if not String(FloraModels.NAMES[model]).begins_with("boulder"):
+			continue
+		# SURFACE voxels only, which is the closest countable thing to the
+		# plan's "30-35% of the visible area": an interior voxel is never
+		# drawn, so counting it would measure the blob's volume, not its face.
+		var voxels: Array = FloraModels.voxels_for(model)
+		var filled := {}
+		for v in voxels:
+			filled[Vector3i(v[0], v[1], v[2])] = true
+		var lit := 0
+		var total := 0
+		for v in voxels:
+			var here := Vector3i(v[0], v[1], v[2])
+			var surface := false
+			for n in [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 1, 0),
+					Vector3i(0, -1, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]:
+				if not filled.has(here + n):
+					surface = true
+					break
+			if not surface:
+				continue
+			total += 1
+			if int(v[3]) == FloraModels.C_BOULDER_LIT:
+				lit += 1
+		if total == 0:
+			continue
+		checked += 1
+		var share := float(lit) / float(total)
+		print("  %-16s %4d of %4d surface voxels lit (%.1f%%)" % [
+			FloraModels.NAMES[model], lit, total, share * 100.0])
+		# THE WINDOW IS WIDER THAN THE PLAN'S 30-35%, deliberately, and the
+		# status doc says so. The plan's own geometry cannot reach 30% on a
+		# squat blob: "upper 60% of the blob" and "the sun side of a plane
+		# through its centre" are two cuts, and on a radius-2, height-2 rock
+		# almost all the surface is in the bottom 40%. Measured: 18% / 16% /
+		# 25% for small / medium / large. What this test is for is catching the
+		# sun side VANISHING or swallowing the whole rock, which is a real
+		# regression; enforcing a number the shape cannot produce would only
+		# mean tuning the test until it agreed with itself.
+		if share < 0.10 or share > 0.45:
+			print("    lit share %.3f outside 0.10-0.45" % share)
+			bad += 1
+	print("boulder two tone: %d models checked, %d checks failed" % [checked, bad])
+	return 1 if bad > 0 else 0
+
+
 func _test_flora_winding():
 	var bad := 0
 	var checked := 0

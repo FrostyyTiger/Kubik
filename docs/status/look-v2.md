@@ -507,3 +507,97 @@ agent to move inside.
 character self-test 28 all passed; probe `76cccdb6` / `da8868d1` / 73,675
 trees / spawn `(-44, -124)` - unchanged, which also proves the jitter knobs are
 not hashed.
+
+---
+
+## Stage 4 - The palette, boulders, water, tufts
+
+**Shipped.**
+
+- `Block.COLORS` and `FloraModels.COLORS` re-authored from
+  `art-direction.md` section 3, verbatim. Every entry converted with
+  `Color.html(hex).srgb_to_linear()` and the hex kept in the comment beside it;
+  the round trip was verified back to the source hex before anything was shot.
+- `C_BOULDER_LIT = 17` / `BOULDER_LIT #D0CCC2`, and `_blob()` takes a
+  `lit_color`: a plane through the blob's centre at `Block.SUN_ASPECT` tilted
+  up, surface voxels only, upper 60%. Boulders pass it; shrubs do not.
+- New self-test **`boulder two tone`**.
+- `flora_placement.gd` meadow density 0.34 -> **0.50**.
+- `lakes.gd`: three rings from the lake-id field - rim, shallows, body - each
+  its own run and its own flat quad; the vertex colour is a **darkening
+  factor** (1.0 / 0.915 / 0.847) and the colour is the hour's, published as
+  `kubik_water` lifted 18% so the body lands on the authored row. Alpha 0.92.
+  `Look.WATER_SHADER`: `v_albedo = kubik_to_linear(COLOR.rgb) * kubik_water.rgb`.
+
+### The tunable that was moved: LIT_BLEACH 0.10 -> 0.00
+
+This is the one number this run changed on its own judgement, and it is inside
+section 4's range (0-0.15). The evidence:
+
+`LIT_BLEACH` mixes the lit albedo toward white **in linear**, so it lifts a
+dark colour far harder than a light one. At 0.10 it raised the lake's red
+channel from 0.068 to 0.162. Predicted, at noon, through `Look.predict()`:
+
+| bleach | lake `#4A6A8A` | meadow `#809945` |
+| --- | --- | --- |
+| 0.10 | H 187.1 S **13.2** V 50.6 | H 70.3 S **43.7** V 62.7 |
+| 0.04 | H 196.0 S **24.8** V 47.5 | H 72.0 S 52.6 V 59.6 |
+| 0.02 | H 197.1 S 29.7 V 46.3 | H 72.0 S 57.0 V 58.4 |
+| **0.00** | H 197.6 S **35.7** V 45.1 | H 72.0 S **61.6** V 57.3 |
+| *window* | *H 195-215, S 35-55, V 40-58* | *H 70-90, S 45-60, V 52-66* |
+
+No value satisfies both. At 0.04 the meadow is dead centre and the lake misses
+its saturation floor by 10 points; at 0.00 the lake lands inside and the meadow
+overshoots by 1.6. **0.00 was taken**, because a 1.6-point overshoot on a field
+of grass is invisible and a grey-teal sheet where a dark tarn should be is the
+whole of `5-lake`. It also makes the lit branch exactly `albedo * sun * energy`,
+which is the plainest statement of rule 4.
+
+Measured after the change: meadow **H 70.9 S 59.6 V 52.5** (inside all three).
+
+### Sampled checks
+
+| check | shot, px | measured | window | verdict |
+| --- | --- | --- | --- | --- |
+| meadow | `1-spawn` (640,600) | H 70.9 S 59.6 V 52.5 | H 70-90, S 45-60, V 52-66 | **pass** |
+| water body | `5-lake` (350,320) | H 196.9 S 28.6 V 43.9 | H 195-215, S 35-55, V 40-58 | H, V **pass**; S 28.6 low |
+| lit snow vs sky | `2-summit` (400,500) vs (100,80) | V 83.1 vs 81.2 | snow > sky | **pass** |
+| boulder two tone | self-test | 18.2% / 16.0% / 25.3% of surface voxels lit | plan says 30-35% of visible area | **see below** |
+
+*The lake's saturation.* Predicted 35.7, measured 28.6. The difference is the
+0.92 alpha: the water blends 8% of the grey-brown lake bed underneath it, which
+desaturates. Raising alpha to 1.0 would close it and is inside the tunable's
+range (0.88-1.0), but the plan wants water you can see into and this is the
+last stage that touches it; left at 0.92 and recorded.
+
+*The boulder share.* The plan asks for 30-35% of the visible area and the
+geometry it specifies cannot reach it: "upper 60% of the blob" and "the sun
+side of a plane through its centre" are two cuts, and on a radius-2 rock nearly
+all the surface is in the bottom 40%. Measured 16-25% of surface voxels. The
+self-test asserts 10-45% - wide enough to catch the sun side vanishing or
+swallowing the rock, which is the regression worth catching, and not so narrow
+that it is only agreeing with itself. **For Marcel:** dropping the y cut to
+0.25 of the height would bring it into the thirties.
+
+**Eye.** `5-lake` - a dark blue-teal tarn with a lighter shallows ring drawn
+round its edge, which is the first time the water has read as water rather than
+as a hole. `1-spawn` - a green meadow, neither lime nor olive, purple flowers
+darker than the field, dark-green trees. `9-treeline` - maroon heath, neutral
+rock, stacked ranges.
+
+**For Marcel - the tuft density.** `ZONE_DENSITY[MEADOW]` went 0.34 -> 0.50 on
+the plan's instruction, undoing a look v1 decision whose reason is recorded in
+the file ("at one tuft on every second block the meadow close-up read as
+confetti"). At 0.50 the meadow in `1-spawn` is visibly busy. The argument for
+v2 is that v1 judged that density through the broken transfer, when a tuft
+arrived at double its authored saturation; the argument for v1 is in the shot.
+Worth one look.
+
+The plan also asks for 0.50 "inside 12 m of the player". Placement is
+world-space with no distance ramp, and adding one would mean two players seeing
+different meadows, so it is the flat number - the plan's own fallback.
+
+**Gates, Stage 4:** swatches worst delta **2**; self-test all passed (with the
+new boulder test); character self-test 28 all passed; probe `76cccdb6` /
+`da8868d1` / 73,675 trees / spawn `(-44, -124)` - unchanged, which confirms Q18:
+ground cover is not hashed and the density change does not move the world.

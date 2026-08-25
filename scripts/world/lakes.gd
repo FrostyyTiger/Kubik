@@ -344,6 +344,26 @@ func _find_lakes(heightmap: Heightmap, config: WorldgenConfig, total: int) -> vo
 ## quads instead of 10,000, for nothing but a while loop. Merging in two
 ## dimensions as the chunk mesher does would do better still, and lakes are
 ## flat and few enough that it has not been worth it.
+## Which of the three rings a water cell is in: 0 rim, 1 shallows, 2 body.
+##
+## Chebyshev distance to the nearest cell that is NOT this lake, capped at the
+## shelf width - a full distance transform for three buckets would cost more
+## code than the buckets are worth, and a lake is a few thousand cells.
+func _ring_at(i: int, j: int, id: int, rim_cells: int, shelf_cells: int) -> int:
+	for r in range(1, shelf_cells + 1):
+		for dj in range(-r, r + 1):
+			for di in range(-r, r + 1):
+				if maxi(absi(di), absi(dj)) != r:
+					continue
+				var ci := i + di
+				var cj := j + dj
+				if ci < 0 or cj < 0 or ci >= _cols or cj >= _cols:
+					return 0 if r <= rim_cells else 1
+				if lake_id[ci + cj * _cols] != id:
+					return 0 if r <= rim_cells else 1
+	return 2
+
+
 func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 	if lakes.is_empty():
 		return []
@@ -355,11 +375,24 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 
 	var bs: float = config.block_size
 	var step: int = config.coarse_step
-	# Linear, like the rest of the palette - see Block.COLORS. Look v1: a
-	# flat alpine blue, nearly opaque - #4A90A4 at 0.65 read as a grey-green
-	# sheet once the highlight and the sky ambient that made it blue were
-	# gone, and a poster lake is a colour, not a window onto the lake bed.
-	var color := Color(0.0742, 0.2747, 0.5209, 0.85)   # #4C8FBF
+	# THE COLOUR IS THE HOUR'S, NOT THIS FILE'S (look v2 Stage 4, Q10). Water
+	# is published by SkyCycle as the global kubik_water - a grey dawn, a deep
+	# noon blue, a violet dusk - and the vertex colour carries only a
+	# DARKENING FACTOR, so the mesh does not have to be rebuilt when the sun
+	# moves. The published colour is the RIM's, the lightest of the three, so
+	# no factor here is above 1.0 and nothing clips in eight bits.
+	#
+	# Three rings and one flat colour per quad: a drawn rim one cell wide, a
+	# shallows ring, and the body. That is how a poster draws a lake - an
+	# outline and two fills - and it is why look v1's single flat sheet read
+	# as a hole rather than as water.
+	const RING_FACTOR := [1.0, 0.915, 0.847]
+	const WATER_ALPHA := 0.92
+	# The plan's rim and shelf are 2 and 8 BLOCKS; the lake grid is in cells of
+	# `step` blocks, so they are rounded to whole cells here and the status doc
+	# records what they landed on.
+	var rim_cells := maxi(1, int(round(2.0 / float(step))))
+	var shelf_cells := maxi(rim_cells + 1, int(round(8.0 / float(step))))
 
 	for j in _cols:
 		var i := 0
@@ -368,8 +401,12 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			if id < 0:
 				i += 1
 				continue
+			var ring := _ring_at(i, j, id, rim_cells, shelf_cells)
+			# The run also breaks where the RING changes, so every quad is one
+			# flat colour.
 			var run := 1
-			while i + run < _cols and lake_id[i + run + j * _cols] == id:
+			while i + run < _cols and lake_id[i + run + j * _cols] == id \
+					and _ring_at(i + run, j, id, rim_cells, shelf_cells) == ring:
 				run += 1
 
 			var level: float = lakes[id]["level"]
@@ -388,7 +425,8 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			]:
 				verts.push_back(p)
 				normals.push_back(Vector3.UP)
-				colors.push_back(Look.to_wire(color))
+				var f: float = RING_FACTOR[ring]
+				colors.push_back(Look.to_wire(Color(f, f, f, WATER_ALPHA)))
 			indices.push_back(first)
 			indices.push_back(first + 1)
 			indices.push_back(first + 2)

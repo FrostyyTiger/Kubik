@@ -73,30 +73,43 @@ enum {
 ## Converted here rather than by setting vertex_color_is_srgb on the material,
 ## because that flag does nothing under the Compatibility renderer and this
 ## has to be right on both.
+##
+## ... AND sRGB ON THE WIRE since look v2 Stage 0. These entries are still
+## LINEAR and so is every multiplier that acts on them - baked AO, the far
+## field's skirt and band, the aspect tint, the jitter. What changed is the
+## last step: each mesh builder calls Look.to_wire() on its final colour at
+## push_back, because the renderer decodes an 8-bit vertex colour on the way to
+## the shader, and a linear value pushed straight in is decoded twice. The
+## swatch sheet (`--sheet swatches`) proves the round trip every stage.
+##
+## THE HEXES BELOW WERE RE-AUTHORED in look v2 Stage 4, from
+## docs/research/art-direction.md section 3, against a colour path that was
+## finally measured. Every one of them is what lands on screen at noon, warmed
+## by the sun and nothing else.
 const COLORS := [
 	Color(0.0000, 0.0000, 0.0000),   # AIR          #000000  never drawn
-	Color(0.3231, 0.2747, 0.2159),   # STONE        #9A8F80  bare rock
-	Color(0.2582, 0.1590, 0.0630),   # DIRT         #8B6F47  soil
-	Color(0.2384, 0.4342, 0.0685),   # GRASS        #86B04A  meadow
-	Color(0.6939, 0.5711, 0.2346),   # SAND         #D9C785  unused for now
+	Color(0.4179, 0.3968, 0.3564),   # STONE           #ADA9A1  bare rock - neutral, so warmth is the sun's
+	Color(0.1946, 0.1144, 0.0630),   # DIRT            #7A5F47  soil
+	Color(0.2159, 0.3185, 0.0595),   # GRASS           #809945  meadow - green, not lime
+	Color(0.5711, 0.5271, 0.4072),   # SAND            #C7C0AB  unused for now
 	Color(0.8879, 0.8714, 0.8070),   # SNOW         #F2F0E8
-	Color(0.1022, 0.2623, 0.0452),   # FOREST_FLOOR #5A8C3C
-	Color(0.0762, 0.1946, 0.0319),   # LEAVES       #4E7A32  foliage
-	Color(0.1470, 0.0782, 0.0232),   # TRUNK        #6B4F2A
-	Color(0.5209, 0.4508, 0.2549),   # SHORE        #BFB48C  wet gravel
-	Color(0.3864, 0.4793, 0.1170),   # ALPINE_GRASS #A7B860  short yellow turf
-	Color(0.2623, 0.1144, 0.0704),   # HEATH        #8C5F4B  rusty dwarf shrub
-	Color(0.0908, 0.2122, 0.0395),   # LEAVES_SPRUCE_B  #557F38  spruce, shade B
-	Color(0.1559, 0.3325, 0.0482),   # LEAVES_BEECH     #6E9C3E  beech, shade A
-	Color(0.1878, 0.3712, 0.0648),   # LEAVES_BEECH_B   #78A448  beech, shade B
-	Color(0.4793, 0.3278, 0.0452),   # LEAVES_LARCH     #B89B3C  larch, shade A
-	Color(0.5395, 0.3813, 0.0666),   # LEAVES_LARCH_B   #C2A649  larch, shade B
-	Color(0.0452, 0.1470, 0.0723),   # LEAVES_PINE      #3C6B4C  krummholz, shade A
-	Color(0.0561, 0.1714, 0.0931),   # LEAVES_PINE_B    #437356  krummholz, shade B
-	Color(0.3325, 0.5210, 0.0953),   # LEAVES_BIRCH     #9CBF57  birch, shade A
-	Color(0.3813, 0.5711, 0.1248),   # LEAVES_BIRCH_B   #A6C763  birch, shade B
+	Color(0.1620, 0.0976, 0.0467),   # FOREST_FLOOR    #70583D  brown floor under near-black spruce
+	Color(0.0284, 0.0782, 0.0482),   # LEAVES          #2F4F3E  foliage
+	Color(0.1119, 0.0545, 0.0395),   # TRUNK           #5E4238  
+	Color(0.2831, 0.2961, 0.2705),   # SHORE           #91948E  wet gravel - grey, and the rim is drawn
+	Color(0.3325, 0.3372, 0.1384),   # ALPINE_GRASS    #9C9D68  short olive turf
+	Color(0.1470, 0.0409, 0.0331),   # HEATH           #6B3933  maroon dwarf shrub
+	Color(0.0395, 0.1070, 0.0648),   # LEAVES_SPRUCE_B #385C48  spruce, shade B
+	Color(0.0782, 0.1946, 0.0423),   # LEAVES_BEECH    #4F7A3A  beech, shade A
+	Color(0.1144, 0.2542, 0.0612),   # LEAVES_BEECH_B  #5F8A46  beech, shade B
+	Color(0.5089, 0.3185, 0.0704),   # LEAVES_LARCH    #BD994B  larch, shade A - the warm accent
+	Color(0.5841, 0.3864, 0.1095),   # LEAVES_LARCH_B  #C9A75D  larch, shade B
+	Color(0.0497, 0.1119, 0.0356),   # LEAVES_PINE     #3F5E35  krummholz, shade A
+	Color(0.0742, 0.1470, 0.0513),   # LEAVES_PINE_B   #4D6B40  krummholz, shade B
+	Color(0.2307, 0.3916, 0.1046),   # LEAVES_BIRCH    #84A85B  birch, shade A
+	Color(0.2874, 0.4452, 0.1384),   # LEAVES_BIRCH_B  #92B268  birch, shade B
 	Color(0.6654, 0.6445, 0.5520),   # TRUNK_BIRCH      #D5D2C4  birch bark
-	Color(0.3231, 0.2831, 0.2384),   # TRUNK_DEAD       #9A9186  snag, weathered
+	Color(0.3419, 0.3185, 0.2789),   # TRUNK_DEAD      #9E9990  snag, weathered
 ]
 
 const NAMES := [
