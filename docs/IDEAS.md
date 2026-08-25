@@ -86,6 +86,14 @@ Terrain v1 delivered a walking third-person player as a side effect, and v2
 added sprint, but both on **local physics only**. Rewiring it into the
 host-authoritative input path is a carried ticket, not done.
 
+**Candidate for the next playtest, from the creature design of 2026-08-25:**
+item 2 becomes a TRIO rather than one enemy - one creature per layer of the
+world. The **wolf** (the rusher archetype: the threat), the **marmot**
+(whistle-and-burrow: ground texture and the information layer), and the
+**eagle** (a slow orbit on the ridgelines and one cry: sky texture). The
+marmot and the eagle are the creature pipeline tested in the cozy register;
+the wolf is that pipeline plus a bite. `DESIGN.md`, Creatures.
+
 Deliberately not here:
 
 - **Gathering.** Foliage v1 built the identity and the removal path for it and
@@ -111,6 +119,20 @@ it should.
   meshing landed in terrain v1; edit-log compaction is still needed.
 - Found cozy places - villages, hot springs
 - Mounts
+- Taming / befriending select creatures. The design feeds the mount system:
+  the *táltos*-horse pattern - the shabby nag that is secretly great - is the
+  north star for mounts.
+- Full night system: area-dependent night fauna, aggro nights, raids on the
+  campfire - a blood-moon-style dial on the existing time/danger grammar
+  (`DESIGN.md`, Creatures: Night).
+- Megafauna encounter design (`DESIGN.md`, Creatures: Megafauna).
+- Deeper mimics: boulder, copse, hillside - the distance-escalation of
+  "seeming frays" (`DESIGN.md`, Creatures: Mimics).
+- The eagle as information layer - circling marks large creatures and
+  carrion - and the eagle-luck superstition in lore fragments.
+- Sound asset acquisition list. The alpine raptor cry is priority #1
+  (freesound / Kenney; licence-check everything for an open-source repo -
+  CC0 or CC-BY with attribution recorded, never NC or ND).
 - More races
 - Full class system *(contradicts a pillar)*
 - Skill trees *(contradicts a pillar)*

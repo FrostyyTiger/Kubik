@@ -317,6 +317,117 @@ for lining up a shot.
 A world nobody wants to cross is smaller than a world they do, whatever the map
 says. If the world grows again, this number is what has to grow with it.
 
+## Creatures
+
+Designed 2026-08-25. Nothing here is built yet; the first combat playtest
+(below) is where it starts.
+
+### Register: three blended layers
+
+- **Real Alpine wildlife, stylised** - ibex, marmot, fox, wolf, eagle, fish.
+  The familiar base, concentrated near spawn and in the valleys.
+- **Fantastic creatures**, increasingly further out and higher up, rooted in
+  the folklore patterns in `docs/lore/swamp/influences.md`: scree-worm
+  (Tatzelwurm energy), frost-folk, storm-beings.
+- **Environment-interacting behaviour is a design priority across all of
+  them.** Worms burst from scree, marmots whistle alarms and dive into
+  burrows, fish shadows scatter, birds lift off when something big moves.
+  Behaviour over anatomy: it is the cheapest form of "the world is alive",
+  and ambient reactions double as player information - the marmot whistle is
+  a danger radar.
+
+### Danger structure: no painted zones
+
+Spawning is driven by four dials the worldgen already has:
+
+- **Altitude** - valley floor safest, above the treeline strangest.
+- **Distance from spawn** - stretches everything wilder
+  (`TerrainGenerator.danger_at()`).
+- **Slope and terrain context** - what the ground is, not where it is on a
+  map.
+- **Time of day.**
+
+Players learn safety as a grammar - "we're high, it's getting dark" - not as
+map regions. Passive wildlife is the norm; hostiles are the exception,
+concentrated by these dials.
+
+### Hostile roster (launch)
+
+Four to five archetypes, few but distinct, each designed for duo tactics
+first (pillar 1), with dumb count-scaling for three and four players:
+**rusher, ranged, ambusher, tank, swarm.** Concrete species are assigned to
+archetypes later, with lore and art.
+
+### Hunting: the cozy-honest rule
+
+The real-wildlife tier is huntable for food and materials (ibex, fish,
+boar-tier); hostiles drop materials. **Small cute ambient creatures -
+marmot-tier - are not huntable.** They are the world's texture and
+information layer. No mechanical punishment needed: they simply cannot be
+targeted.
+
+### Megafauna
+
+A few RARE giant creatures as awe encounters, in the Pilatus-dragon register:
+near-sacred, witnessed more than fought. Not bosses on a checklist -
+encounters that make a session memorable. Designed later; worldgen should be
+flagged that rare large-creature sites may exist.
+
+### Night
+
+v1 night changes creature boldness only mildly. The full night system -
+area-dependent night casts, aggro nights, raid events - is a late-game system,
+see `IDEAS.md`.
+
+### Mimics: the world that seems
+
+- Some world-objects are creatures in disguise. First: the **mimic-tree**.
+  Walk near it and it tears its roots free, shudders upright, and walks.
+  Register: an old thing disturbed, not a horror jump-scare.
+- **Rarity is the mechanic.** Mimics must be rare enough that each awakening
+  is a story, never so common that players distrust the world category. Rough
+  north star: a player meets single-digit mimic-trees across many hours.
+- **Tells for the attentive.** A mimic is subtly off: it leans against the
+  slope's grain; birds never land on it; marmots won't burrow near it. The
+  ambient-life information layer doubles as the mimic detection system.
+  Veterans get to READ forests.
+- Mechanically archetype-cheap: mimic-tree = ambusher or tank archetype plus
+  a unique reveal animation. The roster does not grow.
+- **Escalation with distance.** Near spawn the world is what it seems;
+  further out, seeming frays. Deeper mimics - boulders, a copse, one day a
+  hillside - are Someday material.
+- Lore hook: fragments may reference it obliquely ("the old forest walks";
+  trees "that were not there at lammas").
+
+### The unprompted world: ambient aliveness as a design value
+
+- The world's aliveness lives in things that happen without player cause:
+  eagles crossing the sky, fish rising at dusk, marmot sentries whistling,
+  wind-waves in grass, a distant rockfall, the rare tree that stands up.
+- Each is a small local behaviour script, not a system. This is a jar we add
+  one marble to every few sessions, forever.
+- **First ambient-sky creature: the eagle.** Circles high on thermals along
+  ridgelines, an occasional echoing cry (the classic alpine raptor scream,
+  reverb-touched), lands on far crags, never interacts in v1. A silhouette
+  model, a slow orbit and one sound file: near-free, huge atmosphere payoff.
+- The eagle later joins the information layer (circles over large creatures
+  and carrion - the sky becomes readable) and the lore layer (watchers of the
+  passes; seeing one land is lucky). Someday.
+
+### Art
+
+Creatures follow the poster art direction (see Art direction, above):
+silhouette-first, readable as flat bold shapes at distance, restricted
+palette, and the same voxel-part modularity as characters where possible -
+the critter rig and `tools/parts_author`.
+
+### The first combat playtest: a trio
+
+One creature per layer of the world: the **wolf** (threat - the rusher), the
+**marmot** (ground texture and information - whistle and burrow), and the
+**eagle** (sky texture). Recorded in `IDEAS.md` as the candidate for the next
+playtest.
+
 ## Combat
 
 Simple and readable. If a player cannot tell what just hit them, it is wrong.
