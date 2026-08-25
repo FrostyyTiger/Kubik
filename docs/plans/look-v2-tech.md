@@ -27,10 +27,12 @@ at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.W
 (`<godot>` below). Tours and gallery sheets open a window; that is expected
 overnight. Python 3 with PIL is present (`python -c "import PIL"`).
 
-**Branch.** `feat/look-v2`, branched from `main` at `78c741b`. One commit per
-stage minimum, pushed to `origin` after every stage. **The agent never
-merges, never touches `main`, never force-pushes.** Marcel merges in the
-morning.
+**Branch.** `main`, directly - Marcel's call (2026-08-25): the code lands on
+`main` as the docs did. One commit per stage minimum, pushed to `origin`
+after every stage, fast-forward only. **The agent never force-pushes, never
+rewrites history, never reverts anyone else's commit.** If `origin/main` has
+moved, `git pull --rebase` before pushing; a conflict in a file this plan does
+not touch is not the agent's to resolve - stop and record it.
 
 **Delivered by morning.** The branch, pushed; `docs/status/look-v2.md`
 updated at the end of every stage (so a run that dies at 04:00 still leaves a
@@ -39,8 +41,8 @@ strips in `build/tour/compare/`; a final message in the shape of section 6.
 
 **Never.** No new textures. No worldgen change (the probe proves it after
 every stage). No tree shapes. No enemy, campfire, marker, smoke. No change to
-`player.gd`. No per-renderer branch in any palette or shader. No merge to
-`main`. No palette hex changed away from section 3's values except through
+`player.gd`. No per-renderer branch in any palette or shader. No force-push, no
+history rewrite. No palette hex changed away from section 3's values except through
 the Stage 0 transfer finding. No question left unrecorded.
 
 **Reading order, before the first edit.** `CLAUDE.md`, `README.md`,
@@ -64,7 +66,7 @@ it cannot be made green the run stops there (section 5).
 
 | # | question | answer taken | binds |
 | --- | --- | --- | --- |
-| 1 | Branch or main for the code? | Branch `feat/look-v2`, pushed per stage; Marcel merges. Docs went to main; code does not, unreviewed. | section 0 |
+| 1 | Branch or main for the code? | `main`, directly, pushed after every stage - Marcel's decision, asked and confirmed. Every push is fast-forward only; every commit is green on the gates before it is pushed, because there is no review step between the agent and `main`. | section 0 |
 | 2 | Both renderers - how, on one box? | `--rendering-driver opengl3` on every tour and swatch run. Stage 0 must be green on Forward+; if opengl3 disagrees by more than the tolerance, that is a recorded blocking finding for Marcel and the run **continues on Forward+**, still shooting both. | gates, Stage 0 |
 | 3 | What counts as passing a colour check? | The swatch sheet: every swatch within **6 units per sRGB channel** of prediction; the two renderers within 6 of each other. Tour sample checks: hue / saturation / value inside the window the stage states. | section 2 |
 | 4 | What may the agent tune alone? | Only the knobs in section 4's tunable table, inside their ranges, each change recorded with the shot that decided it. Palette hexes, the shade inks, the sky sets and the sun colours are **not tunable** - if one looks wrong, it is recorded "for Marcel" and left. | section 4 |
@@ -97,7 +99,6 @@ it cannot be made green the run stops there (section 5).
 
 ```
 git checkout main && git pull --ff-only
-git checkout -b feat/look-v2
 <godot> --headless --path . --import
 ```
 
@@ -599,8 +600,8 @@ Marcel". At the top, before anything: any BLOCKING finding.
 
 The final message to Marcel, in this order and nothing else first:
 
-1. Where the branch is and its last commit; which stages are green, which
-   were wrapped early, which reverted.
+1. `main`'s last commit; which stages are green, which were wrapped early,
+   which reverted.
 2. The three comparison strips to open first (paths).
 3. The BLOCKING findings, if any (opengl3 disagreement, Stage 0 findings).
 4. Every "For Marcel" item, one line each.

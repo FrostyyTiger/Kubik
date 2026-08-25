@@ -5,8 +5,8 @@ the Art Deco Alpine travel poster, the travel-poster strand - with its details
 refined against the evidence in `docs/research/art-direction.md`. That
 document is the argument; this one is the work. Read it first.
 
-Runs on `main` (Marcel's call, 2026-08-25: docs land on `main`, code waits for
-his yes on the ranked list). Branched from `main` at `de7a424` (look v1
+Runs on `main` (Marcel's call, 2026-08-25: docs and code both land on
+`main`; he approved all sixteen refinements the same day). Branched from `main` at `de7a424` (look v1
 merged).
 
 **Why now, against the Next 3.** Look v1 put the poster on screen and tuned
