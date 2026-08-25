@@ -823,3 +823,37 @@ inside its 0-0.15 range, decided by the table in Stage 4 and judged on
 - The eight decisions in section 4.
 - No worldgen moved: `76cccdb6` / `da8868d1` / 73,675 trees / spawn
   `(-44, -124)` after every one of the eight stages.
+
+---
+
+## Merged with flora streaming, 2026-08-25
+
+`origin/main` moved while this ran: `feat/flora-streaming` landed (main
+`d916421` -> `731077b`). Merged into `feat/look-v2` before landing. Git
+auto-merged all fifteen files with no conflicts, and the six both passes touch
+(`README.md`, `STATUS.md`, `docs/DESIGN.md`, `game.gd`, `debug_hud.gd`,
+`worldgen_config.gd`) were checked by hand afterwards: the F4 list carries both
+sets of knobs, and `STATUS.md` names both runs.
+
+**The one real interaction, and it is checked.** Flora streaming's whole
+subject is the grass keeping up with a moving player. Look v2 Stage 4 raised
+meadow tuft density 0.34 -> 0.50, which is 47% more plants in the zone their
+pass is about. So their gate was re-run on the merged tree:
+
+```
+godot --headless --path . -- --host --seed 42 --flora-probe
+```
+
+| | grass after terrain | columns rebuilt on return |
+| --- | --- | --- |
+| their baseline, before their fix, density 0.34 | +152 - 172 ms | all of them |
+| **merged, after their fix, density 0.50** | **+0 ms on all 12 jumps** | **0 for jumps 1-5, 63 on jump 6** |
+
+The reserved lane and the cache absorb the extra density completely. Terrain
+still settles in 6-10 s per 48 m jump, which is the disease their status doc
+names and neither pass's to cure.
+
+**Gates on the merged tree:** self-test all passed; character self-test 28 all
+passed; swatches worst delta **2**; probe `76cccdb6` / `da8868d1` / 73,675
+trees / spawn `(-44, -124)` - their two new config knobs are `LOCAL_PROPERTIES`
+and therefore unhashed, so the config hash is unchanged.
