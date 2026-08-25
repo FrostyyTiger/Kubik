@@ -9,14 +9,15 @@ has one owner per wave; everyone else adds a file plus a one-line hook.
 
 ## Wave 0 - now
 
-- [ ] `feat/flora-streaming` lands on main (other session, `Kubik-flora`)
-- [ ] **A. Look v2** - the planned night (`docs/plans/look-v2.md`)
+- [x] `feat/flora-streaming` lands on main (merged 2026-08-25)
+- [x] **A. Look v2** - ran 2026-08-25, merged (`docs/plans/look-v2.md`)
+- [ ] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - night 1: chunk streaming keeps up with sprint, never a hole, trees at 1:2 with old-growth groves and a closed canopy, fog to 800 m; night 2: Jolt, host-authoritative input (D1 pulled forward), boulders and logs as co-op bodies, slope momentum
 
 ## Wave 1 - after flora lands  `C || D || B`
 
 - [ ] **C. Creatures v1 - the trio** (2 nights) - wolf, marmot, eagle; LimboAI, A* over the heightmap, senses, pack, burrows; quadruped rig; species table
 - [ ] **D. Combat v1** (2 nights)
-  - [ ] D1 host-authoritative player input (the carried ticket - unblocks everything)
+  - [ ] D1 host-authoritative player input (the carried ticket) - **pulled into A2 night 2**
   - [ ] D1 stats table: health, stamina, mana; damage through the one mutation path
   - [ ] D2 light attack, dodge / block; sword, bow, staff; fire bolt, frost bolt
   - [ ] D2 attack / hit / downed poses; revive
