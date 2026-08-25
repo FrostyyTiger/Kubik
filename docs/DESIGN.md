@@ -5,12 +5,13 @@ Settled details. Terse on purpose - this is a working doc.
 Subject to the four pillars in the README. A line here that contradicts a
 pillar is a bug in this file, not a licence to bend the pillar.
 
-The fourth pillar - authored truth, improvised path - is the one this file
-serves most directly: everything settled here is the authored truth. Where a
-section defines things a director could one day steer (creature goals, what a
-place is, lore fragments, a quest's outcomes), it defines them as DATA, per the
-three habits in `CLAUDE.md`. The Game Master itself is designed in
-`docs/IDEAS.md` and arrives late; nothing here depends on it.
+The fourth pillar - THE WORLD ANSWERS: authored truth, generative direction -
+is the one this file serves most directly: everything settled here is the
+authored truth. Where a section defines things the director could one day
+steer (creature goals, what a place is, lore fragments, a quest's beats), it
+defines them as DATA, per the three habits in `CLAUDE.md`. The director's
+doctrine is `DIRECTOR.md`; it arrives late, and nothing here depends on it.
+Story delivery is governed by `DIRECTOR.md` (authored beats, directed middles).
 
 ## Setting
 
@@ -404,7 +405,9 @@ see `IDEAS.md`.
   further out, seeming frays. Deeper mimics - boulders, a copse, one day a
   hillside - are Someday material.
 - Lore hook: fragments may reference it obliquely ("the old forest walks";
-  trees "that were not there at lammas").
+  trees "that were not there at lammas"). Story delivery is governed by
+  `DIRECTOR.md` (authored beats, directed middles): the fragment's text may be
+  directed, the fact that mimics exist is authored.
 
 ### The unprompted world: ambient aliveness as a design value
 

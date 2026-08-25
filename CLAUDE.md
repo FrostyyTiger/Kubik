@@ -2,23 +2,22 @@
 
 ## Design pillars
 
-Every feature must serve at least one, and contradict none.
+Four. Every feature must serve at least one, and contradict none.
 
-- **BETTER TOGETHER.** Designed for 2-4 players and tuned for 2. Encounters
-  assume at least two bodies: flanking, saves, complementary roles. Party is
-  hardcoded at 4 maximum. Solo is a dev convenience, never a balanced mode -
-  no solo tuning, ever.
-- **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance from spawn and
-  with darkness. Campfires (and daylight) are the safe, warm register: light,
-  regen, respawn point. Death costs time, not progress. No base building: you
-  place objects, never terrain.
-- **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
-  not from menus or crafting trees. Distance is the difficulty and content axis.
-- **AUTHORED TRUTH, IMPROVISED PATH.** The world's facts - what exists, what
-  things want, what can happen - are data the game owns. Anything generative
-  (the Game Master, an LLM director arriving late - see `docs/IDEAS.md`)
-  performs inside them and never invents them. The game must be complete
-  without it.
+- **BETTER TOGETHER.** Built for pairs, room for four. Encounters assume two
+  bodies; 3-4 players handled by simple scaling. Cap constant: 4. Solo is a
+  dev convenience, never a balanced mode.
+- **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance, altitude, and
+  darkness. Firelight and daylight are the warm register: light, regen,
+  respawn point. Death costs time, not progress. No base building: you place
+  objects, never terrain.
+- **THE WORLD IS THE CONTENT.** Progression is ranging further. Distance is
+  the difficulty, strangeness, and content axis - not menus or crafting trees.
+- **THE WORLD ANSWERS.** Authored truth, generative direction. The world's
+  facts are data the game owns; a director reads what the journey MEANS and
+  responds through opportunity, never railroading, and never invents
+  world-truth. The tech is invisible; the game is complete without it.
+  Doctrine: `docs/DIRECTOR.md`.
 
 ## The three habits
 
@@ -40,6 +39,12 @@ When Marcel proposes a feature, check it against the pillars and the current
 Next 3 list in `docs/IDEAS.md`, and push back if it contradicts them or jumps
 the queue.
 
+- The director acts only through the `docs/DIRECTOR.md` verb list. Features
+  requiring the model to invent world-truth: reject and flag.
+- Base-game milestones precede director milestones. If a session proposal
+  skips stage-building for director work before v0's prerequisites exist
+  (the wolf / marmot / eagle playtest, the journal, the campfire), push back.
+
 ## Worldgen guidance
 
 - World edges are not symmetric by design. Most edges = impassable peaks, but
@@ -50,5 +55,7 @@ the queue.
 ## Where things live
 
 - `README.md` - what the game is, and the architecture contract
-- `docs/DESIGN.md` - settled design details
-- `docs/IDEAS.md` - Next 3, and Someday
+- `docs/DESIGN.md` - settled design details (the authored truth)
+- `docs/DIRECTOR.md` - the director's doctrine: two layers, the verb list,
+  cadence, degradation, the quest model, the roadmap
+- `docs/IDEAS.md` - Next 3, Someday, the Director ladder

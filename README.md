@@ -2,34 +2,34 @@
 
 ## What is this
 
-Kubik is a 2-4 player co-op voxel exploration game with a fantasy
-setting and a cozy-but-adventurous tone. Open source (MIT), built in Godot 4,
-developed by two friends as a learning project.
+Kubik is a 2-4 player co-op voxel exploration game (designed and tuned for
+pairs) set in a cozy-but-eerie fantasy Alps. An authored world with a
+generative director: the game quietly notices what your party does and
+answers at the campfire. Open source (MIT), Godot 4, built by two friends (and
+playtested by four) as a learning project in both gamedev and AI-native game
+design.
 
-**Core loop:** we roam a procedurally generated world together, fight what
-lives in it, and grow stronger from what it drops, which lets us push into
-stranger, more dangerous territory further from the safety of firelight.
+**Core loop:** we roam a generated alpine world together, fight what lives in
+it, and grow stronger from what it drops, pushing further from the safety of
+firelight into stranger territory - while the world reads our journey and
+answers: fragments that reflect our deeds, rumours that point somewhere,
+quests whose middles nobody - including the developers - has seen before.
 
 ### Design pillars
 
-Every feature must serve at least one, and contradict none.
+Four. Every feature serves at least one, and contradicts none.
 
-- **BETTER TOGETHER.** Designed for 2-4 players and tuned for 2. Encounters
-  assume at least two bodies: flanking, saves, complementary roles. Party is
-  hardcoded at 4 maximum. Solo is a dev convenience, never a balanced mode -
-  no solo tuning, ever.
-- **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance from spawn and
-  with darkness. Campfires (and daylight) are the safe, warm register: light,
-  regen, respawn point. Death costs time, not progress. No base building: you
-  place objects, never terrain.
-- **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
-  not from menus or crafting trees. Distance is the difficulty and content axis.
-- **AUTHORED TRUTH, IMPROVISED PATH.** The world's facts - what exists, what
-  things want, what can happen - are data the game owns. Anything generative
-  performs inside them and never invents them. The game must be complete
-  without it. This is the pillar the Game Master stands on (architecture
-  decision 6, and `docs/IDEAS.md`): a director that improvises the path to
-  authored stakes, arriving late, invisible when it arrives.
+1. **BETTER TOGETHER.** Built for pairs, room for four. Encounters assume two
+   bodies; 3-4 players handled by simple scaling. Cap constant: 4.
+2. **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance, altitude,
+   and darkness. Firelight and daylight are the warm register. Death costs
+   time, not progress. No base building.
+3. **THE WORLD IS THE CONTENT.** Progression is ranging further. Distance is
+   the difficulty, strangeness, and content axis.
+4. **THE WORLD ANSWERS.** Authored truth, generative direction. A semantic
+   director reads what the journey MEANS and responds through opportunity,
+   never railroading. The tech is invisible: we market the experience, never
+   the AI. Doctrine in [docs/DIRECTOR.md](docs/DIRECTOR.md).
 
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
@@ -132,32 +132,34 @@ Truncation towards zero puts block `-1` in chunk `0` instead of chunk `-1`,
 which corrupts a band of world on the negative side of the origin only, and is
 a miserable thing to debug. See `Chunk.floor_div`.
 
-### 6. Authored truth, improvised path
+### 6. The world answers: authored truth, generative direction
 
-The fourth pillar, as architecture. The game will one day have a **Game
-Master**: a director that reads what the players' journey means and
-improvises the path to authored stakes - where the pack waits tonight, which
-fragment you find, what a companion remembers. It is designed in
-`docs/IDEAS.md` and it arrives late. What it asks of the code is decided now,
-because it is cheap now and a rewrite later:
+The fourth pillar, as architecture. The game has a **Director**: a model that
+reads what the party's journey means and improvises the path to authored
+stakes - which fragment you find, which rumour points where, how a quest's
+middle unfolds. Its doctrine is `docs/DIRECTOR.md`; it arrives late, on the
+ladder in `docs/IDEAS.md`. What it asks of the code is decided now, because
+it is cheap now and a rewrite later:
 
 - **Facts are data.** What exists, what things want, what can happen - tables
   a program can read, never prose in a script. `Races`, the parts tables and
   the worldgen config already are; creatures, places, lore fragments and
-  quest outcomes follow.
+  quest beats follow.
 - **The host keeps a journal.** Structured events - edit, death, campfire,
   kill, first sight of a lake - appended as they happen. It is the director's
   input later and a debugging record today.
-- **The director is a client of the one mutation path.** It runs beside the
-  host as a sidecar process (an API, or a local model later), talks to Godot
-  over local HTTP/WebSocket, and *proposes*. The host validates every
-  proposal against the allowed outcomes and applies it - exactly how a
-  client's block edit is treated. It never touches state directly, never
-  runs inside the engine's loop, and never sits on a timescale shorter than
-  minutes: no combat, no physics.
+- **The director acts only through verbs.** It runs beside the host as a
+  sidecar process, talks to Godot over local HTTP/WebSocket, and *proposes*
+  through the small verb list in `DIRECTOR.md` (place a fragment, spawn a
+  rumour, mark a site, advance or reroute a beat). The host validates every
+  proposal against the allowed outcomes and applies it through the one
+  mutation path - exactly how a client's block edit is treated. It never
+  touches state directly, never runs inside the engine's loop, and is invoked
+  at campfire rests and session start: state machines own seconds, the
+  director owns minutes. No combat, no physics.
 - **The game is complete without it.** Every beat it can steer has an
-  authored default. Offline, or with no key, the defaults play. The host
-  pays for it; clients get it through the host.
+  authored default. Offline, with no key, or in a stranger's build, the
+  defaults play. The host pays for it; clients get it through the host.
 
 Godot needs nothing added for this. `HTTPRequest` and `WebSocketPeer` are
 built in; the model never runs in-engine.

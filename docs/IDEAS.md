@@ -172,16 +172,18 @@ Longing is free; water physics are not.
 What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
 not hardcode "world edge = mountains" anywhere.
 
-## The Game Master: an LLM director (a core aspect, arriving late)
+## The Director (the fourth pillar, arriving late)
 
 Noted 2026-08-25 from a conversation Marcel had about where LLMs actually
-belong in games, and promoted the same day to a core aspect of Kubik: the
-fourth pillar in `README.md` and `CLAUDE.md` - *authored truth, improvised
-path* - is this idea stated as a rule, and architecture decision 6 in the
-README is what the code does about it now. This section is the design. It
-has its own section in the Second Age's shape because it is a direction and
-not an item, and with the same scope honesty: the director itself is built
-last, on top of a game that is complete without it.
+belong in games, and promoted the same day to the fourth pillar - THE WORLD
+ANSWERS, in `README.md` and `CLAUDE.md`. The doctrine - two layers, the verb
+list, the cadence, graceful degradation, the quest model - is `DIRECTOR.md`;
+architecture decision 6 in the README is what the code does about it now.
+What follows is the argument that got it there, kept because the reasoning
+is worth more than the summary. It has its own section in the Second Age's
+shape because it is a direction and not an item, and with the same scope
+honesty: the director is built on top of a game that is complete without
+it, and the base game's milestones always come first.
 
 **The opportunity.** LLMs in games are not chatbot NPCs or generated dialogue.
 The unit of value is *goal-directed improvisation under constraints* - a
@@ -218,20 +220,31 @@ or a source of facts the world did not author.
 
 **What it asks of the code today** is the three habits in `CLAUDE.md` and
 architecture decision 6 in the README: facts as data, the host's journal, and
-the director as a client of the one mutation path. Nothing to build now;
-nothing to hardcode against later.
+the director acting only through the verb list, via the one mutation path.
+Nothing to build now; nothing to hardcode against later.
 
-**How it arrives, in order.**
+### Director ladder
 
-1. *Now, free:* the journal and facts-as-data, obeyed by every plan from the
-   creature work onward.
-2. *With creatures and quests:* every system built fully authored - fixed
-   goals, fixed beats, allowed outcomes as a list - so the game is complete
-   with no director at all.
-3. *First director:* one small, invisible use. Which fragment you find; where
-   the pack waits tonight. Proposals only, validated by the host, minutes
-   timescale, nothing on the combat path.
-4. *Then:* companions with real memory, the semantic director reading the
-   journal, NPCs with fixed goals and adaptive tactics.
+The rungs, in order. Each is gated on the base game beneath it; none is on
+the Next 3 until its prerequisites exist.
 
-Marketed as the experience, never the technology, at every step.
+- **Prerequisites (base game):** the wolf / marmot / eagle playtest working,
+  the host's event journal, the campfire as a rest. Facts as data from the
+  creature plan onward.
+- **v0 - "the world remembers."** At the campfire, fragments and rumours
+  generated from the true event log. Read-only reflection, no quest logic.
+  Verbs: `place_fragment`, `spawn_rumor`.
+- **v1 - "the world beckons."** Rumour-driven quest routing on authored beat
+  spines. Verbs: `mark_site`, `advance_beat`, `reroute_beat`.
+- **v2 - "the stranger speaks."** One NPC - the storm-scholar, the
+  *garabonciás* archetype - with fixed goals, knowledge bounds and generative
+  speech. Uncanny is lore-correct for him.
+- **Someday rungs**, in no order:
+  - The semantic director reading long-horizon patterns - sessions, not
+    minutes: what this party keeps doing, what it avoids, what it has never
+    seen.
+  - Director-aware fragments in worldgen: sites placed at generation that
+    the director may later fill (a `site_type` the verbs can address).
+  - Companions with real memory; NPCs with fixed goals and adaptive tactics.
+
+Marketed as the experience, never the technology, at every rung.
