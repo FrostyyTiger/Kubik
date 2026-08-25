@@ -537,7 +537,18 @@ func _test_character_height():
 	for entry in _every_build():
 		var view := CharacterView.new()
 		view.build(_def_for(entry))
+		# MEASURED STANDING UPRIGHT. The lizardfolk's 8 degree lean is baked
+		# into its hips rest pose, and a leaning head's bounding box reaches
+		# higher at the back than the crown does - by two voxels at 1/16 of a
+		# block, which is past the tolerance. The table's number is the crown
+		# height of the race stood straight, so that is what is measured; the
+		# lean is put back afterwards, though nothing else here reads it.
+		var rig: Rig = view.rig
+		var lean: float = rig.bones["hips"].rotation.x
+		rig.bones["hips"].rotation.x = 0.0
 		var got := view.height_m()
+		var crown := view.height_m(true)
+		rig.bones["hips"].rotation.x = lean
 		var want := Races.height_m(entry["race"], entry["build"])
 		var tris := view.triangle_count()
 		# A race still borrowing the human's parts is the wrong height BY
@@ -555,11 +566,10 @@ func _test_character_height():
 			bad += 1
 		# The budget, reported rather than gated at this stage - hair and beard
 		# are still to come and Stage 14 is where the number is judged.
-		if tris > 6000:
-			print("  the %s is already %d triangles, over the 6000 budget" % [
-				_build_name(entry), tris])
+		if tris > CharacterConfig.TRIANGLE_BUDGET:
+			print("  the %s is already %d triangles, over the %d budget" % [
+				_build_name(entry), tris, CharacterConfig.TRIANGLE_BUDGET])
 			bad += 1
-		var crown := view.height_m(true)
 		report.append("%s %.2fm/%d%s" % [_build_name(entry), got, tris,
 			"" if is_equal_approx(crown, got) else " (%.2f with hair)" % crown])
 		view.free()

@@ -221,8 +221,13 @@ func _race_row() -> Control:
 ## Disabled rather than hidden, because the toggle disappearing when you click
 ## "Dwarf" reads as the screen breaking. Greyed out reads as "not for this
 ## race", which is what it is - and one line in Races.HAS_LEAN decides it.
+##
+## THE WHOLE ROW IS HIDDEN WHEN NO RACE HAS A LEAN SET, which is every race
+## since look v1. A row of two greyed-out buttons on every race is not a
+## choice, it is furniture.
 func _build_row() -> Control:
 	var row := HBoxContainer.new()
+	row.visible = Races.HAS_LEAN.has(true)
 	var label := Label.new()
 	label.text = "Build"
 	label.custom_minimum_size = Vector2(80, 0)
