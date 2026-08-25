@@ -251,10 +251,12 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# v1. Zone boundaries are noise, so quad by quad a far peak comes
 			# out as a speckle of rock, snow and turf; sampled once per
 			# far_zone_cell_m it comes out in blocks, which is how a poster
-			# paints a mountainside. The innermost ring keeps the exact sample
-			# so the treeline agrees with the voxels at the seam. Rendering
-			# only: the zones themselves do not move.
-			if ring > 0 and config.far_zone_cell_m > 0.0:
+			# paints a mountainside. The two inner rings keep the exact sample:
+			# the first so the treeline agrees with the voxels at the seam, the
+			# second because at 200 m a 24 m cell is still a visible square,
+			# and the postcard showed a checkerboard of meadow on the shore.
+			# Rendering only: the zones themselves do not move.
+			if ring > 1 and config.far_zone_cell_m > 0.0:
 				var cell := maxi(int(round(config.far_zone_cell_m / bs)), step)
 				zone_bx = Chunk.floor_div(bx0, cell) * cell + cell / 2
 				zone_bz = Chunk.floor_div(bz0, cell) * cell + cell / 2

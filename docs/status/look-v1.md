@@ -33,7 +33,7 @@ Then press the character button and look at the new bodies.
 | --- | --- | --- |
 | 1 | `Look`: one lighting ramp (lit / half / shade, shade is a colour) under terrain, far field, far trees, characters, plants and water; stepped depth fog; five new shader globals published by `SkyCycle`; the sun stays up all night as the moon; ambient off; hard shadows; poster water | `build/tour/look-1-light`, `build/character/look-1-light` |
 | 2 | The sky shader: banded gradient, sun disc with rays, hard-edged clouds with a dark underside, moon and stars. `SkyCycle` drives it; the `ProceduralSkyMaterial` in the scenes is now the fallback | `build/tour/look-2-sky` |
-| 3 | Far field as a backdrop: one altitude band per quad, lighting by the flank's slope over 96 m rather than the facet's, zone colour on a 24 m cell beyond the first ring | `build/tour/look-5-meadow`, `look-5b-far` |
+| 3 | Far field as a backdrop: one altitude band per quad, lighting by the flank's slope over 96 m rather than the facet's, zone colour on a 24 m cell in the rings beyond 400 m | `build/tour/look-5-meadow`, `look-5b-far` |
 | 4 | Ground: jitter 0.05 → 0.07 (tried 0.10, see below), hue 0.02 → 0.03, cell 12 → 6 blocks; `Block.aspect_curve()` picks a side; aspect 0.06 → 0.12 | `build/tour/look-5-meadow` |
 | 5 | Meadow as a colour field: tuft colours moved onto the meadow green; meadow density 0.50 → 0.34; half of what grows in a flower patch is flowers (was 0.30) | `build/tour/look-5-meadow/8-meadow-closeup.png` |
 | 6 | Characters at 1/16 of a block, stocky, chamfered, generated — see the section below | `build/character/look-6-characters` |
