@@ -149,7 +149,10 @@ const VIEW_CUSTOM := -1
 
 ## Fog starts this far into its own range. Fog that begins at zero is haze on
 ## your boots; fog that begins at fog_end is a wall.
-const FOG_START_RATIO := 0.6
+## Look v2 Stage 2: 0.6 -> 0.4. The bands need room to be bands; starting
+## them at 60% of the view distance left four of them stacked in the last
+## fifth of the frame, which reads as one soft edge rather than as steps.
+const FOG_START_RATIO := 0.4
 
 ## Radius, in chunks, of real editable voxels around the player.
 ## THIS IS THE PERFORMANCE DIAL. If the frame budget cannot be met, turn this
@@ -728,7 +731,7 @@ const FOG_START_RATIO := 0.6
 ## How many flat steps the fog takes between the two. Look v1: distance is
 ## bands, not haze - see Look. 1 is a single hard cut at fog_end; 64 is
 ## indistinguishable from ordinary depth fog. A look knob, local.
-@export var fog_bands := 6
+@export var fog_bands := 4
 
 ## The poster sky, see Look.SKY_SHADER. Flat bands between horizon and zenith,
 ## and how much of the sky the clouds cover, 0 to 1. Look knobs, local.
@@ -736,13 +739,14 @@ const FOG_START_RATIO := 0.6
 @export var cloud_cover := 0.35
 
 ## THE FAR FIELD AS A BACKDROP, see FarFieldJob. Every far_band_m of altitude
-## the far mesh steps its colour's value by far_band_step, alternating, so a
+## the far mesh steps its colour's value by far_band_step - MONOTONIC since
+## look v2 Stage 2, lighter with altitude rather than alternating, so a
 ## mountain reads as stacked contour bands; and its lighting normal is the
 ## heightmap's slope averaged over far_normal_m, so a flank is one tone rather
 ## than a patchwork of triangles. Look knobs, local. The voxels near the
 ## player do neither - they have their own terraces.
-@export var far_band_m := 40.0
-@export var far_band_step := 0.06
+@export var far_band_m := 60.0
+@export var far_band_step := 0.03
 ## 24 m was the first value and the postcard came back still a patchwork: at
 ## 8 and 16 m per vertex that is a couple of quads, and the coarse heightmap
 ## has a ridge every few of those. A flank is a hundred metres wide.
@@ -818,7 +822,7 @@ const FOG_START_RATIO := 0.6
 ## How much warmer a sun-facing slope is than a shaded one, 0 to 1. This is
 ## aspect, not lighting - see Block.aspect_shade(). Look v1 doubled it and
 ## made the curve pick a side, so a slope is two tones meeting at the ridge.
-@export var aspect_tint := 0.12
+@export var aspect_tint := 0.18
 
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.

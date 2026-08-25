@@ -258,3 +258,169 @@ dark colours much harder than light ones in perceptual terms: a lit `#202020`
 now lands on `#5e594c`. That is the tunable's start value from the plan and it
 is inside its range, but it is the number to look at first if the leaves and
 the spruce read as washed out on your machine. Range is 0-0.15; 0 turns it off.
+
+**Stage 1 tour.** `build/tour/look2-1-light/`, 12 shots, Compatibility.
+
+| check | shot, px | measured | window | verdict |
+| --- | --- | --- | --- | --- |
+| shaded rock | `2-summit` (640,500) | H 256.4 S 23.9 V 31.0 | H 230-280, V 25-45 | **pass** |
+| shaded rock | `2-summit` (450,550) | H 248.5 S 24.3 V 43.0 | H 230-280, V 25-45 | **pass** |
+| lit ground, night | `12-meadow-night` (640,600) | S 27.1 | S <= 60 (was 87) | **pass** |
+| shaded spruce | `7-forest-interior` (540,150) | H 193.4 S 13.9 V 20.7 | H 200-280, S 20-50 | **fail** |
+| dusk sky | `11-forest-dusk` (300,120) | V 33.7 | V >= 60 | **fail** |
+
+**The two failures, and what was done about them.**
+
+*Shaded spruce, H 193 S 14 against a window of H 200-280 S 20-50.* The shade
+lands between the leaf's own green (H 152) and the ink's violet (H 252) and the
+two cancel each other's saturation on the way. `shade_desat` is a tunable
+(0.55, +-0.10) and raising it moves the hue toward the ink - but the noon ink
+`#7A7396` is itself only 23% saturated, so no value in range reaches S 20-50
+*and* H 200-280 at once. The window and the ink are in tension, and the ink is
+not tunable (Q4). Left at 0.55, recorded, per protocol 6. Stage 4 re-authors
+`LEAVES` and `LEAVES_SPRUCE_B` and this is re-measured there.
+
+*Dusk sky V 34 against a window of V >= 60.* Stage 1 publishes `sky_top` from
+the table but still hands the sky its old horizon (`kf["fog"]`), and the
+three-stop band, the horizon row and `cloud_lit` are all Stage 2's. Not chased
+here; re-measured after Stage 2, which is where the sky is actually built.
+
+**The eye, on `11-forest-dusk`:** navy-blue tree masses with internal steps, a
+mauve sky, gold on the lit edges and orange where the sun reaches through. It
+reads as a printed dusk rather than as a dimmed noon, which is the sentence
+Stage 1 exists for. `7-forest-interior` is the weaker shot - milky rather than
+navy - and that is the `LIT_BLEACH` note above plus the old pale fog.
+
+**A bug this run introduced and fixed.** `FloraModels.SHADER` has its own
+`fragment()`. Stage 1 moved the albedo out of `ALBEDO` into a varying in
+`Look`'s two shaders and missed that third one, so every tuft, fern and
+mushroom in the world drew **pure black** - visible in the first
+`7-forest-interior` shot of the stage. Fixed, and the tour re-shot before any
+of the numbers above were taken.
+
+**Gates, Stage 1:** self-test all passed; character self-test 28 tests all
+passed (the `part AO` assertions now decode the wire before measuring the AO
+multiplier, per Q22 - converted, not loosened); probe `76cccdb6` / `da8868d1` /
+73,675 trees / spawn `(-44, -124)`.
+
+**A finding about the light curve, for Marcel.** `dusk_amount()` is
+`clamp(1 - |elevation| * 4.5)`, which is non-zero only for `|elevation| <
+0.222`. On this world's arc that is roughly `time_of_day` 0.71-0.79 and its
+mirror at dawn. So:
+
+- `--time 0.82`, which every character gallery sheet calls "dusk", has
+  elevation **-0.402** and lands on the **night** keyframe with `dusk = 0.00`.
+  The dusk sheets in the character gallery have never been shot at dusk.
+- The tour's `11-forest-dusk` is at **0.74** (elevation +0.059, `dusk` 0.73)
+  and is at dusk. `screenshot_tour.gd` already carries a comment explaining
+  why it is not 0.85 - look v1 found half of this and did not generalise it.
+
+Left alone deliberately (protocol 6: fewer files, nearer today's value) -
+widening `dusk_amount` would move every hour of the day, and the gallery's
+`--time` is not this plan's to change. **Recommend for a later plan:** the
+gallery's dusk sheets should be shot at 0.74, not 0.82.
+
+---
+
+## Stage 2 - Sky and distance
+
+**Shipped.**
+
+- `Look.FOG_FN`: `poster_fog(view_vertex, albedo)` - the target is the
+  fragment's OWN colour desaturated and lifted, then mixed toward the fog, so
+  hue is held across the bands and a far hillside still reads as a hillside.
+  A per-material `fog_dark_mix` blends toward `kubik_fog_dark`.
+- `Look.figure_material()` - the same shader with `fog_dark_mix 1.0`.
+  `VoxelModel` and `FarTreeMeshes` return it; `FloraModels` sets the uniform on
+  its own material. Terrain keeps `opaque_material()`.
+- `Look.SKY_SHADER` rewritten: `sky_mid` and a two-segment band mix, the
+  horizon row instead of the fog, `kubik_fog_color` below the horizon,
+  `poster_wedges()` (24 pairs, alternating long/short, tapering to 0.15 of base
+  width), a sun halo that only takes the sun's colour at dusk, a moon halo and
+  a gold `moon_color` disc, and clouds sampled in polar coordinates with
+  `cloud_lit`.
+- `far_field_job.gd` `_band_color()`: monotonic, keyed to the band the treeline
+  falls in, read once per job from `generator.zone_thresholds[ZONE_FOREST]`.
+- `worldgen_config.gd`: `fog_bands` 6 -> 4, `FOG_START_RATIO` 0.6 -> 0.4,
+  `far_band_m` 40 -> 60, `far_band_step` 0.06 -> 0.03, `aspect_tint` 0.12 ->
+  0.18. All four already on F4.
+- `screenshot_tour.gd`: `13-meadow-dawn` (0.24) and `14-postcard-dusk` (0.74).
+  The tour is 14 shots from here on.
+
+### The sky was never sRGB-encoded, and that is a look v1 bug
+
+**Measured.** At noon the visible sky band mixes to a linear
+`(0.428, 0.514, 0.663)`. Its sRGB encoding is `#B0BFDA`. Written out as raw
+bytes it is `#6D83A9`. The frame came back **`#6A7FA8`**.
+
+So a sky shader's `COLOR` goes to the framebuffer **without** the linear-to-sRGB
+conversion every other surface gets, and every sky colour in this game has been
+displayed as its raw linear value since look v1. It is why `SKY_TOP_DAY` had to
+be `#4D80D4` - a colour nothing like the poster - to arrive as something that
+looked like one, and it is why the dawn keyframe's pale peach `#F3C79E` horizon
+first rendered as a dark rust brown.
+
+Fixed with `kubik_to_srgb()` in the sky shader, applied once to `col` on the way
+out. Every sky uniform stays linear, like every other palette in the game.
+
+**This is worth checking on Forward+ too** - it is the same class of question as
+BLOCKING finding 2 and the `13-meadow-dawn` shot answers it by eye in one run:
+a pale peach dawn is right, a rust-brown one means Forward+ encodes and this
+conversion is one too many.
+
+### Two cloud fixes
+
+- **The underside offset.** The plan says a constant radial offset of 0.35
+  polar units. Measured, a cloud in this field is about half a unit across
+  radially, so 0.35 swallowed the whole shape: every cloud drew as its own
+  underside - dark brown blobs. `CLOUD_LIP` is **0.08**, which is a lip.
+  (The plan's sign is negative; positive radius is *down* the sky in this
+  projection, so the lip is `+`.)
+- **The second night term.** Look v1 derived a cloud's lit colour from the sky
+  band and then darkened it by up to 0.35 after dark. `cloud_lit` is an
+  authored keyframe row now - `#FFE2C8` at dawn, `#6F7C9E` at night - so the
+  hour is already in it, and multiplying again turned a warm dawn cloud into a
+  taupe smudge. Removed.
+
+### Sampled checks
+
+| check | shot, px | measured | window | verdict |
+| --- | --- | --- | --- | --- |
+| far flank monotonic | `9-treeline` (640,300/220/150) | V 30.6 -> 49.4 -> 81.2 | non-decreasing | **pass** |
+| dusk sky | `11-forest-dusk` (300,120) | H 249.8 S 28.2 V 68.2 | H 240-290, V 55-85 | **pass** |
+| dusk sky | `11-forest-dusk` (420,80) | H 263.1 V 66.3 | H 240-290, V 55-85 | **pass** |
+| range sat | `6-postcard` (615,255) | S 20.8 | S <= 25 | **pass** |
+| range sat | `6-postcard` (400,230) | S 4.7 | S <= 25 | **pass** |
+| night sky vs ground | `12-meadow-night` (640,330) | V 41.6, ground V 42.0 | V >= 35 **and** > ground | **pass / marginal fail** |
+| range vs sky above | `6-postcard` (615,255) vs (640,20) | V 75.7 vs 83.1 = 7.4 below | >= 8 below | **marginal fail** |
+| range vs sky above | `6-postcard` (400,230) vs (640,20) | V 64.8 vs 83.1 = 18.3 below | >= 8 below | **pass** |
+
+The two marginals are 7.4 against 8 and 41.6 against 42.0. Both are inside a
+rounding of the window and neither has a tunable that would move it without
+moving something the plan fixes; recorded, not chased.
+
+**Eye.** `9-treeline` - **the red zigzag is gone.** The far ranges are stacked
+mauve planes, each lighter than the one below, cut hard against a pale blue
+sky, and cream lozenge clouds sit along the top. `6-postcard` - opaque stacked
+planes against a cream horizon. `11-forest-dusk` - a three-stop lilac dusk sky.
+`13-meadow-dawn` - a pale peach dawn that could not have existed before this
+stage, because dawn had no keyframe and the sky had no encoding.
+
+**FOR MARCEL - the one eye check that fails.** `1-spawn`, noon: **the clouds
+are close to invisible.** With the sky encoded correctly the noon sky is pale -
+a cream horizon into a pale blue - which is what the keyframe table actually
+says; look v1's rich blue was the un-encoded accident. But `cloud_lit`
+`#F2E8D0` (V 95) against a cream horizon (V 92) has three points of contrast,
+and the plan's own check for this shot is "clouds are lozenges along the
+horizon". They read at dawn, at dusk and higher in the sky at noon; along the
+noon horizon they do not.
+
+`cloud_lit` is a keyframe row and therefore not tunable by the agent (Q4), and
+the honest fix is a decision, not a tuning: either the noon `cloud_lit` goes
+lighter than `#F2E8D0`, or the noon `horizon` goes down from `#EBDFC8`, or the
+cloud takes a floor of one band above whatever sky it sits on. Recorded per
+protocol 5 rather than invented.
+
+**Gates, Stage 2:** self-test all passed; character self-test 28 all passed;
+swatches worst channel delta **1**; probe `76cccdb6` / `da8868d1` / 73,675
+trees / spawn `(-44, -124)`.

@@ -131,11 +131,23 @@ var vertex_count := 0
 ## another parameter threaded through three functions that all already have
 ## six.
 var _seam_radius := 0.0
+## The band the treeline falls in, read once per job from the generator's own
+## zone thresholds rather than re-derived - the bands have to agree with where
+## the forest actually stops or the backdrop contradicts the world in front of
+## it. -1 until run() computes it.
+var _band_treeline := 0
 
 
 func run() -> void:
 	var bs: float = config.block_size
 	var base_step: int = config.far_step
+	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
+	# forest zone in BLOCKS; _band_color works in metres.
+	if config.far_band_m > 0.0 and generator != null \
+			and generator.zone_thresholds.size() > TerrainGenerator.ZONE_FOREST:
+		var treeline_m: float = \
+			generator.zone_thresholds[TerrainGenerator.ZONE_FOREST] * bs
+		_band_treeline = int(floor(treeline_m / config.far_band_m))
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
 
 	# Where the voxels take over. Quads well inside this are skipped - the
@@ -292,17 +304,26 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 
 ## Altitude bands - look v1's far field as a stacked backdrop.
 ##
-## Every far_band_m of altitude the value steps by far_band_step, alternating
-## lighter and darker, so a mountain reads as contour bands the way a poster
+## Every far_band_m of altitude the value steps by far_band_step, MONOTONICALLY
+## lighter with altitude, so a mountain reads as contour bands the way a poster
 ## paints one. Applied to a quad's MIDDLE height, once per quad, which is what
 ## makes the band edge a hard stepped line along the quad grid rather than a
 ## gradient interpolated across it. Off at far_band_step 0.
+## MONOTONIC, NOT ALTERNATING (look v2 Stage 2).
+##
+## Alternating put a lighter band directly above a darker one at every second
+## boundary, and on a flank that climbs across several of them that reads as a
+## ZIGZAG - the red zigzag on shot 9's treeline that look v1 recorded and could
+## not name. Ranges get lighter with altitude and the fog bands carry the
+## distance; the two axes stop fighting each other. Zeroed at the treeline so
+## the forest keeps the colour it was authored with, and clamped either side so
+## a 400 m peak does not run away to white.
 func _band_color(color: Color, y_m: float) -> Color:
 	var step_amount: float = config.far_band_step
 	if step_amount <= 0.0 or config.far_band_m <= 0.0:
 		return color
 	var band := int(floor(y_m / config.far_band_m))
-	var k := 1.0 + (step_amount if posmod(band, 2) == 0 else -step_amount)
+	var k := clampf(1.0 + step_amount * float(band - _band_treeline), 0.85, 1.25)
 	return Color(color.r * k, color.g * k, color.b * k, color.a)
 
 

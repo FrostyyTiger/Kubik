@@ -187,4 +187,5 @@ static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,
 ## on, and a far tree that shaded differently from the hill it stands on would
 ## be the seam the whole look pass exists to remove.
 static func material() -> Material:
-	return Look.opaque_material()
+	# A figure, not the ground - see Look.figure_material().
+	return Look.figure_material()

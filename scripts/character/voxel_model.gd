@@ -256,7 +256,8 @@ static func bounds(voxels: Array) -> Array:
 ## Shared across every part of every character - the colour is in the
 ## vertices, so one material serves every palette.
 static func material() -> Material:
-	return Look.opaque_material()
+	# A figure, not the ground - see Look.figure_material().
+	return Look.figure_material()
 
 
 ## Mesh a voxel list into an ArrayMesh, in metres, with baked corner AO.

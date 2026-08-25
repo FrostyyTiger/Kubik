@@ -148,11 +148,25 @@ void light() {
 ## The last band is exactly the fog colour, and SkyCycle sets the sky's horizon
 ## to the same value, so the far mesh's edge is never a line against the sky.
 const FOG_FN := """
-vec4 poster_fog(vec3 view_vertex) {
+// 0 for terrain, 1 for anything that stands ON it. Set per material, not per
+// vertex: the vertex colour's alpha is already the flora's emissive flag.
+uniform float fog_dark_mix = 0.0;
+
+vec4 poster_fog(vec3 view_vertex, vec3 albedo) {
 	float depth = length(view_vertex);
 	float f = smoothstep(kubik_fog_start, kubik_fog_end, depth);
 	f = floor(f * kubik_fog_bands + 0.5) / kubik_fog_bands;
-	return vec4(kubik_fog_color.rgb, f);
+	// HUE IS HELD ACROSS THE BANDS. Fading everything to one fog colour turns
+	// a green range and a grey range into the same grey at the same distance;
+	// a poster keeps the hue and drains the saturation. So the target is the
+	// fragment's OWN colour, desaturated and lifted, and only then mixed
+	// toward the fog - which is why a far hillside still reads as a hillside.
+	float lum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+	vec3 self = mix(albedo, vec3(lum), 0.5) * 1.25;
+	vec3 target = mix(self, kubik_fog_color.rgb, 0.6);
+	// A FIGURE FOGS DARKER THAN THE GROUND BEHIND IT, or it dissolves into it
+	// at exactly the distance you most need to see it.
+	return vec4(mix(target, kubik_fog_dark.rgb, fog_dark_mix), f);
 }
 """
 
@@ -172,7 +186,7 @@ void fragment() {
 	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	FOG = poster_fog(VERTEX);
+	FOG = poster_fog(VERTEX, v_albedo);
 }
 """ + RAMP
 
@@ -193,7 +207,7 @@ void fragment() {
 	ALPHA = COLOR.a;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	FOG = poster_fog(VERTEX);
+	FOG = poster_fog(VERTEX, v_albedo);
 }
 """ + RAMP
 
@@ -219,8 +233,13 @@ void fragment() {
 const SKY_SHADER := """
 shader_type sky;
 
+global uniform vec4 kubik_fog_color;
+
 uniform vec4 sky_top = vec4(0.07, 0.21, 0.66, 1.0);
+uniform vec4 sky_mid = vec4(0.24, 0.36, 0.60, 1.0);
 uniform vec4 sky_horizon = vec4(0.46, 0.60, 0.77, 1.0);
+uniform vec4 cloud_lit = vec4(0.88, 0.83, 0.66, 1.0);
+uniform vec4 moon_color = vec4(0.79, 0.24, 0.03, 1.0);
 uniform vec3 sun_dir = vec3(0.0, 1.0, 0.0);
 uniform vec3 moon_dir = vec3(0.0, -1.0, 0.0);
 uniform vec4 sun_color = vec4(1.0, 0.89, 0.64, 1.0);
@@ -228,13 +247,34 @@ uniform float day = 1.0;
 uniform float dusk = 0.0;
 uniform float night = 0.0;
 uniform float sky_bands = 5.0;
-uniform float ray_count = 16.0;
+uniform float ray_count = 24.0;
 uniform float ray_strength = 0.4;
 uniform float ray_extent = 0.9;
+uniform float ray_extent_short = 0.45;
 uniform float sun_size = 0.035;
 uniform float cloud_cover = 0.35;
 
 const float TAU_ = 6.28318530718;
+// How far down the sky the underside is sampled, in polar units. See the note
+// where it is used.
+const float CLOUD_LIP = 0.08;
+
+// sRGB ON THE WIRE, FOR THE SKY TOO.
+//
+// A sky shader's COLOR goes to the framebuffer WITHOUT the linear-to-sRGB
+// conversion every other surface gets - measured, look v2 Stage 2: a noon sky
+// whose bands mix to a linear (0.428, 0.514, 0.663) came back as #6A7FA8, and
+// #6A7FA8 is that linear triple written out as bytes, not its sRGB encoding
+// (#B0BFDA). So the sky has been displaying every authored colour as its RAW
+// LINEAR value since look v1 - which is why SKY_TOP_DAY had to be a #4D80D4
+// that looks nothing like the poster to arrive as something that did.
+//
+// Every uniform here stays linear, like every other palette in the game, and
+// the conversion happens once, on the way out.
+vec3 kubik_to_srgb(vec3 c) {
+	return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055,
+		step(vec3(0.0031308), c));
+}
 
 float hash2(vec2 p) {
 	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -255,56 +295,109 @@ float clouds(vec2 uv) {
 	return vnoise(uv) * 0.65 + vnoise(uv * 2.3 + vec2(7.1, 3.3)) * 0.35;
 }
 
+// ALTERNATING LONG AND SHORT WEDGES THAT TAPER, around any axis.
+//
+// ray_count is the number of PAIRS, so there are twice that many wedges and
+// every other one reaches only `short_mul` as far. Each wedge narrows to 0.15
+// of its base width by the time it reaches its own extent, which is what makes
+// it a 4-gon pointing away from the disc rather than a stripe of constant
+// width - the single most Deco thing in the sky, and the plan says not to make
+// it subtle.
+float poster_wedges(vec3 dir, vec3 axis, float extent, float short_mul) {
+	float cs = dot(dir, axis);
+	float ang = acos(clamp(cs, -1.0, 1.0));
+	vec3 t1 = normalize(cross(axis, vec3(0.0, 1.0, 0.0)));
+	vec3 t2 = cross(axis, t1);
+	vec3 perp = dir - axis * cs;
+	float phi = atan(dot(perp, t2), dot(perp, t1));
+
+	float pair = fract(phi * ray_count / TAU_);
+	float is_short = step(0.5, pair);
+	float local = fract(pair * 2.0);
+	float reach = mix(extent, extent * short_mul, is_short);
+	float taper = mix(0.25, 0.25 * 0.15, clamp(ang / max(reach, 0.001), 0.0, 1.0));
+	float wedge = step(abs(local - 0.5), taper);
+	float fade = 1.0 - smoothstep(0.0, reach, ang);
+	return wedge * fade;
+}
+
 void sky() {
 	vec3 dir = EYEDIR;
 	float up = clamp(dir.y, 0.0, 1.0);
 
-	// THE BANDS. Denser near the horizon, where a poster stacks them.
+	// THE BANDS, IN THREE STOPS. Horizon to mid over the lower half, mid to
+	// top over the upper - so a poster sky has a warm band near the ground, a
+	// cool one overhead and a transition that is a stated colour rather than
+	// whatever a two-stop lerp passes through. Denser near the horizon, where
+	// a poster stacks them.
 	float band = floor(pow(up, 0.6) * sky_bands) / sky_bands;
-	vec3 col = mix(sky_horizon.rgb, sky_top.rgb, band);
-	// Below the horizon is the fog colour, which is what the far field fades
-	// to - so the sky's ground and the world's edge are the same colour.
+	vec3 col = band < 0.5
+		? mix(sky_horizon.rgb, sky_mid.rgb, band * 2.0)
+		: mix(sky_mid.rgb, sky_top.rgb, (band - 0.5) * 2.0);
+	// Below the horizon is the FOG colour - a step darker than the sky's
+	// lowest band - so the far mesh's last band and the ground of the sky are
+	// the same value and a far range is a cut-out against the sky, never glass
+	// over it. Rule 2, sharpened.
 	if (dir.y < 0.0) {
-		col = sky_horizon.rgb;
+		col = kubik_fog_color.rgb;
 	}
 
-	// THE SUN AND ITS RAYS.
+	// THE SUN, ITS RAYS AND ITS HALO.
 	float cs = dot(dir, sun_dir);
-	float ang = acos(clamp(cs, -1.0, 1.0));
-	vec3 t1 = normalize(cross(sun_dir, vec3(0.0, 1.0, 0.0)));
-	vec3 t2 = cross(sun_dir, t1);
-	vec3 perp = dir - sun_dir * cs;
-	float phi = atan(dot(perp, t2), dot(perp, t1));
-	float wedge = step(0.5, fract(phi * ray_count / TAU_));
-	float fade = 1.0 - smoothstep(0.0, ray_extent, ang);
 	float sun_up = smoothstep(-0.05, 0.05, sun_dir.y);
-	float rays = wedge * fade * ray_strength * sun_up * step(0.0, dir.y);
-	vec3 ray_col = mix(col, sun_color.rgb, 0.45);
-	col = mix(col, ray_col, rays);
+	float rays = poster_wedges(dir, sun_dir, ray_extent, ray_extent_short)
+		* ray_strength * sun_up * step(0.0, dir.y);
+	// One band lighter than the sky it crosses by day, and only at dusk does
+	// it take the sun's own colour - a white-hot fan at noon reads as a bug.
+	vec3 halo = mix(col, vec3(1.0), 0.08);
+	halo = mix(halo, sun_color.rgb, dusk);
+	col = mix(col, halo, rays);
 	float disc = step(cos(sun_size), cs) * sun_up;
 	col = mix(col, sun_color.rgb, disc);
 
-	// THE CLOUDS. Projected onto a plane above the viewer so they foreshorten
-	// toward the horizon the way real ones do, then cut hard.
+	// THE MOON: a gold disc with a short faint fan, after dark. It bends rule
+	// 5 by one object and Marcel approved it knowing that; it is one uniform
+	// to turn off. The moon's LIGHT stays the cold blue the ramp uses.
+	float moon_rays = poster_wedges(dir, moon_dir, 0.5, ray_extent_short)
+		* 0.10 * night * step(0.0, dir.y);
+	col = mix(col, mix(col, moon_color.rgb, 0.5), moon_rays);
+	float cm = dot(dir, moon_dir);
+	float moon = step(cos(0.018), cm) * night;
+	col = mix(col, moon_color.rgb, moon);
+
+	// THE CLOUDS, SAMPLED IN POLAR COORDINATES of the plane projection, so a
+	// cloud is a LOZENGE lying along the horizon rather than a blob that
+	// happens to be foreshortened. Cut at a hard threshold - the edge is a
+	// line, not a fade - and given one fixed-width shade lip on the underside
+	// by sampling the same field one constant step further out, which in polar
+	// is one constant step DOWN the sky.
 	if (dir.y > 0.02) {
 		vec2 uv = dir.xz / (dir.y + 0.35) * 1.6;
+		vec2 puv = vec2(atan(uv.y, uv.x) * 7.0, length(uv) * 2.2);
 		float thr = 1.0 - cloud_cover * 0.75;
-		float n = clouds(uv);
-		float here = step(thr, n);
-		float below = step(thr, clouds(uv + vec2(0.0, 0.05)));
+		float here = step(thr, clouds(puv));
+		// ONE FIXED-WIDTH LIP, and the width is the whole of it. The plan says
+		// 0.35 of a polar unit; measured, a cloud in this field is about half a
+		// unit across radially, so 0.35 swallowed the entire shape and every
+		// cloud drew as its own underside - dark brown blobs instead of lit
+		// lozenges. 0.08 is a lip.
+		float below = step(thr, clouds(puv + vec2(0.0, CLOUD_LIP)));
 		float underside = here * (1.0 - below);
 		float near_horizon = smoothstep(0.02, 0.12, dir.y);
 		float cloud = here * near_horizon;
-		vec3 lit = mix(col, vec3(1.0), 0.55 * max(day, 0.25)) * mix(vec3(1.0), sun_color.rgb, dusk * 0.6);
-		vec3 shade = mix(col, sky_horizon.rgb, 0.5) * mix(1.0, 0.75, day);
+		vec3 lit = cloud_lit.rgb;
+		vec3 shade = mix(col, sky_horizon.rgb, 0.35) * 0.86;
 		vec3 cloud_col = mix(lit, shade, underside);
-		col = mix(col, cloud_col * mix(1.0, 0.35, night), cloud);
+		// NO SECOND NIGHT TERM. Look v1 derived the cloud's lit colour from
+		// the sky band and then darkened the result by up to 0.35 after dark.
+		// cloud_lit is an authored keyframe row now - #FFE2C8 at dawn, #6F7C9E
+		// at night - so how dark a cloud is at this hour is already in it, and
+		// multiplying again turned a warm dawn cloud into a taupe smudge.
+		col = mix(col, cloud_col, cloud);
 	}
 
-	// THE MOON AND THE STARS, after dark.
-	float cm = dot(dir, moon_dir);
-	float moon = step(cos(0.018), cm) * night;
-	col = mix(col, vec3(0.85, 0.88, 1.0), moon);
+	// THE STARS, after dark.
+	//
 	// A 3D cell hashed in two stages: hashing x + 17 z directly collapses
 	// whole rows of cells onto one value and the first night tour had every
 	// star in one patch of sky.
@@ -313,7 +406,7 @@ void sky() {
 	float star = step(0.994, star_seed) * night * smoothstep(0.05, 0.2, dir.y);
 	col += vec3(0.7, 0.75, 0.9) * star;
 
-	COLOR = col;
+	COLOR = kubik_to_srgb(col);
 }
 """
 
@@ -322,6 +415,7 @@ void sky() {
 
 static var _opaque: ShaderMaterial = null
 static var _water: ShaderMaterial = null
+static var _figure: ShaderMaterial = null
 static var _sky: ShaderMaterial = null
 static var _mutex := Mutex.new()
 
@@ -347,6 +441,23 @@ static func opaque_material() -> ShaderMaterial:
 		_opaque = _make(OPAQUE_SHADER)
 	_mutex.unlock()
 	return _opaque
+
+
+## THE SAME SHADER, FOR THINGS THAT STAND ON THE GROUND RATHER THAN BEING IT.
+##
+## One shader string, two materials: the figures fog toward the darker colour
+## and (from Stage 3) take no grain. Two materials means one extra draw group,
+## which is the whole cost - and it is what keeps a character from fogging into
+## the hillside behind it.
+static func figure_material() -> ShaderMaterial:
+	if _figure != null:
+		return _figure
+	_mutex.lock()
+	if _figure == null:
+		_figure = _make(OPAQUE_SHADER)
+		_figure.set_shader_parameter("fog_dark_mix", 1.0)
+	_mutex.unlock()
+	return _figure
 
 
 static func water_material() -> ShaderMaterial:

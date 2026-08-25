@@ -329,10 +329,18 @@ func apply() -> void:
 		var dusk := dusk_amount(elevation)
 		var night := night_amount(elevation)
 		_sky.set_shader_parameter("sky_top", kf["sky_top"])
-		# STAGE 2 SPLITS THESE. Until then the horizon is still the fog colour,
-		# which is what look v1 did; Stage 2 gives the sky its own horizon row
-		# and makes the fog a step darker than it, per rule 2.
-		_sky.set_shader_parameter("sky_horizon", kf["fog"])
+		_sky.set_shader_parameter("sky_mid", kf["sky_mid"])
+		# THE HORIZON IS NOT THE FOG. Look v1 made them the same value so the
+		# far mesh's last band could never be a line against the sky; look v2
+		# gives the sky its own horizon row and puts the fog a step DARKER, so
+		# a far range is a cut-out against the sky rather than glass over it.
+		# The sky shader reads kubik_fog_color itself for everything below the
+		# horizon, which is what keeps the two in agreement.
+		_sky.set_shader_parameter("sky_horizon", kf["horizon"])
+		_sky.set_shader_parameter("cloud_lit", kf["cloud_lit"])
+		# The gold moon, Marcel's sixteenth refinement. The night keyframe's
+		# accent; the moon's LIGHT stays the cold blue in kf["sun"].
+		_sky.set_shader_parameter("moon_color", keyframe("night")["accent"])
 		_sky.set_shader_parameter("sun_dir", sun_pos)
 		_sky.set_shader_parameter("moon_dir", -sun_pos)
 		_sky.set_shader_parameter("sun_color", kf["sun"])

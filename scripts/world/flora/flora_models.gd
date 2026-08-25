@@ -660,6 +660,10 @@ static func material() -> ShaderMaterial:
 		var m := ShaderMaterial.new()
 		m.shader = shader
 		m.set_shader_parameter("wind_strength", 1.0)
+		# A PLANT IS A FIGURE, not the ground. It fogs toward the darker colour
+		# so a meadow at 150 m does not turn into the same flat band as the
+		# hillside behind it (Look.FOG_FN, look v2 Stage 2).
+		m.set_shader_parameter("fog_dark_mix", 1.0)
 		_material = m
 	_mesh_mutex.unlock()
 	return _material
@@ -702,8 +706,12 @@ void vertex() {
 
 void fragment() {
 	// The vertex colour IS the albedo, exactly as it is for the terrain.
-	// There are no textures in this world; a plant is its colour.
-	ALBEDO = COLOR.rgb;
+	// There are no textures in this world; a plant is its colour. It arrives
+	// sRGB on the wire and goes to light() through v_albedo, with ALBEDO left
+	// white - see the note in Look.HEADER. A plant shader that set ALBEDO and
+	// forgot v_albedo drew every tuft in the world pure black.
+	v_albedo = kubik_to_linear(COLOR.rgb);
+	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	// GLOWING MUSHROOMS, AND THEY COST ONE LINE. COLOR.a is the model's own
@@ -714,7 +722,7 @@ void fragment() {
 	// anywhere in the placement rules.
 	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * kubik_night * night_life * 2.0;
 	// Distance in bands, like everything else - see Look.
-	FOG = poster_fog(VERTEX);
+	FOG = poster_fog(VERTEX, v_albedo);
 }
 """ + Look.RAMP
 
@@ -787,8 +795,12 @@ void vertex() {
 }
 
 void fragment() {
-	// The 0.15 is a darkening of the BODY and belongs in linear, so it is
-	// applied to the decoded colour and handed back to ALBEDO on the wire.
+	// A firefly's body, dark so the glow is the whole of it. This shader has no
+	// custom light() - it is diffuse_lambert - so ALBEDO is the engine's to
+	// decode and the 0.15 lands in sRGB rather than in linear, which makes the
+	// speck slightly lighter than 0.15 of its colour. It is a one-voxel body
+	// under an EMISSION three times its own value, at night; not worth a
+	// conversion. EMISSION does decode, on the line below, because it must.
 	ALBEDO = COLOR.rgb * 0.15;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
