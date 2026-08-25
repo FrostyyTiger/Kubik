@@ -136,6 +136,8 @@ func _sheets() -> Dictionary:
 		"study": _sheet_study,
 		"silhouettes": _sheet_silhouettes,
 		"masks-40": _sheet_masks_40,
+		"variants": _sheet_variants,
+		"masks-options": _sheet_masks_options,
 	}
 
 
@@ -540,6 +542,47 @@ func _sheet_silhouettes() -> void:
 	_set_time(-1.0)
 
 
+# --- Variants -----------------------------------------------------------------
+
+## Every hair and beard a race has, in a row, then every palette in another.
+##
+## THE PLAN ASKS FOR A GRID and this is two rows instead, because a grid on a
+## flat pad means putting the back row further from the camera - which changes
+## its scale and its light and makes the two rows incomparable, which is the
+## one thing a variants sheet must not do. Two rows at one distance compares
+## what it says it compares.
+func _sheet_variants() -> void:
+	for def: CharacterDef in _lineup_defs():
+		if def.build != Races.STOCKY:
+			continue  # the lean human wears the same hair as the stocky one
+		var race: int = def.race
+		var combos := []
+		for hair in Races.hair_count(race):
+			for beard in maxi(Races.beard_count(race), 1):
+				var v: CharacterDef = def.duplicate_def()
+				v.hair = hair
+				v.beard = beard
+				v.validate()
+				combos.append(v)
+		_set_lineup(combos)
+		_face(FACING_CAMERA + deg_to_rad(20.0))
+		await _shoot_row("variants-%s" % Races.name_of(race), combos.size())
+
+		var palettes := []
+		for skin in Races.skin_count(race):
+			var v: CharacterDef = def.duplicate_def()
+			v.skin = skin
+			# Step the other two with it, so the row walks whole palettes
+			# rather than one axis of one.
+			v.hair_color = skin % Races.hair_color_count(race)
+			v.eyes = skin % Races.eye_count(race)
+			v.validate()
+			palettes.append(v)
+		_set_lineup(palettes)
+		_face(FACING_CAMERA + deg_to_rad(20.0))
+		await _shoot_row("palettes-%s" % Races.name_of(race), palettes.size())
+
+
 # --- The silhouette metric ----------------------------------------------------
 #
 # THE TEST THE WHOLE RACE DESIGN HANGS ON. DESIGN.md asks for "strong distinct
@@ -635,6 +678,58 @@ func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> 
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
+
+
+## THE WORST CASE ACROSS HAIR AND BEARD OPTIONS.
+##
+## masks-40 measures the DEFAULT hair and beard, which is what the target is
+## judged on. This walks every option instead and reports the worst pair it can
+## find, because a player who picks the long hair has not agreed to be
+## unrecognisable - and because a metric that only ever sees the defaults is a
+## metric that can be satisfied by choosing convenient defaults.
+func _sheet_masks_options() -> void:
+	var variants := []
+	for def: CharacterDef in _lineup_defs():
+		if def.build != Races.STOCKY:
+			continue
+		var race: int = def.race
+		for hair in Races.hair_count(race):
+			var v: CharacterDef = def.duplicate_def()
+			v.hair = hair
+			v.validate()
+			variants.append({"def": v, "name": "%s hair %d" % [Races.name_of(race), hair]})
+		for beard in maxi(Races.beard_count(race), 1):
+			if beard == 0:
+				continue  # already covered by the default above
+			var v: CharacterDef = def.duplicate_def()
+			v.beard = beard
+			v.validate()
+			variants.append({"def": v, "name": "%s beard %d" % [Races.name_of(race), beard]})
+
+	var masks := []
+	for entry in variants:
+		masks.append(await _mask_of(entry["def"]))
+
+	var worst := 0.0
+	var worst_pair := ""
+	var over := 0
+	var pairs := 0
+	for i in variants.size():
+		for j in range(i + 1, variants.size()):
+			if (variants[i]["def"] as CharacterDef).race == (variants[j]["def"] as CharacterDef).race:
+				continue  # two hairstyles on one race are not a race pair
+			pairs += 1
+			var iou := _mask_iou(masks[i], masks[j])
+			if iou >= 0.70:
+				over += 1
+				print("[Gallery]   %-20s vs %-20s  %.3f  OVER" % [
+					variants[i]["name"], variants[j]["name"], iou])
+			if iou > worst:
+				worst = iou
+				worst_pair = "%s vs %s" % [variants[i]["name"], variants[j]["name"]]
+	print("[Gallery] worst case across all hair and beard options: %s at %.3f" % [
+		worst_pair, worst])
+	print("[Gallery]   %d cross-race variant pairs, %d over 0.70" % [pairs, over])
 
 
 ## Is this pair two DIFFERENT races, both of them characters?

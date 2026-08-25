@@ -44,6 +44,8 @@ func _ready() -> void:
 		"eyes closed variant": _test_eyes_closed_variant,
 		"state byte": _test_state_byte,
 		"remote row": _test_remote_row,
+		"every combination": _test_every_combination,
+		"option tables agree": _test_option_tables,
 	}
 	var failures := 0
 	for name in tests:
@@ -554,7 +556,7 @@ func _test_character_height():
 			bad += 1
 		var crown := view.height_m(true)
 		report.append("%s %.2fm/%d%s" % [_build_name(entry), got, tris,
-			"" if is_equal_approx(crown, got) else " (%.2f with crest)" % crown])
+			"" if is_equal_approx(crown, got) else " (%.2f with hair)" % crown])
 		view.free()
 	print("character height: %s, %d checks failed" % [
 		String(" ").join(report), bad])
@@ -1293,3 +1295,126 @@ func _def_bytes(race: int) -> PackedByteArray:
 	def.race = race
 	def.validate()
 	return def.to_bytes()
+
+
+# --- Stage 9 -----------------------------------------------------------------
+
+## EVERY COMBINATION BUILDS. A LOOP, NOT A SAMPLE.
+##
+## Four races x two builds where they exist x three hairs x up to three beards
+## x five skins x five hair colours x four eyes is more than a sample can
+## honestly cover, and the failure mode this guards against is exactly the one
+## a sample misses: ONE option out of sixty with a ragged row in it, which
+## renders as a missing beard on one dwarf and is never noticed.
+##
+## The palette axis is walked separately from the geometry axis rather than
+## multiplied with it. A palette cannot make a part fail to parse - it is a
+## dictionary lookup - so the full cross product would be a hundred thousand
+## rig builds to prove something the palette-swap test already proves in two.
+func _test_every_combination():
+	var bad := 0
+	var built := 0
+	for entry in _every_build():
+		var race: int = entry["race"]
+		for hair in Races.hair_count(race):
+			for beard in maxi(Races.beard_count(race), 1):
+				var def := _def_for(entry)
+				def.hair = hair
+				def.beard = beard
+				def.validate()
+				if def.hair != hair or def.beard != beard:
+					print("  %s clamped hair %d beard %d to %d/%d - the option counts disagree" % [
+						_build_name(entry), hair, beard, def.hair, def.beard])
+					bad += 1
+					continue
+				var view := CharacterView.new()
+				view.build(def)
+				built += 1
+				if view.rig == null or view.triangle_count() <= 0:
+					print("  %s hair %d beard %d built nothing" % [
+						_build_name(entry), hair, beard])
+					bad += 1
+				# Hair must not silently vanish: if the option table says there
+				# is a part, the rig must have meshed it.
+				if PartsHair.hair_part(race, hair) != null and not view.rig.meshes.has("hair"):
+					print("  %s hair %d has a part but no mesh" % [_build_name(entry), hair])
+					bad += 1
+				if PartsHair.beard_part(race, beard) != null and not view.rig.meshes.has("beard"):
+					print("  %s beard %d has a part but no mesh" % [_build_name(entry), beard])
+					bad += 1
+				view.free()
+
+	# The palette axis, on one race, walked in full.
+	var palettes := 0
+	for race in Races.RACE_COUNT:
+		for skin in Races.skin_count(race):
+			for hair_color in Races.hair_color_count(race):
+				for eyes in Races.eye_count(race):
+					var pal := Races.palette(race, skin, hair_color, eyes)
+					palettes += 1
+					if pal.size() != VoxelModel.SLOT_COUNT:
+						print("  %s palette %d/%d/%d has %d slots, wanted %d" % [
+							Races.name_of(race), skin, hair_color, eyes,
+							pal.size(), VoxelModel.SLOT_COUNT])
+						bad += 1
+					for slot in VoxelModel.SLOT_COUNT:
+						var c: Color = pal[slot]
+						if not (is_finite(c.r) and is_finite(c.g) and is_finite(c.b)):
+							print("  %s palette slot %s is not finite" % [
+								Races.name_of(race), VoxelModel.SLOT_NAMES[slot]])
+							bad += 1
+
+	print("every combination: %d rigs built, %d palettes resolved, %d checks failed" % [
+		built, palettes, bad])
+	return 1 if bad > 0 else 0
+
+
+## THE OPTION LISTS AND THE PART TABLES ARE THE SAME LENGTH.
+##
+## Races.HAIR_OPTIONS names the options and PartsHair.HAIR holds their
+## geometry, and the index that joins them is one byte on the wire and one
+## number in a save file. If the two lists ever drift, a player's saved "long
+## hair" silently becomes something else on the next build - which is the kind
+## of bug that is invisible until someone complains that their character
+## changed.
+func _test_option_tables():
+	var bad := 0
+	for race in Races.RACE_COUNT:
+		var named := Races.hair_count(race)
+		var built: int = (PartsHair.HAIR[race] as Array).size()
+		if named != built:
+			print("  %s names %d hair options but has %d part entries" % [
+				Races.name_of(race), named, built])
+			bad += 1
+		var named_beards := Races.beard_count(race)
+		var built_beards: int = (PartsHair.BEARD[race] as Array).size()
+		if named_beards != built_beards:
+			print("  %s names %d beard options but has %d part entries" % [
+				Races.name_of(race), named_beards, built_beards])
+			bad += 1
+
+	# THE DWARF CAN NEVER BE BEARDLESS and the elf can never be bearded. Both
+	# are stated in the plan as rules and both are enforced by data, so both
+	# are checked against the data rather than against a comment.
+	if Races.beard_count(Races.DWARF) < 3:
+		print("  the dwarf has %d beards, wanted three" % Races.beard_count(Races.DWARF))
+		bad += 1
+	for i in Races.beard_count(Races.DWARF):
+		if PartsHair.beard_part(Races.DWARF, i) == null:
+			print("  dwarf beard option %d is empty - a dwarf would be beardless" % i)
+			bad += 1
+	if Races.beard_count(Races.ELF) != 0:
+		print("  the elf has %d beard options, wanted none" % Races.beard_count(Races.ELF))
+		bad += 1
+	if Races.beard_count(Races.LIZARDFOLK) != 0:
+		print("  the lizardfolk has %d beard options, wanted none" % Races.beard_count(Races.LIZARDFOLK))
+		bad += 1
+	# ...and every lizardfolk crest exists, since its hair slot is a crest and
+	# a crest is the one feature a front-on mask can see.
+	for i in Races.hair_count(Races.LIZARDFOLK):
+		if PartsHair.hair_part(Races.LIZARDFOLK, i) == null:
+			print("  lizardfolk crest option %d is empty" % i)
+			bad += 1
+
+	print("option tables agree: 4 races x hair and beard lists, %d checks failed" % bad)
+	return 1 if bad > 0 else 0
