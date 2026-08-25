@@ -825,3 +825,15 @@ static func build_mesh(name: String) -> ArrayMesh:
 
 static func gallery_material() -> ShaderMaterial:
 	return material()
+
+
+## The material one model is drawn with, by name, for the gallery.
+##
+## BY MATERIAL, NOT BY ONE SHARED ONE, because the firefly has its own shader
+## and a gallery that drew it with the plant shader would be the one place in
+## the project where the firefly shader is never compiled - which is exactly
+## the shader most likely to be wrong, since it is the only one whose output
+## is invisible for two thirds of the day.
+static func gallery_material_for(name: String) -> ShaderMaterial:
+	var i := NAMES.find(name)
+	return material_for(i) if i >= 0 else material()

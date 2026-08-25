@@ -132,7 +132,7 @@ func _ready() -> void:
 
 	var sky: SkyCycle = $SkyCycle
 	sky.setup(_config, $Sun, $WorldEnvironment)
-	sky.time_of_day = GALLERY_TIME
+	sky.time_of_day = _resolve_time()
 	sky.frozen = true
 	sky.apply()
 
@@ -368,7 +368,7 @@ func _build_plant_strip() -> void:
 			var e: Dictionary = row[c]
 			var node := MeshInstance3D.new()
 			node.mesh = e["mesh"]
-			node.material_override = script.gallery_material()
+			node.material_override = script.gallery_material_for(e["name"])
 			# CAST NO SHADOWS, because the world does not - FloraColumn turns
 			# shadow casting off on every flora MultiMesh, and a gallery that
 			# lit its models differently from the game would be showing you
@@ -552,6 +552,20 @@ func _capture(image_name: String, eye: Vector3, look: Vector3) -> void:
 
 func _to_metres(bx: int, by: int, bz: int) -> Vector3:
 	return Vector3(float(bx), float(by), float(bz)) * _config.block_size
+
+
+## `--time 0.95` photographs the models after dark instead of at noon.
+##
+## THE ONLY WAY TO SEE HALF OF WHAT STAGE 8 BUILT. A glowing mushroom cap and a
+## firefly are both invisible by day on purpose - the firefly's vertices are
+## scaled to zero - so a gallery that only ever shoots at noon can prove those
+## models compile and never prove they light up.
+func _resolve_time() -> float:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--time")
+	if i >= 0 and i + 1 < argv.size():
+		return clampf(argv[i + 1].to_float(), 0.0, 1.0)
+	return GALLERY_TIME
 
 
 ## `--label NAME` -> res://build/gallery/NAME. Sanitised the same way the tour
