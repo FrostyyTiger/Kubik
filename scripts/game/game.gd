@@ -107,6 +107,8 @@ func _ready() -> void:
 		_start_tour.call_deferred()
 	elif "--traverse" in OS.get_cmdline_user_args():
 		_start_traverse.call_deferred()
+	elif "--flora-probe" in OS.get_cmdline_user_args():
+		_start_flora_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -265,6 +267,16 @@ func _start_traverse() -> void:
 	_debug.visible = false
 	var probe := TraversalProbe.new()
 	probe.name = "TraversalProbe"
+	add_child(probe)
+	probe.run(_world, _player)
+
+
+## Hand the session to the flora streaming probe - see scripts/tools/flora_probe.gd.
+func _start_flora_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := FloraProbe.new()
+	probe.name = "FloraProbe"
 	add_child(probe)
 	probe.run(_world, _player)
 

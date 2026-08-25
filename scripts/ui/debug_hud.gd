@@ -88,6 +88,8 @@ const LOCAL_TUNING_ROWS := [
 	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
 	["far_zone_cell_m", "poster: far zone cell (m)", 0.0, 128.0, 4.0],
 	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
+	["flora_far_m", "flora far ring (m)", 0.0, 320.0, 8.0],
+	["flora_far_fraction", "flora far density", 0.0, 1.0, 0.05],
 	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
 	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
 	["wind_strength", "wind", 0.0, 3.0, 0.1],
@@ -188,9 +190,10 @@ func _compose_readout() -> String:
 			lines.append("far field %d verts" % world.far_field_vertices())
 		if world.has_method("flora_stats"):
 			var f: Dictionary = world.flora_stats()
-			lines.append("flora     %d inst, %.2f M tris, %d cols, %d pending" % [
-				f.get("instances", 0), float(f.get("triangles", 0)) / 1000000.0,
-				f.get("columns", 0), f.get("pending", 0)])
+			lines.append("flora     %d inst, %.2f M tris, %d cols, %d pending, %d cached" % [
+				f["instances"], f["triangles"], f["columns"], f["pending"], f.get("cached", 0)])
+			lines.append("flora     %.2f ms per column on workers, %d built" % [
+				f.get("ms_per_column", 0.0), f.get("built", 0)])
 	if far_trees != null and far_trees.has_method("stats"):
 		var t: Dictionary = far_trees.stats()
 		lines.append("far trees %d impostors, %d ms rebuild" % [

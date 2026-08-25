@@ -24,6 +24,20 @@ signal generation_finished(chunk_count: int, elapsed_ms: int)
 ## standing still.
 const UNLOAD_MARGIN_CHUNKS := 2
 
+## Flora columns kept hidden after they leave the far ring, most recent last.
+##
+## 1024, measured. The far disc is about 800 columns and a 48 m move replaces
+## 188 of them, so 256 - the first value - held a single step back and the
+## probe rebuilt everything past it. 1024 is five steps, and a column is a
+## few kilobytes of buffer plus its MultiMesh objects: a few megabytes on the
+## render server for every step back the way you came being free.
+const FLORA_CACHE_COLUMNS := 1024
+
+## Chunk columns of hysteresis on the flora rings, for the same reason chunks
+## have UNLOAD_MARGIN_CHUNKS: a player shuffling on a ring boundary must not
+## evict and restore the same column every step.
+const FLORA_MARGIN_CHUNKS := 1
+
 ## Milliseconds of MAIN THREAD chunk work allowed per frame. At 60 fps a frame
 ## is 16.6 ms, so 8 leaves room for everything else and the window stays alive.
 ##
@@ -120,6 +134,15 @@ var _flora_queued := {}
 var _flora_instances := 0
 var _flora_triangles := 0
 var _flora_ms := 0
+var _flora_built := 0          # columns built on workers, for the ms-per-column readout
+
+## Columns that walked out of range, KEPT rather than freed - hidden, in
+## insertion order, so the oldest is the first evicted. Look v1's playtest
+## found the cost of not having this: turn round and the meadow you just
+## walked through is rebuilt from scratch, tuft by tuft, while you stand on
+## bare ground. A column's buffers are a few kilobytes; FLORA_CACHE_COLUMNS
+## of them is the price of never paying twice for the same hillside.
+var _flora_cache := {}         # Vector2i -> FloraColumn, hidden
 
 ## Flora instances that have been taken out of the world, as a set of 64-bit
 ## identities. Host-owned, in the same spirit as _edits.
@@ -231,7 +254,7 @@ func _process(_delta: float) -> void:
 		print("[World] flora %d instances, %.2f M triangles, %d columns, %.2f ms per column on workers" % [
 			_flora_instances, float(_flora_triangles) / 1000000.0,
 			_flora_nodes.size(),
-			float(_flora_ms) / 1000.0 / float(maxi(_flora_nodes.size(), 1))])
+			float(_flora_ms) / 1000.0 / float(maxi(_flora_built, 1))])
 		generation_finished.emit(_built, wall)
 
 
@@ -300,11 +323,15 @@ func reset() -> void:
 	for col in _flora_nodes:
 		_flora_nodes[col].queue_free()
 	_flora_nodes.clear()
+	for col in _flora_cache:
+		_flora_cache[col].queue_free()
+	_flora_cache.clear()
 	_flora_queue.clear()
 	_flora_queued.clear()
 	_flora_instances = 0
 	_flora_triangles = 0
 	_flora_ms = 0
+	_flora_built = 0
 	_gen_in_flight.clear()
 	_build_queue.clear()
 	_queued.clear()
@@ -377,16 +404,31 @@ func _jobs_in_flight() -> int:
 ## terrain jobs are offered the pool first and flora takes what is left. On a
 ## busy load that means flora arrives a moment behind the ground, which is
 ## exactly the order a player notices things in.
+##
+## BUT NEVER STARVED. A walking player keeps the terrain queue full for as
+## long as they walk, and with a shared cap the grass never got a worker at
+## all until they stopped - look v1's playtest saw bare ground trailing the
+## player and filling in only when they stood still. So one flora job may run
+## OVER the cap when none is in flight: the ground still comes first, the
+## grass merely always comes.
 func _submit_flora() -> void:
-	while not _flora_queue.is_empty() and _jobs_in_flight() < _max_jobs_in_flight:
+	while not _flora_queue.is_empty():
+		var lane_free := _jobs_in_flight() < _max_jobs_in_flight \
+			or _flora_in_flight.is_empty()
+		if not lane_free:
+			return
 		var col: Vector2i = _flora_queue.pop_front()
 		_flora_queued.erase(col)
 		if _flora_in_flight.has(col):
+			continue
+		if _flora_fraction_for(col) <= 0.0:
 			continue
 		var job := FloraJob.new()
 		job.column = col
 		job.generator = generator
 		job.config = config
+		# ALWAYS THE FULL COLUMN. The ring a column is in decides how much of
+		# it is shown, not how much of it is built - see FloraColumn.
 		job.draw_fraction = config.flora_draw_fraction
 		# A SNAPSHOT, not the live dictionary. The job reads it on a worker
 		# thread and the main thread may be inserting into it at the same
@@ -494,9 +536,11 @@ func _collect_flora(started: int, budget: int) -> void:
 		done.append(col)
 
 	for col in done:
-		var job: FloraJob = _flora_in_flight[col]["job"]
+		var entry: Dictionary = _flora_in_flight[col]
+		var job: FloraJob = entry["job"]
 		_flora_in_flight.erase(col)
 		_flora_ms += job.elapsed_usec
+		_flora_built += 1
 		# The column may have walked out of range while its job was in flight.
 		# Dropping the result is right: nothing is drawing it, and the job will
 		# be resubmitted if the player comes back.
@@ -504,12 +548,18 @@ func _collect_flora(started: int, budget: int) -> void:
 			continue
 		var node: FloraColumn = _flora_nodes.get(col)
 		if node == null:
-			node = FloraColumn.new()
-			node.setup(col)
-			add_child(node)
+			node = _flora_cache.get(col)
+			if node != null:
+				_flora_cache.erase(col)
+				node.visible = true
+			else:
+				node = FloraColumn.new()
+				node.setup(col)
+				add_child(node)
 			_flora_nodes[col] = node
 		_flora_instances -= node.instance_count
 		_flora_triangles -= node.triangle_count
+		node.draw_fraction = _flora_fraction_for(col)
 		node.apply_buffers(job.buffers, config)
 		_flora_instances += node.instance_count
 		_flora_triangles += node.triangle_count
@@ -734,38 +784,90 @@ func refresh_region() -> void:
 ## HOOK 3 OF 4: free, and queue. Bring the flora columns in line with where the
 ## player is.
 ##
-## flora_radius_m IS MUCH SMALLER THAN THE VOXEL RADIUS - 64 m against 96 - and
-## that is the point of it being a separate radius rather than the same one.
-## Ground cover is 30 cm tall: past about 60 m it is a green haze that costs
-## its full triangle count and adds nothing you could describe. Trees are 10 m
-## and carry on being trees to the horizon, which is what Stage 7's impostor
-## ring is for.
+## TWO RINGS SINCE THE FLORA STREAMING PASS. Foliage v1 drew ground cover to
+## flora_radius_m and nothing beyond, on the argument that 30 cm of grass past
+## 60 m is a haze that costs its full triangle count. True - but the edge of
+## that haze is a circle moving with the player, and in play the eye finds a
+## circle instantly. So beyond the full ring there is now a SPARSE ring out to
+## flora_far_m, drawn at flora_far_fraction of the plants. The fraction is
+## hashed per plant and the buffers are SORTED by that hash (see FloraJob),
+## so the sparse set is a prefix of the full one: crossing from the far ring
+## into the near ring is a visible_instance_count change on a buffer the
+## column already has. Nothing is rebuilt and nothing reshuffles. Every
+## column is built once, at full density, whichever ring it was first seen
+## from.
+##
+## Columns leaving the far ring are not freed. They go to _flora_cache, hidden,
+## and come straight back if the player turns round - a column's buffers are
+## kilobytes and its build was milliseconds of a worker the player was waiting
+## on. The cache is bounded and evicts its oldest.
+##
+## The queue is SORTED NEAREST-FIRST, which foliage v1's was not: it appended
+## in scan order, so the far corners of the disc could be built before the
+## grass under the player's feet.
 func _refresh_flora() -> void:
-	var radius := _flora_radius_chunks()
-	var radius_sq := radius * radius
+	var near := _flora_radius_chunks()
+	var far := _flora_far_chunks()
+	if near < 0:
+		return
+	var far_sq := far * far
 
-	var wanted := {}
-	for dz in range(-radius, radius + 1):
-		for dx in range(-radius, radius + 1):
-			if dx * dx + dz * dz > radius_sq:
+	var wanted := {}   # col -> fraction it should be drawn at
+	for dz in range(-far, far + 1):
+		for dx in range(-far, far + 1):
+			if dx * dx + dz * dz > far_sq:
 				continue
 			var col := Vector2i(_center.x + dx, _center.y + dz)
-			wanted[col] = true
-			if not _flora_nodes.has(col) and not _flora_in_flight.has(col) \
-					and not _flora_queued.has(col):
+			var fraction := _flora_fraction_for(col)
+			if fraction <= 0.0:
+				continue
+			wanted[col] = fraction
+			if _flora_in_flight.has(col) or _flora_queued.has(col):
+				continue
+			var node: FloraColumn = _flora_nodes.get(col)
+			if node == null:
+				node = _flora_cache.get(col)
+				if node != null:
+					# Back from the cache: visible again this frame.
+					_flora_cache.erase(col)
+					_flora_nodes[col] = node
+					node.visible = true
+					_flora_instances += node.instance_count
+					_flora_triangles += node.triangle_count
+			if node == null:
 				_flora_queue.append(col)
 				_flora_queued[col] = true
+			elif not _fraction_matches(node.draw_fraction, fraction):
+				# Crossed a ring: show more or less of a buffer it already
+				# has. No worker, no rebuild - see FloraColumn.set_fraction.
+				_flora_instances -= node.instance_count
+				_flora_triangles -= node.triangle_count
+				node.set_fraction(fraction)
+				_flora_instances += node.instance_count
+				_flora_triangles += node.triangle_count
 
+	# Out of both rings, with hysteresis: keep a column a margin past the far
+	# ring so a player on the boundary does not evict and restore it every
+	# step. What falls outside the margin goes to the cache, not the bin.
+	var keep := far + FLORA_MARGIN_CHUNKS
+	var keep_sq := keep * keep
 	var doomed: Array[Vector2i] = []
 	for col in _flora_nodes:
-		if not wanted.has(col):
+		var dx: int = col.x - _center.x
+		var dz: int = col.y - _center.y
+		if dx * dx + dz * dz > keep_sq:
 			doomed.append(col)
 	for col in doomed:
 		var node: FloraColumn = _flora_nodes[col]
 		_flora_instances -= node.instance_count
 		_flora_triangles -= node.triangle_count
-		node.queue_free()
 		_flora_nodes.erase(col)
+		node.visible = false
+		_flora_cache[col] = node
+	while _flora_cache.size() > FLORA_CACHE_COLUMNS:
+		var oldest: Vector2i = _flora_cache.keys()[0]
+		_flora_cache[oldest].queue_free()
+		_flora_cache.erase(oldest)
 
 	# Anything still queued but no longer wanted is dropped before it costs a
 	# worker. A job already in flight is left to finish and discarded on
@@ -778,6 +880,7 @@ func _refresh_flora() -> void:
 			else:
 				_flora_queued.erase(col)
 		_flora_queue = still
+		_flora_queue.sort_custom(_flora_nearer_to_centre)
 
 
 func _flora_radius_chunks() -> int:
@@ -787,11 +890,45 @@ func _flora_radius_chunks() -> int:
 	return int(ceil(config.flora_radius_m / maxf(per_chunk, 0.001)))
 
 
-func _wants_flora(col: Vector2i) -> bool:
-	var radius := _flora_radius_chunks()
+## Outer edge of the sparse ring, in chunk columns. Never inside the full ring:
+## a far radius at or below the near one simply means there is no sparse ring.
+func _flora_far_chunks() -> int:
+	var near := _flora_radius_chunks()
+	if config.flora_far_m <= config.flora_radius_m or config.flora_far_fraction <= 0.0:
+		return near
+	var per_chunk := float(Chunk.SIZE) * config.block_size
+	return maxi(int(ceil(config.flora_far_m / maxf(per_chunk, 0.001))), near)
+
+
+## The density a column should be drawn at from where the player stands: 1 in
+## the full ring, flora_far_fraction in the sparse ring, 0 beyond.
+func _flora_fraction_for(col: Vector2i) -> float:
+	var near := _flora_radius_chunks()
+	if near < 0:
+		return 0.0
 	var dx := col.x - _center.x
 	var dz := col.y - _center.y
-	return dx * dx + dz * dz <= radius * radius
+	var d_sq := dx * dx + dz * dz
+	if d_sq <= near * near:
+		return 1.0
+	var far := _flora_far_chunks()
+	if d_sq <= far * far:
+		return config.flora_far_fraction
+	return 0.0
+
+
+static func _fraction_matches(have: float, want: float) -> bool:
+	return absf(have - want) < 0.001
+
+
+func _flora_nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
+	var da := (a.x - _center.x) * (a.x - _center.x) + (a.y - _center.y) * (a.y - _center.y)
+	var db := (b.x - _center.x) * (b.x - _center.x) + (b.y - _center.y) * (b.y - _center.y)
+	return da < db
+
+
+func _wants_flora(col: Vector2i) -> bool:
+	return _flora_fraction_for(col) > 0.0
 
 
 ## Instances currently drawn, and columns holding them. For the F3 readout.
@@ -801,6 +938,9 @@ func flora_stats() -> Dictionary:
 		"triangles": _flora_triangles,
 		"columns": _flora_nodes.size(),
 		"pending": _flora_queue.size() + _flora_in_flight.size(),
+		"cached": _flora_cache.size(),
+		"built": _flora_built,
+		"ms_per_column": float(_flora_ms) / 1000.0 / float(maxi(_flora_built, 1)),
 	}
 
 

@@ -10,6 +10,9 @@ never exercised**. The colour transfer was measured rather than assumed and the
 fix is green on Compatibility; whether it is green on Forward+ is one command
 on the Windows box, and the status doc names it.
 
+Since then: `docs/status/flora-streaming.md` — the grass keeps up with the
+player (2026-08-25, `feat/flora-streaming`).
+
 Earlier runs, newest first:
 
 - `docs/status/look-v1.md` — look v1, the poster, 2026-08-25, with the

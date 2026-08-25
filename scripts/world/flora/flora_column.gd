@@ -28,7 +28,16 @@ var instance_count := 0
 ## instance count, and only this number says so.
 var triangle_count := 0
 
+## The share of each model's instances currently VISIBLE - 1 in the full
+## ring, the far fraction in the sparse one. Never rebuilds anything: the
+## buffers are built once at full density with their instances sorted by
+## hash (see FloraJob), so a fraction is a prefix and set_fraction() is a
+## visible_instance_count per slot.
+var draw_fraction := 1.0
+
 var _slots := {}   # model id -> MultiMeshInstance3D
+var _counts := {}  # model id -> instances in the buffer (all of them)
+var _block_size := 0.5
 
 
 func setup(p_column: Vector2i) -> void:
@@ -64,8 +73,7 @@ func apply_buffers(buffers: Dictionary, config: WorldgenConfig) -> void:
 		slot.multimesh.instance_count = count
 		slot.multimesh.buffer = buf
 		slot.visible = true
-		instance_count += count
-		triangle_count += count * FloraModels.triangles_for(model, config.block_size)
+		_counts[model] = count
 
 	# A model this column no longer has any of keeps its node but draws
 	# nothing. Freeing and rebuilding the node instead would churn the
@@ -75,6 +83,25 @@ func apply_buffers(buffers: Dictionary, config: WorldgenConfig) -> void:
 		if not buffers.has(model):
 			_slots[model].multimesh.instance_count = 0
 			_slots[model].visible = false
+			_counts[model] = 0
+	_block_size = config.block_size
+	set_fraction(draw_fraction)
+
+
+## Show this share of every model's instances, cheapest possible: a prefix of
+## a hash-sorted buffer. Recounts instance_count and triangle_count as what
+## is actually drawn, which is what the budget readout wants to know.
+func set_fraction(fraction: float) -> void:
+	draw_fraction = fraction
+	instance_count = 0
+	triangle_count = 0
+	for model in _slots:
+		var total: int = _counts.get(model, 0)
+		var shown := total if fraction >= 0.999 else int(floor(float(total) * fraction))
+		var mm: MultiMesh = _slots[model].multimesh
+		mm.visible_instance_count = -1 if shown >= total else shown
+		instance_count += shown
+		triangle_count += shown * FloraModels.triangles_for(model, _block_size)
 
 
 func _make_slot(model: int, config: WorldgenConfig) -> MultiMeshInstance3D:

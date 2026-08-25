@@ -63,24 +63,35 @@ func run() -> void:
 
 	var by_model := {}
 	for inst in instances:
-		if draw_fraction < 1.0:
-			# HASHED, NOT COUNTED. Dropping every Nth instance would make the
-			# survivors depend on iteration order; hashing the position means a
-			# machine at 0.5 hides the same half as any other machine at 0.5,
-			# and turning the knob up reveals plants rather than reshuffling
-			# them.
-			var p: Vector3 = inst["pos"]
-			if WorldHash.hash01(int(p.x * 64.0), int(p.z * 64.0),
-					generator.world_seed, SALT_DRAW) >= draw_fraction:
-				continue
+		# HASHED, NOT COUNTED. Dropping every Nth instance would make the
+		# survivors depend on iteration order; hashing the position means a
+		# machine at 0.5 hides the same half as any other machine at 0.5,
+		# and turning the knob up reveals plants rather than reshuffling
+		# them.
+		var p: Vector3 = inst["pos"]
+		var key := WorldHash.hash01(int(p.x * 64.0), int(p.z * 64.0),
+			generator.world_seed, SALT_DRAW)
+		if draw_fraction < 1.0 and key >= draw_fraction:
+			continue
 		var model: int = inst["model"]
 		if not by_model.has(model):
 			by_model[model] = []
-		by_model[model].append(inst)
+		by_model[model].append([key, inst])
 		drawn += 1
 
+	# SORTED BY THAT SAME HASH, ascending, so that the first N instances of a
+	# buffer ARE the hashed subset at fraction N / count. That is what lets
+	# the sparse ring be a MultiMesh visible_instance_count on a buffer built
+	# once, rather than a second build - a column crossing from the far ring
+	# into the near one reveals the rest of a buffer it already has. See
+	# World._refresh_flora and FloraColumn.set_fraction.
 	for model in by_model:
-		buffers[model] = _pack(by_model[model])
+		var entries: Array = by_model[model]
+		entries.sort_custom(func(a, b): return a[0] < b[0])
+		var ordered := []
+		for e in entries:
+			ordered.append(e[1])
+		buffers[model] = _pack(ordered)
 	elapsed_usec = Time.get_ticks_usec() - started
 
 
