@@ -95,12 +95,41 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	print("[Tour] waiting for the first world load")
 	await _wait_for_world()
 
-	var shots := _choose_vantages()
+	var shots := _filter(_choose_vantages())
 	for i in shots.size():
 		await _capture(i, shots[i])
 
 	print("[Tour] done, %d images in %s" % [shots.size(), _out_dir])
 	await _shutdown()
+
+
+## `--only NAME` shoots just the vantages whose name contains NAME.
+##
+## A TOUR IS TWELVE FULL WORLD LOADS and takes the best part of an hour on this
+## box. Re-taking one photograph after changing one thing about it should not
+## cost the other eleven - and until this existed it did, which is how a run
+## ended up with an eleven-good-shots set and one black rectangle in it that
+## nobody wanted to spend an hour replacing.
+##
+## Matches on a substring, so `--only forest` takes both forest shots and
+## `--only 11` takes exactly one. The label is unchanged, so a re-taken shot
+## lands in the same directory beside the ones that were already right.
+func _filter(shots: Array) -> Array:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--only")
+	if i < 0 or i + 1 >= argv.size():
+		return shots
+	var want: String = argv[i + 1]
+	var out := []
+	for shot in shots:
+		if String(shot["name"]).contains(want):
+			out.append(shot)
+	if out.is_empty():
+		push_warning("[Tour] --only %s matched no vantage" % want)
+	else:
+		print("[Tour] --only %s: %d of %d vantages" % [
+			want, out.size(), shots.size()])
+	return out
 
 
 ## Put the world down before ending the main loop.
@@ -118,8 +147,10 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 ## still be processed, costs a few milliseconds and takes the ordering question
 ## off the table.
 ##
-## If a tour still hangs after this, the drain is where it is hanging, which is
-## a far more useful thing to know than "it did not come back".
+## THIS WORKED. Runs before it sat at 100% of several cores indefinitely after
+## writing their last image; runs after it print "done" and exit 0. If a tour
+## ever hangs again, the drain is where it is hanging, which is a far more
+## useful thing to know than "it did not come back".
 func _shutdown() -> void:
 	if _world != null and is_instance_valid(_world):
 		_world.reset()

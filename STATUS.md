@@ -192,30 +192,42 @@ night; treat the wall clock as a ratio rather than an absolute.
 | Far-field vertices | 80,320 | 80,320 | — |
 | Flora | — | 24,490 instances, 2.72 M triangles, 197 columns, 15.2 ms/column | — |
 
-**The triangle budget is MET.** The plan sets it at 1.5 M flora triangles in
-frame at High from a meadow-edge vantage, measured with
+**The triangle budget is MET, at every one of the twelve vantages.** The plan
+sets it at 1.5 M flora triangles in frame at High, measured with
 `RENDER_TOTAL_PRIMITIVES_IN_FRAME`. The tour now prints that beside every
-photograph:
+photograph, along with the flora actually loaded around the camera:
 
-| Vantage | primitives in frame | flora instances loaded |
-| --- | --- | --- |
-| 1-spawn (meadow) | 1.20 M | 24,145 |
-| 4-valley-floor (meadow) | 1.12 M | 25,558 |
-| 5-lake | 0.80 M | 19,125 |
-| 3-forest-slope | 2.40 M | 2,126 |
-| 2-summit | 0.35 M | 222 |
+| Vantage | primitives IN FRAME | flora instances | flora triangles loaded |
+| --- | --- | --- | --- |
+| 1-spawn (meadow) | 1.20 M | 24,145 | 2.73 M |
+| 2-summit | 0.35 M | 222 | 0.07 M |
+| 3-forest-slope | **1.62 M** | 2,126 | 0.36 M |
+| 4-valley-floor (meadow) | 1.12 M | 25,558 | 2.82 M |
+| 5-lake | 0.80 M | 19,125 | 1.63 M |
+| 6-postcard | 0.49 M | 1,812 | 0.32 M |
+| 7-forest-interior | 1.27 M | 11,578 | 1.74 M |
+| 8-meadow-closeup | 1.03 M | 25,295 | 2.77 M |
+| 9-treeline | 1.02 M | 12,090 | 1.53 M |
+| 10-shore | 0.38 M | 10,903 | 0.99 M |
+| 11-forest-dusk | 0.79 M | 11,578 | 1.74 M |
+| 12-meadow-night | 0.89 M | 25,295 | 2.77 M |
 
-Those totals include terrain and the far field, so the flora share is smaller
-still. The forest-slope figure is the highest and is almost entirely voxel
-TREES — 2,126 pieces of ground cover in the whole loaded region — so it is
-terrain v2's cost, not this plan's.
+**The worst frame in the world is 1.62 M primitives, and that INCLUDES terrain
+and the far field** — so flora's share of it is smaller again, and the highest
+figure is a forest slope where ground cover is 2,126 instances. The flora
+budget has room everywhere.
 
-**The one vantage not measured is a heath**, and arithmetic says it is the
-worst case: heath carries a shrub on about one block in eight, which is ~6,300
-shrubs inside `flora_radius_m` at ~480 triangles each, or 2.7 M loaded. At the
-~30% loaded-to-in-frame ratio the meadow measurements show, that is around
-0.9 M in frame — inside the budget, but with much less room than a meadow has.
-`flora_radius_m` is the dial and 48 m would halve it.
+The two columns are worth reading together. "Loaded" is every flora triangle in
+the 197 columns around the player, a full 360°; "in frame" is what the frustum
+actually kept. The ratio is consistently about a third, which is what makes the
+loaded figure a usable proxy for zones the tour does not visit.
+
+**The one vantage not measured is a heath**, and arithmetic says it is about
+level with the meadow rather than worse: heath carries a shrub on roughly one
+block in eight, which is ~6,300 shrubs inside `flora_radius_m` at 480 triangles
+each, or ~3.0 M loaded — against the 2.82 M a meadow already reaches without
+trouble. `flora_radius_m` is the dial if it turns out otherwise, and a tour
+vantage in heath is the honest way to settle it.
 
 **THE BOOT BUDGET IS MISSED AND CANNOT BE MET BY KNOBS**, so it ships as
 measured, and here is the accounting:
@@ -625,6 +637,35 @@ so they are decided once and the result scanned.
 - **Forward+ was NOT checked.** Nothing in this run has been seen on the
   renderer you play on. Both shaders compile on Compatibility — the tour is the
   proof, because a shader that fails to compile turns every plant magenta.
+
+---
+
+## One thing about this box, for the next unattended run
+
+**The screenshot tour used not to exit.** A completed run was found still
+burning three and a half cores seven hours after it wrote its last image -
+every photograph it had been asked for was on disk, it had simply not returned,
+and the next thing to want the machine got a third of it. Over one night that
+compounded: three finished-but-live processes were holding most of the CPU
+while the work that needed it crawled.
+
+**It is fixed.** `ScreenshotTour._shutdown()` now drains the world's worker jobs
+explicitly, while the tree is still alive and a frame can still be processed,
+before ending the main loop. Relying on `World._exit_tree()` to do it meant
+relying on the order the engine tears a scene down in while a real renderer is
+also shutting down. Runs after the fix print "done" and exit 0.
+
+Two other things that made the night slower than it needed to be, both now
+addressed:
+
+- **Every headless session hosts**, so two of them collide on one ENet port and
+  the loser sits silently on the main menu generating nothing. `--port N` fixes
+  it and Stage 10's two-peer check needed it anyway.
+- **A tour is twelve full world loads**, so re-taking one photograph cost the
+  other eleven. `--only NAME` shoots just the vantages whose name contains
+  NAME, which is how `11-forest-dusk` got re-taken after its time of day was
+  corrected without spending an hour on the eleven shots that were already
+  right.
 
 ---
 
