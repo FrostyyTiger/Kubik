@@ -171,3 +171,55 @@ Longing is free; water physics are not.
 
 What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
 not hardcode "world edge = mountains" anywhere.
+
+## The Game Master: an LLM layer (a research direction, not a feature)
+
+Noted 2026-08-25 from a conversation Marcel had about where LLMs actually
+belong in games. Parked here in the Second Age's shape - its own section,
+because it is a direction and not an item - and with the same scope honesty:
+nothing here before there is a game to put it in.
+
+**The opportunity.** LLMs in games are not chatbot NPCs or generated dialogue.
+The unit of value is *goal-directed improvisation under constraints* - a
+tabletop game master. The destination and the stakes are authored; the path
+there is invented fresh in response to what the players actually do, the way
+a coding agent holds the requirements and routes creatively.
+
+**The architecture: two layers.** Authored truth underneath - what is real,
+what characters know and want, which outcomes are possible. Generative
+intelligence on top - how it is expressed, how the middle unfolds. The model
+never invents the world's facts; it only performs within them. Applications:
+NPCs with fixed goals but adaptive tactics, companions with real memory,
+quests with fixed beats but emergent connective tissue, and a *semantic
+director* that reads what the journey means - not the health bars - and
+shapes events accordingly.
+
+**The delivery doctrine.** Subtle and invisible, the way physics engines
+became. Market the experience ("suspects who keep their secrets"), never the
+technology. Steer through opportunity, never railroad - Westworld's
+capability without its manipulation.
+
+**The timing claim.** The 2023-25 AI-NPC wave failed because it was chatbots
+in costumes on immature tech; the failures mark infancy, not a ceiling. The
+conversational quality now exists, costs are collapsing, and the unsolved
+part is game design, not capability - so the field is open for whoever ships
+the first non-tacky version, probably a small game built entirely around one
+constrained instance of the idea.
+
+**Against the pillars.** It serves pillar 3 directly - a director that makes
+ranging outward *mean* something is the world being the content - and it can
+serve pillar 1 (a companion that remembers what the two of you did). It
+touches nothing in pillar 2. What it must not become: a menu, a chat window,
+or a source of facts the world did not author.
+
+**What it asks of the code today.** Two things, both cheap and both already
+true by accident:
+
+- Keep authored truth as *data*, not prose in scripts: creature goals, lore
+  fragments, what a place is. `Races` and the parts tables already work this
+  way; the creature design should too.
+- The host owns the world. Any such layer runs on the host and talks to the
+  simulation through the one mutation path, like everything else - which
+  also answers "who pays for the API" (the host) and "what about offline"
+  (it degrades to the authored beats). Nothing to build now; nothing to
+  hardcode against later.
