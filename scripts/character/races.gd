@@ -508,6 +508,25 @@ static func parts_for(def: CharacterDef) -> Dictionary:
 	var beard = PartsHair.beard_part(def.race, def.beard)
 	if beard != null:
 		out["beard"] = beard
+
+	# THE DROP-IN RULE. `assets/characters/<race>/<part>.vox` replaces the
+	# ASCII part of that name, with no code change. Checked here rather than in
+	# Rig because this is the one function that already knows which race is
+	# being built - and because a drop-in must be able to replace a hair part
+	# as easily as a head.
+	#
+	# The ANCHOR comes from the ASCII part it replaces. A `.vox` file carries
+	# no anchor of its own, and inventing one from its bounding box would put a
+	# replacement head's pivot somewhere the bone table does not expect - so a
+	# drop-in inherits the pivot of the thing it stands in for, and a part with
+	# no ASCII original gets bottom-centre.
+	var race_name := name_of(def.race)
+	for part_name in out.keys():
+		var original: Dictionary = out[part_name]
+		var replacement = VoxLoader.drop_in(race_name, part_name,
+			original.get("anchor", Vector3.ZERO))
+		if replacement != null:
+			out[part_name] = replacement
 	return out
 
 

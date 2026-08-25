@@ -113,6 +113,11 @@ const AO_OPEN := 3
 ## too far back.
 static func parse(part: Dictionary, part_name := "<unnamed>") -> Array:
 	var out := []
+	# A part that arrived already parsed - the `.vox` importer produces these.
+	# Accepted here rather than at every call site so Rig, the gallery and the
+	# self-tests never learn that a part can come from a file.
+	if part.has("voxels"):
+		return from_list(part["voxels"])
 	if not part.has("size") or not part.has("slices"):
 		push_error("[VoxelModel] part %s has no size or no slices" % part_name)
 		return out

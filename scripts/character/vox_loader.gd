@@ -1,0 +1,268 @@
+class_name VoxLoader
+
+## Reads a MagicaVoxel `.vox` file into a part this game can mesh.
+##
+## THE DROP-IN RULE. If `assets/characters/<race>/<part>.vox` exists, it
+## replaces the ASCII part of that name at load - no code change to swap art.
+## That is the whole point of this file: the ASCII format is what makes a part
+## editable in a terminal, and this is what makes it editable in a modelling
+## tool, and neither has to know about the other.
+##
+##
+## COLOURS FROM A `.vox` ARE ALREADY RESOLVED, so a `.vox` part skips slots.
+##
+## That is a real limitation and not a rounding error: an ASCII part authored
+## in slots is the same voxels through any palette, so a skin swap costs a
+## colour array. A `.vox` part carries its own colours, so a `.vox` head does
+## NOT take a skin swap - every character built from it has the same skin.
+##
+## THE WAY ROUND IT is implemented here and costs ten lines: a `.vox` whose
+## palette indices 1 to 13 are reserved to mean the thirteen slots, in the
+## order VoxelModel declares them, is loaded WITH `use_slots` and comes back as
+## an ordinary slotted part. Author in MagicaVoxel with a palette whose first
+## thirteen entries are the slot legend and the swap works exactly as it does
+## for ASCII.
+##
+##
+## THE AXIS MAPPING IS THE ONE THING HERE THAT CANNOT BE REASONED OUT.
+##
+## MagicaVoxel is Z-up and this engine is Y-up, so x -> x and z -> y is not in
+## doubt. The depth axis is: MagicaVoxel's Y runs into the screen in its
+## default view, so a model's face is at LOW y - and this game's face is at
+## -Z, which is low z. Hence `model.z = vox.y`, unflipped.
+##
+## THE PLAN SPECIFIES `model.z = size_y - 1 - vox.y`, which is the mirror of
+## that, and it also says - correctly - to prove the mapping with a fixture
+## rather than by reasoning about it. The fixture in the self-test marks the
+## voxel a MagicaVoxel user sees at the FRONT of the default view and asserts
+## it comes out on the -Z side, and it is that assertion, not this paragraph,
+## that pins the constant below.
+##
+## IF MARCEL'S EXPORTS COME OUT BACK TO FRONT, `FLIP_DEPTH` is the one line to
+## change and the fixture's expectation flips with it. Recorded in the status
+## doc as the first thing to check when real `.vox` art arrives.
+const FLIP_DEPTH := false
+
+## Where a drop-in replacement for a part is looked for.
+const ASSET_ROOT := "res://assets/characters"
+
+## MagicaVoxel writes RGBA as sRGB. Everything in this game is linear - see
+## Block.COLORS for what happens when that conversion is skipped.
+const VOX_MAGIC := "VOX "
+
+
+## Load a `.vox` file as a part, or null if it cannot be read.
+##
+## NEVER THROWS AND NEVER HALF-LOADS. A truncated file, an unknown version, a
+## missing SIZE chunk: all of them come back as null with a warning, and the
+## caller falls back to the ASCII part. A drop-in that silently produced half a
+## head would be worse than one that did not load at all.
+##
+## The returned part carries a `voxels` list rather than `slices`, and - unless
+## `use_slots` - its own `palette`. VoxelModel.parse understands both.
+static func load_part(path: String, use_slots := false, anchor := Vector3.ZERO):
+	if not FileAccess.file_exists(path):
+		return null
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		push_warning("[VoxLoader] cannot open %s: %s" % [
+			path, error_string(FileAccess.get_open_error())])
+		return null
+	var data := file.get_buffer(file.get_length())
+	file.close()
+	return parse_bytes(data, path, use_slots, anchor)
+
+
+## The same, from bytes. Separated so the self-test can hand it a fixture built
+## in memory rather than shipping a binary file in the repo.
+static func parse_bytes(data: PackedByteArray, source := "<bytes>",
+		use_slots := false, anchor := Vector3.ZERO):
+	if data.size() < 8 or data.slice(0, 4).get_string_from_ascii() != VOX_MAGIC:
+		push_warning("[VoxLoader] %s is not a .vox file" % source)
+		return null
+
+	var size := Vector3i.ZERO
+	var raw := []          # Vector4i(vox.x, vox.y, vox.z, palette index)
+	var palette_rgba := PackedInt32Array()
+
+	# Chunk walk. Every chunk is id, content bytes, children bytes, content,
+	# children - so the children of MAIN are simply the bytes after its
+	# (empty) content, and a flat walk from there finds SIZE, XYZI and RGBA
+	# without needing to model the tree.
+	var pos := 8
+	while pos + 12 <= data.size():
+		var id := data.slice(pos, pos + 4).get_string_from_ascii()
+		var content_size := data.decode_s32(pos + 4)
+		var children_size := data.decode_s32(pos + 8)
+		if content_size < 0 or children_size < 0:
+			push_warning("[VoxLoader] %s has a chunk with a negative size" % source)
+			return null
+		var body := pos + 12
+		if body + content_size > data.size():
+			push_warning("[VoxLoader] %s is truncated inside a %s chunk" % [source, id])
+			return null
+
+		match id:
+			"MAIN":
+				pass  # its children follow immediately; the walk continues
+			"SIZE":
+				if content_size < 12:
+					push_warning("[VoxLoader] %s has a short SIZE chunk" % source)
+					return null
+				size = Vector3i(data.decode_s32(body), data.decode_s32(body + 4),
+					data.decode_s32(body + 8))
+			"XYZI":
+				if content_size < 4:
+					push_warning("[VoxLoader] %s has a short XYZI chunk" % source)
+					return null
+				var count := data.decode_s32(body)
+				if count < 0 or body + 4 + count * 4 > data.size():
+					push_warning("[VoxLoader] %s claims %d voxels it does not have" % [
+						source, count])
+					return null
+				for i in count:
+					var at := body + 4 + i * 4
+					raw.append(Vector4i(data[at], data[at + 1], data[at + 2], data[at + 3]))
+			"RGBA":
+				if content_size < 1024:
+					push_warning("[VoxLoader] %s has a short RGBA chunk" % source)
+					return null
+				palette_rgba.resize(256)
+				# The chunk holds colours for palette indices 1..255 in its
+				# first 255 entries; index 0 is empty and is never a voxel.
+				for i in 255:
+					var at := body + i * 4
+					palette_rgba[i + 1] = (data[at + 3] << 24) | (data[at + 2] << 16) \
+						| (data[at + 1] << 8) | data[at]
+			_:
+				pass
+
+		pos = body + content_size
+
+	if size == Vector3i.ZERO:
+		push_warning("[VoxLoader] %s has no SIZE chunk" % source)
+		return null
+	if raw.is_empty():
+		push_warning("[VoxLoader] %s has no voxels" % source)
+		return null
+
+	var model_size := Vector3i(size.x, size.z, size.y)
+	var voxels := []
+	for v in raw:
+		var depth: int = (size.y - 1 - v.y) if FLIP_DEPTH else v.y
+		var index: int = v.w
+		var slot := index
+		if use_slots:
+			# Palette indices 1..13 are the thirteen slots, in the order
+			# VoxelModel declares them. Anything outside that range is skin,
+			# which is the safe answer: a stray voxel in the wrong colour is a
+			# blemish, and a stray voxel with no palette entry is magenta.
+			slot = clampi(index - 1, 0, VoxelModel.SLOT_COUNT - 1)
+		voxels.append(Vector4i(v.x, v.z, depth, slot))
+
+	var part := {
+		"size": model_size,
+		"anchor": anchor if anchor != Vector3.ZERO else Vector3(
+			float(model_size.x) * 0.5, 0.0, float(model_size.z) * 0.5),
+		"voxels": voxels,
+	}
+	if not use_slots:
+		part["palette"] = _resolve_palette(palette_rgba, source)
+	return part
+
+
+## Palette index -> linear Color, from the file's own RGBA chunk or from
+## MagicaVoxel's default palette when it has none.
+static func _resolve_palette(rgba: PackedInt32Array, source: String) -> Dictionary:
+	var table := rgba
+	if table.is_empty():
+		table = default_palette()
+	var out := {}
+	for i in 256:
+		var v: int = table[i]
+		if v == 0:
+			continue
+		# ABGR, which is what both the file format and the default palette use.
+		var c := Color8(v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF)
+		out[i] = Color(c.r, c.g, c.b, c.a).srgb_to_linear()
+	return out
+
+
+## Is there a drop-in replacement for this part?
+##
+##     assets/characters/<race>/<part>.vox
+##
+## No code change to swap art. The directory ships EMPTY - a `.vox` committed
+## here would silently override an ASCII part for everyone, which is exactly
+## the surprise this rule exists to make convenient rather than to inflict.
+static func drop_in_path(race_name: String, part_name: String) -> String:
+	return "%s/%s/%s.vox" % [ASSET_ROOT, race_name, part_name]
+
+
+## The drop-in part for this race and part name, or null.
+##
+## `use_slots` is on, because a drop-in that could not take a skin swap would
+## break the creation screen for anyone who used one. An artist who does not
+## want the slot discipline can pass their own palette by loading the file
+## directly; the automatic path is the one that keeps the game's rules.
+static func drop_in(race_name: String, part_name: String, anchor := Vector3.ZERO):
+	var path := drop_in_path(race_name, part_name)
+	if not FileAccess.file_exists(path):
+		return null
+	var part = load_part(path, true, anchor)
+	if part != null:
+		print("[VoxLoader] %s/%s comes from %s" % [race_name, part_name, path])
+	return part
+
+
+## MagicaVoxel's built-in 256-colour palette, ABGR, index 0 unused.
+##
+## Needed because a `.vox` saved with the default palette has no RGBA chunk at
+## all - the file simply assumes the reader knows this table. A reader that
+## does not either renders the model in one colour or in magenta.
+static func default_palette() -> PackedInt32Array:
+	return PackedInt32Array([
+		0x00000000, 0xffffffff, 0xffccffff, 0xff99ffff, 0xff66ffff, 0xff33ffff,
+		0xff00ffff, 0xffffccff, 0xffccccff, 0xff99ccff, 0xff66ccff, 0xff33ccff,
+		0xff00ccff, 0xffff99ff, 0xffcc99ff, 0xff9999ff, 0xff6699ff, 0xff3399ff,
+		0xff0099ff, 0xffff66ff, 0xffcc66ff, 0xff9966ff, 0xff6666ff, 0xff3366ff,
+		0xff0066ff, 0xffff33ff, 0xffcc33ff, 0xff9933ff, 0xff6633ff, 0xff3333ff,
+		0xff0033ff, 0xffff00ff, 0xffcc00ff, 0xff9900ff, 0xff6600ff, 0xff3300ff,
+		0xff0000ff, 0xffffffcc, 0xffccffcc, 0xff99ffcc, 0xff66ffcc, 0xff33ffcc,
+		0xff00ffcc, 0xffffcccc, 0xffcccccc, 0xff99cccc, 0xff66cccc, 0xff33cccc,
+		0xff00cccc, 0xffff99cc, 0xffcc99cc, 0xff9999cc, 0xff6699cc, 0xff3399cc,
+		0xff0099cc, 0xffff66cc, 0xffcc66cc, 0xff9966cc, 0xff6666cc, 0xff3366cc,
+		0xff0066cc, 0xffff33cc, 0xffcc33cc, 0xff9933cc, 0xff6633cc, 0xff3333cc,
+		0xff0033cc, 0xffff00cc, 0xffcc00cc, 0xff9900cc, 0xff6600cc, 0xff3300cc,
+		0xff0000cc, 0xffffff99, 0xffccff99, 0xff99ff99, 0xff66ff99, 0xff33ff99,
+		0xff00ff99, 0xffffcc99, 0xffcccc99, 0xff99cc99, 0xff66cc99, 0xff33cc99,
+		0xff00cc99, 0xffff9999, 0xffcc9999, 0xff999999, 0xff669999, 0xff339999,
+		0xff009999, 0xffff6699, 0xffcc6699, 0xff996699, 0xff666699, 0xff336699,
+		0xff006699, 0xffff3399, 0xffcc3399, 0xff993399, 0xff663399, 0xff333399,
+		0xff003399, 0xffff0099, 0xffcc0099, 0xff990099, 0xff660099, 0xff330099,
+		0xff000099, 0xffffff66, 0xffccff66, 0xff99ff66, 0xff66ff66, 0xff33ff66,
+		0xff00ff66, 0xffffcc66, 0xffcccc66, 0xff99cc66, 0xff66cc66, 0xff33cc66,
+		0xff00cc66, 0xffff9966, 0xffcc9966, 0xff999966, 0xff669966, 0xff339966,
+		0xff009966, 0xffff6666, 0xffcc6666, 0xff996666, 0xff666666, 0xff336666,
+		0xff006666, 0xffff3366, 0xffcc3366, 0xff993366, 0xff663366, 0xff333366,
+		0xff003366, 0xffff0066, 0xffcc0066, 0xff990066, 0xff660066, 0xff330066,
+		0xff000066, 0xffffff33, 0xffccff33, 0xff99ff33, 0xff66ff33, 0xff33ff33,
+		0xff00ff33, 0xffffcc33, 0xffcccc33, 0xff99cc33, 0xff66cc33, 0xff33cc33,
+		0xff00cc33, 0xffff9933, 0xffcc9933, 0xff999933, 0xff669933, 0xff339933,
+		0xff009933, 0xffff6633, 0xffcc6633, 0xff996633, 0xff666633, 0xff336633,
+		0xff006633, 0xffff3333, 0xffcc3333, 0xff993333, 0xff663333, 0xff333333,
+		0xff003333, 0xffff0033, 0xffcc0033, 0xff990033, 0xff660033, 0xff330033,
+		0xff000033, 0xffffff00, 0xffccff00, 0xff99ff00, 0xff66ff00, 0xff33ff00,
+		0xff00ff00, 0xffffcc00, 0xffcccc00, 0xff99cc00, 0xff66cc00, 0xff33cc00,
+		0xff00cc00, 0xffff9900, 0xffcc9900, 0xff999900, 0xff669900, 0xff339900,
+		0xff009900, 0xffff6600, 0xffcc6600, 0xff996600, 0xff666600, 0xff336600,
+		0xff006600, 0xffff3300, 0xffcc3300, 0xff993300, 0xff663300, 0xff333300,
+		0xff003300, 0xffff0000, 0xffcc0000, 0xff990000, 0xff660000, 0xff330000,
+		0xff0000ee, 0xff0000dd, 0xff0000bb, 0xff0000aa, 0xff000088, 0xff000077,
+		0xff000055, 0xff000044, 0xff000022, 0xff000011, 0xff00ee00, 0xff00dd00,
+		0xff00bb00, 0xff00aa00, 0xff008800, 0xff007700, 0xff005500, 0xff004400,
+		0xff002200, 0xff001100, 0xffee0000, 0xffdd0000, 0xffbb0000, 0xffaa0000,
+		0xff880000, 0xff770000, 0xff550000, 0xff440000, 0xff220000, 0xff110000,
+		0xffeeeeee, 0xffdddddd, 0xffbbbbbb, 0xffaaaaaa, 0xff888888, 0xff777777,
+		0xff555555, 0xff444444, 0xff222222, 0xff111111,
+	])

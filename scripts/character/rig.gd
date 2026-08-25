@@ -129,7 +129,15 @@ func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
 		# left and right rotations mean opposite things.
 		voxels = VoxelModel.mirror_x(voxels, size.x)
 		anchor = VoxelModel.mirror_anchor_x(anchor, size.x)
-	var mesh := VoxelModel.build_mesh(voxels, palette, anchor, ao_strength)
+	# A part MAY CARRY ITS OWN PALETTE. A `.vox` loaded without the slot
+	# convention has real colours in it rather than slots, and those colours
+	# are the artist's intent - so they win over the character's palette for
+	# that part, and the part simply does not take a skin swap. See VoxLoader.
+	var resolved := palette
+	if part.has("palette"):
+		resolved = palette.duplicate()
+		resolved.merge(part["palette"], true)
+	var mesh := VoxelModel.build_mesh(voxels, resolved, anchor, ao_strength)
 	if mesh == null:
 		return
 	var mi := MeshInstance3D.new()
@@ -138,7 +146,7 @@ func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
 	bone.add_child(mi)
 	meshes[bone_name] = mi
 	part_voxels[bone_name] = {"voxels": voxels, "anchor": anchor}
-	_attach_blink_variant(bone, bone_name, voxels, anchor, palette, ao_strength)
+	_attach_blink_variant(bone, bone_name, voxels, anchor, resolved, ao_strength)
 
 
 ## The same part with its eyes resolved to skin, if it had any.

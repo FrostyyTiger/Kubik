@@ -47,6 +47,8 @@ func _ready() -> void:
 		"every combination": _test_every_combination,
 		"option tables agree": _test_option_tables,
 		"gear sockets": _test_gear_sockets,
+		"vox fixture": _test_vox_fixture,
+		"vox garbage": _test_vox_garbage,
 	}
 	var failures := 0
 	for name in tests:
@@ -1511,3 +1513,185 @@ func _count_overlaps(a: PackedVector3Array, b: PackedVector3Array) -> int:
 		if buckets.has(key):
 			hits += 1
 	return hits
+
+
+# --- Stage 11 ----------------------------------------------------------------
+
+## Build a `.vox` file in memory. `voxels` is an array of
+## `[x, y, z, palette index]` in MAGICAVOXEL coordinates.
+##
+## In memory rather than as a committed binary, so the fixture can be read: the
+## bytes below are the format, spelled out, and a reader who wants to know what
+## a SIZE chunk looks like can see one here instead of in a hex editor.
+func _vox_bytes(size: Vector3i, voxels: Array, with_rgba := false) -> PackedByteArray:
+	var size_chunk := _vox_chunk("SIZE", _pack_ints([size.x, size.y, size.z]))
+
+	var xyzi := _pack_ints([voxels.size()])
+	for v in voxels:
+		xyzi.append_array(PackedByteArray([v[0], v[1], v[2], v[3]]))
+	var xyzi_chunk := _vox_chunk("XYZI", xyzi)
+
+	var children := size_chunk
+	children.append_array(xyzi_chunk)
+	if with_rgba:
+		var rgba := PackedByteArray()
+		for i in 255:
+			# Palette index i + 1 gets (i, 0, 0, 255) - a red ramp, so a test
+			# can tell one index from another.
+			rgba.append_array(PackedByteArray([i, 0, 0, 255]))
+		children.append_array(_vox_chunk("RGBA", rgba))
+
+	var out := "VOX ".to_ascii_buffer()
+	out.append_array(_pack_ints([150]))
+	# MAIN has no content of its own; everything hangs off it as children.
+	out.append_array("MAIN".to_ascii_buffer())
+	out.append_array(_pack_ints([0, children.size()]))
+	out.append_array(children)
+	return out
+
+
+func _vox_chunk(id: String, content: PackedByteArray) -> PackedByteArray:
+	var out := id.to_ascii_buffer()
+	out.append_array(_pack_ints([content.size(), 0]))
+	out.append_array(content)
+	return out
+
+
+func _pack_ints(values: Array) -> PackedByteArray:
+	var out := PackedByteArray()
+	for v in values:
+		out.append_array(PackedByteArray([
+			v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]))
+	return out
+
+
+## THE AXIS MAPPING, PINNED BY A FIXTURE RATHER THAN BY REASONING.
+##
+## A 3 x 3 x 3 cube with ONE voxel marked, and the marked voxel is the one a
+## MagicaVoxel user sees at the front of the default view: minimum Y, because
+## MagicaVoxel's Y runs into the screen. That sentence is the assumption this
+## whole test rests on, and it is stated here rather than buried, because
+## everything else follows from it arithmetically.
+##
+## What must come out: the mark on the -Z side of the loaded part, since -Z is
+## Vector3.FORWARD and is where this game's faces are. If real MagicaVoxel
+## exports ever come out back to front, VoxLoader.FLIP_DEPTH is the one line to
+## change and this expectation flips with it.
+func _test_vox_fixture():
+	var bad := 0
+	# A solid 3-cube in palette index 1, with the front-centre voxel in index 2.
+	var voxels := []
+	for z in 3:
+		for y in 3:
+			for x in 3:
+				var index := 2 if (y == 0 and x == 1 and z == 1) else 1
+				voxels.append([x, y, z, index])
+	var part = VoxLoader.parse_bytes(_vox_bytes(Vector3i(3, 3, 3), voxels), "fixture")
+	if part == null:
+		print("  the fixture did not load at all")
+		return 1
+
+	if part["size"] != Vector3i(3, 3, 3):
+		print("  the fixture loaded as %s, wanted 3 x 3 x 3" % part["size"])
+		bad += 1
+	var list: Array = part["voxels"]
+	if list.size() != 27:
+		print("  the fixture loaded %d voxels, wanted 27" % list.size())
+		bad += 1
+
+	# Where did the mark end up?
+	var mark := Vector3i(-1, -1, -1)
+	var marks := 0
+	for v in list:
+		if v.w == 2:
+			mark = Vector3i(v.x, v.y, v.z)
+			marks += 1
+	if marks != 1:
+		print("  %d voxels came back marked, wanted exactly one" % marks)
+		bad += 1
+	elif mark.z != 0:
+		print("  the mark is at model z = %d, wanted 0 - the depth axis is flipped" % mark.z)
+		bad += 1
+
+	# The other two axes, which are not in doubt but are cheap to assert.
+	if mark.x != 1:
+		print("  the mark is at model x = %d, wanted 1 (x maps straight through)" % mark.x)
+		bad += 1
+	if mark.y != 1:
+		print("  the mark is at model y = %d, wanted 1 (vox z becomes model y)" % mark.y)
+		bad += 1
+
+	# ...and a part with NO RGBA chunk falls back to MagicaVoxel's default
+	# palette, where index 1 is white. A reader that does not know that table
+	# renders every default-palette model in one colour or in magenta.
+	var single = VoxLoader.parse_bytes(
+		_vox_bytes(Vector3i(1, 1, 1), [[0, 0, 0, 1]]), "one voxel")
+	if single == null:
+		print("  the one-voxel fixture did not load")
+		bad += 1
+	else:
+		var pal: Dictionary = single["palette"]
+		var white: Color = pal.get(1, Color.MAGENTA)
+		if not white.is_equal_approx(Color.WHITE.srgb_to_linear()):
+			print("  default palette index 1 is %s, wanted linear white" % white)
+			bad += 1
+
+	# THE SLOT CONVENTION. Palette indices 1..13 mean the thirteen slots, so a
+	# `.vox` authored against that legend takes a skin swap like an ASCII part.
+	var slotted = VoxLoader.parse_bytes(
+		_vox_bytes(Vector3i(1, 1, 1), [[0, 0, 0, 4]]), "slotted", true)
+	if slotted == null or slotted.has("palette"):
+		print("  a slotted .vox came back carrying its own palette")
+		bad += 1
+	elif (slotted["voxels"][0] as Vector4i).w != VoxelModel.IRIS:
+		print("  palette index 4 became slot %d, wanted IRIS (%d)" % [
+			(slotted["voxels"][0] as Vector4i).w, VoxelModel.IRIS])
+		bad += 1
+
+	print("vox fixture: mark at model %s, default palette and slot convention ok, %d checks failed" % [
+		mark, bad])
+	return 1 if bad > 0 else 0
+
+
+## A BROKEN FILE COMES BACK NULL, AND THE ASCII PART IS USED.
+##
+## A drop-in that silently produced half a head would be worse than one that
+## did not load at all - the failure would look like an art bug and be chased
+## in the wrong file. Every one of these prints a warning naming what was
+## wrong; those warnings are expected output.
+func _test_vox_garbage():
+	var bad := 0
+	print("  (the warnings below are expected - five deliberately broken files)")
+	var cases := {
+		"empty": PackedByteArray(),
+		"not a vox file": "NOPE....".to_ascii_buffer(),
+		"header only": "VOX ".to_ascii_buffer() + _pack_ints([150]),
+		"no size chunk": "VOX ".to_ascii_buffer() + _pack_ints([150])
+			+ _vox_chunk("XYZI", _pack_ints([0])),
+		"lying voxel count": _lying_vox(),
+	}
+	for name in cases:
+		var got = VoxLoader.parse_bytes(cases[name], name)
+		if got != null:
+			print("  a %s file loaded anyway" % name)
+			bad += 1
+
+	# A missing drop-in is not an error, it is the normal case: the assets
+	# directory ships empty.
+	if VoxLoader.drop_in("human", "head") != null:
+		print("  a drop-in was found for the human head - assets/ should ship empty")
+		bad += 1
+
+	print("vox garbage: 5 broken files rejected, no stray drop-ins, %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
+## A file whose XYZI chunk claims more voxels than the file contains - the
+## shape of a truncated download, and the one that would read past the end of
+## the buffer if the count were trusted.
+func _lying_vox() -> PackedByteArray:
+	var out := "VOX ".to_ascii_buffer()
+	out.append_array(_pack_ints([150]))
+	out.append_array(_vox_chunk("SIZE", _pack_ints([2, 2, 2])))
+	out.append_array(_vox_chunk("XYZI", _pack_ints([9999])))
+	return out
