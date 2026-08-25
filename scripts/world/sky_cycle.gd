@@ -16,16 +16,38 @@ extends Node
 ## tested without a window - which matters here, because a full day is eight
 ## minutes of real time and nobody is watching a headless run for eight minutes.
 
-## Colours the sun light passes through, low to high.
-const SUN_NIGHT := Color(0.28, 0.36, 0.60)
-const SUN_DUSK := Color(1.00, 0.58, 0.32)
-const SUN_NOON := Color(1.00, 0.97, 0.92)
+## Colours the sun light passes through, low to high. sRGB, as a Light's
+## colour is. Look v1: a gold-white noon and an orange dusk, off the poster;
+## the night colour is the MOON, which is the same light flipped to the other
+## side of the sky - see apply().
+const SUN_NIGHT := Color(0.43, 0.50, 0.72)
+const SUN_DUSK := Color(1.00, 0.60, 0.29)
+const SUN_NOON := Color(1.00, 0.95, 0.82)
+
+## THE COLOUR OF SHADE. Look v1's first rule: shade is a colour, not a
+## darkness. Everything the sun does not reach - the far side of a hill, the
+## inside of a forest, a shadow - is this, times the surface's own colour.
+## Blue-violet by day, deeper violet at dusk, near-black blue at night. sRGB
+## here, converted to linear before it is published, like every palette.
+const SHADE_NIGHT := Color(0.18, 0.22, 0.38)
+const SHADE_DUSK := Color(0.44, 0.37, 0.66)
+const SHADE_DAY := Color(0.60, 0.62, 0.86)
 
 ## Fog, and the sky it has to agree with. Fog that does not match the sky at the
 ## horizon reads as a grey wall standing in front of the view.
 const FOG_NIGHT := Color(0.07, 0.09, 0.17)
 const FOG_DUSK := Color(0.86, 0.60, 0.45)
 const FOG_DAY := Color(0.71, 0.80, 0.89)
+
+## Where the light comes from during twilight, while it is neither the sun's
+## nor the moon's: low in the south. The sun and the moon are antipodes, so a
+## straight lerp between them passes through zero; going via this direction
+## does not, and it is where dusk light actually comes from.
+const TWILIGHT_DIR := Vector3(0.0, 0.35, -1.0)
+
+## Elevation, either side of the horizon, over which the light hands over from
+## the sun to the moon.
+const HANDOVER := 0.08
 
 const SKY_TOP_NIGHT := Color(0.03, 0.05, 0.12)
 const SKY_TOP_DAY := Color(0.30, 0.50, 0.83)
@@ -57,18 +79,28 @@ var frozen := false
 
 var _sun: DirectionalLight3D = null
 var _env: Environment = null
-var _sky: ProceduralSkyMaterial = null
+var _sky: ShaderMaterial = null
 
 
 func setup(p_config: WorldgenConfig, sun: DirectionalLight3D,
 		world_environment: WorldEnvironment) -> void:
 	config = p_config
 	_sun = sun
+	if _sun != null:
+		# HARD SHADOWS, AND NO HIGHLIGHT. A poster's shadow is a shape with an
+		# edge, and the ramp in Look turns the shadow map straight into the
+		# shade band, so blur here would only soften the one line the look is
+		# built on. Specular is disabled in every poster material already; this
+		# is for anything that is not one.
+		_sun.shadow_blur = 0.25
+		_sun.light_specular = 0.0
 	_env = world_environment.environment
 	if _env != null and _env.sky != null:
-		var mat := _env.sky.sky_material
-		if mat is ProceduralSkyMaterial:
-			_sky = mat
+		# THE POSTER SKY replaces whatever the scene had, which is a
+		# ProceduralSkyMaterial in every scene that has a sky - kept in the
+		# .tscn files as the thing to fall back to if Look is ever unwired.
+		_sky = Look.sky_material()
+		_env.sky.sky_material = _sky
 	time_of_day = config.day_start
 	_apply_fog_distances()
 	apply()
@@ -115,6 +147,38 @@ static func fog_color(elevation: float) -> Color:
 	return c.lerp(FOG_DUSK, dusk_amount(elevation) * 0.75)
 
 
+## The colour of shade at this elevation. Same shape as fog_color(): night to
+## day by how light it is, pulled toward the dusk colour around the horizon.
+static func shade_color(elevation: float) -> Color:
+	var c := SHADE_NIGHT.lerp(SHADE_DAY, day_amount(elevation))
+	return c.lerp(SHADE_DUSK, dusk_amount(elevation) * 0.75)
+
+
+## Where the light comes FROM, as a unit vector: the sun by day, the moon by
+## night, and a hand-over through the twilight direction between them.
+##
+## THE SUN NEVER GOES OUT. Look's ramp paints the shade colour from the
+## directional light's own pass, so a night with no directional light would
+## not be dark, it would be BLACK - no light() call, no shade. The moon is the
+## same light on the far side of the sky: the sun's antipode, which is above
+## the horizon exactly when the sun is below it.
+static func light_direction(t: float) -> Vector3:
+	var sun := sun_position(t)
+	var e := sun.y
+	if e >= HANDOVER:
+		return sun
+	var moon := -sun
+	if e <= -HANDOVER:
+		return moon
+	# Twilight. Two lerps via TWILIGHT_DIR rather than one between antipodes,
+	# which would pass through the zero vector at the horizon.
+	var k := (HANDOVER - e) / (2.0 * HANDOVER)
+	var via := TWILIGHT_DIR.normalized()
+	if k < 0.5:
+		return sun.lerp(via, k * 2.0).normalized()
+	return via.lerp(moon, (k - 0.5) * 2.0).normalized()
+
+
 ## Never quite zero. A pitch-black night is not atmospheric, it is a black
 ## screen with a HUD on it, and there is no torch yet to fix it with.
 ##
@@ -140,15 +204,18 @@ static func night_amount(elevation: float) -> float:
 	return 1.0 - smoothstep(-0.10, 0.06, elevation)
 
 
+## The night value is the MOON's energy, and it is what lights the lit side of
+## everything after dark - there is no ambient any more, see apply(). 0.04 was
+## the figure when sky ambient did most of the night's work; the moon has to do
+## it alone now, and a moonlit hillside should still be a hillside.
+##
+## 0.85 was the day value with sky ambient underneath it, and the first poster
+## tour showed why it cannot stay: with the ramp painting the lit band at the
+## sun's full colour and nothing blue mixed in, #86B04A meadow arrived on
+## screen as neon. The palette was authored for a lit surface landing near 1.0
+## in total; the ramp puts all of that in one term now.
 static func sun_energy(elevation: float) -> float:
-	return lerpf(0.04, 0.85, day_amount(elevation))
-
-
-## Sky ambient is strong - it is lit by the same sky the sun is in - so this
-## stays well below the sun. Too much and the terrain loses its shading
-## entirely and reads as flat coloured paper.
-static func ambient_energy(elevation: float) -> float:
-	return lerpf(0.10, 0.30, day_amount(elevation))
+	return lerpf(0.32, 0.70, day_amount(elevation))
 
 
 # --- Applying it ------------------------------------------------------------
@@ -163,35 +230,55 @@ func apply() -> void:
 	RenderingServer.global_shader_parameter_set(
 		&"kubik_night", night_amount(elevation))
 
+	# THE POSTER'S GLOBALS, published before anything draws with them. Linear,
+	# because every palette in the game is - see Look.
+	Look.publish(shade_color(elevation).srgb_to_linear(),
+		fog_color(elevation).srgb_to_linear(),
+		config.fog_start_m, config.fog_end_m, config.fog_bands)
+
 	if _sun != null:
-		# The light travels FROM the sun, so it points the other way. Built as
-		# a basis rather than look_at() because look_at() is degenerate when
-		# the direction is parallel to up - which is exactly noon.
-		_sun.global_transform.basis = Basis.looking_at(-sun_pos, Vector3.UP)
+		# The light travels FROM the sun (or the moon), so it points the other
+		# way. Built as a basis rather than look_at() because look_at() is
+		# degenerate when the direction is parallel to up - which is exactly
+		# noon.
+		_sun.global_transform.basis = Basis.looking_at(-light_direction(time_of_day), Vector3.UP)
 		_sun.light_color = sun_color(elevation)
 		_sun.light_energy = sun_energy(elevation)
-		# Below the horizon the sun would light the terrain from underneath.
-		_sun.visible = elevation > -0.05
+		# Never hidden. See light_direction(): a night without the light is a
+		# night without shade, which is black.
+		_sun.visible = true
 
 	if _env != null:
 		var fog := fog_color(elevation)
 		_env.fog_light_color = fog
-		_env.ambient_light_energy = ambient_energy(elevation)
+		# NO AMBIENT. The ramp in Look owns the shade colour, and sky ambient
+		# on top of it is exactly the "grey everywhere" the poster is not. The
+		# environment's ambient is left in the scene for the handful of things
+		# that are not poster materials, at nothing.
+		_env.ambient_light_energy = 0.0
 
 	if _sky != null:
 		var day := day_amount(elevation)
 		var dusk := dusk_amount(elevation)
-		_sky.sky_top_color = SKY_TOP_NIGHT.lerp(SKY_TOP_DAY, day)
-		# The horizon is the fog colour by construction. Anything else and the
-		# fog reads as a wall in front of the sky rather than as distance.
-		_sky.sky_horizon_color = fog_color(elevation)
-		_sky.ground_horizon_color = fog_color(elevation)
-		# The sky's "ground" is what you see below the horizon where terrain
-		# does not reach - past the far mesh, or over its edge from high up.
-		# Anything other than the fog colour there draws a hard grey band
-		# across the bottom of the sky, which the first tour showed clearly.
-		_sky.ground_bottom_color = fog_color(elevation)
-		_sky.sun_angle_max = lerpf(2.0, 12.0, dusk)
+		var night := night_amount(elevation)
+		_sky.set_shader_parameter("sky_top",
+			SKY_TOP_NIGHT.lerp(SKY_TOP_DAY, day).srgb_to_linear())
+		# The horizon is the fog colour by construction, and so is everything
+		# below it. Anything else and the fog reads as a wall in front of the
+		# sky rather than as distance - and the far mesh's last fog band, which
+		# is exactly kubik_fog_color, would be a line against the sky.
+		_sky.set_shader_parameter("sky_horizon", fog_color(elevation).srgb_to_linear())
+		_sky.set_shader_parameter("sun_dir", sun_pos)
+		_sky.set_shader_parameter("moon_dir", -sun_pos)
+		_sky.set_shader_parameter("sun_color", sun_color(elevation).srgb_to_linear())
+		_sky.set_shader_parameter("day", day)
+		_sky.set_shader_parameter("dusk", dusk)
+		_sky.set_shader_parameter("night", night)
+		# The rays fan out at dawn and dusk and are a faint fact by noon.
+		_sky.set_shader_parameter("ray_strength", lerpf(0.22, 0.6, dusk))
+		_sky.set_shader_parameter("ray_extent", lerpf(0.7, 1.6, dusk))
+		_sky.set_shader_parameter("sky_bands", float(config.sky_bands))
+		_sky.set_shader_parameter("cloud_cover", config.cloud_cover)
 
 
 ## Fog distances come from the config and only change when it does.

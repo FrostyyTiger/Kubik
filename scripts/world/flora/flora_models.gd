@@ -155,10 +155,18 @@ enum {
 ## Recorded in STATUS.md under "tuned blind": this was judged on the
 ## Compatibility renderer, and value contrast is exactly the kind of thing the
 ## two renderers disagree about.
+##
+## LOOK V1 MOVED ALL THREE TOWARD THE GROUND THEY STAND ON. The meadow is a
+## colour field on the poster, and a tuft is a slightly darker and a slightly
+## lighter meadow (#86B04A), not a different green: the base one step under
+## the ground's value, the tip one step over. The contrast that used to come
+## from a different hue now comes from the ramp - a tuft's sunward face is a
+## tone lighter than the ground's, its far face a tone darker - which is what
+## makes the field read as ground with grass in it rather than as confetti.
 const COLORS := [
-	Color(0.1912, 0.3663, 0.0452),   # GRASS_BLADE      #79A33C  blade, base
-	Color(0.3916, 0.5841, 0.1119),   # GRASS_BLADE_DRY  #A8C95E  blade, sunlit tip
-	Color(0.2918, 0.3763, 0.0844),   # GRASS_ALPINE     #93A552  short turf
+	Color(0.1878, 0.3613, 0.0578),   # GRASS_BLADE      #78A244  blade, base
+	Color(0.3278, 0.5395, 0.0976),   # GRASS_BLADE_DRY  #9BC258  blade, sunlit tip
+	Color(0.3372, 0.4342, 0.1022),   # GRASS_ALPINE     #9DB05A  short turf, on #A7B860
 	# LIGHTENED from #5C7A2E, which was half the meadow block's value and read
 	# as a black stick with a white brick on top. A stem is thinner than one
 	# voxel in reality, so at 6.25 cm it is already too wide - making it dark
@@ -629,10 +637,11 @@ static func _emit_face(pos: Vector3i, face: int, color: Color, unit: float,
 ## One ShaderMaterial for every plant in the world.
 ##
 ## A SHADER RATHER THAN A StandardMaterial3D, for the wind. Everything else it
-## does - vertex colour as albedo, roughness 1, no specular - a standard
-## material does too, and the terrain uses one for exactly that. What a
-## standard material cannot do is move the vertices, and grass that does not
-## move is the single thing that makes a meadow read as painted-on.
+## does - vertex colour as albedo, the poster ramp, banded fog - is Look's
+## opaque shader, and the pieces are concatenated from Look so the two can
+## never disagree about what shade looks like. What the shared shader cannot
+## do is move the vertices, and grass that does not move is the single thing
+## that makes a meadow read as painted-on.
 ##
 ## MUST COMPILE ON BOTH RENDERERS. The screenshot tour runs on Compatibility
 ## under Xvfb here; Marcel plays on Forward+ on a real GPU. Nothing in here is
@@ -668,11 +677,8 @@ static func material_for(model: int) -> ShaderMaterial:
 
 const SHADER := """
 shader_type spatial;
-render_mode cull_back, diffuse_lambert, specular_disabled;
-
-// Written once a frame by SkyCycle. 0 by day, 1 at night.
-global uniform float kubik_night;
-
+render_mode cull_back, ambient_light_disabled, specular_disabled;
+""" + Look.HEADER + Look.FOG_FN + """
 uniform float wind_strength = 1.0;
 uniform float night_life = 1.0;
 
@@ -704,8 +710,10 @@ void fragment() {
 	// them by day, and needs no second material, no second mesh and no branch
 	// anywhere in the placement rules.
 	EMISSION = COLOR.rgb * COLOR.a * kubik_night * night_life * 2.0;
+	// Distance in bands, like everything else - see Look.
+	FOG = poster_fog(VERTEX);
 }
-"""
+""" + Look.RAMP
 
 
 ## Fireflies get their own material.

@@ -250,19 +250,12 @@ static func bounds(voxels: Array) -> Array:
 # --- Meshing ----------------------------------------------------------------
 
 ## The terrain's material, so a character is made of the same stuff as the
-## ground it stands on. Flat vertex colour, no specular, no texture. Shared
-## across every part of every character - the colour is in the vertices, so one
-## material serves every palette.
-static var _material: StandardMaterial3D = null
-
-static func material() -> StandardMaterial3D:
-	if _material == null:
-		_material = StandardMaterial3D.new()
-		_material.vertex_color_use_as_albedo = true
-		_material.roughness = 1.0
-		_material.metallic_specular = 0.0
-		_material.cull_mode = BaseMaterial3D.CULL_BACK
-	return _material
+## ground it stands on. Flat vertex colour, no specular, no texture, and since
+## look v1 the poster ramp - the same object the chunks draw with, see Look.
+## Shared across every part of every character - the colour is in the
+## vertices, so one material serves every palette.
+static func material() -> Material:
+	return Look.opaque_material()
 
 
 ## Mesh a voxel list into an ArrayMesh, in metres, with baked corner AO.

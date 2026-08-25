@@ -248,7 +248,15 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				bx0 + step / 2, bz0 + step / 2, mid_h)
 			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
-			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices)
+			# THE BACKDROP, look v1. One altitude band per quad - so the band
+			# edges are the quad edges, a hard stepped contour rather than a
+			# gradient across the quad - and a lighting normal from the slope
+			# of the whole flank rather than of this one facet. See the two
+			# helpers below.
+			color = _band_color(color, mid_h * bs)
+			var flank := _flank_normal(bx0 + step / 2, bz0 + step / 2)
+
+			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices, flank)
 
 			# One skirt per edge whose neighbour is not in this ring. The four
 			# edges are in the same order as the corners, so edge k runs from
@@ -264,6 +272,45 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				_push_skirt(e[0], e[1], skirt_drop, shaded,
 					verts, normals, colors, indices)
+
+
+## Altitude bands - look v1's far field as a stacked backdrop.
+##
+## Every far_band_m of altitude the value steps by far_band_step, alternating
+## lighter and darker, so a mountain reads as contour bands the way a poster
+## paints one. Applied to a quad's MIDDLE height, once per quad, which is what
+## makes the band edge a hard stepped line along the quad grid rather than a
+## gradient interpolated across it. Off at far_band_step 0.
+func _band_color(color: Color, y_m: float) -> Color:
+	var step_amount: float = config.far_band_step
+	if step_amount <= 0.0 or config.far_band_m <= 0.0:
+		return color
+	var band := int(floor(y_m / config.far_band_m))
+	var k := 1.0 + (step_amount if posmod(band, 2) == 0 else -step_amount)
+	return Color(color.r * k, color.g * k, color.b * k, color.a)
+
+
+## The slope of the FLANK, not of the facet: the heightmap's gradient over
+## far_normal_m, centred on the quad.
+##
+## The poster ramp in Look paints three flat tones, and on a facet normal that
+## means every triangle of a mountain picks its own tone - the first look tour
+## came back with the far ranges as a patchwork. A mountain in a poster has
+## one lit side and one shaded side. Averaging the slope over a couple of dozen
+## metres gives it exactly that, and the mesh stays flat-shaded per quad, so
+## the faceting is still there in the geometry; it just stops being the thing
+## that decides the tone.
+func _flank_normal(bx: int, bz: int) -> Vector3:
+	var bs: float = config.block_size
+	var span := maxi(int(round(config.far_normal_m / bs * 0.5)), 1)
+	var x0 := float(bx - span)
+	var x1 := float(bx + span)
+	var z0 := float(bz - span)
+	var z1 := float(bz + span)
+	var dx := (heightmap.height_at(x1, float(bz)) - heightmap.height_at(x0, float(bz))) * bs
+	var dz := (heightmap.height_at(float(bx), z1) - heightmap.height_at(float(bx), z0)) * bs
+	var run := float(span) * 2.0 * bs
+	return Vector3(-dx, run, -dz).normalized()
 
 
 ## Height of one far-field vertex, in METRES, blended towards the voxel surface
@@ -327,14 +374,21 @@ func _push_skirt(a: Vector3, b: Vector3, drop: float, color: Color,
 ## winding rather than passed in, so the identity the whole mesher rests on -
 ## (p1 - p0) x (p2 - p0) == -normal - holds by construction here instead of
 ## being something each caller has to remember.
+##
+## `lighting_normal`, when given, is what the vertices CARRY instead of the
+## facet's own normal - the winding still decides which side is drawn. Look v1
+## hands the flank normal in for the ground quads; skirts keep their own.
 func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color,
 		verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray, indices: PackedInt32Array) -> void:
+		colors: PackedColorArray, indices: PackedInt32Array,
+		lighting_normal := Vector3.ZERO) -> void:
 	var normal := -((p1 - p0).cross(p2 - p0))
 	if normal.length_squared() < 0.000001:
 		normal = Vector3.UP
 	else:
 		normal = normal.normalized()
+	if lighting_normal != Vector3.ZERO:
+		normal = lighting_normal
 
 	# The same aspect and jitter the voxels get, from the same functions and the
 	# same seed. If the far field skipped them, the boundary between voxels and

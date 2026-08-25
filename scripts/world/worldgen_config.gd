@@ -725,6 +725,29 @@ const FOG_START_RATIO := 0.6
 @export var fog_start_m := 360.0
 @export var fog_end_m := 600.0
 
+## How many flat steps the fog takes between the two. Look v1: distance is
+## bands, not haze - see Look. 1 is a single hard cut at fog_end; 64 is
+## indistinguishable from ordinary depth fog. A look knob, local.
+@export var fog_bands := 6
+
+## The poster sky, see Look.SKY_SHADER. Flat bands between horizon and zenith,
+## and how much of the sky the clouds cover, 0 to 1. Look knobs, local.
+@export var sky_bands := 5
+@export var cloud_cover := 0.35
+
+## THE FAR FIELD AS A BACKDROP, see FarFieldJob. Every far_band_m of altitude
+## the far mesh steps its colour's value by far_band_step, alternating, so a
+## mountain reads as stacked contour bands; and its lighting normal is the
+## heightmap's slope averaged over far_normal_m, so a flank is one tone rather
+## than a patchwork of triangles. Look knobs, local. The voxels near the
+## player do neither - they have their own terraces.
+@export var far_band_m := 40.0
+@export var far_band_step := 0.06
+## 24 m was the first value and the postcard came back still a patchwork: at
+## 8 and 16 m per vertex that is a couple of quads, and the coarse heightmap
+## has a ridge every few of those. A flank is a hundred metres wide.
+@export var far_normal_m := 96.0
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -768,23 +791,28 @@ const FOG_START_RATIO := 0.6
 ## Per VERTEX, not per block, because per-block colour is incompatible with
 ## greedy meshing - see Block.jitter(). The cost is zero extra quads.
 
-## How far the per-vertex tint moves brightness, as a fraction. Start small.
-@export var color_jitter_value := 0.05
+## How far the per-vertex tint moves brightness, as a fraction. Terrain v2
+## started at 0.05; look v1 doubled it so a hillside carries visible grain -
+## the poster's lithograph texture - now that the ramp has taken the shading
+## gradient away that used to do that job.
+@export var color_jitter_value := 0.10
 
 ## Red-against-blue tilt, as a fraction. Smaller than the value jitter: a hue
 ## shift is much more visible than a brightness shift at the same magnitude.
-@export var color_jitter_hue := 0.02
+@export var color_jitter_hue := 0.04
 
-## Blocks per tint cell. 12 blocks is 6 m, so the mottling drifts over about
-## three player-widths - broad enough to read as ground rather than as noise.
-@export var color_jitter_blocks := 12
+## Blocks per tint cell. 6 blocks is 3 m - about a player and a half, so the
+## grain is a texture on the ground rather than a patchwork of fields. Was 12
+## through terrain v2, at the old half-strength.
+@export var color_jitter_blocks := 6
 
 ## How much darker a vertical face is than a horizontal one, 0 to 1.
 @export var slope_tint := 0.10
 
 ## How much warmer a sun-facing slope is than a shaded one, 0 to 1. This is
-## aspect, not lighting - see Block.aspect_shade().
-@export var aspect_tint := 0.06
+## aspect, not lighting - see Block.aspect_shade(). Look v1 doubled it and
+## made the curve pick a side, so a slope is two tones meeting at the ridge.
+@export var aspect_tint := 0.12
 
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
@@ -904,7 +932,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life",
 	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
-	"fog_start_m", "fog_end_m",
+	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
+	"far_band_m", "far_band_step", "far_normal_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

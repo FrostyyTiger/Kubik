@@ -83,9 +83,6 @@ const AO_CORNER_U1V0 := 1
 const AO_CORNER_U0V1 := 2
 const AO_CORNER_U1V1 := 3
 
-static var _material: StandardMaterial3D = null
-
-
 ## Build the surface arrays for `chunk`.
 ##
 ## `solid_outside` is called as solid_outside.call(wx, wy, wz) -> bool and ONLY
@@ -365,22 +362,15 @@ static func build(chunk: Chunk, world_solid: Callable,
 
 ## One shared material for every chunk. Sharing it means the renderer can batch
 ## chunks together; a material per chunk would defeat that.
-static func get_material() -> StandardMaterial3D:
-	if _material == null:
-		var m := StandardMaterial3D.new()
-		# The entire surface appearance: the per-block colour baked into the
-		# vertices IS the albedo. No texture, no UVs in the vertex stream.
-		m.vertex_color_use_as_albedo = true
-		# Note there is no vertex_color_is_srgb here: the palette in Block is
-		# already stored linear. That flag is ignored by the Compatibility
-		# renderer, and this has to look the same on both.
-		# Terrain is soil, grass, rock and snow. None of them are shiny, and a
-		# specular highlight sliding across a hillside as you walk is the
-		# fastest way to make a matte world look like wet plastic.
-		m.roughness = 1.0
-		m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-		_material = m
-	return _material
+##
+## SINCE LOOK V1 IT IS THE POSTER MATERIAL, shared with the far field, the far
+## trees and the characters - see Look. What it keeps from the terrain v1
+## StandardMaterial3D: the per-block colour baked into the vertices IS the
+## albedo, no texture, no UVs in the vertex stream, and nothing shiny, because
+## a specular highlight sliding across a hillside as you walk is the fastest
+## way to make a matte world look like wet plastic. What it adds is the ramp.
+static func get_material() -> Material:
+	return Look.opaque_material()
 
 
 # --- Corner ambient occlusion -----------------------------------------------
