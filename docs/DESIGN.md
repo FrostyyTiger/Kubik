@@ -11,6 +11,47 @@ Fantasy. Cozy but adventurous.
 
 Playable races are described under Character identity below.
 
+## Art direction
+
+**Settled by look v1 (2026-08-25): the Art Deco Alpine travel poster.** The
+1920s-30s railway and resort posters of the Alps - Broders' PLM series, the
+Swiss lithographs of the same decade. Flat colour fields, mountains as stacked
+bands, warm sun and cool violet shade, stepped geometric forms, a sun with
+rays, one gold accent. The travel-poster strand of Deco, never the Manhattan
+strand: no chrome, no glamour, no city. The world is cozy-Alpine; Deco is how
+it is drawn - world, characters and UI alike.
+
+Why it fits and not merely looks nice: Deco is built from steps and facets,
+which is what a voxel terrace and a low-poly far range already are. Under any
+other colour language they are artefacts; under this one they are the
+vocabulary.
+
+Five rules. Everything drawn obeys all of them; a feature that cannot is drawn
+differently.
+
+1. **Two tones and a shade.** A surface is lit, half-lit or in shade - three
+   flat bands, no gradient across a face. Shade is a *colour* (blue-violet),
+   never a darkness. Shadows are hard-edged and that colour. This is pillar 2
+   made visible: warmth is safety, and a campfire is the one warm thing in a
+   cool night.
+2. **No texture, no specular, no gradient.** Colour variation is per-block
+   jitter and altitude/aspect banding, never a map.
+3. **Distance is bands, not haze.** Fog steps in flat bands to the sky's
+   horizon colour; the far field is a stacked backdrop, the near field a solid
+   voxel world, and the seam between them is owned rather than hidden.
+4. **Forms are stepped and chamfered.** Heads lose their vertical edges to a
+   chamfer, shoulders step, hair is a geometric mass. Trees are cones and
+   ziggurats (not yet - see IDEAS).
+5. **One accent.** Gold `#C9A24A`: UI rules, the sun disc, later the
+   campfire's light. Nothing else in the world is gold.
+
+Where it lives: `scripts/world/look.gd` holds the one lighting ramp every
+shader in the game is built from, the banded fog and the sky; `SkyCycle`
+publishes the shade and fog colours by time of day; the UI theme is
+`assets/ui/deco_theme.tres` (paper `#F2E8D0`, ink `#1E2430`, gold, alpine blue
+`#2F5D8A`, sun `#E8863A`; Limelight for titles, Josefin Sans for body).
+`docs/plans/look-v1.md` is the full argument.
+
 ## Character identity model
 
 Three layers, each answering a different question.
@@ -120,30 +161,33 @@ legs as separate parts.
 - **Customisation** = palette swaps plus part picks.
 - **Gear** = models attached to bones, or part swaps.
 
-**Settled by character v1.** One model voxel is **1/8 of a block, 6.25 cm**, and
-a human is **32 voxels = 2.00 m**. Characters and terrain therefore do not share
-a voxel grid, and the chunk mesher is not the character mesher: two systems, not
-one, and they meet only in the material and the baked-AO rule.
+**Settled by character v1, re-settled by look v1.** One model voxel is **1/16
+of a block, 3.125 cm**, and a human is **64 voxels = 2.00 m**. (Character v1
+built them at 1/8; look v1 halved the voxel for the detail a face and a hand
+need, and re-authored every part.) Characters and terrain therefore do not
+share a voxel grid, and the chunk mesher is not the character mesher: two
+systems, not one, and they meet only in the material and the baked-AO rule.
 
 The four races, at the crown, all built and measured:
 
 | Race | Height | Silhouette |
 | --- | --- | --- |
-| Human | 32 vox, 2.00 m | the reference: square shoulders |
-| Elf | 36 vox, 2.25 m | tall and narrow, ears three voxels out each side |
-| Dwarf | 24 vox, 1.50 m | as wide as it is tall, and always bearded |
-| Lizardfolk | 30 vox, 1.88 m | tail, crest, snout, leaning 8 degrees forward |
+| Human | 64 vox, 2.00 m | the reference: square, stepped shoulders |
+| Elf | 72 vox, 2.25 m | tall and narrow, ears six voxels out each side |
+| Dwarf | 48 vox, 1.50 m | as wide as it is tall, and always bearded |
+| Lizardfolk | 60 vox, 1.88 m | tail, crest, snout, leaning 8 degrees forward |
 
 **The collider is identical for every race** - a capsule, radius 0.4 m, height
 2.0 m, with the camera pivot at 1.5 m. Race is never a stat: the dwarf's head
 sits at 1.5 m inside a 2 m capsule and the elf's pokes 0.25 m above it, and both
 are cosmetic by decision. No per-race number appears in `player.gd`.
 
-**Two proportion schemes exist for the human**, stocky (Cube World, big head,
-short legs) and lean (naturalistic). Both are 2.00 m, both run on the same rig
-and the same animator, and they differ only in their part sets. **Default
-stocky; lean built for comparison; the decision is pending** - see
-`docs/status/character-v1.md`, which is waiting on exactly this.
+**Every race is stocky - decided in look v1.** Head about a third of the
+height, big hands, big boots, no neck except the elf's: the Cube World read,
+kept on the stocky side rather than the doll side, because it is what stays
+readable at 40 m at dusk. Character v1 built a lean (naturalistic) human for
+comparison; it was retired with the decision and its part set deleted. The
+`build` byte stays on the wire, always 0, so the wire version did not bump.
 
 ### Parts are data
 
@@ -246,10 +290,13 @@ the only consistency the eye can actually check. A player wading through
 knee-high grass is the picture; a player wading through ankle-high mountains
 would not be.
 
-**Ground plants are built at 8 model voxels per block - 6.25 cm each** - which
-is the character voxel scale in the art pipeline above, not the world block
-scale. That is deliberate too: a plant and a player are made of the same size
-of material, so they look like they belong in the same hand.
+**Ground plants are built at 8 model voxels per block - 6.25 cm each** - not
+the world block scale. Characters were the same size through character v1;
+look v1 took them one step finer (1/16, see the art pipeline above) and left
+the plants where they were, deliberately: a face needs the detail and a tuft
+does not, and 8.7 million pieces of ground cover at eight times the voxels is
+not a cost worth paying for the tuft. A plant is still read against the
+player, at 1:1, which is the consistency the eye actually checks.
 
 **Full scale was considered and rejected, in writing, so it is not
 relitigated.** A real 1400 m mountain needs roughly a 6 km base, which does not

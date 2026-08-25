@@ -244,8 +244,22 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# quad's middle. Anything else and the treeline would be in a
 			# different place near and far.
 			var mid_h := (h00 + h10 + h11 + h01) * 0.25
-			var zone := generator.surface_zone_at(
-				bx0 + step / 2, bz0 + step / 2, mid_h)
+			var zone_bx := bx0 + step / 2
+			var zone_bz := bz0 + step / 2
+			var zone_h := mid_h
+			# BEYOND THE FIRST RING THE ZONE IS SAMPLED ON A COARSER CELL, look
+			# v1. Zone boundaries are noise, so quad by quad a far peak comes
+			# out as a speckle of rock, snow and turf; sampled once per
+			# far_zone_cell_m it comes out in blocks, which is how a poster
+			# paints a mountainside. The innermost ring keeps the exact sample
+			# so the treeline agrees with the voxels at the seam. Rendering
+			# only: the zones themselves do not move.
+			if ring > 0 and config.far_zone_cell_m > 0.0:
+				var cell := maxi(int(round(config.far_zone_cell_m / bs)), step)
+				zone_bx = Chunk.floor_div(bx0, cell) * cell + cell / 2
+				zone_bz = Chunk.floor_div(bz0, cell) * cell + cell / 2
+				zone_h = heightmap.height_at(float(zone_bx), float(zone_bz))
+			var zone := generator.surface_zone_at(zone_bx, zone_bz, zone_h)
 			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 			# THE BACKDROP, look v1. One altitude band per quad - so the band

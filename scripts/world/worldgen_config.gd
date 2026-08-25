@@ -747,6 +747,9 @@ const FOG_START_RATIO := 0.6
 ## 8 and 16 m per vertex that is a couple of quads, and the coarse heightmap
 ## has a ridge every few of those. A flank is a hundred metres wide.
 @export var far_normal_m := 96.0
+## Metres per zone-colour cell in the rings beyond the first; 0 samples every
+## quad. Blocks of colour on the far peaks rather than speckle.
+@export var far_zone_cell_m := 24.0
 
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
@@ -792,14 +795,17 @@ const FOG_START_RATIO := 0.6
 ## greedy meshing - see Block.jitter(). The cost is zero extra quads.
 
 ## How far the per-vertex tint moves brightness, as a fraction. Terrain v2
-## started at 0.05; look v1 doubled it so a hillside carries visible grain -
-## the poster's lithograph texture - now that the ramp has taken the shading
-## gradient away that used to do that job.
-@export var color_jitter_value := 0.10
+## started at 0.05; look v1 tried 0.10 for a lithograph grain and the spawn
+## tour showed why per-VERTEX tint cannot give one: a greedy-meshed meadow is
+## a few huge quads, so the jitter lands on their corners and interpolates
+## across them as soft blotches, and doubling it doubled the blotches. 0.07
+## is where it reads as ground again. Grain would need per-block colour, which
+## greedy meshing rules out - see Block.jitter().
+@export var color_jitter_value := 0.07
 
 ## Red-against-blue tilt, as a fraction. Smaller than the value jitter: a hue
 ## shift is much more visible than a brightness shift at the same magnitude.
-@export var color_jitter_hue := 0.04
+@export var color_jitter_hue := 0.03
 
 ## Blocks per tint cell. 6 blocks is 3 m - about a player and a half, so the
 ## grain is a texture on the ground rather than a patchwork of fields. Was 12
@@ -933,7 +939,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"wind_strength", "night_life",
 	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
-	"far_band_m", "far_band_step", "far_normal_m",
+	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

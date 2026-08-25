@@ -28,11 +28,12 @@ here on this list is filled by what a playtest taught us.
    forest does not stop at 96 m, and fireflies and glowing mushrooms after
    dark. Trees went from 34,925 to 73,675 on seed 42 and the terrain under them
    did not move - same heightmap hash, same zone shares, same spawn.
-   `STATUS.md` has every number and the list of things tuned on the wrong
-   renderer.
+   `docs/status/foliage-v1.md` has every number and the list of things tuned
+   on the wrong renderer.
 
    **Water and rivers** is the other half and is still not written. What
-   foliage v1 leaves ready for it is at the end of `STATUS.md`: the placement
+   foliage v1 leaves ready for it is at the end of `docs/status/foliage-v1.md`:
+   the placement
    product takes another `base` case and another binary gate almost for free,
    the decoration layer takes water plants without changing, and reeds already
    follow `Lakes.shore_level_at_cell()` - which is the same question a river
@@ -66,6 +67,20 @@ humanoid-only, and the campfire is sold on "your character sitting at the fire
 IS the progress screen", which needs a character, a sit pose and gear sockets.
 All three exist now, plus four races, a creation screen and appearance sync. See
 `docs/plans/character-v1.md` and `docs/status/character-v1.md`.
+
+**Look v1 ran next, on `feat/look-v1`, 2026-08-25**, and it is not on this
+list either. The argument: an art direction is not a feature, it is the same
+kind of decision as the art pipeline - cheap to make now and dearer with every
+part, plant and screen authored under the old look - and the character half
+was urgent, because the first enemy and the first gear are parts, and every
+part authored at the old resolution and proportions would be a part to redo.
+It settled the direction (Art Deco Alpine poster, `DESIGN.md` "Art
+direction"), put one lighting ramp under everything drawn, gave the sky rays
+and the far field bands, re-authored every character at 1/16 of a block in
+stocky proportions, and gave the UI its typography. See
+`docs/plans/look-v1.md` and `docs/status/look-v1.md`. What it deliberately did
+NOT do: trees. Rule 4 wants cones and ziggurats where there are stacked
+squares, and that is content work parked behind items 2 and 3.
 
 Terrain v1 delivered a walking third-person player as a side effect, and v2
 added sprint, but both on **local physics only**. Rewiring it into the

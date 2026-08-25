@@ -82,6 +82,7 @@ const LOCAL_TUNING_ROWS := [
 	["far_band_m", "poster: far band (m)", 5.0, 200.0, 5.0],
 	["far_band_step", "poster: far band step", 0.0, 0.3, 0.01],
 	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
+	["far_zone_cell_m", "poster: far zone cell (m)", 0.0, 128.0, 4.0],
 	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
 	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
 	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],

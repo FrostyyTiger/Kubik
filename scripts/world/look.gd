@@ -252,8 +252,12 @@ void sky() {
 	float cm = dot(dir, moon_dir);
 	float moon = step(cos(0.018), cm) * night;
 	col = mix(col, vec3(0.85, 0.88, 1.0), moon);
+	// A 3D cell hashed in two stages: hashing x + 17 z directly collapses
+	// whole rows of cells onto one value and the first night tour had every
+	// star in one patch of sky.
 	vec3 cell = floor(dir * 220.0);
-	float star = step(0.996, hash2(cell.xy + cell.z * 17.0)) * night * smoothstep(0.05, 0.2, dir.y);
+	float star_seed = hash2(cell.xz + vec2(hash2(cell.xy) * 61.0, cell.y * 3.7));
+	float star = step(0.994, star_seed) * night * smoothstep(0.05, 0.2, dir.y);
 	col += vec3(0.7, 0.75, 0.9) * star;
 
 	COLOR = col;
