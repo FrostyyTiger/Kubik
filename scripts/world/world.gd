@@ -170,6 +170,18 @@ var _wall_start_ms := 0
 var _total_ms := 0
 var _built := 0
 
+## WORLD FEEL V1 STAGE 0 - the live counters behind the F4 readout.
+##
+## The crossing is where a frame is lost, so the two numbers that describe one
+## are kept from the last crossing rather than averaged away: how many nodes it
+## freed and how long refresh_region took. `_max_frame_ms_2s` is a rolling
+## window, because a max since load is a number that only ever goes up and
+## stops meaning anything after the first hitch.
+var _freed_last_crossing := 0
+var _refresh_ms := 0.0
+var _max_frame_ms_2s := 0.0
+var _frame_window := []
+
 ## Split generate from mesh rather than reporting one number. They are tuned by
 ## completely different means - generate by noise layer count, mesh by the
 ## meshing algorithm - and one combined figure hides which of the two just got
@@ -228,7 +240,8 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 		p_seed, _build_queue.size(), _center])
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_track_frame(delta)
 	if _build_queue.is_empty() and _in_flight.is_empty() \
 			and _gen_in_flight.is_empty() and _flora_queue.is_empty() \
 			and _flora_in_flight.is_empty():
@@ -362,6 +375,25 @@ func queued_chunk_count() -> int:
 	return _build_queue.size()
 
 
+## Chunks that have been meshed and uploaded since the world was built. The
+## streaming probe's supply number - `built/s` over a sprint is the whole of
+## what night 1's first half moves.
+func built_chunk_count() -> int:
+	return _built
+
+
+## How far out, in metres, the far mesh currently declines to draw because the
+## voxels are expected to cover it.
+##
+## One radius until Stage 3 makes it per sector; `dir` is taken now so the
+## probe and the HUD do not have to change when it does. A column further out
+## than this is covered by the far mesh, so its absence is not a hole.
+func far_field_exclusion_m(_dir: Vector3) -> float:
+	if _far_field == null:
+		return 0.0
+	return _far_field.exclusion_blocks() * config.block_size
+
+
 ## Averages, not totals: a total tells you the world loaded, a per-chunk
 ## average tells you whether the next one will arrive in time. The HUD shows
 ## these live and they are the number the performance work in Stage 6 moves.
@@ -371,6 +403,17 @@ func last_timings() -> Dictionary:
 		"gen_ms": float(_gen_ms) / 1000.0 / float(n),
 		"mesh_ms": float(_mesh_ms) / 1000.0 / float(n),
 		"heightmap_ms": _heightmap_ms,
+		# WORLD FEEL V1 STAGE 0. The averages above are cumulative since load,
+		# which is the right number for "did the world arrive" and the wrong
+		# one for "is it keeping up NOW" - a 20-second load buries a two-second
+		# stall. These are the live ones.
+		"gen_in_flight": _gen_in_flight.size(),
+		"mesh_in_flight": _in_flight.size(),
+		"built": _built,
+		"freed_last_crossing": _freed_last_crossing,
+		"refresh_ms": _refresh_ms,
+		"max_frame_ms": _max_frame_ms_2s,
+		"cached_chunks": 0,
 	}
 
 
@@ -565,6 +608,24 @@ func _collect_flora(started: int, budget: int) -> void:
 		_flora_triangles += node.triangle_count
 
 
+## The worst frame in the last two seconds.
+##
+## A rolling window rather than a max since load: a max since load is a number
+## that only goes up, and after the first hitch it stops telling you whether
+## the thing you just changed made the next one better.
+func _track_frame(delta: float) -> void:
+	var now := Time.get_ticks_msec()
+	_frame_window.append([now, delta * 1000.0])
+	var worst := 0.0
+	var keep := []
+	for f in _frame_window:
+		if now - int(f[0]) <= 2000:
+			keep.append(f)
+			worst = maxf(worst, float(f[1]))
+	_frame_window = keep
+	_max_frame_ms_2s = worst
+
+
 ## Chunks whose voxels have arrived. Publish them, replay their edits, and
 ## hand them straight on to phase two.
 func _collect_generated(started: int, budget: int) -> void:
@@ -744,6 +805,8 @@ func set_center_from_position(pos_m: Vector3) -> bool:
 ## Bring the loaded set in line with where the centre now is: queue what is
 ## missing inside the radius, free what has fallen well outside it.
 func refresh_region() -> void:
+	var _refresh_t0 := Time.get_ticks_usec()
+	var _freed_before := _chunk_nodes.size()
 	var radius: int = config.voxel_radius_chunks
 	var radius_sq := radius * radius
 	var lo := _world_chunk_min()
@@ -779,6 +842,11 @@ func refresh_region() -> void:
 	# Nearest-first, so the world grows outward from the player rather than
 	# popping in in some arbitrary order.
 	_build_queue.sort_custom(Callable(self, "_nearer_to_centre"))
+
+	# What this crossing cost, for the F4 readout. Stage 4 is the stage that
+	# has to bring both of these down; this is where they are measured.
+	_freed_last_crossing = maxi(_freed_before - _chunk_nodes.size(), 0)
+	_refresh_ms = float(Time.get_ticks_usec() - _refresh_t0) / 1000.0
 
 
 ## HOOK 3 OF 4: free, and queue. Bring the flora columns in line with where the

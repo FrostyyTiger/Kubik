@@ -83,7 +83,12 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	# is built to follow a character and fight for control of its own pitch;
 	# for a photograph we just want to say where to stand and what to look at.
 	_camera = Camera3D.new()
-	_camera.far = 600.0
+	# THE SAME FAR PLANE THE PLAYER GETS, and until world feel v1 Stage 0 it was
+	# a third, independent number: the player's camera clipped at 400 m, this
+	# one at a hardcoded 600, and the fog ended at 600 too - so the tour cut the
+	# last fog band off and could never have photographed the player's bug at
+	# all. The tour's whole job is to photograph what the player sees.
+	_camera.far = _world.config.fog_end_m * Player.FAR_PLANE_RATIO
 	_camera.fov = 68.0
 	get_tree().current_scene.add_child(_camera)
 	_camera.current = true

@@ -66,6 +66,19 @@ func _start_if_idle() -> void:
 	_task = WorkerThreadPool.add_task(_job.run, false, "kubik far field")
 
 
+## The radius, in blocks, inside which the far mesh declines to draw because
+## the voxels are expected to cover it.
+##
+## Derived the same way FarFieldJob derives it, rather than read back off the
+## last job: the job is null between builds, and a probe asking "is this column
+## covered" needs an answer every frame, not only just after a rebuild.
+func exclusion_blocks() -> float:
+	if _config == null:
+		return 0.0
+	var voxel_radius_blocks := float(_config.voxel_radius_chunks * Chunk.SIZE)
+	return maxf(voxel_radius_blocks - float(2 * _config.far_step), 0.0)
+
+
 ## Block until any build finishes, before the world it reads is thrown away.
 func drain() -> void:
 	if _task != -1:

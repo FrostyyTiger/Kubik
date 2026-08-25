@@ -75,12 +75,22 @@ func _ready() -> void:
 	# everything that reads one.
 	config.apply_cli_overrides(OS.get_cmdline_user_args())
 	_apply_msaa()
-	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+	# The camera's far plane is on this line because it used to disagree with
+	# the fog and nobody could see that it did: player.tscn carried a literal
+	# 400 m while High fog ran to 600, so the far ridge was clipped out of
+	# every frame on High and Ultra and the only symptom was a view that
+	# stopped short. It is derived now (world feel v1 Stage 0); printing it is
+	# what makes a future disagreement visible in one line of any log.
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m, camera far %d m" % [
 		config.view_distance_name(), config.voxel_radius_chunks,
 		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
-		int(config.fog_end_m)])
+		int(config.fog_end_m),
+		int(config.fog_end_m * Player.FAR_PLANE_RATIO)])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	# The session's config, which may carry CLI overrides the saved file does
+	# not - so the far plane matches the fog this run actually uses.
+	_player.apply_view_config(config)
 	_debug.set_far_trees(_far_trees)
 	# Wind and night are LOCAL knobs and live on the shared flora materials, so
 	# they are pushed once here and again whenever the F4 panel moves.
@@ -109,6 +119,8 @@ func _ready() -> void:
 		_start_traverse.call_deferred()
 	elif "--flora-probe" in OS.get_cmdline_user_args():
 		_start_flora_probe.call_deferred()
+	elif "--stream-probe" in OS.get_cmdline_user_args():
+		_start_stream_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -277,6 +289,16 @@ func _start_flora_probe() -> void:
 	_debug.visible = false
 	var probe := FloraProbe.new()
 	probe.name = "FloraProbe"
+	add_child(probe)
+	probe.run(_world, _player)
+
+
+## Hand the session to the streaming probe - see scripts/tools/stream_probe.gd.
+func _start_stream_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := StreamProbe.new()
+	probe.name = "StreamProbe"
 	add_child(probe)
 	probe.run(_world, _player)
 

@@ -97,6 +97,9 @@ var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
 # and then carried by hand - see _ready() for why it cannot stay a child.
 var _pivot_offset := Vector3.ZERO
+## How far past the end of the fog the camera still draws. See _ready().
+const FAR_PLANE_RATIO := 1.25
+
 var _pitch := deg_to_rad(-15.0)
 
 
@@ -117,6 +120,18 @@ func _ready() -> void:
 	# The arm casts from inside the player's own capsule, so without this it
 	# collides with the player and jams the camera at zero distance.
 	_arm.add_excluded_object(get_rid())
+
+	# THE FAR PLANE FOLLOWS THE FOG, and until world feel v1 it did not.
+	#
+	# player.tscn carried `far = 400.0` as a literal while High fog and the far
+	# field both run to 600 m, so on High and Ultra the far ridge was clipped
+	# out of the frame and nobody had ever seen it. The camera has to reach
+	# past the point where fog has finished hiding things, or the fog's last
+	# band is a wall with nothing behind it.
+	#
+	# 1.25x rather than exactly fog_end so the band at the very end of the fog
+	# is drawn rather than clipped mid-fade.
+	apply_view_config(WorldgenConfig.load_or_default())
 
 	# The camera pivot must NOT inherit the body's rotation.
 	#
@@ -470,3 +485,12 @@ func _mouse_captured() -> bool:
 
 func _capture_mouse(on: bool) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if on else Input.MOUSE_MODE_VISIBLE
+
+
+## Set the camera's far plane from the view distance. Called by Game with the
+## session's config - which may carry CLI overrides the saved file does not -
+## and once from _ready() so a scene opened on its own is still right.
+func apply_view_config(config: WorldgenConfig) -> void:
+	if config == null or _camera == null:
+		return
+	_camera.far = config.fog_end_m * FAR_PLANE_RATIO

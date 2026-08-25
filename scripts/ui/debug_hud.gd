@@ -186,6 +186,18 @@ func _compose_readout() -> String:
 			lines.append("gen/mesh  %.2f / %.2f ms per chunk" % [
 				t.get("gen_ms", 0.0), t.get("mesh_ms", 0.0)])
 			lines.append("worldgen  %d ms heightmap" % t.get("heightmap_ms", 0))
+			# WORLD FEEL V1 STAGE 0. The live half: what is out at the pool
+			# right now, what the last crossing cost, and the worst frame in
+			# the last two seconds. The averages above say whether the world
+			# arrived; these say whether it is keeping up.
+			lines.append("stream    %d gen / %d mesh in flight, %d built" % [
+				t.get("gen_in_flight", 0), t.get("mesh_in_flight", 0),
+				t.get("built", 0)])
+			lines.append("crossing  %d freed, %.1f ms refresh, worst frame %.1f ms" % [
+				t.get("freed_last_crossing", 0), t.get("refresh_ms", 0.0),
+				t.get("max_frame_ms", 0.0)])
+			if t.get("cached_chunks", 0) > 0:
+				lines.append("cache     %d chunks" % t.get("cached_chunks", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
 		if world.has_method("flora_stats"):
