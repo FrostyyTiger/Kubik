@@ -44,9 +44,20 @@ layout_mode = 2
 text = "co-op voxel exploration"
 horizontal_alignment = 1
 
+[node name="CharacterLine" type="Label" parent="Center/VBox"]
+modulate = Color(0.75, 0.85, 1, 1)
+layout_mode = 2
+text = "..."
+horizontal_alignment = 1
+
 [node name="Spacer" type="Control" parent="Center/VBox"]
 custom_minimum_size = Vector2(0, 16)
 layout_mode = 2
+
+[node name="CharacterButton" type="Button" parent="Center/VBox"]
+custom_minimum_size = Vector2(280, 44)
+layout_mode = 2
+text = "Character"
 
 [node name="HostButton" type="Button" parent="Center/VBox"]
 custom_minimum_size = Vector2(280, 44)

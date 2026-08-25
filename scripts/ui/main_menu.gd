@@ -3,6 +3,8 @@ extends Control
 ## Host / Join / Quit. The menu never touches ENet directly - it only talks to
 ## the `Net` autoload and reacts to its signals.
 
+@onready var _character_button: Button = $Center/VBox/CharacterButton
+@onready var _character_line: Label = $Center/VBox/CharacterLine
 @onready var _host_button: Button = $Center/VBox/HostButton
 @onready var _join_button: Button = $Center/VBox/JoinButton
 @onready var _quit_button: Button = $Center/VBox/QuitButton
@@ -22,6 +24,7 @@ func _ready() -> void:
 	if Net.is_online():
 		Net.leave()
 
+	_character_button.pressed.connect(_on_character_pressed)
 	_host_button.pressed.connect(_on_host_pressed)
 	_join_button.pressed.connect(_on_join_pressed)
 	_quit_button.pressed.connect(_on_quit_pressed)
@@ -30,6 +33,8 @@ func _ready() -> void:
 	Net.join_succeeded.connect(_enter_game)
 	Net.host_failed.connect(_on_failed)
 	Net.join_failed.connect(_on_failed)
+
+	_show_character()
 
 	# Explains a bounce back from a session that ended without us asking.
 	_status.text = Net.last_status
@@ -74,6 +79,27 @@ func _apply_launch_args() -> void:
 		_on_join_pressed()
 
 
+## Who you will be when you press Host or Join.
+##
+## Shown on the menu rather than only inside the creation screen, because the
+## character is chosen once and played for hours - and the moment to notice you
+## are still the default human is before you join a friend's world, not after.
+func _show_character() -> void:
+	var def := CharacterDef.load_or_default()
+	# "unnamed" rather than sanitise_name's "peer N". That fallback exists so
+	# that a friend without a name still has something to be CALLED on their
+	# tag; on your own menu it reads as a bug.
+	var display := def.name_text.strip_edges()
+	if display.is_empty():
+		display = "unnamed"
+	_character_line.text = "%s - %s %s" % [
+		display, Races.BUILD_NAMES[def.build], Races.name_of(def.race)]
+
+
+func _on_character_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/character/creation.tscn")
+
+
 ## `--port N`, or the default if it is absent or unusable.
 func _launch_port() -> int:
 	var args := OS.get_cmdline_user_args()
@@ -114,6 +140,7 @@ func _on_failed(reason: String) -> void:
 
 
 func _set_busy(busy: bool, message: String) -> void:
+	_character_button.disabled = busy
 	_host_button.disabled = busy
 	_join_button.disabled = busy
 	_address_edit.editable = not busy

@@ -1,5 +1,8 @@
 # Foliage v1 — run status
 
+*Character v1 ran the same night on `feat/character-v1` — see
+`docs/status/character-v1.md`.*
+
 Unattended overnight run of `docs/plans/foliage-v1.md`, 2026-08-24/25, on the
 Linux box. All eleven stages attempted and committed on `feat/foliage-v1`,
 branched from `main` at `198274d` (the terrain work — threaded heightmap,

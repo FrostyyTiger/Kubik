@@ -63,7 +63,11 @@ const FLY_SPEED := 18.0
 @onready var _pivot: Node3D = $CamPivot
 @onready var _arm: SpringArm3D = $CamPivot/SpringArm3D
 @onready var _camera: Camera3D = $CamPivot/SpringArm3D/Camera3D
-@onready var _body: MeshInstance3D = $Body
+## The character. NOT a capsule any more: the collider is still a capsule and
+## always will be - hard rule 3, one collider for every race - but what you see
+## is a CharacterView built from the saved CharacterDef. The model's feet are at
+## y = 0 and the capsule's centre is at y = 1, and the two agree.
+@onready var _view: CharacterView = $View
 
 ## Debug flight. A tool, not a mode - see docs/DESIGN.md. Tuning terrain
 ## without it is miserable, which is the entire reason it survives.
@@ -85,6 +89,10 @@ var sprint_override := false
 ## a probe that never jumps measures a world nobody plays in.
 var jump_override := false
 
+## A static pose, when something has asked for one. Scaffolding until the
+## campfire owns sit and the death design owns downed - see the debug keys.
+var pose := LocomotionState.POSE_NONE
+
 var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
 # and then carried by hand - see _ready() for why it cannot stay a child.
@@ -94,6 +102,13 @@ var _pitch := deg_to_rad(-15.0)
 
 func _ready() -> void:
 	_capture_mouse(true)
+	# The character Marcel made, or the default human on a machine that has
+	# never opened the creation screen. `--race` and friends override it for
+	# one run - see CharacterDef.load_or_default().
+	_view.build(CharacterDef.load_or_default())
+	# This is the player's own character, so it is the one that has to get out
+	# of the way when the camera ends up inside its head.
+	_view.local = true
 	# Terrain is a staircase of half-metre steps and the capsule must stay
 	# glued to it going downhill, or walking down any slope turns into a
 	# sequence of small hops.
@@ -125,6 +140,24 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	_capture_mouse(false)
+
+
+## What this player looks like, as the eight bytes that travel on the wire.
+##
+## Asked for every sync tick rather than cached, so that cycling the character
+## on the F8 panel is visible to a friend without any plumbing between the
+## panel and the network.
+func appearance_bytes() -> PackedByteArray:
+	return _view.appearance_bytes()
+
+
+## The name to put on this player's tag, sanitised the same way the host will
+## sanitise it. Doing it here as well as on the host is not redundancy for its
+## own sake: it means the local player sees the same name everyone else does,
+## rather than seeing the raw string they typed.
+func display_name() -> String:
+	return CharacterDef.sanitise_name(
+		_view.def.name_text if _view.def != null else "", Net.local_peer_id())
 
 
 ## Where the camera is looking, used by anything that needs a facing.
@@ -162,6 +195,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			_set_noclip(not noclip)
 			get_viewport().set_input_as_handled()
 			return
+		if _pose_key(event.physical_keycode):
+			get_viewport().set_input_as_handled()
+			return
 
 	if event.is_action_pressed("ui_cancel") and _mouse_captured():
 		# First Escape frees the cursor and is consumed here. A second one is
@@ -176,7 +212,7 @@ func _set_noclip(on: bool) -> void:
 	# Turning the collider off is what makes it noclip rather than merely
 	# flight. Without it you would hover, but still be stopped by hillsides.
 	$Collider.disabled = on
-	_body.visible = not on
+	_view.visible = not on
 	print("[Player] noclip %s" % ("on" if on else "off"))
 
 
@@ -186,6 +222,11 @@ func _physics_process(delta: float) -> void:
 	# Carried by hand because the pivot is top_level. One frame behind the
 	# body, which the spring arm smooths away.
 	_pivot.global_position = global_position + _pivot_offset
+
+	if _wave_left > 0.0:
+		_wave_left -= delta
+		if _wave_left <= 0.0 and pose == LocomotionState.POSE_WAVE:
+			pose = LocomotionState.POSE_NONE
 
 	if not _mouse_captured() and wish_override == Vector3.ZERO:
 		# Cursor released means a menu or a panel has focus. Walking on while
@@ -199,12 +240,14 @@ func _physics_process(delta: float) -> void:
 			velocity.z = 0.0
 			velocity.y -= GRAVITY * delta
 			move_and_slide()
+		_publish_locomotion()
 		return
 
 	if noclip:
 		_fly(delta)
 	else:
 		_walk(delta)
+	_publish_locomotion()
 
 
 func _walk(delta: float) -> void:
@@ -319,6 +362,87 @@ func _face_movement(wish: Vector3, delta: float) -> void:
 	# Frame-rate independent smoothing - see RemotePlayer for why this shape
 	# rather than lerp(current, target, 0.1).
 	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
+
+
+## Everything the animator is allowed to know about what this body is doing.
+##
+## Built fresh every frame rather than mutated, because the same object is
+## handed to the view and read next frame, and a struct that two things hold a
+## reference to is a struct that changes under one of them.
+##
+## THIS IS THE SEAM the host-authoritative rewrite goes through. When the host
+## starts simulating players, it fills a LocomotionState from its own table and
+## nothing in the animation system changes - see LocomotionState.
+func locomotion_state() -> LocomotionState:
+	var st := LocomotionState.new()
+	st.speed = Vector2(velocity.x, velocity.z).length()
+	st.vertical = velocity.y
+	st.grounded = is_on_floor()
+	st.mode = _locomotion_mode()
+	# Not `vertical > 0`: the two differ for one frame at the apex, and a
+	# legs-tucked pose that flickers there is worse than one that commits.
+	st.rising = not st.grounded and velocity.y > 0.5
+	st.pose = pose
+	st.look_yaw = _yaw
+	st.look_pitch = _pitch
+	st.noclip = noclip
+	return st
+
+
+func _publish_locomotion() -> void:
+	_view.set_state(locomotion_state())
+
+
+## Which of the three gaits this frame is in. THE SAME PRECEDENCE as
+## _speed_multiplier - sprint first, so holding both keys is not ambiguous -
+## and derived from the same inputs, so the animation can never disagree with
+## the speed it is animating.
+func _locomotion_mode() -> int:
+	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
+		return LocomotionState.MODE_SPRINT
+	if Input.is_physical_key_pressed(KEY_ALT):
+		return LocomotionState.MODE_PRECISION
+	return LocomotionState.MODE_WALK
+
+
+## SCAFFOLDING, AND IT SAYS SO. X sits, B goes down, V waves.
+##
+## THE CAMPFIRE PLAN OWNS `sit` AND THE DEATH DESIGN OWNS `downed`. Neither
+## system exists yet, and a pose with nothing to trigger it is a pose nobody
+## finds the bugs in - so these three keys exist to drive the state byte until
+## the systems that own them arrive, and they are the first thing those plans
+## should delete.
+##
+## Local only in the sense that the KEY is local; the pose itself rides the
+## state byte from Stage 6, so a friend sees you sit.
+func _pose_key(keycode: int) -> bool:
+	match keycode:
+		KEY_X:
+			pose = LocomotionState.POSE_NONE if pose == LocomotionState.POSE_SIT \
+				else LocomotionState.POSE_SIT
+		KEY_B:
+			pose = LocomotionState.POSE_NONE if pose == LocomotionState.POSE_DOWNED \
+				else LocomotionState.POSE_DOWNED
+		KEY_V:
+			# The wave ends by itself, so it is a press rather than a toggle.
+			pose = LocomotionState.POSE_WAVE
+			_wave_left = Animator.WAVE_SECONDS
+		KEY_T:
+			# Stage 10's placeholders. Scaffolding like the pose keys - the
+			# gear plan owns what actually hangs here.
+			_view.set_gear_placeholders(not _view.gear_placeholders_on())
+			print("[Player] gear placeholders %s" % (
+				"on" if _view.gear_placeholders_on() else "off"))
+			return true
+		_:
+			return false
+	print("[Player] pose %d" % pose)
+	return true
+
+
+## Counts the wave down, because the wave is the one pose that stops on its
+## own and the animator must not be the thing that decides a player's state.
+var _wave_left := 0.0
 
 
 ## Multiplier applied to the base speed this frame. Applies to walking and to

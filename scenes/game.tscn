@@ -1,4 +1,4 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/ui/debug_hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/world/sky_cycle.gd" id="5_sky"]
 [ext_resource type="Script" path="res://scripts/world/flora/far_trees.gd" id="6_fartrees"]
+[ext_resource type="Script" path="res://scripts/ui/character_debug.gd" id="7_chardebug"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -53,3 +54,6 @@ script = ExtResource("4_hud")
 
 [node name="SkyCycle" type="Node" parent="."]
 script = ExtResource("5_sky")
+
+[node name="CharacterDebug" type="CanvasLayer" parent="."]
+script = ExtResource("7_chardebug")

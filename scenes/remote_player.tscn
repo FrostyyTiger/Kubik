@@ -1,17 +1,13 @@
 [gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/player/remote_player.gd" id="1_remote"]
-
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_1"]
-radius = 0.4
-height = 2.0
+[ext_resource type="Script" path="res://scripts/character/character_view.gd" id="2_view"]
 
 [node name="RemotePlayer" type="Node3D"]
 script = ExtResource("1_remote")
 
-[node name="Body" type="MeshInstance3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0)
-mesh = SubResource("CapsuleMesh_1")
+[node name="View" type="Node3D" parent="."]
+script = ExtResource("2_view")
 
 [node name="Nametag" type="Label3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
