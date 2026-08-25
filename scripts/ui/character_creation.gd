@@ -42,6 +42,16 @@ func _ready() -> void:
 	def = CharacterDef.load_or_default()
 	_build_ui()
 	_rebuild()
+	if UiShot.wanted():
+		_shoot_ui()
+
+
+## `--shot-ui <label>`: the main menu has already photographed itself and
+## pressed Character; this screen saves build/ui/<label>/character-creation.png
+## and ends the process. See UiShot.
+func _shoot_ui() -> void:
+	await UiShot.capture(get_tree(), "character-creation")
+	get_tree().quit()
 
 
 func _process(delta: float) -> void:
@@ -74,7 +84,9 @@ func _build_preview() -> SubViewportContainer:
 	var env := WorldEnvironment.new()
 	var environment := Environment.new()
 	environment.background_mode = Environment.BG_COLOR
-	environment.background_color = Color(0.11, 0.13, 0.16)
+	# Ink. The preview is a print mounted on the paper of the screen, and a
+	# character reads best against the darkest of the five colours.
+	environment.background_color = Deco.INK
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.55, 0.60, 0.70)
 	environment.ambient_light_energy = 0.35
@@ -139,7 +151,7 @@ func _build_ui() -> void:
 
 	var background := ColorRect.new()
 	background.set_anchors_preset(Control.PRESET_FULL_RECT)
-	background.color = Color(0.09, 0.11, 0.13)
+	background.color = Deco.PAPER
 	add_child(background)
 
 	var margin := MarginContainer.new()
@@ -152,17 +164,22 @@ func _build_ui() -> void:
 	columns.add_theme_constant_override("separation", 24)
 	margin.add_child(columns)
 
-	columns.add_child(_build_preview())
+	# The preview sits in a PanelContainer, so the theme's ink border and paper
+	# margin frame it like a mounted print.
+	var frame := PanelContainer.new()
+	frame.add_child(_build_preview())
+	columns.add_child(frame)
 
 	var right := VBoxContainer.new()
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.add_theme_constant_override("separation", 8)
 	columns.add_child(right)
 
-	var title := Label.new()
-	title.text = "Your character"
-	title.add_theme_font_size_override("font_size", 28)
+	right.add_child(Deco.rule())
+	var title := Deco.label("Your character", &"TitleLabel", true)
+	title.add_theme_font_size_override("font_size", 44)
 	right.add_child(title)
+	right.add_child(Deco.rule())
 
 	right.add_child(_race_row())
 	right.add_child(_build_row())
@@ -185,28 +202,34 @@ func _build_ui() -> void:
 	right.add_child(buttons)
 
 	var randomise := Button.new()
-	randomise.text = "Randomise"
+	randomise.text = "RANDOMISE"
 	randomise.custom_minimum_size = Vector2(140, 44)
 	randomise.pressed.connect(_on_randomise)
 	buttons.add_child(randomise)
 
 	var done := Button.new()
-	done.text = "Done"
+	done.text = "DONE"
 	done.custom_minimum_size = Vector2(140, 44)
 	done.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	done.pressed.connect(_on_done)
 	buttons.add_child(done)
 
 
+## The label that starts every row: a section heading, small capitals in
+## alpine blue, on a fixed width so the controls line up down the screen.
+func _row_label(text: String) -> Label:
+	var label := Deco.label(text, &"SectionLabel", true)
+	label.custom_minimum_size = Vector2(88, 0)
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return label
+
+
 func _race_row() -> Control:
 	var row := HBoxContainer.new()
-	var label := Label.new()
-	label.text = "Race"
-	label.custom_minimum_size = Vector2(80, 0)
-	row.add_child(label)
+	row.add_child(_row_label("Race"))
 	for race in Races.RACE_COUNT:
 		var button := Button.new()
-		button.text = Races.RACE_NAMES[race].capitalize()
+		button.text = Races.RACE_NAMES[race].to_upper()
 		button.toggle_mode = true
 		button.custom_minimum_size = Vector2(0, 40)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -223,13 +246,10 @@ func _race_row() -> Control:
 ## race", which is what it is - and one line in Races.HAS_LEAN decides it.
 func _build_row() -> Control:
 	var row := HBoxContainer.new()
-	var label := Label.new()
-	label.text = "Build"
-	label.custom_minimum_size = Vector2(80, 0)
-	row.add_child(label)
+	row.add_child(_row_label("Build"))
 	for build in Races.BUILD_COUNT:
 		var button := Button.new()
-		button.text = Races.BUILD_NAMES[build].capitalize()
+		button.text = Races.BUILD_NAMES[build].to_upper()
 		button.toggle_mode = true
 		button.custom_minimum_size = Vector2(0, 36)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -250,10 +270,7 @@ func _build_row() -> Control:
 ## screen, because it would be confidently wrong.
 func _swatch_row(field: String, label_text: String) -> Control:
 	var row := HBoxContainer.new()
-	var label := Label.new()
-	label.text = label_text
-	label.custom_minimum_size = Vector2(80, 0)
-	row.add_child(label)
+	row.add_child(_row_label(label_text))
 
 	var holder := HBoxContainer.new()
 	holder.add_theme_constant_override("separation", 6)
@@ -283,10 +300,7 @@ func _max_options(field: String) -> int:
 
 func _picker_row(field: String, label_text: String) -> Control:
 	var row := HBoxContainer.new()
-	var label := Label.new()
-	label.text = label_text
-	label.custom_minimum_size = Vector2(80, 0)
-	row.add_child(label)
+	row.add_child(_row_label(label_text))
 
 	var back := Button.new()
 	back.text = "<"
@@ -294,8 +308,10 @@ func _picker_row(field: String, label_text: String) -> Control:
 	back.pressed.connect(_on_picker.bind(field, -1))
 	row.add_child(back)
 
-	var value := Label.new()
+	var value := Deco.label("", &"AccentLabel")
+	value.add_theme_font_size_override("font_size", 22)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(value)
 	_labels[field] = value
@@ -312,10 +328,7 @@ func _picker_row(field: String, label_text: String) -> Control:
 
 func _name_row() -> Control:
 	var row := HBoxContainer.new()
-	var label := Label.new()
-	label.text = "Name"
-	label.custom_minimum_size = Vector2(80, 0)
-	row.add_child(label)
+	row.add_child(_row_label("Name"))
 
 	_name_edit = LineEdit.new()
 	_name_edit.max_length = CharacterDef.NAME_MAX
@@ -437,10 +450,13 @@ func _set_picker(field: String, options: Array) -> void:
 func _paint_swatch(button: Button, field: String, index: int, selected: bool) -> void:
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color.html(_swatch_hex(field, index))
-	style.set_corner_radius_all(3)
-	if selected:
-		style.set_border_width_all(3)
-		style.border_color = Color(1.0, 1.0, 1.0, 0.9)
+	# The theme's chamfer, so a swatch is the same octagon as a button.
+	style.set_corner_radius_all(8)
+	style.corner_detail = 1
+	style.set_border_width_all(3)
+	# Gold picks the current one out; ink keeps the rest from floating on
+	# paper when the swatch is a pale skin tone.
+	style.border_color = Deco.GOLD if selected else Deco.INK
 	for state in ["normal", "hover", "pressed", "focus"]:
 		button.add_theme_stylebox_override(state, style)
 

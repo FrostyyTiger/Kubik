@@ -274,6 +274,12 @@ func _build_panel() -> void:
 
 	var title := Label.new()
 	title.text = "worldgen tuning"
+	# The one line of the tool that is typeset like the game. The readout and
+	# the rows below stay in the plain face: a tuning panel is a tool, and a
+	# display face on forty numbers would make them harder to read.
+	title.add_theme_font_override("font", Deco.font_of(&"TitleLabel"))
+	title.add_theme_font_size_override("font_size", 20)
+	title.uppercase = true
 	box.add_child(title)
 
 	box.add_child(_seed_row())
