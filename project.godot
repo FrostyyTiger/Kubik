@@ -29,6 +29,26 @@ Net="*res://scripts/net/net_manager.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[shader_globals]
+
+; HOW DARK IT IS, 0 by day and 1 at night, written once per frame by SkyCycle
+; and readable by every shader in the game without any of them being handed a
+; reference to anything.
+;
+; A GLOBAL RATHER THAN A UNIFORM PER MATERIAL, deliberately. Night is a fact
+; about the world, not about one material: the flora shader wants it for
+; glowing mushrooms, the firefly shader for whether fireflies exist at all, and
+; anything later - a campfire's light falloff, a torch - will want it too.
+; Pushing it to each material as it is added is how a value like this ends up
+; set in three places and wrong in one of them.
+;
+; The transition is a smoothstep across civil twilight, so it is fully night
+; well before the sky is black and there is no moment where a mushroom snaps on.
+kubik_night={
+"type": "float",
+"value": 0.0
+}
+
 [threading]
 
 ; Chunk generation and chunk meshing both run as LOW priority worker tasks, and

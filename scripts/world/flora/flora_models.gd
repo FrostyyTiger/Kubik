@@ -272,10 +272,15 @@ static func voxels_for(model: int) -> Array:
 			])
 
 		FIREFLY:
-			# One emissive voxel. Stage 8 gives it its drift and its blink; on
-			# its own it is a 6 cm point of light, and by day the shader scales
-			# it to nothing so there is no alpha to sort and nothing to see.
-			return [[0, 1, 0, C_FIREFLY, 1]]
+			# ONE EMISSIVE VOXEL, A METRE UP. The height is in the MODEL rather
+			# than in the placement rule, because a firefly is the one thing on
+			# this layer that does not stand on the ground - and putting the
+			# offset here means the placement code stays "one instance on the
+			# surface of this block" for every model without exception.
+			#
+			# 16 voxels is 1 m at 8 to the block. The shader drifts it another
+			# 40 cm each way and collapses it to nothing by day.
+			return [[0, 16, 0, C_FIREFLY, 1]]
 	return []
 
 
@@ -567,17 +572,28 @@ static func material() -> ShaderMaterial:
 	return _material
 
 
-## Push a local knob into the shared material. Called from the main thread when
-## the F4 panel moves.
-static func set_wind(strength: float) -> void:
-	material().set_shader_parameter("wind_strength", strength)
+## Push the local knobs into the shared materials. Called from the main thread
+## when the F4 panel moves, and once at startup.
+static func apply_local_knobs(config: WorldgenConfig) -> void:
+	material().set_shader_parameter("wind_strength", config.wind_strength)
+	material().set_shader_parameter("night_life", config.night_life)
+	firefly_material().set_shader_parameter("night_life", config.night_life)
+
+
+## Which material a model is drawn with.
+static func material_for(model: int) -> ShaderMaterial:
+	return firefly_material() if model == FIREFLY else material()
 
 
 const SHADER := """
 shader_type spatial;
 render_mode cull_back, diffuse_lambert, specular_disabled;
 
+// Written once a frame by SkyCycle. 0 by day, 1 at night.
+global uniform float kubik_night;
+
 uniform float wind_strength = 1.0;
+uniform float night_life = 1.0;
 
 void vertex() {
 	// THE SWAY. Height-weighted, so the roots stay planted and only the tips
@@ -600,6 +616,80 @@ void fragment() {
 	ALBEDO = COLOR.rgb;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
+	// GLOWING MUSHROOMS, AND THEY COST ONE LINE. COLOR.a is the model's own
+	// emissive flag, authored per voxel and carried in the vertex colour's
+	// alpha - 1 on a mushroom cap and 0 on everything else in the world. So
+	// this is zero for every plant that is not meant to glow, zero for all of
+	// them by day, and needs no second material, no second mesh and no branch
+	// anywhere in the placement rules.
+	EMISSION = COLOR.rgb * COLOR.a * kubik_night * night_life * 2.0;
+}
+"""
+
+
+## Fireflies get their own material.
+##
+## WHY NOT ONE SHADER WITH A FLAG: the plant shader bends its vertices in the
+## wind, and a firefly does not grow out of the ground - it drifts, blinks, and
+## does not exist at all by day. Those are different vertex programs, not one
+## program with a branch, and a branch taken by one model in nineteen is a
+## branch every blade of grass in the world pays for.
+static func firefly_material() -> ShaderMaterial:
+	if _firefly_material != null:
+		return _firefly_material
+	_mesh_mutex.lock()
+	if _firefly_material == null:
+		var shader := Shader.new()
+		shader.code = FIREFLY_SHADER
+		var m := ShaderMaterial.new()
+		m.shader = shader
+		m.set_shader_parameter("night_life", 1.0)
+		_firefly_material = m
+	_mesh_mutex.unlock()
+	return _firefly_material
+
+
+static var _firefly_material: ShaderMaterial = null
+
+
+const FIREFLY_SHADER := """
+shader_type spatial;
+render_mode cull_back, diffuse_lambert, specular_disabled;
+
+global uniform float kubik_night;
+uniform float night_life = 1.0;
+
+varying float v_glow;
+
+void vertex() {
+	// PHASE FROM THE WORLD POSITION, so every firefly drifts and blinks on its
+	// own schedule without anything having to store a per-instance number.
+	// Two different multipliers on x and z, and irrational-ish ratios between
+	// the three periods, so nothing ever falls back into step.
+	vec3 wp = MODEL_MATRIX[3].xyz;
+	float ph = wp.x * 1.7 + wp.z * 2.3;
+
+	VERTEX.x += sin(TIME * 0.60 + ph) * 0.40;
+	VERTEX.z += cos(TIME * 0.47 + ph * 1.3) * 0.40;
+	VERTEX.y += sin(TIME * 0.35 + ph * 0.7) * 0.22;
+
+	// The blink. Squared so it spends most of its time dim and flares briefly,
+	// which is what a firefly does - a plain sine reads as a pulsing lamp.
+	float b = max(sin(TIME * 1.1 + ph * 2.1), 0.0);
+	v_glow = (0.15 + 0.85 * b * b) * kubik_night * night_life;
+
+	// GONE BY DAY, and collapsed rather than faded. Scaling the vertex to zero
+	// makes the whole model a degenerate point: nothing is rasterised, there is
+	// no alpha to sort, and at noon there is nothing to see rather than a
+	// dark speck hanging in the air.
+	VERTEX *= clamp(kubik_night * night_life, 0.0, 1.0);
+}
+
+void fragment() {
+	ALBEDO = COLOR.rgb * 0.15;
+	ROUGHNESS = 1.0;
+	SPECULAR = 0.0;
+	EMISSION = COLOR.rgb * v_glow * 3.0;
 }
 """
 

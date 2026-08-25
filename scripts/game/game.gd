@@ -68,6 +68,9 @@ func _ready() -> void:
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	_debug.set_far_trees(_far_trees)
+	# Wind and night are LOCAL knobs and live on the shared flora materials, so
+	# they are pushed once here and again whenever the F4 panel moves.
+	FloraModels.apply_local_knobs(config)
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -472,6 +475,12 @@ func _on_config_changed() -> void:
 	# and are much easier to tune when you can see the result at once. Terrain
 	# shape needs a rebuild, which is what the message is about.
 	_sky.rebind(config)
+	# Wind and night-life are the same kind of knob - they live on the shared
+	# flora materials and take effect on the next frame, with nothing to
+	# rebuild. flora_radius_m and flora_draw_fraction are NOT: they change what
+	# a column contains, so they land with the next column the player walks
+	# into rather than immediately.
+	FloraModels.apply_local_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
 
 

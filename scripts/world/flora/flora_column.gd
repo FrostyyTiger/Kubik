@@ -81,7 +81,8 @@ func _make_slot(model: int, config: WorldgenConfig) -> MultiMeshInstance3D:
 	var node := MultiMeshInstance3D.new()
 	node.name = "Model%d" % model
 	node.multimesh = mm
-	node.material_override = FloraModels.material()
+	# Fireflies are drawn with their own shader - see FloraModels.material_for.
+	node.material_override = FloraModels.material_for(model)
 	# CAST NO SHADOWS. A meadow's worth of grass in the shadow map costs as
 	# much as drawing it again, and 30 cm of grass casts a shadow nobody will
 	# ever identify as a shadow. Trees are blocks and still cast theirs.

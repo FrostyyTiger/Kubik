@@ -120,6 +120,20 @@ var _flora_queued := {}
 var _flora_instances := 0
 var _flora_ms := 0
 
+## Flora instances that have been taken out of the world, as a set of 64-bit
+## identities. Host-owned, in the same spirit as _edits.
+##
+## THE DIFFERENCE FROM THE WORLD, NOT THE WORLD. There are nearly nine million
+## flora instances on seed 42 and this dictionary holds none of them: an
+## instance's identity is a pure function of its position, so placement can
+## recompute it and ask "was this one taken" for the cost of one lookup.
+## Gathering a thousand plants therefore costs a thousand integers, and
+## gathering none costs nothing at all.
+##
+## NOT YET WIRED TO ANYTHING. Stage 9 builds the identity and the removal path
+## up to but not including the RPC - see remove_flora_local().
+var _flora_removed := {}
+
 ## Every basin in the world, and the water sitting in it.
 var lakes: Lakes = null
 var _water: MeshInstance3D = null
@@ -371,6 +385,12 @@ func _submit_flora() -> void:
 		job.generator = generator
 		job.config = config
 		job.draw_fraction = config.flora_draw_fraction
+		# A SNAPSHOT, not the live dictionary. The job reads it on a worker
+		# thread and the main thread may be inserting into it at the same
+		# moment. Duplicated only when it has anything in it, which for now is
+		# never - so the common case costs one is_empty().
+		job.removed = {} if _flora_removed.is_empty() else _flora_removed.duplicate()
+		job.edited = _edited_blocks_in(col)
 		_flora_in_flight[col] = {
 			"task": WorkerThreadPool.add_task(job.run, false, "kubik flora"),
 			"job": job,
@@ -982,6 +1002,80 @@ func _boundary_neighbours(cpos: Vector3i, local: Vector3i) -> Array[Vector3i]:
 	elif local.z == last:
 		out.append(cpos + Vector3i(0, 0, 1))
 	return out
+
+
+## Which block columns inside this chunk column have been edited.
+##
+## EDITED GROUND CARRIES NO PLANTS, and that is the whole rule. Flora is placed
+## from the GENERATOR's surface, not from the voxels - which is what lets a
+## column be built on a worker with no chunk in hand, and is right for every
+## block nobody has touched. It is wrong for the ones they have: dig the
+## surface block out and the generator still says the ground is where it was,
+## so the grass on it hangs in the air over the hole.
+##
+## Recomputing the true surface from the edits would be the thorough answer and
+## it is not the right one. A block somebody has dug or built on is disturbed
+## ground, and disturbed ground having no grass on it is both cheap and what a
+## player expects - drop the debug slab on a meadow and the grass under it is
+## gone, not poking through.
+##
+## Returns a set keyed by Vector2i(bx, bz) - the COLUMN of the edit, not the
+## block - because an edit at any altitude disturbs the whole column under it.
+func _edited_blocks_in(col: Vector2i) -> Dictionary:
+	var out := {}
+	if _edits.is_empty():
+		return out
+	var x0 := col.x * Chunk.SIZE
+	var z0 := col.y * Chunk.SIZE
+	for pos in _edits:
+		var bx: int = pos.x
+		var bz: int = pos.z
+		if bx < x0 or bx >= x0 + Chunk.SIZE:
+			continue
+		if bz < z0 or bz >= z0 + Chunk.SIZE:
+			continue
+		out[Vector2i(bx, bz)] = true
+	return out
+
+
+## Take one flora instance out of the world.
+##
+## `id` is a FloraPlacement.identity() - the model, a sub-index, and the block
+## it stands on, packed into 64 bits. Nothing else about the instance is
+## recorded, because nothing else has to be: everything it was is a function of
+## where it was.
+##
+## THE RPC THIS IS WAITING FOR, and it is deliberately NOT here. Gathering is a
+## launch skill in DESIGN.md; foliage v1 builds the identity and the removal
+## path and stops. When it arrives it mirrors request_set_block() exactly:
+##
+##     func request_gather(id: int) -> void:
+##         if Net.is_host():
+##             _host_apply_gather(Net.local_peer_id(), id)
+##         else:
+##             _srv_request_gather.rpc_id(1, id)
+##
+##     @rpc("any_peer", "call_remote", "reliable")
+##     func _srv_request_gather(id: int) -> void:
+##         # host validates - is the player near it, does it still exist -
+##         # then _cl_apply_gather.rpc(id) to everyone and applies locally.
+##
+## and the join handshake gains _flora_removed beside get_edits(), which is one
+## more dictionary of integers and no change to the wire format of anything
+## already there. NONE OF THAT IS IN THIS STAGE: the plan is explicit that the
+## net protocol is not to be touched, and the point of stopping here is that
+## when the RPC is written there is nothing left to design.
+func remove_flora_local(id: int) -> void:
+	if _flora_removed.has(id):
+		return
+	_flora_removed[id] = true
+	_flora_dirty(FloraPlacement.column_of(id))
+
+
+## Everything gathered so far, for a joining client. The counterpart of
+## get_edits(), and not yet sent by anything.
+func get_flora_removed() -> Dictionary:
+	return _flora_removed.duplicate()
 
 
 ## Flora sits on the surface, so a changed block can leave a tuft of grass

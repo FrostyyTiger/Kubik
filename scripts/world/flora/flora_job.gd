@@ -28,6 +28,11 @@ var config: WorldgenConfig = null
 ## submit time. Empty until Stage 9.
 var removed := {}
 
+## Block columns inside this chunk column that carry an edit, keyed by
+## Vector2i(bx, bz). Snapshotted at submit time for the same reason `removed`
+## is: the main thread writes to _edits while this runs.
+var edited := {}
+
 ## Only instances whose hash falls below this are drawn. A LOCAL knob: identity
 ## is unaffected, so two machines at the same fraction hide the same plants and
 ## two machines at different fractions still agree about what exists.
@@ -53,7 +58,7 @@ const SALT_DRAW := 305
 func run() -> void:
 	var started := Time.get_ticks_usec()
 	var instances := FloraPlacement.column(
-		generator, config, column.x, column.y, removed)
+		generator, config, column.x, column.y, removed, edited)
 	placed = instances.size()
 
 	var by_model := {}

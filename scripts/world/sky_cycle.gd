@@ -123,6 +123,23 @@ static func fog_color(elevation: float) -> Color:
 ## meadow arrived on screen as near-white, and every zone looked like every
 ## other zone. Flat-shaded terrain has no texture detail to survive
 ## over-exposure with, so it goes to paste sooner than a textured world would.
+## How dark it is: 0 in daylight, 1 at night.
+##
+## THE TRANSITION IS CIVIL TWILIGHT, not sunset. Real dusk is long - the sun
+## goes down and the light keeps failing for another half hour - and a night
+## factor that reached 1 at the moment the sun touched the horizon would switch
+## the fireflies on while the sky was still orange.
+##
+## smoothstep rather than a linear ramp for the same reason day_amount() is
+## curved: the two ends are the states worth being in, and the changeover
+## should be quick without being a step.
+##
+## Pure, like everything else in this section, so the day cycle self-test can
+## walk a whole day through it without a window.
+static func night_amount(elevation: float) -> float:
+	return 1.0 - smoothstep(-0.10, 0.06, elevation)
+
+
 static func sun_energy(elevation: float) -> float:
 	return lerpf(0.04, 0.85, day_amount(elevation))
 
@@ -139,6 +156,12 @@ static func ambient_energy(elevation: float) -> float:
 func apply() -> void:
 	var sun_pos := sun_position(time_of_day)
 	var elevation := sun_pos.y
+
+	# NIGHT, PUBLISHED TO EVERY SHADER AT ONCE. Written here rather than by
+	# anything that draws, because the sun's elevation is what defines it and
+	# this is the only thing that knows where the sun is.
+	RenderingServer.global_shader_parameter_set(
+		&"kubik_night", night_amount(elevation))
 
 	if _sun != null:
 		# The light travels FROM the sun, so it points the other way. Built as

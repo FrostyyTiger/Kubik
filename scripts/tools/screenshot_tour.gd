@@ -1,7 +1,7 @@
 class_name ScreenshotTour
 extends Node
 
-## Drives the camera to eleven vantage points, photographs each, and quits.
+## Drives the camera to twelve vantage points, photographs each, and quits.
 ##
 ##     godot --path . -- --tour --seed 42
 ##
@@ -129,7 +129,7 @@ func _shutdown() -> void:
 
 # --- Choosing where to stand ------------------------------------------------
 
-## Eleven vantage points, found by reading the world rather than by guessing.
+## Twelve vantage points, found by reading the world rather than by guessing.
 func _choose_vantages() -> Array:
 	var hm := _world.generator.heightmap
 	var cfg := _world.config
@@ -255,6 +255,19 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 		"note": "shot 7 again, at dusk - the acceptance test",
 		"eye_m": forest_eye, "target": forest_look,
 		"time": 0.85,
+	})
+
+	# NIGHT, IN THE MEADOW, and it needs its own shot rather than being read
+	# off the dusk one. Fireflies exist only over open ground and only after
+	# dark, and glowing mushrooms are only visible once there is nothing else
+	# lighting them - at 0.85 the sky is still orange and both are invisible.
+	# 0.95 is properly night.
+	out.append({
+		"name": "12-meadow-night",
+		"note": "fireflies and glowing things, at 0.95",
+		"eye_m": meadow_eye,
+		"target": _along(meadow_eye, _hashed_heading(8), 16.0, 0.5),
+		"time": 0.95,
 	})
 	return out
 

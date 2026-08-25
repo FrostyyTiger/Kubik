@@ -51,6 +51,7 @@ func _ready() -> void:
 		"sky reserve": _test_sky_reserve,
 		"species borders": _test_species_borders,
 		"flora determinism": _test_flora_determinism,
+		"flora removal": _test_flora_removal,
 	}
 	var failures := 0
 	for name in tests:
@@ -234,6 +235,92 @@ func _test_tree_borders():
 		print("  WARNING: no tree blocks in the sample - this test proved nothing")
 		return 1
 	return 1 if bad > 0 else 0
+
+
+## GATHERING ONE PLANT MUST TAKE EXACTLY ONE PLANT.
+##
+## The removal path is a set of identities that placement skips, and the whole
+## thing rests on an identity being a pure function of position. If it were not
+## - if it depended on the order instances were generated in, say - then
+## removing one would renumber its neighbours, and gathering a single flower
+## would silently delete or duplicate others in the same column. Nobody would
+## see an error; they would see a meadow that changes when you pick something.
+##
+## So the test is exact rather than approximate: rebuild the column with one id
+## removed, and require the result to be the SAME BUFFER with one instance's
+## worth of floats missing and every other float identical. That is a much
+## stronger statement than "one fewer instance", and it is the statement the
+## RPC will need to be able to rely on.
+func _test_flora_removal():
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 512
+	var gen := TerrainGenerator.new(4242, cfg)
+	gen.build_heightmap()
+	var lakes := Lakes.new()
+	lakes.compute(gen.heightmap, cfg)
+	gen.lakes = lakes
+	gen.find_spawn()
+
+	# A column with something in it.
+	var col := Vector2i.ZERO
+	var before: Array = []
+	for cz in range(-3, 4):
+		for cx in range(-3, 4):
+			var got := FloraPlacement.column(gen, cfg, cx, cz)
+			if got.size() > before.size():
+				before = got
+				col = Vector2i(cx, cz)
+	if before.is_empty():
+		print("  no flora anywhere in the sample - this test proved nothing")
+		return 1
+
+	# Take the middle one, so the check covers instances on both sides of it.
+	var victim: Dictionary = before[before.size() / 2]
+	var bx := int(round(float(victim["pos"].x) / cfg.block_size))
+	var bz := int(round(float(victim["pos"].z) / cfg.block_size))
+	var id := FloraPlacement.identity(int(victim["model"]), bx, bz)
+
+	var bad := 0
+	# The identity must round-trip, or _flora_dirty() would resubmit the wrong
+	# column and the plant would stay on screen until the player walked away.
+	var back := FloraPlacement.block_of(id)
+	if back != Vector2i(bx, bz):
+		print("  identity did not round-trip: (%d, %d) -> %s" % [bx, bz, back])
+		bad += 1
+	if FloraPlacement.column_of(id) != col:
+		print("  identity names column %s, not %s" % [
+			FloraPlacement.column_of(id), col])
+		bad += 1
+	if FloraPlacement.model_of(id) != int(victim["model"]):
+		print("  identity lost its model id")
+		bad += 1
+
+	var after := FloraPlacement.column(gen, cfg, col.x, col.y, {id: true})
+	if after.size() != before.size() - 1:
+		print("  removing one instance left %d of %d" % [
+			after.size(), before.size()])
+		bad += 1
+
+	# Every survivor, unchanged and in the same order.
+	var j := 0
+	for i in before.size():
+		var a: Dictionary = before[i]
+		if int(a["model"]) == int(victim["model"]) and a["pos"] == victim["pos"]:
+			continue
+		if j >= after.size():
+			bad += 1
+			break
+		var b: Dictionary = after[j]
+		if a["pos"] != b["pos"] or int(a["model"]) != int(b["model"]) \
+				or not is_equal_approx(float(a["yaw"]), float(b["yaw"])):
+			print("  survivor %d changed when its neighbour was removed" % j)
+			bad += 1
+			break
+		j += 1
+
+	print("flora removal: column %s, %d instances -> %d, %d wrong" % [
+		col, before.size(), after.size(), bad])
+	return bad
 
 
 ## A COLUMN OF GROUND COVER MUST COME BACK THE SAME EVERY TIME IT IS BUILT.

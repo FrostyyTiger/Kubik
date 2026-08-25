@@ -34,6 +34,12 @@ const SALT_TINT := 304
 const SALT_KIND := 306
 const SALT_PATCH_COLOR := 307
 const SALT_BOULDER_SIZE := 308
+const SALT_FIREFLY := 309
+
+## Fireflies per block column, in meadow. Their own roll, not part of the zone
+## density - at 0.004 they would be swamped by grass at 0.35, and a firefly is
+## not competing for the ground anyway. It hovers a metre over it.
+const FIREFLY_DENSITY := 0.004
 
 ## Steepest ground a plant will stand on, in degrees.
 ##
@@ -172,13 +178,29 @@ const MAX_DENSITY := 0.50
 ## directly and better than the voxels do, because it can answer for a column
 ## whose chunks have not been built yet.
 static func column(gen: TerrainGenerator, config: WorldgenConfig,
-		cx: int, cz: int, removed: Dictionary = {}) -> Array:
+		cx: int, cz: int, removed: Dictionary = {},
+		edited: Dictionary = {}) -> Array:
 	var out: Array = []
 	var bx0 := cx * Chunk.SIZE
 	var bz0 := cz * Chunk.SIZE
 	var seed := gen.world_seed
 	var bs: float = config.block_size
 	var masks := masks_for(gen, config)
+	# EVERY TREE THAT CAN REACH THIS COLUMN, WORKED OUT ONCE.
+	#
+	# This was the single most expensive thing in the whole decoration layer
+	# and it did not look like it. Two rules need to know about trunks - grass
+	# does not grow through one, and mushrooms crowd them - and both were
+	# asking TreePlacement.decide() per BLOCK, over the four to nine candidate
+	# cells that could reach it. That is several hundred full placement
+	# decisions per column, each of them noise samples and a heightmap lookup,
+	# to answer a question about at most a dozen trees.
+	#
+	# Thirty-six cells cover a column and its margin. Deciding them once and
+	# scanning the handful of trees that come back took a column from 34 ms to
+	# a fraction of it - and it is the same answer, because decide() is a pure
+	# function of the cell.
+	var trees := _trees_near(gen, config, cx, cz)
 
 	for lz in Chunk.SIZE:
 		var bz := bz0 + lz
@@ -194,6 +216,9 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 			var roll := WorldHash.hash01(bx, bz, seed, SALT_PRESENT)
 			if roll >= MAX_DENSITY:
 				continue
+			# Disturbed ground grows nothing - see World._edited_blocks_in().
+			if not edited.is_empty() and edited.has(Vector2i(bx, bz)):
+				continue
 
 			var surface := gen.surface_at(float(bx), float(bz))
 			var zone := gen.surface_zone_at(bx, bz, surface)
@@ -201,10 +226,10 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 			if density <= 0.0 or roll >= density:
 				continue
 
-			if not _ground_allows(gen, config, bx, bz, surface):
+			if not _ground_allows(gen, config, bx, bz, surface, trees):
 				continue
 
-			var model := _model_for(gen, config, masks, zone, bx, bz, surface)
+			var model := _model_for(gen, config, masks, zone, bx, bz, surface, trees)
 			if model < 0:
 				continue
 			if not removed.is_empty() and removed.has(identity(model, bx, bz)):
@@ -226,6 +251,82 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 				"tint": 1.0 + (WorldHash.hash01(bx, bz, seed, SALT_TINT) * 2.0 - 1.0)
 					* TINT_AMOUNT,
 			})
+	_add_fireflies(gen, config, cx, cz, out, removed)
+	return out
+
+
+## A METRE OF AIR OVER A MEADOW, AFTER DARK.
+##
+## Rolled separately from everything else and added on top, because a firefly
+## is not ground cover competing for a block - it is in the air above one, and
+## a block can perfectly well have a grass tuft under a firefly.
+##
+## ONLY IN COLUMNS THAT ARE MEADOW AT THEIR CENTRE, which is a deliberate
+## coarseness. Testing every block would put a lone firefly on each stray patch
+## of meadow inside a forest; testing the column puts them where there is open
+## ground to see them over, and costs one zone lookup per column instead of
+## two hundred and fifty six.
+static func _add_fireflies(gen: TerrainGenerator, config: WorldgenConfig,
+		cx: int, cz: int, out: Array, removed: Dictionary) -> void:
+	if config.night_life <= 0.0:
+		return
+	var mid_x := cx * Chunk.SIZE + Chunk.SIZE / 2
+	var mid_z := cz * Chunk.SIZE + Chunk.SIZE / 2
+	var mid_surface := gen.surface_at(float(mid_x), float(mid_z))
+	if gen.surface_zone_at(mid_x, mid_z, mid_surface) != TerrainGenerator.ZONE_MEADOW:
+		return
+
+	var seed := gen.world_seed
+	var bs: float = config.block_size
+	for lz in Chunk.SIZE:
+		var bz := cz * Chunk.SIZE + lz
+		for lx in Chunk.SIZE:
+			var bx := cx * Chunk.SIZE + lx
+			if WorldHash.hash01(bx, bz, seed, SALT_FIREFLY) >= FIREFLY_DENSITY:
+				continue
+			if not removed.is_empty() \
+					and removed.has(identity(FloraModels.FIREFLY, bx, bz)):
+				continue
+			var surface := gen.surface_at(float(bx), float(bz))
+			out.append({
+				"model": FloraModels.FIREFLY,
+				"pos": Vector3(float(bx) * bs,
+					float(int(floor(surface)) + 1) * bs, float(bz) * bs),
+				"yaw": WorldHash.hash01(bx, bz, seed, SALT_YAW) * TAU,
+				"scale": 1.0,
+				"tint": 1.0,
+			})
+
+
+## Every tree whose trunk could stand on or near this chunk column.
+##
+## The margin is the trunk jitter plus the two blocks a mushroom crowds a trunk
+## by, plus one for a 2 x 2 trunk's second column - so nothing that either rule
+## cares about can be outside the scan.
+static func _trees_near(gen: TerrainGenerator, config: WorldgenConfig,
+		cx: int, cz: int) -> Array:
+	var out: Array = []
+	var cell: int = config.tree_cell_blocks
+	if cell <= 0:
+		return out
+	var margin: int = config.tree_jitter_blocks + 3
+	var x0 := cx * Chunk.SIZE - margin
+	var x1 := cx * Chunk.SIZE + Chunk.SIZE - 1 + margin
+	var z0 := cz * Chunk.SIZE - margin
+	var z1 := cz * Chunk.SIZE + Chunk.SIZE - 1 + margin
+	var masks := TreePlacement.masks_for(gen)
+	for tz in range(Chunk.floor_div(z0, cell), Chunk.floor_div(z1, cell) + 1):
+		for tx in range(Chunk.floor_div(x0, cell), Chunk.floor_div(x1, cell) + 1):
+			var found := TreePlacement.decide(gen, tx, tz, masks)
+			if found.is_empty():
+				continue
+			out.append({
+				"bx": int(found["bx"]),
+				"bz": int(found["bz"]),
+				# A 2 x 2 trunk occupies one block further out on each axis -
+				# see TreeSpecies._draw_trunk().
+				"span": 1 if found["params"]["thick"] else 0,
+			})
 	return out
 
 
@@ -236,7 +337,8 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 ## its own salt, so the choice cannot correlate with presence - if it did,
 ## every densest patch of meadow would also be the flowery one.
 static func _model_for(gen: TerrainGenerator, config: WorldgenConfig,
-		masks: Masks, zone: int, bx: int, bz: int, surface: float) -> int:
+		masks: Masks, zone: int, bx: int, bz: int, surface: float,
+		trees: Array) -> int:
 	var seed := gen.world_seed
 	var kind := WorldHash.hash01(bx, bz, seed, SALT_KIND)
 
@@ -255,7 +357,7 @@ static func _model_for(gen: TerrainGenerator, config: WorldgenConfig,
 			# grass 0.10, fern 0.12 damped by its mask, mushrooms 0.02 - and
 			# 0.15 within two blocks of a trunk, which is where they really
 			# grow.
-			var near_trunk := _near_trunk(gen, config, bx, bz)
+			var near_trunk := _near_trunk(trees, bx, bz)
 			var shroom := 0.15 if near_trunk else 0.02
 			if kind < shroom:
 				return FloraModels.MUSHROOM
@@ -336,29 +438,16 @@ static func _boulder(bx: int, bz: int, seed: int) -> int:
 
 
 ## Is there a trunk within two blocks? Mushrooms crowd them.
-static func _near_trunk(gen: TerrainGenerator, config: WorldgenConfig,
-		bx: int, bz: int) -> bool:
-	var cell: int = config.tree_cell_blocks
-	if cell <= 0:
-		return false
-	var reach := 2 + config.tree_jitter_blocks
-	var c0x := Chunk.floor_div(bx - reach, cell)
-	var c1x := Chunk.floor_div(bx + reach, cell)
-	var c0z := Chunk.floor_div(bz - reach, cell)
-	var c1z := Chunk.floor_div(bz + reach, cell)
-	for cz in range(c0z, c1z + 1):
-		for cx in range(c0x, c1x + 1):
-			var found := TreePlacement.decide(gen, cx, cz)
-			if found.is_empty():
-				continue
-			if absi(int(found["bx"]) - bx) <= 2 and absi(int(found["bz"]) - bz) <= 2:
-				return true
+static func _near_trunk(trees: Array, bx: int, bz: int) -> bool:
+	for t in trees:
+		if absi(int(t["bx"]) - bx) <= 2 and absi(int(t["bz"]) - bz) <= 2:
+			return true
 	return false
 
 
 ## Can anything grow on this block at all?
 static func _ground_allows(gen: TerrainGenerator, config: WorldgenConfig,
-		bx: int, bz: int, surface: float) -> bool:
+		bx: int, bz: int, surface: float, trees: Array) -> bool:
 	# NOT UNDER WATER. A lake's surface is drawn as a flat sheet and the bed
 	# below it is ordinary ground, so without this every lake in the world
 	# would have a meadow at the bottom of it.
@@ -377,37 +466,20 @@ static func _ground_allows(gen: TerrainGenerator, config: WorldgenConfig,
 	# grows straight through it. Asking the placement rule rather than reading
 	# the voxels keeps this on a worker thread with no chunk in hand - and
 	# gives the same answer, because both are functions of the same seed.
-	return not _tree_occupies(gen, config, bx, bz)
+	return not _tree_occupies(trees, bx, bz)
 
 
 ## Does a trunk stand on this block?
 ##
 ## Only the trunk, not the canopy: grass under a canopy is exactly what a
 ## forest floor is, and the plan puts ferns and mushrooms there on purpose.
-## The check is over the candidate cells that could have put a trunk on this
-## block, which after jitter is at most the four nearest.
-static func _tree_occupies(gen: TerrainGenerator, config: WorldgenConfig,
-		bx: int, bz: int) -> bool:
-	var cell: int = config.tree_cell_blocks
-	if cell <= 0:
-		return false
-	var jitter: int = config.tree_jitter_blocks
-	var c0x := Chunk.floor_div(bx - jitter - 1, cell)
-	var c1x := Chunk.floor_div(bx + jitter + 1, cell)
-	var c0z := Chunk.floor_div(bz - jitter - 1, cell)
-	var c1z := Chunk.floor_div(bz + jitter + 1, cell)
-	for cz in range(c0z, c1z + 1):
-		for cx in range(c0x, c1x + 1):
-			var found := TreePlacement.decide(gen, cx, cz)
-			if found.is_empty():
-				continue
-			var tx: int = found["bx"]
-			var tz: int = found["bz"]
-			# A 2 x 2 trunk occupies (bx, bz) and one block further out on
-			# each axis - see TreeSpecies._draw_trunk().
-			var span := 1 if found["params"]["thick"] else 0
-			if bx >= tx and bx <= tx + span and bz >= tz and bz <= tz + span:
-				return true
+static func _tree_occupies(trees: Array, bx: int, bz: int) -> bool:
+	for t in trees:
+		var tx: int = t["bx"]
+		var tz: int = t["bz"]
+		var span: int = t["span"]
+		if bx >= tx and bx <= tx + span and bz >= tz and bz <= tz + span:
+			return true
 	return false
 
 
@@ -429,6 +501,35 @@ static func _tree_occupies(gen: TerrainGenerator, config: WorldgenConfig,
 static func identity(model: int, bx: int, bz: int, sub: int = 0) -> int:
 	return ((model & 0xFF) << 56) | ((sub & 0xFF) << 48) \
 		| ((bz & 0xFFFFFF) << 24) | (bx & 0xFFFFFF)
+
+
+## The block an identity refers to, unpacked.
+##
+## SIGN-EXTENDED BY HAND, and this is the part that is easy to get wrong. The
+## coordinates are packed into 24 bits, so a negative one comes back out as a
+## large positive number - block -100 becomes 16,777,116 - and a column lookup
+## on that lands on the far side of a 3 km world with no error anywhere. The
+## world is 6,000 blocks across against a 24-bit range of 16.7 million, so
+## there is no ambiguity to resolve, only a sign to restore.
+static func block_of(id: int) -> Vector2i:
+	var bx := id & 0xFFFFFF
+	var bz := (id >> 24) & 0xFFFFFF
+	if bx >= 0x800000:
+		bx -= 0x1000000
+	if bz >= 0x800000:
+		bz -= 0x1000000
+	return Vector2i(bx, bz)
+
+
+## Which chunk column an identity belongs to.
+static func column_of(id: int) -> Vector2i:
+	var b := block_of(id)
+	return Vector2i(Chunk.floor_div(b.x, Chunk.SIZE),
+		Chunk.floor_div(b.y, Chunk.SIZE))
+
+
+static func model_of(id: int) -> int:
+	return (id >> 56) & 0xFF
 
 
 # --- For the probe ----------------------------------------------------------
@@ -461,9 +562,11 @@ static func probe_counts(gen: TerrainGenerator, config: WorldgenConfig,
 			var density: float = ZONE_DENSITY.get(zone, 0.0)
 			if density <= 0.0 or roll >= density:
 				continue
-			if not _ground_allows(gen, config, bx, bz, surface):
+			var trees := _trees_near(gen, config,
+				Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE))
+			if not _ground_allows(gen, config, bx, bz, surface, trees):
 				continue
-			var model := _model_for(gen, config, masks, zone, bx, bz, surface)
+			var model := _model_for(gen, config, masks, zone, bx, bz, surface, trees)
 			if model < 0:
 				continue
 			out[TerrainGenerator.ZONE_NAMES[zone]] += scale
