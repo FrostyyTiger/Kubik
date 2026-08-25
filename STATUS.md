@@ -209,13 +209,25 @@ photograph, along with the flora actually loaded around the camera:
 | 8-meadow-closeup | 1.03 M | 25,295 | 2.77 M |
 | 9-treeline | 1.02 M | 12,090 | 1.53 M |
 | 10-shore | 0.38 M | 10,903 | 0.99 M |
-| 11-forest-dusk | 0.79 M | 11,578 | 1.74 M |
+| 11-forest-dusk | 1.50 M | 11,578 | 1.74 M |
 | 12-meadow-night | 0.89 M | 25,295 | 2.77 M |
 
 **The worst frame in the world is 1.62 M primitives, and that INCLUDES terrain
 and the far field** — so flora's share of it is smaller again, and the highest
 figure is a forest slope where ground cover is 2,126 instances. The flora
 budget has room everywhere.
+
+**These counts include the shadow pass, and that is visible in the table.**
+`11-forest-dusk` is the same standing position as `7-forest-interior`; shot at
+0.85, with the sun below the horizon and `SkyCycle` therefore hiding the
+directional light, it came in at 0.79 M, and at 0.74 with the sun just up it is
+1.50 M. Nothing moved and nothing was added — the difference is the shadow map
+being drawn at all. The meadow pair (`8` at 1.03 M by day against `12` at
+0.89 M at night) shows the same effect much smaller, because flora casts no
+shadows and flat meadow terrain has little to cast.
+
+Read the daytime figures as the honest worst case, then: they are the ones with
+shadows in them.
 
 The two columns are worth reading together. "Loaded" is every flora triangle in
 the 197 columns around the player, a full 360°; "in frame" is what the frustum
