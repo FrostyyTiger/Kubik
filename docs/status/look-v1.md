@@ -96,7 +96,46 @@ motion. Things worth a walk before trusting:
 
 ## Characters
 
-CHARACTER_SECTION
+Full detail, every judgement call and every measured number, in
+`docs/status/look-v1-characters.md`. The short version:
+
+- **1/16 of a block, 3.125 cm.** A human is 64 voxels = 2.00 m; elf 72,
+  dwarf 48, lizardfolk 60. Heights measure exact to the table. Plants stay
+  at 1/8.
+- **Every race is stocky.** The lean human is deleted; `build` stays on the
+  wire at 0; `WIRE_VERSION` is still 1. The creation screen hides the build
+  row when no race has a second scheme.
+- **A generator writes the ASCII.** `tools/parts_author/` (Python 3, no
+  dependencies; `python -m tools.parts_author` rewrites the seven
+  `parts_*.gd` files, docstrings included). The runtime never sees Python.
+  Every generated file names its generator in its header; a hand edit to
+  the ASCII is legal and must say so there.
+- **Forms.** Chamfered octagonal heads with stepped jaw and crown, stepped
+  shoulders, hands and boots a voxel proud of the limb, 4 x 4 eyes with a
+  2 x 2 iris low and inboard, brow, nose, 8-wide mouth. Hair as stepped Deco
+  masses; the lizardfolk's tall crest is a sunburst.
+- **Self-test:** 28 tests, all passed, gear placeholders at zero
+  intersection on all four races.
+- **Triangles, mesh, default hair and beard**, character v1 → look v1:
+  human 3,308 → 16,824; elf 2,848 → 13,824; dwarf 4,104 → 17,740;
+  lizardfolk 3,564 → 16,544; critter 1,820 → 7,280. Budget is one constant,
+  `CharacterConfig.TRIANGLE_BUDGET = 24000`. Four players with gear are
+  roughly 75k mesh triangles - under the far field alone.
+- **Silhouette IoU at 40 m, front-on** (under 0.70 wanted): human/elf 0.530,
+  human/dwarf 0.561, elf/dwarf 0.357, elf/lizardfolk 0.534, dwarf/lizardfolk
+  0.566 - every one of them further apart than in v1. **Human/lizardfolk is
+  0.913, over**, as it was in v1 (0.868): the lizardfolk's body is the
+  human's by design and front-on only the crest and snout differ. The
+  22-tall sunburst crest gets it to 0.841. **A decision for Marcel:** give
+  the lizardfolk its own stance or torso (a lower, wider, forward-leaning
+  body would do it) or accept that the pair separates only in three-quarter
+  view (0.769) and profile.
+- Judgement calls the agent made and recorded: crests kept at their v1 size
+  in metres (the plan's "8 tall" was in old voxels); tabard one voxel proud
+  so the dwarf's beard clears it; pendant eleven voxels forward for the
+  same reason; the height test measures the lizardfolk stood upright;
+  `CharacterConfig.USER_PATH` moved to `character_tuning_v2.tres` because
+  every `_vox` knob doubled.
 
 ## UI
 
