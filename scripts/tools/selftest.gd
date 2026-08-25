@@ -375,8 +375,30 @@ func _test_flora_removal():
 			break
 		j += 1
 
-	print("flora removal: column %s, %d instances -> %d, %d wrong" % [
-		col, before.size(), after.size(), bad])
+	# AND THE OTHER HALF OF STAGE 9: edited ground grows nothing. The G debug
+	# slab is what exercises this in the game - drop it on a meadow and the
+	# grass under it has to be gone rather than poking through - but the rule
+	# itself is a question about placement, so it is checked here where it does
+	# not need a scene, a network peer or a slab.
+	var edited := {Vector2i(bx, bz): true}
+	var dug := FloraPlacement.column(gen, cfg, col.x, col.y, {}, edited)
+	var still_there := 0
+	for inst in dug:
+		var ix := int(round(float(inst["pos"].x) / cfg.block_size))
+		var iz := int(round(float(inst["pos"].z) / cfg.block_size))
+		if ix == bx and iz == bz:
+			still_there += 1
+	if still_there > 0:
+		print("  %d instances survived on an edited block" % still_there)
+		bad += 1
+	# One block edited takes at most what stood on it - not its neighbours.
+	if dug.size() < before.size() - 2:
+		print("  editing one block removed %d instances, not one or two" % [
+			before.size() - dug.size()])
+		bad += 1
+
+	print("flora removal: column %s, %d instances -> %d gathered, %d dug, %d wrong" % [
+		col, before.size(), after.size(), dug.size(), bad])
 	return bad
 
 
