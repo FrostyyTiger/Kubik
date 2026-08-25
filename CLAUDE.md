@@ -21,6 +21,13 @@ When Marcel proposes a feature, check it against the pillars and the current
 Next 3 list in `docs/IDEAS.md`, and push back if it contradicts them or jumps
 the queue.
 
+## Worldgen guidance
+
+- World edges are not symmetric by design. Most edges = impassable peaks, but
+  one edge will eventually descend to a coast (Second Age expansion, see
+  `docs/IDEAS.md`). Do not hardcode "world edge = mountains" into worldgen,
+  pathing, or fog logic. Edge treatment must be per-edge configurable.
+
 ## Where things live
 
 - `README.md` - what the game is, and the architecture contract

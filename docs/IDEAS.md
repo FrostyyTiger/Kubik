@@ -97,3 +97,32 @@ it should.
 The tagged entries contradict a pillar as written. That is fine as a parking
 space, but building one means amending the pillar first, deliberately and in
 writing - not discovering halfway through a branch that the design moved.
+
+## Second Age: The Sea (post-1.0 expansion arc, not before)
+
+Bigger than a Someday item - an expansion arc, so it gets its own section.
+
+The launch world is Alpine and bounded. Long-term, one world edge descends past
+the far ranges to a COAST, and the game's second act opens: the sea.
+
+- **Coast at ONE world edge.** World edges are asymmetric: peaks on most sides,
+  descent to water on one.
+- **Interactive water.** Swimming ships here, and with it the lizardfolk swim
+  perk (replaces the fish-shadow placeholder in `DESIGN.md`).
+- **Sailing.** Boat controller, wind matters. Valheim-school: sailing should be
+  a skill and a feeling, not a fast-travel skin.
+- **Ocean and island generation.** Island kingdoms as the new far-zone content
+  tier.
+- **The lizardfolk homeland lies across the water** - the answer to "why is a
+  water-race in the mountains".
+- **Trailer moment to build toward:** two players crest the last ridge and see
+  open water for the first time.
+
+Scope honesty: this is an expansion-sized arc (2.0 energy), not a feature.
+Nothing here before the Alpine game is complete and shipped. BUT the sea may be
+foreshadowed from day one via lore fragments, which are cheap: shells in high
+ruins, lizardfolk graves facing away from the mountains, salt references.
+Longing is free; water physics are not.
+
+What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
+not hardcode "world edge = mountains" anywhere.
