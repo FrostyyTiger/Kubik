@@ -134,6 +134,11 @@ func _build_panel() -> void:
 	for row in CYCLE_BUTTONS:
 		box.add_child(_cycle_row(row[0], row[1]))
 
+	var gear := Button.new()
+	gear.text = "toggle gear placeholders  [T]"
+	gear.pressed.connect(_on_gear_pressed)
+	box.add_child(gear)
+
 	box.add_child(HSeparator.new())
 	for row in CharacterConfig.TUNING_ROWS:
 		box.add_child(_spin_row(row[0], row[1], row[2], row[3], row[4]))
@@ -231,6 +236,15 @@ func _on_spin_changed(value: float, prop: String) -> void:
 		view.animator.config = config
 
 
+## Stage 10's three placeholders, on or off. The same thing the T key does -
+## the panel is where you find it, the key is where you use it.
+func _on_gear_pressed() -> void:
+	if view == null:
+		return
+	view.set_gear_placeholders(not view.gear_placeholders_on())
+	_refresh_summary()
+
+
 func _on_save_pressed() -> void:
 	if config != null:
 		config.save_to_user()
@@ -284,6 +298,7 @@ func _refresh_summary() -> void:
 	if view == null or view.def == null:
 		return
 	var def := view.def
-	_summary.text = "%s | skin %d hair %d eyes %d | hair %d beard %d | %d tris" % [
+	_summary.text = "%s | skin %d hair %d eyes %d | hair %d beard %d | %d tris%s" % [
 		def.describe(), def.skin, def.hair_color, def.eyes,
-		def.hair, def.beard, view.triangle_count()]
+		def.hair, def.beard, view.triangle_count(),
+		" | gear on" if view.gear_placeholders_on() else ""]

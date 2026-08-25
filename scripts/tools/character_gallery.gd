@@ -138,6 +138,7 @@ func _sheets() -> Dictionary:
 		"masks-40": _sheet_masks_40,
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
+		"gear": _sheet_gear,
 	}
 
 
@@ -540,6 +541,40 @@ func _sheet_silhouettes() -> void:
 		await _shoot("silhouettes-%d-hill" % int(distance), distance)
 	_wall.visible = false
 	_set_time(-1.0)
+
+
+# --- Gear ---------------------------------------------------------------------
+
+## THE SOCKETS FOLLOW THE ANIMATION, which is the whole claim of Stage 10.
+##
+## Two sheets. `gear.png` is every race wearing all three placeholders, so the
+## fit can be judged on the widest body and the narrowest. `gear-walk.png` is
+## the human's walk cycle with them on: the sword swings with the arm because
+## it is a child of the arm bone, the tunic rides the torso, and the pendant
+## stays on the chest. A still sheet can show that, because the strip is eight
+## poses of the same cycle - if the sword did not follow the arm it would be in
+## the same place in all eight.
+func _sheet_gear() -> void:
+	var defs := _lineup_defs()
+	_set_lineup(defs)
+	for child in _subjects_root.get_children():
+		(child as CharacterView).set_gear_placeholders(true)
+	_face(FACING_CAMERA + deg_to_rad(25.0))
+	await _shoot_row("gear", defs.size())
+
+	var human := CharacterDef.new()
+	human.race = Races.HUMAN
+	human.validate()
+	var states := []
+	for k in STRIP_STEPS:
+		var st := LocomotionState.new()
+		st.speed = 5.0
+		st.grounded = true
+		states.append({"state": st, "phase": float(k) / float(STRIP_STEPS)})
+	_set_posed_row(human, states)
+	for child in _subjects_root.get_children():
+		(child as CharacterView).set_gear_placeholders(true)
+	await _shoot_row("gear-walk", states.size())
 
 
 # --- Variants -----------------------------------------------------------------

@@ -71,6 +71,12 @@ func build(new_def: CharacterDef) -> void:
 	animator.snap_to(_state)
 	animator.apply(rig)
 
+	# A rebuild throws the old rig away, so anything hanging on it went with
+	# it. Put the placeholders back if they were on - otherwise cycling race on
+	# the F8 panel would silently disarm the T key.
+	if _gear_on:
+		set_gear_placeholders(true)
+
 
 ## What this character is doing. Called every physics frame by Player, and
 ## every sync tick by RemotePlayer.
@@ -115,6 +121,33 @@ func _update_close_hide() -> void:
 	var head: Node3D = rig.bones["head"]
 	var head_pos: Vector3 = rig.global_transform * rig.transform_to_rig(head).origin
 	rig.visible = cam.global_position.distance_to(head_pos) > _config.view_hide_m
+
+
+## Hang the three Stage 10 placeholders on their sockets, or take them off.
+##
+## NOT A GEAR SYSTEM. The sockets are the deliverable and these three items
+## prove them: the sword swings with the arm because it is a child of the arm
+## bone, the tunic rides the sprint lean because it is a child of the torso,
+## and the pendant survives a sit for the same reason. Nothing here touches
+## CharacterDef or the wire.
+func set_gear_placeholders(on: bool) -> void:
+	if rig == null:
+		return
+	_gear_on = on
+	rig.clear_attachments()
+	if not on:
+		return
+	var palette := Races.palette(def.race, def.skin, def.hair_color, def.eyes)
+	for socket_name in PartsGear.PLACEHOLDERS:
+		rig.attach_to_socket(socket_name, PartsGear.PLACEHOLDERS[socket_name],
+			socket_name, palette, _config.ao_strength)
+
+
+func gear_placeholders_on() -> bool:
+	return _gear_on
+
+
+var _gear_on := false
 
 
 ## The appearance this view was built from, as bytes. Used to decide whether a

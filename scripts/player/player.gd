@@ -427,6 +427,13 @@ func _pose_key(keycode: int) -> bool:
 			# The wave ends by itself, so it is a press rather than a toggle.
 			pose = LocomotionState.POSE_WAVE
 			_wave_left = Animator.WAVE_SECONDS
+		KEY_T:
+			# Stage 10's placeholders. Scaffolding like the pose keys - the
+			# gear plan owns what actually hangs here.
+			_view.set_gear_placeholders(not _view.gear_placeholders_on())
+			print("[Player] gear placeholders %s" % (
+				"on" if _view.gear_placeholders_on() else "off"))
+			return true
 		_:
 			return false
 	print("[Player] pose %d" % pose)

@@ -40,6 +40,17 @@ var meshes := {}
 ## Hidden until a blink swaps it in.
 var blink_meshes := {}
 
+## bone name -> {"voxels": Array, "anchor": Vector3}, kept after meshing.
+##
+## The mesh is triangles and cannot answer "is there a voxel here"; the overlap
+## check in Stage 10 has to ask exactly that, of two parts that were authored
+## on lattices half a voxel apart. Keeping the list costs a few kilobytes per
+## character and is the difference between a real test and an eyeballed one.
+var part_voxels := {}
+
+## socket name -> MeshInstance3D, for whatever is currently hanging on it.
+var attachments := {}
+
 
 ## Build the whole skeleton. Parents must appear before their children in the
 ## table, which Races.bone_table guarantees.
@@ -98,6 +109,8 @@ func clear() -> void:
 	rest.clear()
 	meshes.clear()
 	blink_meshes.clear()
+	part_voxels.clear()
+	attachments.clear()
 
 
 func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
@@ -124,6 +137,7 @@ func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
 	mi.mesh = mesh
 	bone.add_child(mi)
 	meshes[bone_name] = mi
+	part_voxels[bone_name] = {"voxels": voxels, "anchor": anchor}
 	_attach_blink_variant(bone, bone_name, voxels, anchor, palette, ao_strength)
 
 
@@ -253,16 +267,67 @@ func transform_to_rig(node: Node3D) -> Transform3D:
 	return out
 
 
-## Every voxel of a built part, in RIG space and in metres. The overlap check
-## in Stage 10 and the eyes-forward test both need to ask where a voxel ended
-## up rather than where its part file put it.
-func part_voxels_in_rig(bone_name: String) -> PackedVector3Array:
+## Every voxel CENTRE of a built part, in RIG space and in metres.
+##
+## Centres rather than mesh vertices: two parts authored on lattices half a
+## voxel apart share no vertex even when they occupy the same space, so a
+## vertex comparison would report no overlap for two solids sitting inside each
+## other. Centres plus a half-voxel tolerance is the question actually being
+## asked - does a voxel of this part occupy the same cell as a voxel of that
+## one.
+func voxel_centres_in_rig(bone_name: String) -> PackedVector3Array:
 	var out := PackedVector3Array()
-	if not meshes.has(bone_name):
+	if not part_voxels.has(bone_name) or not meshes.has(bone_name):
 		return out
-	var mi: MeshInstance3D = meshes[bone_name]
-	var to_rig := transform_to_rig(mi)
-	var verts: PackedVector3Array = (mi.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
-	for v in verts:
-		out.push_back(to_rig * v)
+	var entry: Dictionary = part_voxels[bone_name]
+	var anchor: Vector3 = entry["anchor"]
+	var to_rig := transform_to_rig(meshes[bone_name])
+	for v in (entry["voxels"] as Array):
+		var centre := (Vector3(v.x, v.y, v.z) + Vector3(0.5, 0.5, 0.5) - anchor) * VoxelModel.VOXEL_M
+		out.push_back(to_rig * centre)
+	return out
+
+
+# --- Sockets ------------------------------------------------------------------
+
+## Hang a part on a socket. The part is authored in the SOCKET's own frame.
+func attach_to_socket(socket_name: String, part: Dictionary, part_name: String,
+		palette: Dictionary, ao_strength: float) -> void:
+	if not sockets.has(socket_name):
+		push_warning("[Rig] no socket named %s" % socket_name)
+		return
+	var voxels := VoxelModel.parse(part, part_name)
+	if voxels.is_empty():
+		return
+	var anchor: Vector3 = part.get("anchor", Vector3.ZERO)
+	var mesh := VoxelModel.build_mesh(voxels, palette, anchor, ao_strength)
+	if mesh == null:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Gear_" + part_name
+	mi.mesh = mesh
+	(sockets[socket_name] as Node3D).add_child(mi)
+	attachments[socket_name] = mi
+	part_voxels["socket:" + socket_name] = {"voxels": voxels, "anchor": anchor}
+
+
+func clear_attachments() -> void:
+	for socket_name in attachments:
+		(attachments[socket_name] as MeshInstance3D).queue_free()
+		part_voxels.erase("socket:" + socket_name)
+	attachments.clear()
+
+
+## The same voxel-centre question, for something hanging on a socket.
+func socket_voxel_centres_in_rig(socket_name: String) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	var key := "socket:" + socket_name
+	if not part_voxels.has(key) or not attachments.has(socket_name):
+		return out
+	var entry: Dictionary = part_voxels[key]
+	var anchor: Vector3 = entry["anchor"]
+	var to_rig := transform_to_rig(attachments[socket_name])
+	for v in (entry["voxels"] as Array):
+		var centre := (Vector3(v.x, v.y, v.z) + Vector3(0.5, 0.5, 0.5) - anchor) * VoxelModel.VOXEL_M
+		out.push_back(to_rig * centre)
 	return out

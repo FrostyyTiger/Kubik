@@ -46,6 +46,7 @@ func _ready() -> void:
 		"remote row": _test_remote_row,
 		"every combination": _test_every_combination,
 		"option tables agree": _test_option_tables,
+		"gear sockets": _test_gear_sockets,
 	}
 	var failures := 0
 	for name in tests:
@@ -1418,3 +1419,95 @@ func _test_option_tables():
 
 	print("option tables agree: 4 races x hair and beard lists, %d checks failed" % bad)
 	return 1 if bad > 0 else 0
+
+
+# --- Stage 10 ----------------------------------------------------------------
+
+## THE PLACEHOLDERS DO NOT INTERSECT THE BODY. On any race, in rest pose.
+##
+## Voxel by voxel, not by eye. Two parts authored on lattices half a voxel
+## apart share no mesh vertex even when they occupy the same space, so the
+## comparison is between voxel CENTRES with a half-voxel tolerance - which is
+## the question actually being asked: does a voxel of the sword occupy the same
+## cell as a voxel of the arm.
+##
+## THE TOLERANCE IS 2 VOXELS, and it is the plan's: "allow at most 2 voxels for
+## the tunic which is designed to hug". Nothing here currently needs it - all
+## three placeholders came out at zero - but the allowance is the plan's and
+## removing it would make a hugging chest item a test failure rather than a
+## design.
+const GEAR_OVERLAP_ALLOWED := 2
+
+func _test_gear_sockets():
+	var bad := 0
+	var report := PackedStringArray()
+	for entry in _every_build():
+		var view := CharacterView.new()
+		view.build(_def_for(entry))
+		view.set_gear_placeholders(true)
+		var rig: Rig = view.rig
+
+		# Every socket exists and every placeholder actually attached.
+		for socket_name in Races.SOCKET_NAMES:
+			if not rig.sockets.has(socket_name):
+				print("  %s has no socket %s" % [_build_name(entry), socket_name])
+				bad += 1
+		for socket_name in PartsGear.PLACEHOLDERS:
+			if not rig.attachments.has(socket_name):
+				print("  %s did not attach the %s placeholder" % [
+					_build_name(entry), socket_name])
+				bad += 1
+
+		# Per BODY PART rather than against one merged cloud, so a failure says
+		# what it hit. "The pendant overlaps by two" and "the pendant is two
+		# voxels into the dwarf's beard" are the same number and different
+		# pieces of news.
+		var worst := 0
+		var worst_name := ""
+		for socket_name in PartsGear.PLACEHOLDERS:
+			var gear := rig.socket_voxel_centres_in_rig(socket_name)
+			if gear.is_empty():
+				continue
+			for bone_name in rig.meshes:
+				var overlaps := _count_overlaps(gear, rig.voxel_centres_in_rig(bone_name))
+				if overlaps > worst:
+					worst = overlaps
+					worst_name = "%s in %s" % [socket_name, bone_name]
+				if overlaps > GEAR_OVERLAP_ALLOWED:
+					print("  %s: the %s placeholder puts %d voxels inside the %s" % [
+						_build_name(entry), socket_name, overlaps, bone_name])
+					bad += 1
+		report.append("%s %d%s" % [_build_name(entry), worst,
+			"" if worst == 0 else " (" + worst_name + ")"])
+
+		# ...and taking them off really takes them off.
+		view.set_gear_placeholders(false)
+		if not rig.attachments.is_empty():
+			print("  %s kept %d attachments after being turned off" % [
+				_build_name(entry), rig.attachments.size()])
+			bad += 1
+		view.free()
+
+	print("gear sockets: worst body overlap per build - %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+
+## How many of `a`'s voxel centres share a cell with one of `b`'s.
+##
+## A cell is half a voxel in each axis: two centres closer than that in all
+## three axes are the same cell however the two lattices are offset. The body
+## is bucketed first, because the naive loop is four thousand gear voxels
+## against three thousand body voxels per character per build.
+func _count_overlaps(a: PackedVector3Array, b: PackedVector3Array) -> int:
+	var cell := VoxelModel.VOXEL_M
+	var buckets := {}
+	for p in b:
+		var key := Vector3i(roundi(p.x / cell), roundi(p.y / cell), roundi(p.z / cell))
+		buckets[key] = true
+	var hits := 0
+	for p in a:
+		var key := Vector3i(roundi(p.x / cell), roundi(p.y / cell), roundi(p.z / cell))
+		if buckets.has(key):
+			hits += 1
+	return hits
