@@ -26,3 +26,6 @@ Thumbs.db
 desktop.ini
 *.swp
 *~
+
+# Claude Code worktrees and session files
+.claude/
