@@ -233,24 +233,33 @@ def dwarf_beard_forked() -> Part:
 # --- Lizardfolk ------------------------------------------------------------------
 
 def lizard_crest_low() -> Part:
+    # A fin six wide and fourteen tall, raking back a voxel every two rows.
+    # The v1 crest's size in METRES - six and fourteen here are three and
+    # seven at 1/8 - because the crest is the one feature a front-on mask
+    # can see on this race, and halving it halved the number.
     f = Frame()
-    for k in range(8):
-        f.box((-2, 2), (18 + k, 19 + k), (-6 + k, 8), H)
+    for k in range(14):
+        f.box((-3, 3), (18 + k, 19 + k), (-7 + k // 2, 8), H)
     return f.to_part("LIZARD_CREST_LOW")
 
 
 def lizard_crest_tall() -> Part:
+    # A sunburst: twenty-two tall, widening from six at the base to sixteen at
+    # the top in two-voxel steps, raking back past the skull. The most Deco
+    # thing on any head in the game.
     f = Frame()
-    for k in range(12):
-        f.box((-2, 2), (18 + k, 19 + k), (-6 + k, 10), H)
+    for k in range(22):
+        half = 3 + k // 4
+        f.box((-half, half), (18 + k, 19 + k), (-7 + k // 3, 10), H)
     return f.to_part("LIZARD_CREST_TALL")
 
 
 def lizard_frill() -> Part:
+    # A fan behind the head, twenty-four across, eighteen tall, four thick.
     f = Frame()
     widths = {10: 4, 12: 6, 14: 8, 16: 10, 18: 12, 20: 12, 22: 12, 24: 10, 26: 8}
     for y0, half in widths.items():
-        f.box((-half, half), (y0, y0 + 2), (8, 10), H)
+        f.box((-half, half), (y0, y0 + 2), (8, 12), H)
     return f.to_part("LIZARD_FRILL")
 
 
@@ -383,9 +392,9 @@ def render() -> str:
         dwarf_beard_short().gd("DWARF_BEARD_SHORT", "Short: chin to the top of the chest, three voxels in front of the face."),
         dwarf_beard_full().gd("DWARF_BEARD_FULL", "Full: to the belt in three steps, and up the cheeks."),
         dwarf_beard_forked().gd("DWARF_BEARD_FORKED", "Forked: full length, split into two prongs below the chin."),
-        lizard_crest_low().gd("LIZARD_CREST_LOW", LIZARD_COMMENT + "\n\nA fin four wide, eight tall, raking backward in steps."),
-        lizard_crest_tall().gd("LIZARD_CREST_TALL", "The same fin, half again as tall and reaching past the back of the skull."),
-        lizard_frill().gd("LIZARD_FRILL", "A fan behind the head rather than a fin on top of it: twenty-four across\nand two thick, stepped, which is a completely different outline from either\ncrest."),
+        lizard_crest_low().gd("LIZARD_CREST_LOW", LIZARD_COMMENT + "\n\nA fin six wide, fourteen tall, raking backward in steps."),
+        lizard_crest_tall().gd("LIZARD_CREST_TALL", "A sunburst: six wide at the base and sixteen at the top, twenty-two\ntall, raking back past the skull."),
+        lizard_frill().gd("LIZARD_FRILL", "A fan behind the head rather than a fin on top of it: twenty-four across\nand four thick, stepped, which is a completely different outline from either\ncrest."),
     ]
     out = ["class_name PartsHair", ""]
     for line in DOC.strip("\n").split("\n"):
