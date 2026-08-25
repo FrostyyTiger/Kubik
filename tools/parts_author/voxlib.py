@@ -274,3 +274,48 @@ def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
         out.append(extra.rstrip("\n"))
     out.append("")
     return "\n".join(out)
+
+
+# --- Look v2 Stage 5: the face -----------------------------------------------
+#
+# ONE ROUTINE, FOUR RACES. Look v1 authored each face by hand in its own module
+# and the four drifted: three eye geometries, two brow conventions, mouths from
+# four to eight voxels wide. The spec in docs/plans/look-v2.md Stage 5 is one
+# spec, so this is one function and each race passes its own numbers.
+#
+# WHY THE EYES ARE SOLID AND PROUD. A 4 x 4 white with a 2 x 2 iris inside it
+# is five values across four voxels, and at 40 m the white wins and the figure
+# reads as having no eyes at all. A 2 x 4 block of pure iris colour, standing
+# one voxel out of the face the way the nose does, is one shape and one value:
+# it survives being two pixels tall, and it catches the sun on its own front
+# face so it reads at every hour rather than only at noon.
+
+
+def solid_eyes(p, x_centre: int, y0: int, z_face: int, gap: int = 6,
+               width: int = 2, height: int = 4, catchlight: bool = True,
+               clear=None) -> None:
+    """Two solid iris blocks, one voxel proud of the face plane at `z_face`.
+
+    `x_centre` is the face's centre line, `gap` the space between the two
+    inner edges. `clear` is an (xr, yr, zr) region repainted back to skin
+    first, which is how the old whites are removed - repaint never adds a
+    cell, so this cannot punch a hole in the head.
+    """
+    if clear is not None:
+        p.repaint(clear[0], clear[1], clear[2], S)
+    inner = gap // 2
+    for sign in (-1, 1):
+        x0 = x_centre - inner - width if sign < 0 else x_centre + inner
+        p.box((x0, x0 + width), (y0, y0 + height), (z_face - 1, z_face), E)
+        if catchlight:
+            # The TOP INNER corner, one voxel, and never more: it is a
+            # highlight, and two of them read as a second pair of pupils.
+            cx = x0 + width - 1 if sign < 0 else x0
+            p.put(cx, y0 + height - 1, z_face - 1, W)
+
+
+def hair_brow(p, xr, y: int, z_face: int) -> None:
+    """One row of hair-coloured brow on the face plane. Rule: a brow is the
+    hair's colour or it is nothing - a brow in shaded skin is a smudge at any
+    distance past arm's length."""
+    p.repaint(xr, (y, y + 1), (z_face, z_face + 1), H)

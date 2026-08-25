@@ -30,10 +30,16 @@ def cap(f: Frame, skull: set, foot: set, y0: int, y1: int) -> None:
                 f.put(x, y, z, H)
 
 
-def fringe(f: Frame, xr, y0: int, y1: int, z: int) -> None:
-    """One voxel proud of the forehead, from just above the brows to the top
-    of the cap. The hard bottom edge is the fringe line."""
-    f.box(xr, (y0, y1), (z, z + 1), H)
+def fringe(f: Frame, xr, y0: int, y1: int, z: int, depth: int = 1) -> None:
+    """Proud of the forehead, from just above the brows to the top of the cap.
+    The hard bottom edge is the fringe line.
+
+    LOOK V2 STAGE 5: `depth` lets the mass BREAK THE HEAD BOX. A hair that is
+    one voxel of paint on a flat forehead reads as a hat brim at any distance;
+    a mass that overhangs is what tells a human from an elf in a silhouette,
+    which is what `silhouettes-40` is for. Low z is the front, so the fringe
+    grows toward -z."""
+    f.box(xr, (y0, y1), (z - depth + 1, z + 1), H)
 
 
 def notched_column(f: Frame, xr_wide, xr_narrow, y_top: int, y_bottom: int, zr) -> None:
@@ -70,7 +76,7 @@ def human_hair_short() -> Part:
     skull, foot = human_frame()
     f = Frame()
     cap(f, skull, foot, 20, 24)
-    fringe(f, (-7, 7), human.BROW_Y + 1, 24, -9)
+    fringe(f, (-8, 8), human.BROW_Y + 1, 24, -9, depth=2)
     return f.to_part("HUMAN_HAIR_SHORT")
 
 
@@ -78,7 +84,7 @@ def human_hair_long() -> Part:
     skull, foot = human_frame()
     f = Frame()
     cap(f, skull, foot, 20, 24)
-    fringe(f, (-7, 7), human.BROW_Y + 1, 24, -9)
+    fringe(f, (-8, 8), human.BROW_Y + 1, 24, -9, depth=2)
     # The bob: sides and back, outside the skull, flat bottom at the jaw.
     f.fill_outside(skull, (-10, 10), (4, 24), (-6, 9), H, footprint=foot)
     return f.to_part("HUMAN_HAIR_LONG")
@@ -88,7 +94,7 @@ def human_hair_tied() -> Part:
     skull, foot = human_frame()
     f = Frame()
     cap(f, skull, foot, 20, 24)
-    fringe(f, (-7, 7), human.BROW_Y + 1, 24, -9)
+    fringe(f, (-8, 8), human.BROW_Y + 1, 24, -9, depth=2)
     # A bun at the back, stepped top and bottom.
     f.box((-3, 3), (17, 21), (8, 12), H)
     f.box((-2, 2), (16, 17), (8, 11), H)
@@ -134,6 +140,10 @@ def elf_hair_short() -> Part:
     f = Frame()
     cap(f, skull, foot, 23, 27)
     fringe(f, (-6, 6), elf.BROW_Y + 1, 27, -9)
+    # SWEPT BACK 3 PAST THE SKULL (look v2 Stage 5). The elf's silhouette is
+    # the one that has to differ from the human's from behind as well as in
+    # front, and the ears alone were not doing it at 40 m.
+    f.box((-7, 7), (14, 25), (8, 11), H)
     return f.to_part("ELF_HAIR_SHORT")
 
 
@@ -155,6 +165,7 @@ def elf_hair_braided() -> Part:
     f = Frame()
     cap(f, skull, foot, 23, 27)
     fringe(f, (-6, 6), elf.BROW_Y + 1, 27, -9)
+    f.box((-7, 7), (14, 25), (8, 11), H)
     notched_column(f, (-2, 2), (-1, 1), 23, -8, (8, 11))
     return f.to_part("ELF_HAIR_BRAIDED")
 
@@ -213,9 +224,12 @@ def dwarf_beard_full() -> Part:
     f = Frame()
     f.box((-8, 8), (0, dwarf.MOUTH_Y), (-9, -8), H)
     jaw_wrap(f, skull, foot, 0, 9)
-    f.box((-8, 8), (-6, 0), (-11, -8), H)
-    f.box((-6, 6), (-12, -6), (-11, -8), H)
-    f.box((-4, 4), (-18, -12), (-11, -8), H)
+    # LOOK V2 STAGE 5: two voxels wider than the head each side and four
+    # further below the jaw. A dwarf is his beard in silhouette; at look v1's
+    # width it stopped exactly at the jawline and read as a chin.
+    f.box((-10, 10), (-6, 0), (-11, -8), H)
+    f.box((-8, 8), (-12, -6), (-11, -8), H)
+    f.box((-6, 6), (-22, -12), (-11, -8), H)
     return f.to_part("DWARF_BEARD_FULL")
 
 

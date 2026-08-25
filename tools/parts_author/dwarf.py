@@ -7,7 +7,8 @@ The stack, in model voxels:
     head   [28, 48) 20
 """
 
-from .voxlib import Part, gd_file, S, s, M, E, W, C, c, L, B, X
+from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+                     S, s, M, E, W, H, C, c, L, B, X)
 
 HEAD_SIZE = (20, 20, 17)
 HEAD_ANCHOR = (10, 0, 9)
@@ -26,19 +27,18 @@ def head() -> Part:
     p.prism((0, 20), (0, 20), (1, 17), S, chamfer=CHAMFER,
             bottom=JAW_INSETS, top=CROWN_INSETS)
     p.note(0, "the chin - well inside the beard")
-    p.front_paint(MOUTH_Y, (6, 14), M)
+    # Four wide; most of a dwarf's mouth is under the beard anyway.
+    p.front_paint(MOUTH_Y, (8, 12), M)
     p.note(MOUTH_Y, "the mouth")
     p.box((9, 11), (7, 10), (0, 1), S)
     p.note(7, "the nose")
-    for x0 in (13, 3):
-        p.repaint((x0, x0 + 4), (9, 13), (1, 2), W)
-    p.repaint((13, 15), (9, 11), (1, 2), E)
-    p.repaint((5, 7), (9, 11), (1, 2), E)
+    solid_eyes(p, 10, 9, 1, gap=6, clear=((3, 17), (9, 13), (1, 2)))
     p.note(9, "eyes, the iris rows")
-    # Bushy brows: two rows, a voxel wider outboard.
-    p.repaint((13, 18), (BROW_Y, BROW_Y + 2), (1, 2), s)
-    p.repaint((2, 7), (BROW_Y, BROW_Y + 2), (1, 2), s)
-    p.note(BROW_Y, "the brows, two rows deep")
+    # ONE row, not two, and in the HAIR's colour: the spec is one row for
+    # every race, and two rows of shaded skin was the loudest thing on his face.
+    hair_brow(p, (13, 18), BROW_Y, 1)
+    hair_brow(p, (2, 7), BROW_Y, 1)
+    p.note(BROW_Y, "the brows")
     p.note(18, "the crown, stepped in")
     return p
 

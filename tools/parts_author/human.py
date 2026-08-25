@@ -10,7 +10,8 @@ Numbers are the look plan's Stage 6 table. The stack, in model voxels:
     head   [42, 64) 22
 """
 
-from .voxlib import Part, gd_file, S, s, M, E, W, C, c, L, B, X
+from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+                     S, s, M, E, W, H, C, c, L, B, X)
 
 # --- Geometry the hair file needs to know ------------------------------------
 
@@ -35,23 +36,24 @@ def head() -> Part:
             bottom=JAW_INSETS, top=CROWN_INSETS)
     p.note(0, "the chin, stepped in twice")
     p.note(2, "the jaw at full width")
-    # Mouth: an 8-wide line on the front face.
-    p.front_paint(MOUTH_Y, (5, 13), M)
+    # Mouth: FIVE wide, not eight (look v2 Stage 5). An eight-wide mouth on an
+    # eighteen-wide head is a grin; five is a line, and a line is what a poster
+    # prints.
+    p.front_paint(MOUTH_Y, (7, 12), M)
     p.note(MOUTH_Y, "the mouth")
     # Nose: 2 wide, 3 tall, one voxel proud of the face.
     p.box((8, 10), (8, 11), (0, 1), S)
     p.note(8, "the nose - the only slices with anything at z = 0")
-    # Eyes: 4 x 4 whites with a 2 x 2 iris low and inboard, looking at you.
-    # The picture-left eye is the character's right, which is HIGH x.
-    for x0 in (11, 3):
-        p.repaint((x0, x0 + 4), (10, 14), (1, 2), W)
-    p.repaint((11, 13), (10, 12), (1, 2), E)   # picture-left eye, inboard
-    p.repaint((5, 7), (10, 12), (1, 2), E)     # picture-right eye, inboard
+    # Eyes: 2 x 4 solid iris, one voxel proud, gap 6 (look v2 Stage 5). The
+    # old 4 x 4 white with a 2 x 2 iris inside it is cleared back to skin
+    # first.
+    solid_eyes(p, 9, 10, 1, gap=6, clear=((3, 15), (10, 14), (1, 2)))
     p.note(10, "eyes, the iris rows")
     p.note(12, "eyes, the upper rows")
-    # Brows: one row of shaded skin over each eye, one voxel wider outboard.
-    p.repaint((11, 16), (BROW_Y, BROW_Y + 1), (1, 2), s)
-    p.repaint((2, 7), (BROW_Y, BROW_Y + 1), (1, 2), s)
+    # Brow: one row in the HAIR's colour over each eye, one voxel wider
+    # outboard. Shaded skin was a smudge past arm's length.
+    hair_brow(p, (11, 16), BROW_Y, 1)
+    hair_brow(p, (2, 7), BROW_Y, 1)
     p.note(BROW_Y, "the brows")
     p.note(20, "the crown, stepped in")
     return p
