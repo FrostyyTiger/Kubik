@@ -25,7 +25,6 @@ class_name FarTreeMeshes
 
 static var _meshes := {}
 static var _mutex := Mutex.new()
-static var _material: StandardMaterial3D = null
 
 
 static func for_species(species: int, config: WorldgenConfig) -> ArrayMesh:
@@ -182,19 +181,9 @@ static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,
 	return mesh
 
 
-## The same kind of material the terrain uses: vertex colour as albedo, matte,
-## no specular. Shared with nothing, because ChunkMesher's is a different
-## object with the same settings and reaching across for it would couple the
-## two for no gain.
-static func material() -> StandardMaterial3D:
-	if _material != null:
-		return _material
-	_mutex.lock()
-	if _material == null:
-		var m := StandardMaterial3D.new()
-		m.vertex_color_use_as_albedo = true
-		m.roughness = 1.0
-		m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-		_material = m
-	_mutex.unlock()
-	return _material
+## The terrain's material - since look v1 literally the same object, because
+## the poster ramp in Look is the one thing every opaque surface has to agree
+## on, and a far tree that shaded differently from the hill it stands on would
+## be the seam the whole look pass exists to remove.
+static func material() -> Material:
+	return Look.opaque_material()

@@ -355,8 +355,11 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 
 	var bs: float = config.block_size
 	var step: int = config.coarse_step
-	# Linear, like the rest of the palette - see Block.COLORS.
-	var color := Color(0.0685, 0.2789, 0.3712, 0.65)   # #4A90A4
+	# Linear, like the rest of the palette - see Block.COLORS. Look v1: a
+	# flat alpine blue, nearly opaque - #4A90A4 at 0.65 read as a grey-green
+	# sheet once the highlight and the sky ambient that made it blue were
+	# gone, and a poster lake is a colour, not a window onto the lake bed.
+	var color := Color(0.0742, 0.2747, 0.5209, 0.85)   # #4C8FBF
 
 	for j in _cols:
 		var i := 0
@@ -406,15 +409,10 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 	return arrays
 
 
-## Translucent, unshaded-ish, and drawn from both sides.
+## Translucent, drawn from both sides, and flat - the poster water in Look.
 ##
-## Double-sided because the surface is a single plane with nothing underneath
-## it: standing in a lake and looking up at a one-sided surface shows you
-## nothing at all, which reads as a bug rather than as water.
-static func make_material() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.vertex_color_use_as_albedo = true
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.roughness = 0.15
-	return m
+## Terrain v1 gave this roughness 0.15, and a specular highlight sliding across
+## a lake as you walk is exactly the thing look v1's rule 2 forbids. A poster
+## lake is a flat blue with a hard shore.
+static func make_material() -> Material:
+	return Look.water_material()

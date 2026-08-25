@@ -210,7 +210,7 @@ const SALT_TINT_VALUE := 301
 const SALT_TINT_HUE := 302
 
 
-## TODO(marcel): make the aspect tint pick a side.
+## The aspect tint picks a side. (Was a TODO from terrain v2; look v1 did it.)
 ##
 ## `dot` is -1 for a face pointing directly away from the sun, +1 for one
 ## pointing straight at it, and 0 for one side-on. Returned unchanged, the tint
@@ -230,6 +230,8 @@ const SALT_TINT_HUE := 302
 ## Worth doing with aspect_tint turned well up in the F4 panel first, so you
 ## can see what the curve is doing, and then turning it back down.
 ##
-## Fallback: linear, i.e. the dot product straight through.
+## DONE IN LOOK V1, exactly as the hint says. A poster hillside is two flat
+## tones meeting at the ridge, which is what this curve makes of the aspect:
+## most of the range sits at the two ends and the changeover is quick.
 static func aspect_curve(dot: float) -> float:
-	return dot
+	return smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0

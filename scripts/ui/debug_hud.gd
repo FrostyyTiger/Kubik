@@ -76,6 +76,13 @@ const LOCAL_TUNING_ROWS := [
 	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
 	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
 	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
+	["fog_bands", "poster: fog bands", 1.0, 64.0, 1.0],
+	["sky_bands", "poster: sky bands", 1.0, 16.0, 1.0],
+	["cloud_cover", "poster: cloud cover", 0.0, 1.0, 0.05],
+	["far_band_m", "poster: far band (m)", 5.0, 200.0, 5.0],
+	["far_band_step", "poster: far band step", 0.0, 0.3, 0.01],
+	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
+	["far_zone_cell_m", "poster: far zone cell (m)", 0.0, 128.0, 4.0],
 	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
 	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
 	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
@@ -274,6 +281,12 @@ func _build_panel() -> void:
 
 	var title := Label.new()
 	title.text = "worldgen tuning"
+	# The one line of the tool that is typeset like the game. The readout and
+	# the rows below stay in the plain face: a tuning panel is a tool, and a
+	# display face on forty numbers would make them harder to read.
+	title.add_theme_font_override("font", Deco.font_of(&"TitleLabel"))
+	title.add_theme_font_size_override("font_size", 20)
+	title.uppercase = true
 	box.add_child(title)
 
 	box.add_child(_seed_row())

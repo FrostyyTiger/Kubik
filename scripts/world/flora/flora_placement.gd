@@ -151,9 +151,13 @@ static func masks_for(gen: TerrainGenerator, config: WorldgenConfig) -> Masks:
 ## anything at all; a second decides what. That keeps the cost of an empty
 ## block to a single hash however many models a zone can grow, and it means
 ## raising the variety of a zone never raises its triangle count.
+## MEADOW WAS 0.50 through foliage v1 and look v1 took a third off it: at one
+## tuft on every second block the meadow close-up read as confetti, and the
+## poster wants a colour field with drifts on it. The flowers did not thin
+## with it - see _meadow(), which grows them denser inside a patch instead.
 const ZONE_DENSITY := {
 	TerrainGenerator.ZONE_SHORE: 0.35,
-	TerrainGenerator.ZONE_MEADOW: 0.50,
+	TerrainGenerator.ZONE_MEADOW: 0.34,
 	TerrainGenerator.ZONE_FOREST: 0.24,
 	TerrainGenerator.ZONE_ALPINE: 0.24,
 	TerrainGenerator.ZONE_HEATH: 0.26,
@@ -413,8 +417,13 @@ static func _model_for(gen: TerrainGenerator, config: WorldgenConfig,
 ## distance. The colour is hashed from the PATCH cell, not the block.
 static func _meadow(masks: Masks, kind: float, bx: int, bz: int,
 		seed: int) -> int:
+	# HALF OF WHAT GROWS IN A PATCH IS FLOWERS - was 0.30 through foliage v1.
+	# Look v1 thinned the meadow by a third (ZONE_DENSITY) and raised this so
+	# the flowers did not thin with it: about as many flowers per block inside
+	# a patch as before, on half the grass, which is a drift of one colour on
+	# a plain field rather than flowers scattered through confetti.
 	if masks.flower.get_noise_2d(float(bx), float(bz)) >= masks.flower_cut \
-			and kind < 0.30:
+			and kind < 0.50:
 		var cell := int(Masks.FLOWER_WAVELENGTH)
 		var px := Chunk.floor_div(bx, cell)
 		var pz := Chunk.floor_div(bz, cell)

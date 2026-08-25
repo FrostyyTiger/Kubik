@@ -67,6 +67,11 @@ func _apply_launch_args() -> void:
 		return
 	_launch_handled = true
 
+	# The UI comparison harness: photograph this screen, then open the next.
+	if UiShot.wanted():
+		_shoot_ui()
+		return
+
 	var args := OS.get_cmdline_user_args()
 	# The screenshot tour is a host session that drives itself, so it implies
 	# --host rather than needing both spelled out.
@@ -98,6 +103,13 @@ func _show_character() -> void:
 
 func _on_character_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/character/creation.tscn")
+
+
+## `--shot-ui <label>`: save this screen to build/ui/<label>/main-menu.png and
+## press Character, whose screen shoots itself and quits. See UiShot.
+func _shoot_ui() -> void:
+	await UiShot.capture(get_tree(), "main-menu")
+	_on_character_pressed()
 
 
 ## `--port N`, or the default if it is absent or unusable.

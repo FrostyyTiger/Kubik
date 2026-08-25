@@ -32,8 +32,8 @@ extends RefCounted
 ## at 60 and the game feels different on two machines.
 
 ## The reference leg length the stride table is written against: the stocky
-## human's 9 voxels. Every other race and scheme scales from it.
-const REFERENCE_LEG_M := 9.0 * VoxelModel.VOXEL_M
+## human's 16 voxels, 0.5 m. Every other race scales from it.
+const REFERENCE_LEG_M := 16.0 * VoxelModel.VOXEL_M
 
 ## Below this speed the character is standing still as far as the legs are
 ## concerned, and the swing blends out rather than shrinking asymptotically.

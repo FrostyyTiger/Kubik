@@ -29,6 +29,12 @@ Net="*res://scripts/net/net_manager.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[gui]
+
+; The poster. Every Control in the game inherits it; a screen opts OUT of the
+; look rather than into it. See docs/plans/look-v1.md, Stage 7.
+theme/custom="res://assets/ui/deco_theme.tres"
+
 [shader_globals]
 
 ; HOW DARK IT IS, 0 by day and 1 at night, written once per frame by SkyCycle
@@ -47,6 +53,35 @@ window/size/viewport_height=720
 kubik_night={
 "type": "float",
 "value": 0.0
+}
+
+; THE POSTER, look v1. The colour of shade, the colour of distance, and where
+; distance begins, ends and how many flat steps it takes - written every frame
+; by SkyCycle.apply() through Look.publish(). The defaults are a clear day, so
+; a scene with no SkyCycle (a self-test, a stray tool) draws sensibly.
+;
+; vec4 AND LINEAR, NOT color. The Compatibility renderer ignores colour-space
+; hints, and every palette in the game is stored linear for that reason - so
+; these are too, and SkyCycle converts before it publishes.
+kubik_shade={
+"type": "vec4",
+"value": Vector4(0.25, 0.29, 0.55, 1.0)
+}
+kubik_fog_color={
+"type": "vec4",
+"value": Vector4(0.46, 0.60, 0.77, 1.0)
+}
+kubik_fog_start={
+"type": "float",
+"value": 360.0
+}
+kubik_fog_end={
+"type": "float",
+"value": 600.0
+}
+kubik_fog_bands={
+"type": "float",
+"value": 6.0
 }
 
 [threading]

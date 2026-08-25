@@ -43,7 +43,12 @@ func setup(p_peer_id: int) -> void:
 
 func _ready() -> void:
 	_nametag.text = "peer %d" % peer_id
-	_nametag.modulate = color_for_peer(peer_id)
+	# Paper on ink, in the poster's body face. The per-peer hue used to be the
+	# whole tag; it is now the outline, so two friends still tell each other
+	# apart at a glance and the type stays the type.
+	_nametag.font = Deco.font_of(&"SectionLabel")
+	_nametag.modulate = Deco.PAPER
+	_nametag.outline_modulate = color_for_peer(peer_id).darkened(0.55)
 	# A remote character is never the one the close-camera hide applies to.
 	_view.local = false
 	# The default human until an appearance arrives. A REMOTE VIEW MUST NEVER

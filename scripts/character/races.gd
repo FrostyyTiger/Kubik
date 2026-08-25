@@ -23,8 +23,10 @@ enum {
 const RACE_COUNT := 4
 const RACE_NAMES := ["human", "elf", "dwarf", "lizardfolk"]
 
-## Proportion schemes. The human is built in both and Marcel picks in the
-## morning; every other race clamps to stocky.
+## Proportion schemes. Character v1 built the human in both and the look plan
+## DECIDED STOCKY for every race; the lean part set is gone. LEAN stays here
+## because `build` is a byte on the wire and in the save file, and a def that
+## still says 1 must clamp to 0 rather than fail to parse.
 enum {
 	STOCKY = 0,
 	LEAN = 1,
@@ -36,29 +38,20 @@ const BUILD_NAMES := ["stocky", "lean"]
 
 # --- The stack ---------------------------------------------------------------
 #
-# THE PLAN'S PART TABLE SUMS TO 28, AND THE HUMAN IS 32.
+# ONE MODEL VOXEL IS 1/16 OF A BLOCK since look v1, and a human is 64 of them.
+# The look plan's Stage 6 table is the source of every number below; the
+# pelvis is what the stack does not otherwise spend, and it is the part the
+# root bone `hips` carries:
 #
-# "Head 9, Neck 0, Torso 10, Legs 9" stacks to 28 voxels, or 1.75 m, against a
-# fixed total of 32 voxels = 2.00 m that the plan states twice and makes a
-# self-test of. Rather than inflate three tabled numbers to close a four-voxel
-# gap, the four voxels go where a voxel character usually has them and where
-# this rig already needed a bone: the HIPS.
-#
-# `hips` is the root bone of the plan's own bone list and every bone in that
-# list must have a part. A four-voxel pelvis between the legs and the torso
-# gives it one, preserves every number in the proportion table exactly, and
-# produces the Cube World stack the scheme is named after - short legs, a
-# chunky middle, a big head:
-#
-#     legs   [0,  9)   9
-#     pelvis [9, 13)   4
-#     torso  [13, 23) 10
-#     head   [23, 32)  9
+#     legs   [0, 16)  16
+#     pelvis [16, 22)  6
+#     torso  [22, 42) 20
+#     head   [42, 64) 22
 #                     --
-#                      32
+#                      64
 #
-# Recorded in the status doc as a departure. It is the only one in the
-# proportion table.
+# Head a third of the height, big hands, big boots - the Cube World stack the
+# scheme is named after, one step finer than character v1 drew it.
 
 ## Model voxels, for readability of the tables below.
 const V := VoxelModel.VOXEL_M
@@ -70,45 +63,42 @@ const V := VoxelModel.VOXEL_M
 # numbers in model voxels. `pelvis` is derived: total - legs - torso - head.
 
 const TABLE := [
+	# `leg_w` and `arm_w` are the widths the BONE TABLE spaces limbs by - the
+	# boot and the hand, which are a voxel wider than the trouser and the
+	# sleeve - so two boots touch at the centre line rather than sharing a
+	# voxel, and a hand hangs flush with the torso with a voxel of daylight at
+	# the armpit. `head_d` is the skull; the nose is one more in front of it.
 	{
 		"name": "human",
-		"total": 32, "legs": 9, "torso": 10, "head": 9,
-		"torso_w": 8, "torso_d": 5, "head_w": 8, "head_d": 8,
-		"leg_w": 3, "arm_len": 9, "arm_w": 3,
+		"total": 64, "legs": 16, "torso": 20, "head": 22,
+		"torso_w": 20, "torso_d": 11, "head_w": 18, "head_d": 16,
+		"leg_w": 8, "arm_len": 20, "arm_w": 8,
 		"lean_deg": 0.0,
-		"silhouette": "the reference: square shoulders",
+		"silhouette": "the reference: square stepped shoulders",
 	},
 	{
 		"name": "elf",
-		"total": 36, "legs": 12, "torso": 10, "head": 9,
-		# torso 5 and legs 2, narrowed from the table's 6 and 3 in silhouette
-		# pass 3 - see PartsElf. "Width" is on the plan's own list of features
-		# an elf may be exaggerated by.
-		"torso_w": 5, "torso_d": 4, "head_w": 8, "head_d": 8,
-		"leg_w": 2, "arm_len": 11, "arm_w": 2,
-		"neck": 2, "ear_out": 3,
+		"total": 72, "legs": 24, "torso": 20, "head": 22,
+		"torso_w": 12, "torso_d": 8, "head_w": 16, "head_d": 16,
+		"leg_w": 6, "arm_len": 24, "arm_w": 6,
+		"neck": 3, "ear_out": 6,
 		"lean_deg": 0.0,
 		"silhouette": "tall and narrow, ears",
 	},
 	{
 		"name": "dwarf",
-		# TORSO 9, NOT THE TABLE'S 10. legs 5 + torso 10 + head 10 is 25 and
-		# the dwarf's fixed total is 24, so one voxel has to come out of
-		# something. The torso is the one that is not a silhouette feature:
-		# the head and the beard are half of what makes a dwarf nameable at
-		# 40 m, and the legs are already the shortest in the game.
-		"total": 24, "legs": 5, "torso": 9, "head": 10,
-		"torso_w": 12, "torso_d": 7, "head_w": 10, "head_d": 8,
-		"leg_w": 4, "arm_len": 8, "arm_w": 4,
+		"total": 48, "legs": 10, "torso": 18, "head": 20,
+		"torso_w": 26, "torso_d": 14, "head_w": 20, "head_d": 16,
+		"leg_w": 10, "arm_len": 16, "arm_w": 10,
 		"lean_deg": 0.0,
 		"silhouette": "as wide as it is tall, beard",
 	},
 	{
 		"name": "lizardfolk",
-		"total": 30, "legs": 9, "torso": 10, "head": 9,
-		"torso_w": 8, "torso_d": 5, "head_w": 8, "head_d": 8,
-		"leg_w": 3, "arm_len": 9, "arm_w": 3,
-		"snout": 4, "tail_len": 14, "tail_segments": [5, 5, 4],
+		"total": 60, "legs": 18, "torso": 20, "head": 18,
+		"torso_w": 20, "torso_d": 11, "head_w": 16, "head_d": 16,
+		"leg_w": 8, "arm_len": 20, "arm_w": 8,
+		"snout": 8, "tail_len": 28, "tail_segments": [10, 10, 8],
 		"lean_deg": 8.0,
 		"silhouette": "tail, crest, snout",
 	},
@@ -182,9 +172,13 @@ const BEARD_OPTIONS := [
 	[],
 ]
 
-## Which races have a lean part set. `CharacterDef.validate()` clamps `build`
-## to stocky for every race not in here.
-const HAS_LEAN := [true, false, false, false]
+## Which races have a lean part set. NONE, since look v1 decided every race is
+## stocky and retired `parts_human_lean.gd`. `CharacterDef.validate()` clamps
+## `build` to stocky for every race not in here, which is how a save file or a
+## peer that still says "lean" gets a stocky human rather than an error. Kept
+## as a table rather than deleted so the machinery is one line from coming
+## back if a second scheme is ever wanted.
+const HAS_LEAN := [false, false, false, false]
 
 
 # --- Lookups -----------------------------------------------------------------
@@ -254,15 +248,13 @@ static func eye_height_m(race: int, build := STOCKY) -> float:
 ## Leg length in metres. The stride scales with this, which is what makes the
 ## dwarf take short quick steps and the elf long slow ones from one table.
 static func leg_length_m(race: int, build := STOCKY) -> float:
-	if build == LEAN and has_lean(race):
-		return float(LEAN_HUMAN["legs"]) * V
-	return float(table(race)["legs"]) * V
+	return float(dims(race, build)["legs"]) * V
 
 
 ## The pelvis, which is the height the rest of the stack does not spend. See
-## the note at the top of this file. Zero is a legal answer - the lean human
-## and the dwarf have no pelvis block at all, and their `hips` bone is a pure
-## transform with a socket on it.
+## the note at the top of this file. Zero is a legal answer - the dwarf has no
+## pelvis block at all, and its `hips` bone is a pure transform with a socket
+## on it.
 static func pelvis_height(race: int, build := STOCKY) -> int:
 	var t := dims(race, build)
 	var out: int = t["total"] - t["legs"] - t["torso"] - t["head"] - int(t.get("neck", 0))
@@ -273,26 +265,13 @@ static func pelvis_height(race: int, build := STOCKY) -> int:
 	return out
 
 
-# --- The lean human ----------------------------------------------------------
-#
-# The second scheme, for the proportion study in Stage 7. Same total height,
-# same animator, different bone lengths - which is the entire point of the
-# comparison: if the two schemes needed two animators the study would be
-# measuring the animator instead of the proportions.
-
-const LEAN_HUMAN := {
-	"name": "human", "total": 32, "legs": 14, "torso": 11, "head": 6,
-	"torso_w": 7, "torso_d": 4, "head_w": 6, "head_d": 6,
-	"leg_w": 2, "arm_len": 12, "arm_w": 2, "neck": 1,
-	"lean_deg": 0.0,
-	"silhouette": "naturalistic: neck and shoulders",
-}
-
-
 ## The dimension table for a race in a given build.
-static func dims(race: int, build := STOCKY) -> Dictionary:
-	if build == LEAN and has_lean(race):
-		return LEAN_HUMAN
+##
+## `build` is accepted and ignored: there is one scheme per race since look
+## v1. The parameter stays so the self-tests, the gallery and the animator
+## keep asking the question the way they always did, and a second scheme
+## would answer it here and nowhere else.
+static func dims(race: int, _build := STOCKY) -> Dictionary:
 	return table(race)
 
 
@@ -415,7 +394,7 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 			"parent": "hips" if i == 0 else "tail_%d" % i,
 			# The first link starts at the back of the pelvis, a little above
 			# the hip pivot; the rest follow their parent's own length.
-			"rest": (Vector3(0, 1, float(torso_d) * 0.5) if i == 0
+			"rest": (Vector3(0, 2, float(torso_d) * 0.5) if i == 0
 				else Vector3(0, 0, float(segments[i - 1]))) * V,
 			"part": "tail_%d" % (i + 1),
 		})
@@ -472,15 +451,8 @@ static func has_part_set(race: int) -> bool:
 	return HAS_PART_SET[valid_race(race)]
 
 
-## The part set for a race and scheme.
-##
-## Stage 3 has only the stocky human. Every other race falls back to it WITH A
-## WARNING rather than failing to build: a remote view must never fail to
-## build, and the same rule is worth having on this side of the branch too - a
-## half-finished run should still show you something walking around.
-static func part_set(race: int, build := STOCKY) -> Dictionary:
-	if build == LEAN and has_lean(race):
-		return PartsHumanLean.PARTS
+## The part set for a race. `build` is accepted and ignored, as in dims().
+static func part_set(race: int, _build := STOCKY) -> Dictionary:
 	match valid_race(race):
 		ELF:
 			return PartsElf.PARTS

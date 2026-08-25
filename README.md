@@ -136,8 +136,14 @@ rather than "4.x or newer" because CI builds against exactly this version,
 and an export template that does not match the engine produces a broken build.
 
 1. Open the Godot project manager, *Import*, select `project.godot`.
-2. First open takes a moment while Godot imports the block texture.
+2. First open takes a moment while Godot imports the fonts.
 3. Press F5.
+
+If you launch the game from the command line rather than the editor, run
+`godot --headless --path . --import` once after any pull that adds scripts with
+a `class_name` - the editor keeps the global class cache in `.godot/`, and a
+game started without it fails to parse the first script that names a new
+class.
 
 ### Testing multiplayer locally
 

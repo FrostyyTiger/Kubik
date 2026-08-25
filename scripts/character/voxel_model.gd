@@ -49,10 +49,11 @@ class_name VoxelModel
 ## below is deliberately the most boring one that can hold a voxel: an array of
 ## strings you can read in a terminal.
 
-## Metres per model voxel. 8 per 0.5 m block, which is what foliage v1 fixed
-## for plants citing the character scale, and what this plan confirms for
-## characters: a 2 m human is 32 voxels tall.
-const VOXEL_M := 0.0625
+## Metres per model voxel. 16 per 0.5 m block since look v1: a 2 m human is
+## 64 voxels tall. Character v1 built at 8 per block, the scale foliage v1
+## fixed for plants; the look plan halved it for characters alone, because a
+## face needs the resolution and a grass tuft does not. Plants stay at 1/8.
+const VOXEL_M := 0.03125
 
 ## Semantic slots. A part is authored in these, never in colours - the same
 ## voxels resolved through a different palette are a different-looking
@@ -250,19 +251,12 @@ static func bounds(voxels: Array) -> Array:
 # --- Meshing ----------------------------------------------------------------
 
 ## The terrain's material, so a character is made of the same stuff as the
-## ground it stands on. Flat vertex colour, no specular, no texture. Shared
-## across every part of every character - the colour is in the vertices, so one
-## material serves every palette.
-static var _material: StandardMaterial3D = null
-
-static func material() -> StandardMaterial3D:
-	if _material == null:
-		_material = StandardMaterial3D.new()
-		_material.vertex_color_use_as_albedo = true
-		_material.roughness = 1.0
-		_material.metallic_specular = 0.0
-		_material.cull_mode = BaseMaterial3D.CULL_BACK
-	return _material
+## ground it stands on. Flat vertex colour, no specular, no texture, and since
+## look v1 the poster ramp - the same object the chunks draw with, see Look.
+## Shared across every part of every character - the colour is in the
+## vertices, so one material serves every palette.
+static func material() -> Material:
+	return Look.opaque_material()
 
 
 ## Mesh a voxel list into an ArrayMesh, in metres, with baked corner AO.
