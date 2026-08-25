@@ -565,21 +565,40 @@ func _densest_heading(gen: TerrainGenerator, cfg: WorldgenConfig,
 				trunks.append(Vector2(float(int(found["bx"]) - bx),
 					float(int(found["bz"]) - bz)))
 
+	# THE NEAR ZONE IS WHAT RUINS THE SHOT. Weighting by 1/d was the first
+	# attempt and it is exactly backwards for a photograph: it picks whichever
+	# direction has a trunk closest to the lens, and a trunk three metres from
+	# a 68 degree camera is a wall filling the middle of the frame. What is
+	# wanted is trees you can see BETWEEN - a middle distance full of them and
+	# nothing pressed against the glass.
+	const TOO_CLOSE := 7.0    # blocks; 3.5 m
+	const NEAR := 10.0
+	const FAR := 34.0
+
 	var best := Vector2(1.0, 0.0)
-	var best_score := -1.0
-	for i in 8:
-		var angle := float(i) / 8.0 * TAU
+	var best_score := -INF
+	for i in 12:
+		var angle := float(i) / 12.0 * TAU
 		var dir := Vector2(cos(angle), sin(angle))
 		var score := 0.0
+		var blocked := false
 		for t in trunks:
 			var d := t.length()
-			if d < 2.0 or d > float(reach):
+			if d < 0.5 or d > FAR:
 				continue
-			# Inside a 45 degree wedge, and nearer trunks count for more -
-			# a wall of trees at 25 m is a backdrop, one at 6 m is the subject.
-			if dir.dot(t / d) < 0.85:
+			var along := dir.dot(t / d)
+			# A wide wedge for what is in shot, a narrow one for what is in
+			# the way: a trunk 20 degrees off axis at 3 m still fills a third
+			# of the frame.
+			if along < 0.7:
 				continue
-			score += 1.0 / d
+			if d < TOO_CLOSE and along > 0.55:
+				blocked = true
+				break
+			if d >= NEAR:
+				score += 1.0
+		if blocked:
+			continue
 		if score > best_score:
 			best_score = score
 			best = dir
