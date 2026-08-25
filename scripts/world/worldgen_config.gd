@@ -914,8 +914,17 @@ const PROPERTIES: PackedStringArray = [
 # That is what makes density a dial rather than a rewrite, which is the whole
 # reason the performance budget can be met by turning something down.
 
-## Columns further than this from the player carry no flora node at all.
+## Columns further than this from the player carry the full ground cover.
 @export var flora_radius_m := 64.0
+
+## THE SPARSE RING, from the flora streaming pass. Between flora_radius_m and
+## flora_far_m a column draws flora_far_fraction of its plants - the same
+## hashed subset every machine would pick, so walking into the full ring adds
+## plants around the ones already there. The circle where the grass used to
+## end becomes a fade. Set flora_far_m at or below flora_radius_m to switch the
+## ring off. Local knobs, like the radius.
+@export var flora_far_m := 128.0
+@export var flora_far_fraction := 0.25
 
 ## An instance is drawn only if its hash falls below this.
 ##
@@ -935,7 +944,7 @@ const PROPERTIES: PackedStringArray = [
 
 
 const LOCAL_PROPERTIES: PackedStringArray = [
-	"flora_radius_m", "flora_draw_fraction", "far_tree_m",
+	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life",
 	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
