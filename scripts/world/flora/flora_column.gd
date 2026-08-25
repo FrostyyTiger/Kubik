@@ -20,6 +20,14 @@ var column := Vector2i.ZERO
 ## How many instances this column is currently drawing, for the F3 readout.
 var instance_count := 0
 
+## And how many triangles those instances add up to.
+##
+## THE BUDGET IS IN TRIANGLES, NOT INSTANCES, and the two are not
+## proportional: a grass tuft is a few dozen and a three-metre boulder is
+## thousands. A column of heath costs many times a column of meadow at the same
+## instance count, and only this number says so.
+var triangle_count := 0
+
 var _slots := {}   # model id -> MultiMeshInstance3D
 
 
@@ -40,6 +48,7 @@ func setup(p_column: Vector2i) -> void:
 ## the other way round either drops the data or errors.
 func apply_buffers(buffers: Dictionary, config: WorldgenConfig) -> void:
 	instance_count = 0
+	triangle_count = 0
 
 	for model in buffers:
 		var buf: PackedFloat32Array = buffers[model]
@@ -56,6 +65,7 @@ func apply_buffers(buffers: Dictionary, config: WorldgenConfig) -> void:
 		slot.multimesh.buffer = buf
 		slot.visible = true
 		instance_count += count
+		triangle_count += count * FloraModels.triangles_for(model, config.block_size)
 
 	# A model this column no longer has any of keeps its node but draws
 	# nothing. Freeing and rebuilding the node instead would churn the

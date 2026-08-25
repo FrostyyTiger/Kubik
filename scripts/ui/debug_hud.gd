@@ -177,8 +177,9 @@ func _compose_readout() -> String:
 			lines.append("far field %d verts" % world.far_field_vertices())
 		if world.has_method("flora_stats"):
 			var f: Dictionary = world.flora_stats()
-			lines.append("flora     %d in %d cols, %d pending" % [
-				f.get("instances", 0), f.get("columns", 0), f.get("pending", 0)])
+			lines.append("flora     %d inst, %.2f M tris, %d cols, %d pending" % [
+				f.get("instances", 0), float(f.get("triangles", 0)) / 1000000.0,
+				f.get("columns", 0), f.get("pending", 0)])
 	if far_trees != null and far_trees.has_method("stats"):
 		var t: Dictionary = far_trees.stats()
 		lines.append("far trees %d impostors, %d ms rebuild" % [

@@ -459,7 +459,40 @@ static func _grove(masks: Masks, bx: int, bz: int) -> float:
 	return masks.grove_floor
 
 
-## Clearings. 0 inside a glade, 1 everywhere else.
+## TODO(marcel): glades are in the wrong places.
+##
+## This decides where a clearing happens, from a low-frequency noise mask. Noise
+## is a fine way to pick DISTRICTS and a poor way to pick a glade, because a
+## glade is not a random location - it is a place where the light gets to the
+## floor, and the terrain already knows where those are.
+##
+## The result today is clearings that sometimes sit on a steep north face where
+## nothing would open up, and no clearings at all on the sunny shelf next to it
+## where in a real forest there would be one.
+##
+## Note this is the SAME shape of exercise as `_bench_placement()` in
+## TerrainGenerator, deliberately - it is the same mistake made twice, and the
+## second one is easier to see now that the first is written down.
+##
+##   Hint: two things make a clearing, and the terrain has both.
+##
+##       var slope := gen.heightmap.slope_deg_at(wx, wz)
+##       var flat := 1.0 - smoothstep(8.0, 26.0, slope)
+##       var sunny := ... the aspect - see Block.SUN_ASPECT and the normal of
+##                        the coarse gradient at (wx, wz)
+##       return open if mask_value * flat * sunny is in its top glade_share
+##
+##   Careful, and this is the interesting part: making the glade term depend on
+##   slope puts it in the same business as `_slope_ok`, which already refuses
+##   trees on anything past 40 degrees. Multiply two terms that both say "not
+##   on a slope" and the forest loses its edges twice over. Decide which one
+##   owns steepness before you write the other.
+##
+##   Worth doing with glade_share turned well up in the F4 panel first, so you
+##   can see what the mask is doing, and then turning it back down.
+##
+## Fallback: the noise mask alone, which gives clearings in plausible districts
+## at implausible spots.
 static func _glade(masks: Masks, bx: int, bz: int) -> float:
 	if masks.glade_cut == INF:
 		return 1.0   # share 0: the term is off
@@ -596,6 +629,38 @@ static func species_at(gen: TerrainGenerator, cell_x: int, cell_z: int,
 	return -1
 
 
+## TODO(marcel): the species blend is a straight line, and forests are not.
+##
+## `t` is where in the forest band a tree stands, 0 at the bottom and 1 at the
+## top, and it is handed to the weight table unchanged - so beech gives way to
+## spruce, and spruce to larch, at a perfectly even rate all the way up.
+##
+## Real treelines do not do that. A forest is one thing for most of its height
+## and then changes its mind quickly near the top, where the growing season
+## gets short: the bottom two thirds of a slope are much the same wood, and the
+## last third is where larch and krummholz take over in a hurry.
+##
+##   Hint:  return smoothstep(0.0, 1.0, t) is NOT what you want - that is
+##   slower at both ends and this only wants to be slower at the bottom. Try
+##
+##       return pow(t, 1.6)
+##
+##   which spends longer in the low rows and compresses the top ones, so the
+##   changeover happens where the trees are already struggling. 1.0 is the
+##   present behaviour; push it up towards 2.5 and the treeline becomes a
+##   distinct band rather than a gradient.
+##
+##   The thing to watch is the SPECIES COUNTS in the probe, not the picture:
+##   this moves trees between species without changing the total, so it is the
+##   per-species lines that tell you what you did. Bending it too far starves
+##   beech, which is the only broadleaf in the forest band and the one giving
+##   the conifers something to be compared against.
+##
+## Fallback: linear, i.e. `t` straight through.
+static func _blend_curve(t: float) -> float:
+	return t
+
+
 ## The blended weight table, plus wildness.
 static func _forest_species(gen: TerrainGenerator, cell_x: int, cell_z: int,
 		surface: float, bx: int, bz: int) -> int:
@@ -607,7 +672,7 @@ static func _forest_species(gen: TerrainGenerator, cell_x: int, cell_z: int,
 	# Position along the four rows: 0 at the middle of the bottom quarter, 3 at
 	# the middle of the top one, so the ends of the band are not extrapolated
 	# past the rows that describe them.
-	var f := clampf(t * 4.0 - 0.5, 0.0, 3.0)
+	var f := clampf(_blend_curve(t) * 4.0 - 0.5, 0.0, 3.0)
 	var row := int(floor(f))
 	var frac := f - float(row)
 	var next := mini(row + 1, FOREST_WEIGHTS.size() - 1)

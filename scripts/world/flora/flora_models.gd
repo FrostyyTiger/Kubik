@@ -34,6 +34,33 @@ class_name FloraModels
 ## Model voxels per world block. 8, from the character scale in DESIGN.md.
 const VOXELS_PER_BLOCK := 8
 
+
+## Voxels per block for ONE model, where 8 is not the right answer.
+##
+## NOT EVERY MODEL IS A PLANT, and the measurement that forced this is worth
+## keeping. A 3 m boulder built at 8 voxels to the block is 48 voxels across,
+## and its shell came to 35,964 TRIANGLES - one rock costing more than two
+## hundred grass tufts, and a scree field costing more than the entire flora
+## budget by itself. A heath of 90 cm shrubs at 2,184 triangles each was the
+## same problem one size down.
+##
+## The fix is not to make them smaller - the sizes are what you see - it is to
+## notice that THE WORLD'S OWN BLOCKS ARE 50 cm. A boulder made of 25 cm voxels
+## is still twice as detailed as the ground it is sitting on, and a shrub at
+## 12.5 cm is four times. There was never a reason for a rock to be eight times
+## finer than the mountain it fell off.
+##
+## Grass, flowers, ferns and mushrooms stay at 8. They are the things a player
+## crouches next to, they are the things DESIGN.md's character scale is about,
+## and they are small enough that the resolution costs almost nothing.
+static func voxels_per_block(model: int) -> int:
+	match model:
+		BOULDER_S, BOULDER_M, BOULDER_L:
+			return 2
+		SHRUB_A, SHRUB_B:
+			return 4
+	return VOXELS_PER_BLOCK
+
 # --- Model ids --------------------------------------------------------------
 #
 # Indices into the model table. They are NOT block ids and do not cross the
@@ -132,7 +159,11 @@ const COLORS := [
 	Color(0.1912, 0.3663, 0.0452),   # GRASS_BLADE      #79A33C  blade, base
 	Color(0.3916, 0.5841, 0.1119),   # GRASS_BLADE_DRY  #A8C95E  blade, sunlit tip
 	Color(0.2918, 0.3763, 0.0844),   # GRASS_ALPINE     #93A552  short turf
-	Color(0.1070, 0.1946, 0.0273),   # STEM             #5C7A2E  flower, reed stem
+	# LIGHTENED from #5C7A2E, which was half the meadow block's value and read
+	# as a black stick with a white brick on top. A stem is thinner than one
+	# voxel in reality, so at 6.25 cm it is already too wide - making it dark
+	# as well turned a field of flowers into a field of nails.
+	Color(0.2384, 0.3916, 0.0595),   # STEM             #86A845  flower, reed stem
 	# LIGHTER AND GREENER than the first attempt at #4A7A34, which came back
 	# from the gallery almost black against the forest floor and, with
 	# one-voxel fronds, read as a spider rather than as a plant.
@@ -171,6 +202,13 @@ const COLORS := [
 
 ## Every model, built on demand and cached.
 static var _meshes := {}
+## Triangles per model, recorded as each mesh is built.
+##
+## COUNTED AT BUILD TIME because the alternative is not cheap: ArrayMesh has no
+## triangle count, and get_faces() rebuilds the whole vertex list to answer.
+## The number is wanted once a frame by the budget readout, so it has to be a
+## lookup rather than a rebuild.
+static var _triangles := {}
 static var _mesh_mutex := Mutex.new()
 static var _material: ShaderMaterial = null
 
@@ -236,24 +274,26 @@ static func voxels_for(model: int) -> Array:
 		MUSHROOM:
 			return _mushroom()
 
+		# RADII ARE IN THIS MODEL'S OWN VOXELS - see voxels_per_block(). A
+		# shrub's voxel is 12.5 cm and a boulder's is 25 cm, so the numbers
+		# below are smaller than the plant models' for the same real size.
+
 		SHRUB_A:
-			# 90 cm across and 50 cm tall - wider than it is tall, which is
+			# 100 cm across and 50 cm tall - wider than it is tall, which is
 			# what "dwarf shrub" means and why heath reads as a rusty carpet
 			# rather than as a field of bushes.
-			return _blob(7, 8, C_SHRUB, 511)
+			return _blob(4, 4, C_SHRUB, 511)
 		SHRUB_B:
-			return _blob(6, 7, C_SHRUB_B, 733)
+			return _blob(3, 3, C_SHRUB_B, 733)
 
-		# 1.0, 1.8 and 3.0 m across. The largest is a LANDMARK - one of them in
-		# a scree field is something to walk towards - which is why it is worth
-		# the triangles a 48-voxel-wide blob costs at a density of one block in
-		# seventy.
+		# 1.0, 2.0 and 3.0 m across. The largest is a LANDMARK - one of them in
+		# a scree field is something to walk towards.
 		BOULDER_S:
-			return _blob(8, 6, C_BOULDER, 101, true)
+			return _blob(2, 2, C_BOULDER, 101, true)
 		BOULDER_M:
-			return _blob(14, 11, C_BOULDER, 202, true)
+			return _blob(4, 3, C_BOULDER, 202, true)
 		BOULDER_L:
-			return _blob(24, 18, C_BOULDER, 303, true)
+			return _blob(6, 5, C_BOULDER, 303, true)
 
 		SCREE_A:
 			# A flat angular chip, 30-50 cm. Wide and one or two voxels thick,
@@ -375,10 +415,25 @@ static func _blob(radius: int, height: int, color: int, salt: int,
 				# Chew only the OUTER shell. Hollowing the middle would cost
 				# nothing visually and everything in triangles, because the
 				# faces facing the new hole would all have to be drawn.
-				if d > 0.55:
-					var keep := WorldHash.hash01(x * 31 + y, z * 17 + y, salt,
-						719)
-					if keep < (0.22 if stone else 0.30):
+				#
+				# AND CHEW LESS WHEN THERE IS LESS TO CHEW. The amount is
+				# scaled by the radius, because at a small radius the "outer
+				# shell" is most of the blob and removing a third of it does
+				# not make a ragged outline, it punches holes right through -
+				# which is exactly what happened when boulders and shrubs
+				# moved to a coarser voxel scale and came back striped, with
+				# their own inside faces showing through the gaps.
+				# AND ONLY WHEN THERE IS A SHELL TO CHEW. Below radius 6 the
+				# "outer shell" is most of the blob, and removing a fifth of
+				# it does not ragged the outline - it opens holes right
+				# through, and you see the model's own inside faces through
+				# them. Boulders and shrubs moved to a coarser voxel scale for
+				# the triangle budget and came back striped for exactly this
+				# reason. A small blob is smooth; only the big ones are ragged,
+				# which is also true of real rocks.
+				if d > 0.55 and radius >= 6:
+					if WorldHash.hash01(x * 31 + y, z * 17 + y, salt, 719) \
+							< (0.22 if stone else 0.30):
 						continue
 				out.append([x, y, z, color, 0])
 	return out
@@ -441,10 +496,21 @@ static func mesh_for(model: int, block_size: float) -> ArrayMesh:
 	_mesh_mutex.lock()
 	got = _meshes.get(key)
 	if got == null:
-		got = build_mesh_from(voxels_for(model), block_size)
+		got = build_mesh_from(voxels_for(model), block_size,
+			voxels_per_block(model))
 		_meshes[key] = got
+		_triangles[key] = 0 if got == null \
+			else got.surface_get_array_index_len(0) / 3
 	_mesh_mutex.unlock()
 	return got
+
+
+## Triangles in one instance of this model.
+static func triangles_for(model: int, block_size: float) -> int:
+	var key := "%d|%.4f" % [model, block_size]
+	if not _triangles.has(key):
+		mesh_for(model, block_size)
+	return int(_triangles.get(key, 0))
 
 
 ## Build one voxel list into a mesh, with hidden faces culled.
@@ -455,10 +521,11 @@ static func mesh_for(model: int, block_size: float) -> ArrayMesh:
 ## between two voxels of the same model can never be seen - they are inside the
 ## plant - so dropping them is free, and on these shapes it removes between a
 ## third and a half of everything.
-static func build_mesh_from(voxels: Array, block_size: float) -> ArrayMesh:
+static func build_mesh_from(voxels: Array, block_size: float,
+		per_block: int = VOXELS_PER_BLOCK) -> ArrayMesh:
 	if voxels.is_empty():
 		return null
-	var unit := block_size / float(VOXELS_PER_BLOCK)
+	var unit := block_size / float(maxi(per_block, 1))
 
 	# Occupancy, so a face can ask whether anything is next to it.
 	var filled := {}
@@ -497,8 +564,22 @@ static func build_mesh_from(voxels: Array, block_size: float) -> ArrayMesh:
 ## The six face normals, and the four corner offsets of each face.
 ##
 ## Wound CLOCKWISE SEEN FROM OUTSIDE, which is Godot's front face - the same
-## rule ChunkMesher's winding self-test enforces on the terrain. Get it wrong
-## and a plant is not invisible, it is inside out.
+## rule ChunkMesher's winding self-test enforces on the terrain, and stated
+## algebraically there as
+##
+##     (p1 - p0) x (p2 - p0) == -normal
+##
+## EVERY ONE OF THESE SIX WAS BACKWARDS in the first version, and the way it
+## showed up is worth writing down because it did not look like a winding bug.
+## The models were not inside out and nothing vanished - what appeared was thin
+## horizontal gaps through every rounded blob, so a boulder read as sedimentary
+## layers and a shrub as a bush with slices missing. That survived being
+## explained as the raggedness setting, as the coarser voxel scale, and as
+## shadow acne, and was only caught by checking the six faces against the
+## identity above rather than by looking at them.
+##
+## The lesson is the one the terrain's winding self-test already encodes: check
+## winding with the cross product, not with your eyes.
 const FACE_NORMALS := [
 	Vector3i(1, 0, 0), Vector3i(-1, 0, 0),
 	Vector3i(0, 1, 0), Vector3i(0, -1, 0),
@@ -507,17 +588,17 @@ const FACE_NORMALS := [
 
 const FACES := [
 	# +X
-	[Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(1, 1, 1), Vector3(1, 0, 1)],
+	[Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(1, 1, 0), Vector3(1, 0, 0)],
 	# -X
-	[Vector3(0, 0, 1), Vector3(0, 1, 1), Vector3(0, 1, 0), Vector3(0, 0, 0)],
+	[Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(0, 1, 1), Vector3(0, 0, 1)],
 	# +Y
-	[Vector3(0, 1, 1), Vector3(1, 1, 1), Vector3(1, 1, 0), Vector3(0, 1, 0)],
+	[Vector3(0, 1, 0), Vector3(1, 1, 0), Vector3(1, 1, 1), Vector3(0, 1, 1)],
 	# -Y
-	[Vector3(0, 0, 0), Vector3(1, 0, 0), Vector3(1, 0, 1), Vector3(0, 0, 1)],
+	[Vector3(0, 0, 1), Vector3(1, 0, 1), Vector3(1, 0, 0), Vector3(0, 0, 0)],
 	# +Z
-	[Vector3(1, 0, 1), Vector3(1, 1, 1), Vector3(0, 1, 1), Vector3(0, 0, 1)],
+	[Vector3(0, 0, 1), Vector3(0, 1, 1), Vector3(1, 1, 1), Vector3(1, 0, 1)],
 	# -Z
-	[Vector3(0, 0, 0), Vector3(0, 1, 0), Vector3(1, 1, 0), Vector3(1, 0, 0)],
+	[Vector3(1, 0, 0), Vector3(1, 1, 0), Vector3(0, 1, 0), Vector3(0, 0, 0)],
 ]
 
 
@@ -673,8 +754,11 @@ void vertex() {
 	VERTEX.z += cos(TIME * 0.47 + ph * 1.3) * 0.40;
 	VERTEX.y += sin(TIME * 0.35 + ph * 0.7) * 0.22;
 
-	// The blink. Squared so it spends most of its time dim and flares briefly,
-	// which is what a firefly does - a plain sine reads as a pulsing lamp.
+	// TODO(marcel): the blink is too regular. See the note below the shader.
+	//
+	// Squared so it spends most of its time dim and flares briefly, which is
+	// what a firefly does - a plain sine reads as a pulsing lamp. What it is
+	// not is IRREGULAR, and a real firefly is.
 	float b = max(sin(TIME * 1.1 + ph * 2.1), 0.0);
 	v_glow = (0.15 + 0.85 * b * b) * kubik_night * night_life;
 
@@ -694,6 +778,36 @@ void fragment() {
 """
 
 
+## TODO(marcel): make the fireflies blink like fireflies.
+##
+## The blink in FIREFLY_SHADER is one sine, squared. Every firefly therefore
+## flashes at exactly the same RATE - only the phase differs - and once you have
+## noticed that, a meadow full of them reads as a string of fairy lights rather
+## than as insects.
+##
+## What a real firefly does is flash, wait an irregular while, and flash again.
+##
+##   Hint: multiply two sines whose periods do not divide into each other.
+##
+##       float a = max(sin(TIME * 1.10 + ph * 2.1), 0.0);
+##       float c = max(sin(TIME * 0.37 + ph * 1.3), 0.0);
+##       float b = a * a * c;
+##
+##   The second one is slow, so it gates the fast one on and off in bursts, and
+##   because 1.10 and 0.37 are not related the pattern does not repeat for a
+##   very long time. Push the two rates further apart for longer silences.
+##
+##   The reason to do it in the SHADER rather than by hashing a per-instance
+##   rate is that there is nowhere to put a per-instance number: the MultiMesh
+##   colour is already carrying the tint, and adding custom data to the buffer
+##   would cost four floats on every plant in the world to give one model in
+##   nineteen a variable it can derive from its own position anyway.
+##
+##   Worth turning night_life well up in the F4 panel while you look at it.
+##
+## Fallback: one squared sine, which blinks but does not wait.
+
+
 # --- The model gallery ------------------------------------------------------
 
 ## Model names, for the gallery's 1:1 strip.
@@ -706,7 +820,7 @@ static func build_mesh(name: String) -> ArrayMesh:
 	var i := NAMES.find(name)
 	if i < 0:
 		return null
-	return build_mesh_from(voxels_for(i), 0.5)
+	return build_mesh_from(voxels_for(i), 0.5, voxels_per_block(i))
 
 
 static func gallery_material() -> ShaderMaterial:

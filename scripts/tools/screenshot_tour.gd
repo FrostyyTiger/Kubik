@@ -211,7 +211,13 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 	# Looking level, lifted a little at the far end so the canopy is in frame.
 	# Straight ahead at eye height photographs trunks and forest floor and cuts
 	# the crowns off at the top of the picture, which answers half the question.
-	var forest_look := _along(forest_eye, _hashed_heading(7), 22.0, 5.0)
+	#
+	# AIMED AT THE TREES, not at a hashed compass bearing. Standing in a gap is
+	# what the shot needs; FACING one is not, and an arbitrary heading from a
+	# gap points at the open side about as often as not - the first version
+	# came back as a third of a frame of trees and two thirds of sky.
+	var forest_look := _along(forest_eye, _densest_heading(gen, cfg, forest_eye),
+		22.0, 5.0)
 	out.append({
 		"name": "7-forest-interior",
 		"note": "standing inside the densest forest in the world",
@@ -492,6 +498,50 @@ func _stand_in_gap(gen: TerrainGenerator, cfg: WorldgenConfig,
 		float(best.y) * cfg.block_size)
 
 
+## Which way to look for the most trees.
+##
+## Eight compass bearings, scored by how many trunks fall inside a wedge in
+## front of the camera. Cheap, and it turns "stand in a gap in the forest" into
+## "stand in a gap and look INTO the forest", which is the shot.
+func _densest_heading(gen: TerrainGenerator, cfg: WorldgenConfig,
+		eye: Vector3) -> Vector2:
+	var bx := int(eye.x / cfg.block_size)
+	var bz := int(eye.z / cfg.block_size)
+	var cell: int = cfg.tree_cell_blocks
+	var reach := 30
+
+	# Every trunk in range, once, rather than once per bearing.
+	var trunks: Array[Vector2] = []
+	for cz in range(Chunk.floor_div(bz - reach, cell),
+			Chunk.floor_div(bz + reach, cell) + 1):
+		for cx in range(Chunk.floor_div(bx - reach, cell),
+				Chunk.floor_div(bx + reach, cell) + 1):
+			var found := TreePlacement.decide(gen, cx, cz, _forest_masks)
+			if not found.is_empty():
+				trunks.append(Vector2(float(int(found["bx"]) - bx),
+					float(int(found["bz"]) - bz)))
+
+	var best := Vector2(1.0, 0.0)
+	var best_score := -1.0
+	for i in 8:
+		var angle := float(i) / 8.0 * TAU
+		var dir := Vector2(cos(angle), sin(angle))
+		var score := 0.0
+		for t in trunks:
+			var d := t.length()
+			if d < 2.0 or d > float(reach):
+				continue
+			# Inside a 45 degree wedge, and nearer trunks count for more -
+			# a wall of trees at 25 m is a backdrop, one at 6 m is the subject.
+			if dir.dot(t / d) < 0.85:
+				continue
+			score += 1.0 / d
+		if score > best_score:
+			best_score = score
+			best = dir
+	return best
+
+
 ## Distance in blocks to the nearest trunk, over the cells that could reach.
 func _nearest_trunk(gen: TerrainGenerator, cfg: WorldgenConfig,
 		bx: int, bz: int, cell_blocks: int) -> float:
@@ -757,8 +807,9 @@ func _report_cost(shot_name: String) -> void:
 		shot_name, float(prims) / 1000000.0]
 	if _world != null and _world.has_method("flora_stats"):
 		var f: Dictionary = _world.flora_stats()
-		line += ", %d flora in %d columns" % [
-			f.get("instances", 0), f.get("columns", 0)]
+		line += ", flora %d inst / %.2f M tris in %d cols" % [
+			f.get("instances", 0), float(f.get("triangles", 0)) / 1000000.0,
+			f.get("columns", 0)]
 	line += ", %d chunks" % _world.loaded_chunk_count()
 	print(line)
 

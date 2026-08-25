@@ -96,10 +96,45 @@ func _init() -> void:
 	gen.find_spawn()
 	spawn_ms = Time.get_ticks_msec() - spawn_ms
 	_print_spawn(gen, config, spawn_ms)
+	_print_spawn_clearance(gen, config)
 	quit()
 
 
-## Share of the map in each elevation zone.
+## How clear of trees the spawn point actually is.
+##
+## THE PLACEMENT RULE SAYS trees ramp in from tree_spawn_clear_m; this measures
+## whether they do. It is worth measuring rather than trusting because the two
+## halves are decided by completely different code at completely different
+## times - spawn is chosen from the finished heightmap, and the ramp is a term
+## in a product evaluated per candidate - and nothing but this line would
+## notice if they disagreed.
+##
+## Spawn is chosen to be flat, dry and open with a mountain in view. A forest
+## closing over it undoes every one of those at once, and it is also the one
+## place in the world a player stands still for their first minute.
+func _print_spawn_clearance(gen: TerrainGenerator, config: WorldgenConfig) -> void:
+	var spawn := gen.spawn_block
+	var cell: int = config.tree_cell_blocks
+	var reach := int(ceil(config.tree_spawn_ramp_m / config.block_size)) + cell
+	var nearest := INF
+	var within := 0
+	var masks := TreePlacement.masks_for(gen)
+	for cz in range(Chunk.floor_div(spawn.y - reach, cell),
+			Chunk.floor_div(spawn.y + reach, cell) + 1):
+		for cx in range(Chunk.floor_div(spawn.x - reach, cell),
+				Chunk.floor_div(spawn.x + reach, cell) + 1):
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			var dx := float(int(found["bx"]) - spawn.x) * config.block_size
+			var dz := float(int(found["bz"]) - spawn.y) * config.block_size
+			var d := sqrt(dx * dx + dz * dz)
+			nearest = minf(nearest, d)
+			if d < config.tree_spawn_clear_m:
+				within += 1
+	print("spawn clear   nearest tree %.1f m, %d inside the %.0f m clearing%s" % [
+		nearest if nearest < INF else -1.0, within, config.tree_spawn_clear_m,
+		"" if within == 0 else "  <-- FAILED"])
 ##
 ## The sanity check this answers is "do all four zones actually occur" - it is
 ## entirely possible to tune a world where the treeline sits above the highest

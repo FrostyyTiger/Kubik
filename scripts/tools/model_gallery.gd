@@ -369,6 +369,16 @@ func _build_plant_strip() -> void:
 			var node := MeshInstance3D.new()
 			node.mesh = e["mesh"]
 			node.material_override = script.gallery_material()
+			# CAST NO SHADOWS, because the world does not - FloraColumn turns
+			# shadow casting off on every flora MultiMesh, and a gallery that
+			# lit its models differently from the game would be showing you
+			# something the game never draws.
+			#
+			# It also removes an artefact that looked like a modelling bug and
+			# was not: a rounded voxel blob self-shadowing without a normal
+			# bias bands horizontally, and boulders and shrubs came back
+			# striped as though slices were missing out of them.
+			node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			node.position = Vector3(x0 + float(c) * pitch, ground, z)
 			root.add_child(node)
 			_plant_tallest = maxf(_plant_tallest, float(e["aabb"].size.y))

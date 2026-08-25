@@ -52,6 +52,7 @@ func _ready() -> void:
 		"species borders": _test_species_borders,
 		"flora determinism": _test_flora_determinism,
 		"flora removal": _test_flora_removal,
+		"flora winding": _test_flora_winding,
 	}
 	var failures := 0
 	for name in tests:
@@ -235,6 +236,62 @@ func _test_tree_borders():
 		print("  WARNING: no tree blocks in the sample - this test proved nothing")
 		return 1
 	return 1 if bad > 0 else 0
+
+
+## EVERY FLORA TRIANGLE MUST FACE OUTWARDS.
+##
+## The terrain has had a winding self-test since v1 and it earned its keep
+## immediately. FloraModels shipped without one and every single face in it was
+## backwards - all six directions - for three stages.
+##
+## WHAT MAKES THAT WORTH A TEST rather than a look is how it presented. The
+## models were not inside out and nothing disappeared: because the blobs are
+## solid and most of their faces are culled as interior anyway, the only
+## symptom was thin horizontal gaps through rounded models. A boulder read as
+## sedimentary layers, which looks almost deliberate. It survived being
+## explained as the raggedness setting, as the coarser voxel scale, and as
+## shadow acne, and was found by checking the arithmetic.
+##
+## The rule is the same one ChunkMesher's test enforces:
+##
+##     (p1 - p0) x (p2 - p0) == -normal
+##
+## which is the algebraic form of "clockwise seen from outside" - the face
+## Godot draws, since back faces are culled.
+func _test_flora_winding():
+	var bad := 0
+	var checked := 0
+	for model in FloraModels.COUNT:
+		var mesh := FloraModels.mesh_for(model, 0.5)
+		if mesh == null:
+			continue
+		var arrays := mesh.surface_get_arrays(0)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		var wrong := 0
+		var i := 0
+		while i + 2 < indices.size():
+			var p0 := verts[indices[i]]
+			var p1 := verts[indices[i + 1]]
+			var p2 := verts[indices[i + 2]]
+			var n := normals[indices[i]]
+			var cross := (p1 - p0).cross(p2 - p0)
+			# Direction only - the magnitude is twice the triangle's area.
+			if cross.length() > 0.0 and cross.normalized().dot(-n) < 0.99:
+				wrong += 1
+			checked += 1
+			i += 3
+		if wrong > 0:
+			print("  %s: %d of %d triangles wound the wrong way" % [
+				FloraModels.NAMES[model], wrong, indices.size() / 3])
+			bad += 1
+	print("flora winding: %d triangles across %d models, %d models wrong" % [
+		checked, FloraModels.COUNT, bad])
+	if checked == 0:
+		print("  WARNING: no triangles in the sample - this test proved nothing")
+		return 1
+	return bad
 
 
 ## GATHERING ONE PLANT MUST TAKE EXACTLY ONE PLANT.

@@ -118,6 +118,7 @@ var _flora_in_flight := {}   # Vector2i -> {"task": int, "job": FloraJob}
 var _flora_queue: Array[Vector2i] = []
 var _flora_queued := {}
 var _flora_instances := 0
+var _flora_triangles := 0
 var _flora_ms := 0
 
 ## Flora instances that have been taken out of the world, as a set of 64-bit
@@ -227,8 +228,9 @@ func _process(_delta: float) -> void:
 			_built, wall, _total_ms, float(_gen_ms) / 1000.0 / n,
 			float(_mesh_ms) / 1000.0 / n])
 		print("[World] far field %d vertices" % _far_vertices)
-		print("[World] flora %d instances in %d columns, %.2f ms per column on workers" % [
-			_flora_instances, _flora_nodes.size(),
+		print("[World] flora %d instances, %.2f M triangles, %d columns, %.2f ms per column on workers" % [
+			_flora_instances, float(_flora_triangles) / 1000000.0,
+			_flora_nodes.size(),
 			float(_flora_ms) / 1000.0 / float(maxi(_flora_nodes.size(), 1))])
 		generation_finished.emit(_built, wall)
 
@@ -301,6 +303,7 @@ func reset() -> void:
 	_flora_queue.clear()
 	_flora_queued.clear()
 	_flora_instances = 0
+	_flora_triangles = 0
 	_flora_ms = 0
 	_gen_in_flight.clear()
 	_build_queue.clear()
@@ -506,8 +509,10 @@ func _collect_flora(started: int, budget: int) -> void:
 			add_child(node)
 			_flora_nodes[col] = node
 		_flora_instances -= node.instance_count
+		_flora_triangles -= node.triangle_count
 		node.apply_buffers(job.buffers, config)
 		_flora_instances += node.instance_count
+		_flora_triangles += node.triangle_count
 
 
 ## Chunks whose voxels have arrived. Publish them, replay their edits, and
@@ -758,6 +763,7 @@ func _refresh_flora() -> void:
 	for col in doomed:
 		var node: FloraColumn = _flora_nodes[col]
 		_flora_instances -= node.instance_count
+		_flora_triangles -= node.triangle_count
 		node.queue_free()
 		_flora_nodes.erase(col)
 
@@ -792,6 +798,7 @@ func _wants_flora(col: Vector2i) -> bool:
 func flora_stats() -> Dictionary:
 	return {
 		"instances": _flora_instances,
+		"triangles": _flora_triangles,
 		"columns": _flora_nodes.size(),
 		"pending": _flora_queue.size() + _flora_in_flight.size(),
 	}
