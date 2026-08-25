@@ -24,6 +24,12 @@ Every feature must serve at least one, and contradict none.
   place objects, never terrain.
 - **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
   not from menus or crafting trees. Distance is the difficulty and content axis.
+- **AUTHORED TRUTH, IMPROVISED PATH.** The world's facts - what exists, what
+  things want, what can happen - are data the game owns. Anything generative
+  performs inside them and never invents them. The game must be complete
+  without it. This is the pillar the Game Master stands on (architecture
+  decision 6, and `docs/IDEAS.md`): a director that improvises the path to
+  authored stakes, arriving late, invisible when it arrives.
 
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
@@ -125,6 +131,36 @@ Coordinate conversion floor-divides rather than using integer division.
 Truncation towards zero puts block `-1` in chunk `0` instead of chunk `-1`,
 which corrupts a band of world on the negative side of the origin only, and is
 a miserable thing to debug. See `Chunk.floor_div`.
+
+### 6. Authored truth, improvised path
+
+The fourth pillar, as architecture. The game will one day have a **Game
+Master**: a director that reads what the players' journey means and
+improvises the path to authored stakes - where the pack waits tonight, which
+fragment you find, what a companion remembers. It is designed in
+`docs/IDEAS.md` and it arrives late. What it asks of the code is decided now,
+because it is cheap now and a rewrite later:
+
+- **Facts are data.** What exists, what things want, what can happen - tables
+  a program can read, never prose in a script. `Races`, the parts tables and
+  the worldgen config already are; creatures, places, lore fragments and
+  quest outcomes follow.
+- **The host keeps a journal.** Structured events - edit, death, campfire,
+  kill, first sight of a lake - appended as they happen. It is the director's
+  input later and a debugging record today.
+- **The director is a client of the one mutation path.** It runs beside the
+  host as a sidecar process (an API, or a local model later), talks to Godot
+  over local HTTP/WebSocket, and *proposes*. The host validates every
+  proposal against the allowed outcomes and applies it - exactly how a
+  client's block edit is treated. It never touches state directly, never
+  runs inside the engine's loop, and never sits on a timescale shorter than
+  minutes: no combat, no physics.
+- **The game is complete without it.** Every beat it can steer has an
+  authored default. Offline, or with no key, the defaults play. The host
+  pays for it; clients get it through the host.
+
+Godot needs nothing added for this. `HTTPRequest` and `WebSocketPeer` are
+built in; the model never runs in-engine.
 
 ---
 

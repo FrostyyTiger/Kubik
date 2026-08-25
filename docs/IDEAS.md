@@ -172,12 +172,16 @@ Longing is free; water physics are not.
 What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
 not hardcode "world edge = mountains" anywhere.
 
-## The Game Master: an LLM layer (a research direction, not a feature)
+## The Game Master: an LLM director (a core aspect, arriving late)
 
 Noted 2026-08-25 from a conversation Marcel had about where LLMs actually
-belong in games. Parked here in the Second Age's shape - its own section,
-because it is a direction and not an item - and with the same scope honesty:
-nothing here before there is a game to put it in.
+belong in games, and promoted the same day to a core aspect of Kubik: the
+fourth pillar in `README.md` and `CLAUDE.md` - *authored truth, improvised
+path* - is this idea stated as a rule, and architecture decision 6 in the
+README is what the code does about it now. This section is the design. It
+has its own section in the Second Age's shape because it is a direction and
+not an item, and with the same scope honesty: the director itself is built
+last, on top of a game that is complete without it.
 
 **The opportunity.** LLMs in games are not chatbot NPCs or generated dialogue.
 The unit of value is *goal-directed improvisation under constraints* - a
@@ -212,14 +216,22 @@ serve pillar 1 (a companion that remembers what the two of you did). It
 touches nothing in pillar 2. What it must not become: a menu, a chat window,
 or a source of facts the world did not author.
 
-**What it asks of the code today.** Two things, both cheap and both already
-true by accident:
+**What it asks of the code today** is the three habits in `CLAUDE.md` and
+architecture decision 6 in the README: facts as data, the host's journal, and
+the director as a client of the one mutation path. Nothing to build now;
+nothing to hardcode against later.
 
-- Keep authored truth as *data*, not prose in scripts: creature goals, lore
-  fragments, what a place is. `Races` and the parts tables already work this
-  way; the creature design should too.
-- The host owns the world. Any such layer runs on the host and talks to the
-  simulation through the one mutation path, like everything else - which
-  also answers "who pays for the API" (the host) and "what about offline"
-  (it degrades to the authored beats). Nothing to build now; nothing to
-  hardcode against later.
+**How it arrives, in order.**
+
+1. *Now, free:* the journal and facts-as-data, obeyed by every plan from the
+   creature work onward.
+2. *With creatures and quests:* every system built fully authored - fixed
+   goals, fixed beats, allowed outcomes as a list - so the game is complete
+   with no director at all.
+3. *First director:* one small, invisible use. Which fragment you find; where
+   the pack waits tonight. Proposals only, validated by the host, minutes
+   timescale, nothing on the combat path.
+4. *Then:* companions with real memory, the semantic director reading the
+   journal, NPCs with fixed goals and adaptive tactics.
+
+Marketed as the experience, never the technology, at every step.

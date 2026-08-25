@@ -2,8 +2,15 @@
 
 Settled details. Terse on purpose - this is a working doc.
 
-Subject to the three pillars in the README. A line here that contradicts a
+Subject to the four pillars in the README. A line here that contradicts a
 pillar is a bug in this file, not a licence to bend the pillar.
+
+The fourth pillar - authored truth, improvised path - is the one this file
+serves most directly: everything settled here is the authored truth. Where a
+section defines things a director could one day steer (creature goals, what a
+place is, lore fragments, a quest's outcomes), it defines them as DATA, per the
+three habits in `CLAUDE.md`. The Game Master itself is designed in
+`docs/IDEAS.md` and arrives late; nothing here depends on it.
 
 ## Setting
 

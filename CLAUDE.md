@@ -14,6 +14,25 @@ Every feature must serve at least one, and contradict none.
   place objects, never terrain.
 - **THE WORLD IS THE CONTENT.** Progression comes from ranging further outward,
   not from menus or crafting trees. Distance is the difficulty and content axis.
+- **AUTHORED TRUTH, IMPROVISED PATH.** The world's facts - what exists, what
+  things want, what can happen - are data the game owns. Anything generative
+  (the Game Master, an LLM director arriving late - see `docs/IDEAS.md`)
+  performs inside them and never invents them. The game must be complete
+  without it.
+
+## The three habits
+
+Cheap now, and what the fourth pillar asks of every plan from here on:
+
+1. **Facts as data, not prose in code.** Creature goals, what a place is, lore
+   fragments, a quest's allowed outcomes: tables, like `Races` already is. A
+   director can only steer what it can read.
+2. **Keep the journal.** The host sees every event - edit, death, campfire,
+   kill, first sight of a lake. Log them as structured events. That journal is
+   the "what the journey means" input later, and it costs nothing today.
+3. **Everything through the one mutation path.** A director proposes; the host
+   validates against the allowed list and applies - exactly how a client's
+   block edit is treated. Nothing generative ever touches state directly.
 
 ## Rule
 
