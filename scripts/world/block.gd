@@ -18,6 +18,34 @@ enum {
 	SHORE = 9,
 	ALPINE_GRASS = 10,
 	HEATH = 11,
+
+	# --- Foliage v1 Stage 3: seven species instead of one ------------------
+	#
+	# APPENDED, NEVER RENUMBERED, like everything above them - these ids are
+	# the wire format for block edits.
+	#
+	# TWO IDS PER SPECIES, A AND B. A grove drawn in one exact green reads as
+	# one object rather than as many trees, and the fix that does NOT work is
+	# per-block colour variation: it is incompatible with greedy meshing, and
+	# a flat canopy would go from one quad to hundreds. Per-TREE variation
+	# costs nothing at all - each tree hashes A or B for its whole crown, the
+	# mesher merges within a tree exactly as before, and neighbouring trees
+	# stop being the same colour. The two shades are a few percent apart in
+	# value and hue; more reads as two species rather than as light.
+	#
+	# LEAVES stays spruce A and TRUNK stays every brown trunk, so no existing
+	# world changes colour.
+	LEAVES_SPRUCE_B = 12,
+	LEAVES_BEECH = 13,
+	LEAVES_BEECH_B = 14,
+	LEAVES_LARCH = 15,
+	LEAVES_LARCH_B = 16,
+	LEAVES_PINE = 17,
+	LEAVES_PINE_B = 18,
+	LEAVES_BIRCH = 19,
+	LEAVES_BIRCH_B = 20,
+	TRUNK_BIRCH = 21,
+	TRUNK_DEAD = 22,
 }
 
 ## The palette. These ARE the look of the game - there are no textures, so a
@@ -58,12 +86,29 @@ const COLORS := [
 	Color(0.5209, 0.4508, 0.2549),   # SHORE        #BFB48C  wet gravel
 	Color(0.3864, 0.4793, 0.1170),   # ALPINE_GRASS #A7B860  short yellow turf
 	Color(0.2623, 0.1144, 0.0704),   # HEATH        #8C5F4B  rusty dwarf shrub
+	Color(0.0908, 0.2122, 0.0395),   # LEAVES_SPRUCE_B  #557F38  spruce, shade B
+	Color(0.1559, 0.3325, 0.0482),   # LEAVES_BEECH     #6E9C3E  beech, shade A
+	Color(0.1878, 0.3712, 0.0648),   # LEAVES_BEECH_B   #78A448  beech, shade B
+	Color(0.4793, 0.3278, 0.0452),   # LEAVES_LARCH     #B89B3C  larch, shade A
+	Color(0.5395, 0.3813, 0.0666),   # LEAVES_LARCH_B   #C2A649  larch, shade B
+	Color(0.0452, 0.1470, 0.0723),   # LEAVES_PINE      #3C6B4C  krummholz, shade A
+	Color(0.0561, 0.1714, 0.0931),   # LEAVES_PINE_B    #437356  krummholz, shade B
+	Color(0.3325, 0.5210, 0.0953),   # LEAVES_BIRCH     #9CBF57  birch, shade A
+	Color(0.3813, 0.5711, 0.1248),   # LEAVES_BIRCH_B   #A6C763  birch, shade B
+	Color(0.6654, 0.6445, 0.5520),   # TRUNK_BIRCH      #D5D2C4  birch bark
+	Color(0.3231, 0.2831, 0.2384),   # TRUNK_DEAD       #9A9186  snag, weathered
 ]
 
 const NAMES := [
 	"air", "stone", "dirt", "grass", "sand", "snow",
 	"forest_floor", "leaves", "trunk",
 	"shore", "alpine_grass", "heath",
+	"leaves_spruce_b",
+	"leaves_beech", "leaves_beech_b",
+	"leaves_larch", "leaves_larch_b",
+	"leaves_pine", "leaves_pine_b",
+	"leaves_birch", "leaves_birch_b",
+	"trunk_birch", "trunk_dead",
 ]
 
 

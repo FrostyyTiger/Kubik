@@ -96,10 +96,45 @@ func _init() -> void:
 	gen.find_spawn()
 	spawn_ms = Time.get_ticks_msec() - spawn_ms
 	_print_spawn(gen, config, spawn_ms)
+	_print_spawn_clearance(gen, config)
 	quit()
 
 
-## Share of the map in each elevation zone.
+## How clear of trees the spawn point actually is.
+##
+## THE PLACEMENT RULE SAYS trees ramp in from tree_spawn_clear_m; this measures
+## whether they do. It is worth measuring rather than trusting because the two
+## halves are decided by completely different code at completely different
+## times - spawn is chosen from the finished heightmap, and the ramp is a term
+## in a product evaluated per candidate - and nothing but this line would
+## notice if they disagreed.
+##
+## Spawn is chosen to be flat, dry and open with a mountain in view. A forest
+## closing over it undoes every one of those at once, and it is also the one
+## place in the world a player stands still for their first minute.
+func _print_spawn_clearance(gen: TerrainGenerator, config: WorldgenConfig) -> void:
+	var spawn := gen.spawn_block
+	var cell: int = config.tree_cell_blocks
+	var reach := int(ceil(config.tree_spawn_ramp_m / config.block_size)) + cell
+	var nearest := INF
+	var within := 0
+	var masks := TreePlacement.masks_for(gen)
+	for cz in range(Chunk.floor_div(spawn.y - reach, cell),
+			Chunk.floor_div(spawn.y + reach, cell) + 1):
+		for cx in range(Chunk.floor_div(spawn.x - reach, cell),
+				Chunk.floor_div(spawn.x + reach, cell) + 1):
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			var dx := float(int(found["bx"]) - spawn.x) * config.block_size
+			var dz := float(int(found["bz"]) - spawn.y) * config.block_size
+			var d := sqrt(dx * dx + dz * dz)
+			nearest = minf(nearest, d)
+			if d < config.tree_spawn_clear_m:
+				within += 1
+	print("spawn clear   nearest tree %.1f m, %d inside the %.0f m clearing%s" % [
+		nearest if nearest < INF else -1.0, within, config.tree_spawn_clear_m,
+		"" if within == 0 else "  <-- FAILED"])
 ##
 ## The sanity check this answers is "do all four zones actually occur" - it is
 ## entirely possible to tune a world where the treeline sits above the highest
@@ -179,27 +214,99 @@ func _print_lakes(lakes: Lakes, hm: Heightmap) -> void:
 ## Every candidate cell in the world, counted. Slower than sampling but it is
 ## the number that has to match between two machines, so it is the number worth
 ## printing.
+## How many trees the world grows, and of what.
+##
+## THE TOTAL WAS THE ONLY NUMBER UNTIL FOLIAGE V1, and one number cannot answer
+## the question that plan is judged on. "35,000 trees" is equally true of a
+## world that is one species everywhere and of one where larch replaces spruce
+## as you climb - and the second is the whole point of having seven of them. A
+## species that never occurs, or that occurs 40 times in three million
+## candidates, is a tuning bug that a total hides completely.
 func _print_trees(gen: TerrainGenerator, hm: Heightmap, config: WorldgenConfig) -> void:
 	var started := Time.get_ticks_msec()
+	var names := PackedStringArray()
+	for row in TreeSpecies.gallery_rows(config):
+		names.append(row["name"])
+	var per_species := PackedInt32Array()
+	per_species.resize(names.size())
+
 	var trees := 0
 	var step: int = config.tree_cell_blocks
 	var lo := -int(config.world_blocks_xz / 2)
 	var hi := int(config.world_blocks_xz / 2)
 	var cell_lo := lo / step
 	var cell_hi := hi / step
+	# THE WORLD'S OWN RULE, asked directly. Restating the placement formula
+	# here would be a second copy of it, and a second copy of a rule this long
+	# would be wrong within a stage - which is the whole reason decide() is one
+	# function that the stamper, the probe, the tour and the far-tree ring all
+	# call.
+	var masks := TreePlacement.masks_for(gen)
 	for cz in range(cell_lo, cell_hi):
 		for cx in range(cell_lo, cell_hi):
-			var bx := cx * step
-			var bz := cz * step
-			var surface := gen.surface_at(float(bx), float(bz))
-			var chance := gen.tree_probability_at(
-				surface, gen.zone_jitter_at(float(bx), float(bz)))
-			if chance <= 0.0:
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
 				continue
-			if WorldHash.hash01(cx, cz, gen.world_seed, TerrainGenerator.SALT_TREE) < chance:
-				trees += 1
+			trees += 1
+			var species: int = found["species"]
+			if species >= 0 and species < per_species.size():
+				per_species[species] += 1
 	print("trees         %d in the whole world (%d ms)" % [
 		trees, Time.get_ticks_msec() - started])
+	for s in names.size():
+		# Printed even at zero, and deliberately: a species missing from the
+		# list reads as "not implemented yet", a species listed at 0 reads as
+		# "implemented and never chosen", and those are different bugs.
+		print("  %-11s %7d  %5.1f%%" % [names[s], per_species[s],
+			100.0 * float(per_species[s]) / float(maxi(trees, 1))])
+	_print_glades(gen, hm, config)
+	_print_flora(gen, hm, config)
+
+
+## How much of the forest band is CLEARING rather than trees.
+##
+## The glade mask is what stops a forest from being a solid block of canopy
+## with no floor visible anywhere, and it is the one placement term whose
+## effect is invisible in a tree count: glades move trees around rather than
+## removing them, so the total barely shifts while the world changes
+## completely. This is the number that says whether they are happening.
+func _print_glades(gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfig) -> void:
+	var step := 8
+	print("groves        %.1f%% of the forest band (want %.1f%%), every %d blocks" % [
+		100.0 * TreePlacement.grove_share_measured(gen, step),
+		100.0 * _config.grove_share, step])
+	print("glades        %.1f%% of the forest band (want %.1f%%), every %d blocks" % [
+		100.0 * TreePlacement.glade_share_measured(gen, step),
+		100.0 * _config.glade_share, step])
+
+
+## Ground cover, per zone.
+##
+## SAMPLED AND SCALED, AND THE LINE SAYS SO. Every block column in a 3 km world
+## is nine million placement evaluations and this tool is run twice per stage;
+## a stride of 16 is 35,000 of them and answers the question the number is
+## actually asked - "does heath have shrubs on it" - to well inside the
+## precision anyone reads it at. A scaled estimate labelled as one is honest.
+## An exact count nobody waits for is not available.
+func _print_flora(_gen: TerrainGenerator, _hm: Heightmap, _config: WorldgenConfig) -> void:
+	if not ResourceLoader.exists("res://scripts/world/flora/flora_placement.gd"):
+		print("flora         not yet - the decoration layer arrives in Stage 5")
+		return
+	var script := load("res://scripts/world/flora/flora_placement.gd")
+	if not script.has_method("probe_counts"):
+		print("flora         placement exists but reports nothing")
+		return
+	var stride := 16
+	var report: Dictionary = script.probe_counts(_gen, _config, stride)
+	print("flora         %d instances estimated, sampled every %d blocks and scaled" % [
+		int(report.get("total", 0)), stride])
+	for zone in TerrainGenerator.ZONE_NAMES:
+		print("  %-13s %11d" % [zone, int(report.get(zone, 0))])
+	print("flora models")
+	for name in FloraModels.NAMES:
+		var n: int = int(report.get("model_" + name, 0))
+		if n > 0:
+			print("  %-13s %11d" % [name, n])
 
 
 # --- Terrain v2 Stage 1: the instruments ------------------------------------
@@ -337,8 +444,23 @@ func _print_object_scale(hm: Heightmap, lakes: Lakes, config: WorldgenConfig) ->
 	# A tree's total height is its trunk plus the canopy standing above it. The
 	# canopy starts one block below the trunk top and is canopy_radius + 3
 	# layers tall, so the tip lands at trunk + canopy_radius + 1 blocks.
-	var tree_lo := float(config.tree_trunk_min + config.tree_canopy_min + 1) * bs
-	var tree_hi := float(config.tree_trunk_max + config.tree_canopy_max + 1) * bs
+	# The shortest and tallest CANOPY tree. Three species are deliberately left
+	# out, and which three is the whole point of the row: it exists to compare
+	# a tree against a real tree, so it has to be measuring trees. The hero is
+	# one per 300 x 300 m and would report the world as twice the size almost
+	# none of it is; a krummholz is a wind-flattened shrub 1.5 m tall and
+	# dragged the reported minimum down to a ratio of 1:5.7, which said the
+	# scale had drifted when nothing had moved; a snag is a dead trunk with no
+	# crown at all.
+	var tree_lo := INF
+	var tree_hi := 0.0
+	for i in TreeSpecies.table(config).size():
+		if i == TreeSpecies.HERO or i == TreeSpecies.KRUMMHOLZ \
+				or i == TreeSpecies.SNAG:
+			continue
+		var row: Dictionary = TreeSpecies.table(config)[i]
+		tree_lo = minf(tree_lo, float(row["height"].x) * bs)
+		tree_hi = maxf(tree_hi, float(row["height"].y) * bs)
 
 	var lake_w := _largest_lake_width_m(hm, lakes, config)
 	print("scale         player %.2f m, tree %.1f-%.1f m, lake %.0f m across (%.0f m span), relief %.0f m" % [

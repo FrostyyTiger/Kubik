@@ -210,7 +210,8 @@ small world - it reads as a broken one.
 
 | Thing | In game | Real equivalent |
 | --- | --- | --- |
-| Tree | 6.5 - 10.5 m | ~30 m spruce |
+| Tree | 5 - 10.5 m | 26 - 42 m spruce, beech, larch |
+| Grass tuft, flower | 15 - 55 cm | the same, at 1:1 |
 | Largest lake | ~116 m across | ~400 m tarn |
 | Mountain relief | ~350 m | ~1400 m |
 
@@ -219,6 +220,36 @@ quarter-scale player would be 44 cm tall and everything about the camera, the
 step height and the reach distance would have to be re-derived from it, for a
 world that looked exactly the same. So the character is life-size and the land
 is quarter-size, and the visible consequence is that sprint looks fast.
+
+**Ground plants and boulders are the second exception, at 1:1.** Added in
+foliage v1. The rule is not "small things are life-size", it is **what the
+object is read against**:
+
+| Read against | Scale | Examples |
+| --- | --- | --- |
+| The landscape, from across a valley | 1:4 | terrain, lakes, **trees** |
+| The player, from two metres away | 1:1 | the character, **grass, flowers, ferns, boulders** |
+
+A tree is landscape. You judge it against the slope it stands on and the
+treeline above it, so it is drawn at 1:4 like the mountain behind it, and a
+10.5 m spruce reads as a 42 m spruce.
+
+A grass tuft is not. Nobody ever compares a blade of grass to a mountain -
+they compare it to their own boots. A 30 cm tuft drawn at 1:4 is 7.5 cm, which
+is not short grass, it is invisible: below the height of the block it stands
+on, and gone entirely by the time the camera is where a third-person camera
+goes. So ground cover is drawn at its real size.
+
+The two exceptions are the same exception. Anything read against the PLAYER is
+1:1, and the player is 1:1 - so they are consistent with each other, which is
+the only consistency the eye can actually check. A player wading through
+knee-high grass is the picture; a player wading through ankle-high mountains
+would not be.
+
+**Ground plants are built at 8 model voxels per block - 6.25 cm each** - which
+is the character voxel scale in the art pipeline above, not the world block
+scale. That is deliberate too: a plant and a player are made of the same size
+of material, so they look like they belong in the same hand.
 
 **Full scale was considered and rejected, in writing, so it is not
 relitigated.** A real 1400 m mountain needs roughly a 6 km base, which does not

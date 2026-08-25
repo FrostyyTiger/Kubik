@@ -66,9 +66,13 @@ const SEED_PLATEAU := 10
 ## ground happens to dither.
 const SALT_ZONE_DITHER := 101
 const SALT_TREE := 202
-const SALT_TREE_TRUNK := 203
-const SALT_TREE_CANOPY := 204
 const SALT_SLOPE_ZONE := 205
+
+# 203 and 204 were SALT_TREE_TRUNK and SALT_TREE_CANOPY. They moved to
+# TreeSpecies with the shapes in Stage 2 and kept their VALUES, which is the
+# point of naming them here: a salt is part of what a seed means, so reusing
+# 203 for something else would silently rearrange every tree in every existing
+# world. Do not hand them out again.
 
 ## Elevation zones, low to high. Seven since terrain v2 Stage 7.
 const ZONE_SHORE := 0
@@ -1096,130 +1100,37 @@ func generate_into(chunk: Chunk) -> void:
 
 # --- Trees ------------------------------------------------------------------
 #
-# THE CHUNK BORDER BUG LIVES HERE, and it is the classic one.
+# THE TREES THEMSELVES MOVED OUT IN FOLIAGE V1 STAGE 2. Shapes now live in
+# scripts/world/flora/tree_species.gd and the placement decision in
+# tree_placement.gd, including the chunk-border argument that used to be
+# written out here - a tree reaches into chunks that do not contain its trunk,
+# so every chunk scans a region wider than itself and clips.
 #
-# A tree is rooted at one candidate cell but its canopy spreads several blocks
-# sideways and ten blocks up, so it reaches into neighbouring chunks. The
-# tempting implementation - iterate the cells inside this chunk and draw their
-# trees - produces a world where a canopy is drawn by the chunk that owns its
-# trunk and by nobody else, so every tree near a boundary is sliced off. Worse,
-# whether you see the slice depends on which chunks happen to be loaded.
+# What is left below is the one question the rest of the engine asks about
+# trees and cannot get anywhere else - how much sky to reserve above the
+# terrain - and the hook that draws them.
 #
-# The fix is to iterate candidate cells over a region WIDER than the chunk
-# being built, by the largest distance a tree can reach, and let each chunk
-# write only the blocks that land inside itself. Every chunk a tree touches
-# then draws its own share of it, and because placement is hashed from the
-# cell's coordinates rather than drawn from a stream, all of them compute
-# exactly the same tree. A chunk generates identically whether it is built
-# first, last, or on the other player's machine.
+# tree_probability_at() went with the rest in Stage 4. It was "the chance in
+# the middle of the forest band", and there is no such single number any more:
+# the probability is a product of six terms across five zones, and anything
+# that wants to know whether a tree stands somewhere asks TreePlacement.
 
 ## How far above the surface a tree can reach, in blocks. World uses this to
 ## decide how much empty sky above the terrain still has to be built - without
 ## it, a tree on a column near the top of a chunk would have its canopy
 ## silently cut off by a chunk that was never queued.
-func max_tree_height() -> int:
-	return config.tree_trunk_max + config.tree_canopy_max + 3
-
-
-## Probability that a candidate cell grows a tree, given the surface altitude
-## there and that column's zone jitter.
 ##
-## Peaks in the MIDDLE of the forest band and tapers linearly to zero at both
-## edges, so the treeline thins out instead of stopping dead along a contour.
-func tree_probability_at(surface: float, jitter: float) -> float:
-	# The forest band is wherever Stage 7 put it this world, not a pair of
-	# altitudes in the config. Without this the treeline and the forest FLOOR
-	# would be two different bands, and trees would grow on grass.
-	var band := zone_band(ZONE_FOREST)
-	var lo := band.x + jitter
-	var hi := band.y + jitter
-	if surface <= lo or surface >= hi or hi <= lo:
-		return 0.0
-	var t := (surface - lo) / (hi - lo)
-	return config.tree_probability * (1.0 - absf(t - 0.5) * 2.0)
+## DERIVED FROM THE SPECIES TABLE since foliage v1 Stage 2, not from a pair of
+## config knobs. There are seven species now and they are not all the same
+## height; a reserve computed from the spruce's numbers would quietly decapitate
+## every larch in the world, and the symptom - a flat-topped tree, but only
+## sometimes, and only near a chunk ceiling - is a miserable thing to find.
+func max_tree_height() -> int:
+	return TreeSpecies.max_height(config)
 
 
 func _place_trees(chunk: Chunk) -> void:
-	var origin := chunk.origin()
-	var cell: int = config.tree_cell_blocks
-	if cell <= 0:
-		return
-
-	# Widen by the furthest a canopy can spread sideways. This is the whole
-	# fix for the border bug - see the note above.
-	var margin: int = config.tree_canopy_max
-
-	var cx0 := Chunk.floor_div(origin.x - margin, cell)
-	var cx1 := Chunk.floor_div(origin.x + Chunk.SIZE - 1 + margin, cell)
-	var cz0 := Chunk.floor_div(origin.z - margin, cell)
-	var cz1 := Chunk.floor_div(origin.z + Chunk.SIZE - 1 + margin, cell)
-
-	for cz in range(cz0, cz1 + 1):
-		for cx in range(cx0, cx1 + 1):
-			_stamp_tree(chunk, cx, cz)
-
-
-## Draw one candidate cell's tree into `chunk`, writing only the blocks that
-## fall inside it. Called by every chunk the tree reaches, and must produce the
-## same tree for all of them.
-func _stamp_tree(chunk: Chunk, cell_x: int, cell_z: int) -> void:
-	var bx: int = cell_x * config.tree_cell_blocks
-	var bz: int = cell_z * config.tree_cell_blocks
-
-	var surface := surface_at(float(bx), float(bz))
-	var jitter := zone_jitter_at(float(bx), float(bz))
-	var chance := tree_probability_at(surface, jitter)
-	if chance <= 0.0:
-		return
-	# Hashed from the cell's own coordinates, never drawn from a stream - so
-	# the answer does not depend on how many trees were considered before it.
-	if WorldHash.hash01(cell_x, cell_z, world_seed, SALT_TREE) >= chance:
-		return
-
-	var ground := int(floor(surface))
-	var trunk_height := WorldHash.hash_range(
-		cell_x, cell_z, world_seed, SALT_TREE_TRUNK,
-		config.tree_trunk_min, config.tree_trunk_max)
-	var canopy_radius := WorldHash.hash_range(
-		cell_x, cell_z, world_seed, SALT_TREE_CANOPY,
-		config.tree_canopy_min, config.tree_canopy_max)
-
-	var origin := chunk.origin()
-
-	for i in trunk_height:
-		_set_if_inside(chunk, origin, bx, ground + 1 + i, bz, Block.TRUNK, false)
-
-	# A cone: widest one block below the top of the trunk, narrowing to a point
-	# a little above it. Starting below the trunk top is what makes the foliage
-	# wrap the trunk instead of balancing on it like a hat.
-	var layers := canopy_radius + 3
-	var base_y := ground + trunk_height - 1
-	for layer in layers:
-		var r := int(round(float(canopy_radius) * (1.0 - float(layer) / float(layers))))
-		for dz in range(-r, r + 1):
-			for dx in range(-r, r + 1):
-				# +1 rounds the corners off, so the canopy is a cone rather
-				# than a stepped pyramid of squares.
-				if dx * dx + dz * dz > r * r + 1:
-					continue
-				_set_if_inside(chunk, origin, bx + dx, base_y + layer, bz + dz,
-					Block.LEAVES, true)
-
-
-## Write one block, if it is inside this chunk.
-##
-## `only_air` is what stops the canopy from eating its own trunk - leaves are
-## drawn over air only, trunk over anything.
-func _set_if_inside(chunk: Chunk, origin: Vector3i, bx: int, by: int, bz: int,
-		id: int, only_air: bool) -> void:
-	var lx := bx - origin.x
-	var ly := by - origin.y
-	var lz := bz - origin.z
-	if not Chunk.in_bounds(lx, ly, lz):
-		return
-	if only_air and chunk.voxels[Chunk.index(lx, ly, lz)] != Block.AIR:
-		return
-	chunk.set_voxel(lx, ly, lz, id)
+	TreePlacement.stamp_chunk(chunk, self)
 
 
 ## The three depth bands block_for() answers in. Named so generate_into() can

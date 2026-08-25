@@ -75,8 +75,24 @@ const REAL_LAKE_MIN_M2 := 2560.0
 const REAL_LAKE_WIDTH_M := 400.0
 const REAL_PLAYER_HEIGHT_M := 1.75
 
-## How much of a tree is trunk. The rest is canopy, plus one block for the tip.
-const TREE_TRUNK_FRACTION := 0.65
+## The largest tree in the species table, and the sky the world must reserve
+## above the terrain for it - both in blocks, at tree_size_scale 1.
+##
+## RESTATED HERE RATHER THAN READ FROM TreeSpecies, deliberately. TreeSpecies
+## takes a WorldgenConfig in every signature, and having this file call back
+## into it makes the two mutually dependent for the sake of two integers. The
+## self-test asserts the two agree instead, which is the same guarantee without
+## the cycle - see "sky reserve" in selftest.gd.
+const REF_TREE_MAX_BLOCKS := 21.0
+const REF_MAX_TREE_BLOCKS := 42.0
+
+## Blocks of slack above the tallest tree. FLAT, NOT SCALED, and the self-test
+## is what found that out: a shape may round a layer upward by a block or two
+## whatever size it is being drawn at, so the slack is a property of the
+## rounding and not of the tree. Scaling it with everything else left the
+## reserve one block short at tree_size_scale 0.5 - which would have shown up
+## as heroes with flat tops, in some columns, on small-scale worlds only.
+const TREE_RESERVE_MARGIN := 3.0
 
 ## World footprint in blocks, centred on the origin: x and z run
 ## -world_blocks_xz/2 .. world_blocks_xz/2 - 1.
@@ -475,23 +491,138 @@ const FOG_START_RATIO := 0.6
 ## One candidate tree per this many blocks, in both x and z.
 @export var tree_cell_blocks := 4
 
-## Placement probability in the MIDDLE of the forest band. Tapers linearly to
-## zero at both edges of the band, so the treeline thins out instead of
-## stopping dead.
-@export var tree_probability := 0.12
-
-## Tree size, in blocks.
+## Global multiplier on the whole placement product. 0 empties the world of
+## trees, 1 is the tuned density, 2 doubles it.
 ##
-## The plan specifies a 3-5 block trunk and a 2-3 block canopy. At 0.5 m per
-## block that is a 2 m tree with a 1.5 m crown - the same height as the player,
-## which on screen reads as a shrub, and a "forested slope" of them reads as a
-## lawn. Those numbers were sized for 1 m blocks; the same plan sets blocks at
-## 0.5 m. Doubled here so a tree is 5-10 m, which is a small conifer, and a
-## forest looks like one. Recorded in STATUS.md as a departure.
-@export var tree_trunk_min := 8
-@export var tree_trunk_max := 14
-@export var tree_canopy_min := 4
-@export var tree_canopy_max := 6
+## REPLACED tree_probability IN STAGE 4. That knob was "the chance in the
+## middle of the forest band", which stopped being a single number the moment
+## there were five bands with different rules - a meadow's 0.008 and a forest's
+## 0.45 cannot both be it. What survives is the thing a person actually reaches
+## for the slider to do, which is "more trees" or "fewer trees" everywhere at
+## once. Recorded as a departure.
+@export var tree_density_scale := 1.0
+
+
+# --- Where a tree is allowed to grow ----------------------------------------
+#
+# THE PLACEMENT PRODUCT. A candidate's probability is
+#
+#   p = base(zone, altitude in band) * grove * glade
+#       * slope_ok * bench_ok * spawn_ok * tree_density_scale
+#
+# A PRODUCT OF INDEPENDENT TERMS, not a single tuned number, and that is the
+# structural point of the stage. Each term answers one question, each is
+# disabled by setting its own knob to 0, and none of them has to know what the
+# others decided. The old world had one term and read as evenly scattered
+# cones, because one term is exactly what "evenly scattered" means.
+
+## Peak probability in the middle of the forest band, and at its two edges.
+##
+## 0.45 against the old 0.12. Nearly four times as many trees in the heart of a
+## forest, which is what makes it a forest you cannot see through rather than
+## an orchard - and the edge value is what keeps the treeline a thinning rather
+## than a boundary.
+@export var tree_base_forest := 0.45
+@export var tree_base_forest_edge := 0.10
+
+## Meadow. Two orders of magnitude below the forest on purpose: a meadow with
+## trees scattered through it is not a meadow. These are the lone beech and the
+## birch at the margin, and there should be room to see between them.
+@export var tree_base_meadow := 0.008
+
+## The shore band - birch only - and how far above a lake's shore level it
+## reaches, in blocks.
+@export var tree_base_shore := 0.06
+@export var tree_shore_blocks := 12.0
+
+## Krummholz above the forest, through alpine and heath. Fades to nothing at
+## the midpoint of the two bands together, so the last twisted pines give out
+## well below the rock.
+@export var tree_base_alpine := 0.05
+
+## GROVES: forest clumps, ~90 m across. `grove_share` of the forest is inside a
+## grove and grows at full probability; the rest grows at `grove_floor` of it.
+##
+## This is what breaks the evenness. A forest at one probability everywhere is
+## a Poisson scatter, and a Poisson scatter has no clearings, no thickets and
+## no edges - which is why the old one read as wallpaper however dense it got.
+@export var grove_freq := 0.005556
+@export var grove_share := 0.35
+@export var grove_floor := 0.35
+
+## GLADES: clearings inside the forest, ~160 m across. The top `glade_share` of
+## the mask grows nothing at all.
+##
+## Flowers go in them in Stage 6, which is the other half of why they exist: a
+## clearing you can stand in and see the sky is where the light gets to the
+## floor, and light on the floor is what grows there.
+@export var glade_freq := 0.003125
+@export var glade_share := 0.12
+
+## Ground steeper than this grows no trees, in degrees. Krummholz has its own,
+## steeper, limit in the species table - it is the one thing up there that
+## holds onto a slope.
+@export var tree_max_slope_deg := 40.0
+
+## Whether trees avoid benches and plateaux, 0 to 1. 0 disables the term.
+##
+## A bench is an artificially flat shelf cut into a slope. Covering one in dense
+## forest hides the only thing it was carved for, and a flat shelf carrying a
+## thicket reads as a lawn that someone planted.
+@export var tree_bench_avoid := 1.0
+
+## No trees within this many metres of spawn, ramping to full at the second.
+##
+## Spawn is chosen to be flat, dry and open, with a mountain in view - and a
+## forest closing over it undoes every one of those at once. It is also where
+## a player stands still for their first minute, so it is the one place in the
+## world where the frame cost of dense foliage is least worth paying.
+@export var tree_spawn_clear_m := 24.0
+@export var tree_spawn_ramp_m := 60.0
+
+## Chance per meadow candidate of a hero - the one enormous tree.
+##
+## 0.0004 over a 4-block lattice is about one per 300 x 300 m of meadow, which
+## is the density that makes one remarkable. Ten times this and they are just
+## big trees.
+@export var hero_probability := 0.0004
+
+## How far a trunk may step off its lattice cell, in blocks, on each axis.
+##
+## BOUNDED, AND THE BOUND IS WALKABILITY. Candidates sit every
+## tree_cell_blocks, so two neighbouring trunks are at least
+## (tree_cell_blocks - 2 * jitter) blocks apart. At cell 4 and jitter 1 that is
+## 2 blocks between trunk centres. Raise the jitter and trees start to touch,
+## and a forest you cannot walk through is a wall, not a forest - which the
+## traversal probe is what actually checks.
+@export var tree_jitter_blocks := 1
+
+## How much wildness adds to the snag and krummholz weights at the far edge of
+## the world, taken from spruce.
+##
+## Distance is the difficulty axis - see the pillars - and this is that axis
+## expressed in vegetation rather than in numbers. Far from spawn the forest
+## has more dead trees in it and gives way to twisted pine sooner.
+@export var wildness_snag := 0.15
+@export var wildness_krummholz := 0.15
+
+## Global multiplier on every species' height and crown radius.
+##
+## REPLACED FOUR KNOBS IN FOLIAGE V1 STAGE 3, and the four are worth naming
+## because they were doing something this one is not: tree_trunk_min/max and
+## tree_canopy_min/max described ONE tree, because there was one. Seven species
+## cannot share four numbers - a krummholz is 3 blocks and a hero is 42 - so
+## the per-species sizes moved into the table in TreeSpecies where they can be
+## read next to each other, and what is left here is the only thing that
+## genuinely applies to all of them at once: how big trees are in general.
+##
+## A SHAPE KNOB, so it is in PROPERTIES. Two machines that disagreed about it
+## would grow different trees while the join handshake reported a match, which
+## is the exact failure the handshake exists to prevent.
+##
+## 1.0 means the table as authored, which is sized for world_scale 4 - see
+## apply_world_scale(), which sets this rather than leaving it at 1.
+@export var tree_size_scale := 1.0
 
 ## A basin smaller than this many coarse cells is a puddle, not a lake, and is
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
@@ -704,8 +835,15 @@ const PROPERTIES: PackedStringArray = [
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
 	"share_heath", "share_rock", "share_snow",
 	"zone_blend_blocks", "zone_dither_blocks",
-	"tree_cell_blocks", "tree_probability",
-	"tree_trunk_min", "tree_trunk_max", "tree_canopy_min", "tree_canopy_max",
+	"tree_cell_blocks", "tree_size_scale", "tree_density_scale",
+	"tree_base_forest", "tree_base_forest_edge", "tree_base_meadow",
+	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
+	"grove_freq", "grove_share", "grove_floor",
+	"glade_freq", "glade_share",
+	"tree_max_slope_deg", "tree_bench_avoid",
+	"tree_spawn_clear_m", "tree_spawn_ramp_m",
+	"hero_probability", "tree_jitter_blocks",
+	"wildness_snag", "wildness_krummholz",
 	"spawn_water_m", "spawn_mountain_m", "spawn_max_slope_deg",
 	"spawn_center_fraction", "wildness_relief", "wildness_rock_deg",
 	"lake_min_cells", "lake_level_offset", "lake_max_depth", "lake_min_depth",
@@ -730,7 +868,41 @@ const PROPERTIES: PackedStringArray = [
 ## World._edits and replayed when that chunk loads, so two players at different
 ## radii stay in the same world. far_step and the fog are the far mesh and the
 ## atmosphere. None of them can move a block.
+# --- The decoration layer: LOCAL, every one of them --------------------------
+#
+# NOT ONE OF THESE IS A SHAPE KNOB, and the test is the one rule 2 states:
+# would two machines disagreeing about it mean one player could pick a flower
+# the other cannot see? No - flora IDENTITY is a pure function of position and
+# seed, and every knob below decides only how much of it this machine draws or
+# how it looks while drawing it. A laptop at flora_radius_m 32 and a desktop at
+# 96 are standing in the same meadow.
+#
+# That is what makes density a dial rather than a rewrite, which is the whole
+# reason the performance budget can be met by turning something down.
+
+## Columns further than this from the player carry no flora node at all.
+@export var flora_radius_m := 64.0
+
+## An instance is drawn only if its hash falls below this.
+##
+## HASHED, NOT COUNTED, which is what makes it safe to differ between machines:
+## every machine at 0.5 hides the same half, and turning it up reveals the
+## plants that were there rather than reshuffling the ones that are.
+@export var flora_draw_fraction := 1.0
+
+## Outer edge of the far-tree ring, in metres. Stage 7.
+@export var far_tree_m := 300.0
+
+## Sway. 0 disables the wind shader entirely.
+@export var wind_strength := 1.0
+
+## Fireflies and glowing mushrooms. 0 disables them. Stage 8.
+@export var night_life := 1.0
+
+
 const LOCAL_PROPERTIES: PackedStringArray = [
+	"flora_radius_m", "flora_draw_fraction", "far_tree_m",
+	"wind_strength", "night_life",
 	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m",
 	"ao_strength", "msaa_level",
@@ -843,21 +1015,22 @@ func apply_world_scale() -> void:
 	max_altitude = REF_MAX_ALTITUDE * k
 	zone_jitter_blocks = REF_ZONE_JITTER_BLOCKS * k
 
+	# Trees. The species table is AUTHORED for world_scale 4: a spruce there is
+	# 13-21 blocks, which is exactly (26..42 m / 4) / 0.5 - the same derivation
+	# this used to run for the one species that existed. So the only thing left
+	# to derive is the ratio between what this scale asks for and what the
+	# table already is, and at world_scale 4 that ratio is 1.
+	var tree_hi := (REAL_TREE_HEIGHT_M.y / world_scale) / block_size
+	tree_size_scale = maxf(tree_hi / REF_TREE_MAX_BLOCKS, 0.05)
+
 	# The ceiling has to clear the highest possible summit plus the tallest
 	# possible tree standing on it, and land on a chunk boundary. Only chunks
 	# terrain passes through are built, so headroom is free.
-	var needed := max_altitude + float(tree_trunk_max + tree_canopy_max + 3) + 16.0
+	#
+	# AFTER the tree scale, not before: the tallest tree is a function of it.
+	var needed := max_altitude \
+		+ REF_MAX_TREE_BLOCKS * tree_size_scale + TREE_RESERVE_MARGIN + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
-
-	# Trees. Total height is trunk + canopy radius + 1 for the tip, and the
-	# split is TREE_TRUNK_FRACTION. At world_scale 4 this reproduces 8-14 and
-	# 4-6 exactly, which is the point: they were already right.
-	var tree_lo := int(round((REAL_TREE_HEIGHT_M.x / world_scale) / block_size))
-	var tree_hi := int(round((REAL_TREE_HEIGHT_M.y / world_scale) / block_size))
-	tree_trunk_min = maxi(int(round(float(tree_lo) * TREE_TRUNK_FRACTION)), 1)
-	tree_trunk_max = maxi(int(round(float(tree_hi) * TREE_TRUNK_FRACTION)), tree_trunk_min)
-	tree_canopy_min = maxi(tree_lo - tree_trunk_min - 1, 1)
-	tree_canopy_max = maxi(tree_hi - tree_trunk_max - 1, tree_canopy_min)
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a
 	# puddle. Cells are coarse_step blocks square.

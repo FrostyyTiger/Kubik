@@ -52,6 +52,14 @@ func _ready() -> void:
 ##
 ##     Godot_v4.exe --path . -- --host
 ##     Godot_v4.exe --path . -- --join 127.0.0.1
+##
+## `--port N` overrides the default on either side. Added in foliage v1: every
+## headless session on this box hosts, and two of them - a screenshot tour and
+## a probe run, or the two peers Stage 10's handshake check needs - collide on
+## the one port and the second dies with "Couldn\'t create an ENet host". The
+## symptom is worth naming because it is not obviously about ports: the second
+## instance sits on the main menu, generates nothing, and eventually times out
+## having printed no error anybody was watching for.
 func _apply_launch_args() -> void:
 	# Once per process. `static` survives the menu being freed and rebuilt, so
 	# bouncing back here after a session ends does not silently reconnect you.
@@ -62,7 +70,7 @@ func _apply_launch_args() -> void:
 	var args := OS.get_cmdline_user_args()
 	# The screenshot tour is a host session that drives itself, so it implies
 	# --host rather than needing both spelled out.
-	if args.has("--host") or args.has("--tour"):
+	if args.has("--host") or args.has("--tour") or args.has("--traverse"):
 		_on_host_pressed()
 	elif args.has("--join"):
 		var i := args.find("--join")
@@ -92,9 +100,22 @@ func _on_character_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/character/creation.tscn")
 
 
+## `--port N`, or the default if it is absent or unusable.
+func _launch_port() -> int:
+	var args := OS.get_cmdline_user_args()
+	var i := args.find("--port")
+	if i < 0 or i + 1 >= args.size():
+		return Net.DEFAULT_PORT
+	var port := args[i + 1].to_int()
+	if port <= 0 or port > 65535:
+		push_warning("[Menu] --port %s is not a usable port" % args[i + 1])
+		return Net.DEFAULT_PORT
+	return port
+
+
 func _on_host_pressed() -> void:
 	_set_busy(true, "Starting host...")
-	Net.host_game()
+	Net.host_game(_launch_port())
 
 
 func _on_join_pressed() -> void:
@@ -102,7 +123,7 @@ func _on_join_pressed() -> void:
 	if address.is_empty():
 		address = "127.0.0.1"
 	_set_busy(true, "Connecting to %s..." % address)
-	Net.join_game(address)
+	Net.join_game(address, _launch_port())
 
 
 func _on_quit_pressed() -> void:
