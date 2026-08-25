@@ -59,3 +59,5 @@ the queue.
 - `docs/DIRECTOR.md` - the director's doctrine: two layers, the verb list,
   cadence, degradation, the quest model, the roadmap
 - `docs/IDEAS.md` - Next 3, Someday, the Director ladder
+- `TODO.md` - the queue as a checklist, in waves and parallel lanes
+- `docs/ROADMAP.md` - why the queue is in that order: epics, territories, pushbacks
