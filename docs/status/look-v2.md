@@ -857,3 +857,21 @@ names and neither pass's to cure.
 passed; swatches worst delta **2**; probe `76cccdb6` / `da8868d1` / 73,675
 trees / spawn `(-44, -124)` - their two new config knobs are `LOCAL_PROPERTIES`
 and therefore unhashed, so the config hash is unchanged.
+
+## Resolved on Forward+ - Marcel's box, 2026-08-25
+
+The blocking finding above was run on the RTX 5080 (Vulkan, Forward+) the
+same evening, straight after the merge:
+
+```
+scenes/character/gallery.tscn -- --sheet swatches --strict --label forwardplus
+```
+
+`[Swatches] worst channel delta 2 (tolerance 6): PASS` - sixteen swatches,
+lit and shade, every one within 2 sRGB units of `Look.predict()`. The
+`swatch-ramp` sheet's `vertex` row tracks `srgb2lin(v)` to the third decimal
+across the whole ramp, so Forward+ does NOT decode an 8-bit vertex colour
+before the shader either: the shader's own `kubik_to_linear(COLOR.rgb)` is
+correct on both renderers and the one-line alternative fix is not needed.
+Sheets in `build/character/forwardplus/`. Both renderers agree; the gate
+holds; nothing to change.
