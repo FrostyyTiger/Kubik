@@ -29,3 +29,6 @@ desktop.ini
 
 # Claude Code worktrees and session files
 .claude/
+
+# The parts generator, tools/parts_author
+__pycache__/

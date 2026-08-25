@@ -181,10 +181,11 @@ func _face(yaw: float) -> void:
 		(s as Node3D).rotation.y = yaw
 
 
-## Who stands in the lineup. Every race in the stocky scheme, plus the lean
-## human once Stage 7 builds it. Stage 3 has only the human, so that is the
-## whole lineup; the capsule "before" is already on disk under
-## build/character/character-baseline.
+## Who stands in the lineup. Every race, in its default look.
+##
+## Character v1 stood the lean human beside the stocky one here, because the
+## proportion decision was the first thing Marcel was asked to make. Look v1
+## made it - stocky, everywhere - and the lean part set is gone.
 func _lineup_defs() -> Array:
 	var out := []
 	for race in Races.RACE_COUNT:
@@ -194,14 +195,6 @@ func _lineup_defs() -> Array:
 		def.race = race
 		def.validate()
 		out.append(def)
-	# The lean human stands beside the stocky one in every sheet, because the
-	# proportion decision is the first thing Marcel is asked to make and a
-	# comparison you have to open two files for is a comparison nobody makes.
-	var lean := CharacterDef.new()
-	lean.race = Races.HUMAN
-	lean.build = Races.LEAN
-	lean.validate()
-	out.append(lean)
 	return out
 
 
@@ -470,32 +463,27 @@ func _save(file_name: String) -> void:
 
 ## THE SHEET MARCEL DECIDES FROM.
 ##
-## Stocky and lean humans side by side, at both distances and both times of
-## day, front and three-quarter. The distance and the time are in the FILENAME
-## rather than burned into the image, so the eight pictures can be flipped
-## between without a caption getting in the way of the comparison.
+## The whole lineup at both distances and both times of day, front and
+## three-quarter, plus one close pair at four metres. The distance and the
+## time are in the FILENAME rather than burned into the image, so the
+## pictures can be flipped between without a caption getting in the way.
 ##
-## Same animator on both, which is the point: if the two schemes needed two
-## animators the study would be measuring the animator.
+## Character v1 shot the stocky and lean humans here for the proportion
+## study; look v1 decided stocky and this is now the lineup's own sheet. The
+## 4 m pair is the human and the dwarf - the two faces that differ most - and
+## it is where a face, a chamfer and a hand can actually be looked at, since
+## at 15 m a 2 m character is sixty pixels tall.
 func _sheet_study() -> void:
-	var stocky := CharacterDef.new()
-	stocky.race = Races.HUMAN
-	stocky.build = Races.STOCKY
-	stocky.validate()
-	var lean := CharacterDef.new()
-	lean.race = Races.HUMAN
-	lean.build = Races.LEAN
-	lean.validate()
+	var human := CharacterDef.new()
+	human.race = Races.HUMAN
+	human.validate()
+	var dwarf := CharacterDef.new()
+	dwarf.race = Races.DWARF
+	dwarf.validate()
 
-	# THE DETAIL PAIR FIRST, at four metres. The two distances the plan names
-	# are the ones a character is actually seen at, and that is what makes them
-	# the right test of READABILITY - but a proportion decision is also a
-	# decision about shapes, and at 15 m a 2 m character is sixty pixels tall.
-	# One close pair costs one picture and is where the head-to-torso ratio can
-	# actually be looked at.
 	_set_time(0.5)
 	for angle in [{"deg": 0.0, "name": "front"}, {"deg": 35.0, "name": "three-quarter"}]:
-		_set_lineup([stocky, lean])
+		_set_lineup([human, dwarf])
 		_face(FACING_CAMERA + deg_to_rad(angle["deg"]))
 		await _shoot("study-detail-4m-%s" % angle["name"], 4.0)
 
@@ -504,7 +492,7 @@ func _sheet_study() -> void:
 		for distance in [15.0, 40.0]:
 			for angle in [{"deg": 0.0, "name": "front"},
 					{"deg": 35.0, "name": "three-quarter"}]:
-				_set_lineup([stocky, lean])
+				_set_lineup(_lineup_defs())
 				_face(FACING_CAMERA + deg_to_rad(angle["deg"]))
 				await _shoot("study-%s-%dm-%s" % [
 					time_entry["name"], int(distance), angle["name"]], distance)
@@ -561,15 +549,15 @@ func _sheet_silhouettes() -> void:
 ## something is genuinely being drawn twice, which is what the eyes-closed head
 ## variant would do if it were ever left visible alongside the open one.
 ##
-## The budget is 6000 triangles for a stocky character with hair and beard, and
-## it is the MESH column that is judged against it.
+## The budget is CharacterConfig.TRIANGLE_BUDGET for a character with hair and
+## beard, and it is the MESH column that is judged against it.
 func _sheet_budget() -> void:
 	for child in _subjects_root.get_children():
 		child.free()
 	# The pad and the wall have to be paid for once and subtracted, and the
 	# renderer needs a frame with nothing on the pad to tell us what that is.
 	var empty := await _primitives()
-	print("[Gallery] triangle budget, 6000 per stocky character with hair and beard:")
+	print("[Gallery] triangle budget, %d per character with hair and beard:" % CharacterConfig.TRIANGLE_BUDGET)
 	print("[Gallery]   %-22s %8s %8s   (drawn = mesh x 2, the shadow pass)" % [
 		"", "mesh", "drawn"])
 	print("[Gallery]   %-22s %8s %8d" % ["(pad and sky alone)", "-", empty])
@@ -585,7 +573,7 @@ func _sheet_budget() -> void:
 			var mesh_tris := view.triangle_count()
 			var label := "%s%s" % [_mask_name(def), " + gear" if gear else ""]
 			print("[Gallery]   %-22s %8d %8d%s" % [label, mesh_tris, drawn - empty,
-				"   OVER" if mesh_tris > 6000 else ""])
+				"   OVER" if mesh_tris > CharacterConfig.TRIANGLE_BUDGET else ""])
 			if not gear and mesh_tris > worst:
 				worst = mesh_tris
 				worst_name = _mask_name(def)
@@ -605,8 +593,8 @@ func _sheet_budget() -> void:
 	print("[Gallery]   %-22s %8d %8d" % ["critter (not a budget)",
 		rig.triangle_count(), critter_drawn - empty])
 
-	print("[Gallery]   worst character: %s at %d triangles, budget 6000" % [
-		worst_name, worst])
+	print("[Gallery]   worst character: %s at %d triangles, budget %d" % [
+		worst_name, worst, CharacterConfig.TRIANGLE_BUDGET])
 
 
 ## Triangles the renderer drew this frame. Needs a real frame to have happened,

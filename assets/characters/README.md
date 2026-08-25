@@ -38,7 +38,7 @@ face of your model should be at MINIMUM Y - the side you look at in
 MagicaVoxel's default view. If your models come out back to front,
 `VoxLoader.FLIP_DEPTH` is the one line to change.
 
-**Scale.** One model voxel is 6.25 cm, eight to a block. A human is 32 voxels
+**Scale.** One model voxel is 3.125 cm, sixteen to a block. A human is 64 voxels
 tall; see `Races.TABLE` for every race's dimensions.
 
 **The pivot** is inherited from the ASCII part being replaced, because a `.vox`
