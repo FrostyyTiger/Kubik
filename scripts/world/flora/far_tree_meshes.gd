@@ -163,9 +163,10 @@ static func _tri(verts: PackedVector3Array, normals: PackedVector3Array,
 	if n == Vector3.ZERO:
 		n = Vector3.UP
 	verts.push_back(a); verts.push_back(b); verts.push_back(c)
+	var wire := Look.to_wire(color)
 	for i in 3:
 		normals.push_back(n)
-		colors.push_back(color)
+		colors.push_back(wire)
 
 
 static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,

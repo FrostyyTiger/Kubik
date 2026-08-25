@@ -126,6 +126,8 @@ func _run() -> void:
 func _sheets() -> Dictionary:
 	return {
 		"testcube": _sheet_testcube,
+		"swatches": _sheet_swatches,
+		"swatch-ramp": _sheet_swatch_ramp,
 		"closeup": _sheet_closeup,
 		"lineup-front": _sheet_lineup_front,
 		"lineup-back": _sheet_lineup_back,
@@ -224,6 +226,356 @@ func _sheet_testcube() -> void:
 	holder.position = Vector3(0.0, 0.0, SUBJECT_Z)
 	_subjects_root.add_child(holder)
 	await _shoot("testcube", 2.4)
+
+
+# --- The swatch sheet ---------------------------------------------------------
+#
+# STAGE 0'S ONLY INSTRUMENT. Eight authored colours drawn twice - once with
+# their normal up, where the frozen sun puts them over BAND_LIT and the ramp's
+# lit branch owns them, and once facing the camera, where n.l is negative and
+# the shade branch owns them. Each quad is sampled out of the frame that was
+# just shot and compared with Look.predict(), which mirrors the ramp.
+#
+# WHY IT EXISTS. Look v1 tuned every constant through a colour path nobody had
+# measured, so every constant absorbed the path's error. This sheet is the
+# measurement: authored | predicted | measured | delta, on both renderers,
+# every stage that touches a colour. `--strict` makes a miss an exit code so a
+# stage cannot be committed green while a swatch is red.
+#
+# The quads cast no shadow. A vertical quad at 3.2 m throws a shadow onto the
+# pad about 1.7 m downsun of it, and with the sun's arc tilted that lands on a
+# NEIGHBOURING lit swatch - which would be measured as its own colour in the
+# shade band and read as an enormous delta.
+
+## The eight. White, mid grey and near black size the transfer at the ends and
+## the middle; the five after them are the palette's actual working colours -
+## meadow, deep leaf, sand, skin, water - so a miss is a miss on a colour the
+## game ships.
+const SWATCHES: Array[String] = [
+	"#FFFFFF", "#808080", "#202020", "#86B04A",
+	"#4E7A32", "#BFB48C", "#E0AC7E", "#4C8FBF",
+]
+
+const SWATCH_SIZE := 1.2
+const SWATCH_PITCH := 1.55
+## y of the shade row's centre. Clear of the lit row, and clear of the pad.
+const SWATCH_SHADE_Y := 3.2
+## Per-channel sRGB units a swatch may miss its prediction by. The plan's
+## number, and it is not widened - see look-v2-tech.md section 5.2.
+const SWATCH_TOLERANCE := 6
+
+var _swatch_probes: Array = []
+
+
+## TEMPORARY (Stage 0.3, experiment): measure the engine's own transfer.
+##
+## Sixteen greys pushed RAW into ARRAY_COLOR - no srgb_to_linear - and drawn in
+## the SHADE band, where the ramp multiplies by kubik_shade alone: no sun, no
+## energy, no PI, and nothing clips. So measured_linear / shade_linear is
+## exactly what the engine did to the value we pushed, and the shape of that
+## curve names the bug.
+func _sheet_swatch_ramp() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	var holder := Node3D.new()
+	_subjects_root.add_child(holder)
+	var n := 16
+	var half := SWATCH_SIZE * 0.5
+	var probes := []
+	for i in n:
+		var v := float(i) / float(n - 1)
+		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
+		holder.add_child(_swatch_quad([
+			Vector3(cx - half, SWATCH_SHADE_Y - half, SUBJECT_Z),
+			Vector3(cx + half, SWATCH_SHADE_Y - half, SUBJECT_Z),
+			Vector3(cx + half, SWATCH_SHADE_Y + half, SUBJECT_Z),
+			Vector3(cx - half, SWATCH_SHADE_Y + half, SUBJECT_Z),
+		], Vector3.BACK, Color(v, v, v), false))
+		probes.append({"v": v, "centre": Vector3(cx, SWATCH_SHADE_Y, SUBJECT_Z)})
+
+	var span := float(n) * SWATCH_PITCH + 1.0
+	var aspect := float(get_viewport().size.x) / float(get_viewport().size.y)
+	var half_angle := atan(tan(deg_to_rad(FOV) * 0.5) * aspect)
+	var distance := maxf(9.0, (span * 0.5) / tan(half_angle))
+	var look_at := Vector3(0.0, SWATCH_SHADE_Y + SWATCH_PITCH * 1.5, SUBJECT_Z)
+	_camera.global_position = look_at + Vector3(0.0, 0.0, 1.0) * distance
+	_camera.look_at(look_at, Vector3.UP)
+
+	# A second row whose albedo arrives as a UNIFORM instead of a vertex
+	# colour. If this row is clean and the vertex row is not, the error is the
+	# vertex path and belongs at the push; if both bend the same way, it is
+	# downstream of ALBEDO and no push conversion can reach it.
+	var uni_shader := Shader.new()
+	uni_shader.code = Look.OPAQUE_SHADER.replace(
+		"v_albedo = kubik_to_linear(COLOR.rgb);", "v_albedo = test_color.rgb;").replace(
+		"shader_type spatial;", "shader_type spatial;\nuniform vec4 test_color;")
+	for i in n:
+		var v := float(i) / float(n - 1)
+		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
+		var y := SWATCH_SHADE_Y + SWATCH_PITCH
+		var q := _swatch_quad([
+			Vector3(cx - half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y + half, SUBJECT_Z),
+			Vector3(cx - half, y + half, SUBJECT_Z),
+		], Vector3.BACK, Color(0.0, 0.0, 0.0))
+		var m := ShaderMaterial.new()
+		m.shader = uni_shader
+		m.set_shader_parameter("test_color", Color(v, v, v))
+		q.mesh.surface_set_material(0, m)
+		holder.add_child(q)
+		probes.append({"v": v, "uniform": true,
+			"centre": Vector3(cx, y, SUBJECT_Z)})
+
+	# A third row, UNSHADED: ALBEDO goes straight to the output with no light()
+	# in the way. If this row is clean, the bend lives in the custom light
+	# function on this renderer; if it bends too, it is the output path.
+	var uns := Shader.new()
+	uns.code = """
+shader_type spatial;
+render_mode unshaded;
+uniform vec4 test_color;
+void fragment() { ALBEDO = test_color.rgb; }
+"""
+	for i in n:
+		var v := float(i) / float(n - 1)
+		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
+		var y := SWATCH_SHADE_Y + SWATCH_PITCH * 2.0
+		var q := _swatch_quad([
+			Vector3(cx - half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y + half, SUBJECT_Z),
+			Vector3(cx - half, y + half, SUBJECT_Z),
+		], Vector3.BACK, Color(0.0, 0.0, 0.0), false)
+		var m2 := ShaderMaterial.new()
+		m2.shader = uns
+		m2.set_shader_parameter("test_color", Color(v, v, v))
+		q.mesh.surface_set_material(0, m2)
+		holder.add_child(q)
+		probes.append({"v": v, "unshaded": true,
+			"centre": Vector3(cx, y, SUBJECT_Z)})
+
+	# A fourth row that answers the mechanism outright. ALBEDO is the swatch
+	# value; light() writes a flat vec3(1.0) and nothing else. If the engine
+	# re-applies ALBEDO after light(), the row reads back as the value pushed;
+	# if it does not, every quad is white.
+	var probe_shader := Shader.new()
+	probe_shader.code = """
+shader_type spatial;
+render_mode ambient_light_disabled, specular_disabled;
+uniform vec4 test_color;
+void fragment() { ALBEDO = test_color.rgb; ROUGHNESS = 1.0; SPECULAR = 0.0; }
+void light() { DIFFUSE_LIGHT += vec3(1.0); }
+"""
+	for i in n:
+		var v := float(i) / float(n - 1)
+		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
+		var y := SWATCH_SHADE_Y + SWATCH_PITCH * 3.0
+		var q := _swatch_quad([
+			Vector3(cx - half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y - half, SUBJECT_Z),
+			Vector3(cx + half, y + half, SUBJECT_Z),
+			Vector3(cx - half, y + half, SUBJECT_Z),
+		], Vector3.BACK, Color(0.0, 0.0, 0.0), false)
+		var m3 := ShaderMaterial.new()
+		m3.shader = probe_shader
+		m3.set_shader_parameter("test_color", Color(v, v, v))
+		q.mesh.surface_set_material(0, m3)
+		holder.add_child(q)
+		probes.append({"v": v, "flatlight": true,
+			"centre": Vector3(cx, y, SUBJECT_Z)})
+
+	var image := await _capture()
+	_save_image(image, "swatch-ramp")
+
+	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
+	var shade_linear: Color = SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)["shade"]
+	print("[Ramp] shade linear r=%.5f g=%.5f b=%.5f" % [
+		shade_linear.r, shade_linear.g, shade_linear.b])
+	print("[Ramp] %-7s %-8s %-10s %-10s %-10s %-10s" % [
+		"path", "pushed", "measured", "E(v)=lin/sh", "srgb2lin(v)", "sq"])
+	for probe in probes:
+		var m := _sample_at(image, _camera.unproject_position(probe["centre"]))
+		var e := Color(m.r, m.g, m.b).srgb_to_linear()
+		var v: float = probe["v"]
+		var lin := Color(v, v, v).srgb_to_linear().r
+		print("[Ramp] %-7s %-8.4f %-10s %-10.5f %-10.5f %-10.5f" % [
+			"flatlight" if probe.has("flatlight") else "unshaded" if probe.has("unshaded") else ("uniform" if probe.has("uniform") else "vertex"),
+			v, m.to_html(false), e.r / shade_linear.r, lin, lin * lin])
+
+
+func _sheet_swatches() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	_swatch_probes.clear()
+
+	var holder := Node3D.new()
+	_subjects_root.add_child(holder)
+	var half := SWATCH_SIZE * 0.5
+	for i in SWATCHES.size():
+		var authored := Color.html(SWATCHES[i])
+		var linear := authored.srgb_to_linear()
+		var cx := (float(i) - float(SWATCHES.size() - 1) * 0.5) * SWATCH_PITCH
+
+		# The lit row: flat on the pad, normal up.
+		var lit_c := Vector3(cx, 0.02, SUBJECT_Z)
+		holder.add_child(_swatch_quad([
+			Vector3(cx - half, 0.02, SUBJECT_Z - half),
+			Vector3(cx - half, 0.02, SUBJECT_Z + half),
+			Vector3(cx + half, 0.02, SUBJECT_Z + half),
+			Vector3(cx + half, 0.02, SUBJECT_Z - half),
+		], Vector3.UP, linear))
+		_swatch_probes.append({
+			"name": "%s lit" % SWATCHES[i], "authored": SWATCHES[i],
+			"linear": linear, "lit": true, "centre": lit_c})
+
+		# The shade row: standing, normal at the camera. The sun's z is
+		# negative at every hour, so a +Z normal is always in the shade band.
+		var sh_c := Vector3(cx, SWATCH_SHADE_Y, SUBJECT_Z)
+		holder.add_child(_swatch_quad([
+			Vector3(cx - half, SWATCH_SHADE_Y - half, SUBJECT_Z),
+			Vector3(cx + half, SWATCH_SHADE_Y - half, SUBJECT_Z),
+			Vector3(cx + half, SWATCH_SHADE_Y + half, SUBJECT_Z),
+			Vector3(cx - half, SWATCH_SHADE_Y + half, SUBJECT_Z),
+		], Vector3.BACK, linear))
+		_swatch_probes.append({
+			"name": "%s shade" % SWATCHES[i], "authored": SWATCHES[i],
+			"linear": linear, "lit": false, "centre": sh_c})
+
+	_aim_at_swatches()
+	var image := await _capture()
+	_save_image(image, "swatches")
+	_report_swatches(image)
+
+
+## One swatch quad: the poster material, and nothing thrown on its neighbours.
+func _swatch_quad(points: Array, normal: Vector3, linear: Color,
+		wire := true) -> MeshInstance3D:
+	var mi := _flat_mesh(points, normal, linear, wire)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+## Both rows in frame, pitched down far enough that the flat row is not a line.
+##
+## The distance is computed from the viewport's aspect the way _shoot_row does
+## it, so the sheet frames the same on a 16:9 window and a 4:3 one - a swatch
+## half off the edge is a swatch that cannot be sampled.
+func _aim_at_swatches() -> void:
+	var span := float(SWATCHES.size()) * SWATCH_PITCH + 1.0
+	var aspect := float(get_viewport().size.x) / float(get_viewport().size.y)
+	var half_angle := atan(tan(deg_to_rad(FOV) * 0.5) * aspect)
+	var distance := maxf(9.0, (span * 0.5) / tan(half_angle))
+	var pitch := deg_to_rad(40.0)
+	var look_at := Vector3(0.0, 1.6, SUBJECT_Z)
+	_camera.global_position = look_at + Vector3(0.0, sin(pitch), cos(pitch)) * distance
+	_camera.look_at(look_at, Vector3.UP)
+
+
+## Sample every quad out of the frame and hold it against the ramp.
+##
+## The sun state comes from SkyCycle's own pure functions at the frozen time,
+## converted exactly as apply() converts them before publishing - so the sheet
+## predicts from the same numbers the shader was handed, and a disagreement is
+## the TRANSFER and never a stale uniform.
+func _report_swatches(image: Image) -> void:
+	# STRAIGHT FROM THE KEYFRAME, not from the wrappers: this is the same
+	# Dictionary apply() published, so a disagreement is the transfer and never
+	# a value that was converted twice on its way to the prediction.
+	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
+	var kf := SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)
+	var sun_linear: Color = kf["sun"]
+	var energy: float = kf["energy"]
+	var shade_linear: Color = kf["shade"]
+	var shade_desat: float = kf["shade_desat"]
+	var lit_bleach := Look.LIT_BLEACH
+
+	print("[Swatches] time %.3f, elevation %.3f, energy %.3f" % [
+		_sky.time_of_day, elevation, energy])
+	print("[Swatches] sun %s  shade %s  desat %.2f  bleach %.2f" % [
+		sun_linear.linear_to_srgb().to_html(false),
+		shade_linear.linear_to_srgb().to_html(false), shade_desat, lit_bleach])
+	print("[Swatches] %-16s %-9s %-9s %-9s %s" % [
+		"name", "authored", "predicted", "measured", "delta r,g,b"])
+
+	var rows := []
+	var worst := 0
+	for probe in _swatch_probes:
+		var predicted: Color = Look.predict(probe["linear"], probe["lit"],
+			sun_linear, energy, shade_linear, shade_desat, lit_bleach)
+		var measured := _sample_at(image, _camera.unproject_position(probe["centre"]))
+		var dr := int(round(measured.r * 255.0)) - int(round(predicted.r * 255.0))
+		var dg := int(round(measured.g * 255.0)) - int(round(predicted.g * 255.0))
+		var db := int(round(measured.b * 255.0)) - int(round(predicted.b * 255.0))
+		var delta := maxi(absi(dr), maxi(absi(dg), absi(db)))
+		worst = maxi(worst, delta)
+		print("[Swatches] %-16s #%-8s #%-8s #%-8s %+4d %+4d %+4d%s" % [
+			probe["name"], probe["authored"], predicted.to_html(false),
+			measured.to_html(false), dr, dg, db,
+			"   MISS" if delta > SWATCH_TOLERANCE else ""])
+		rows.append({
+			"name": probe["name"], "authored": probe["authored"],
+			"lit": probe["lit"], "predicted": predicted.to_html(false),
+			"measured": measured.to_html(false),
+			"delta": [dr, dg, db], "worst": delta})
+
+	var report := {
+		"time_of_day": _sky.time_of_day, "elevation": elevation,
+		"energy": energy, "shade_desat": shade_desat, "lit_bleach": lit_bleach,
+		"renderer": RenderingServer.get_video_adapter_name(),
+		"driver": ProjectSettings.get_setting("rendering/renderer/rendering_method", ""),
+		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
+	}
+	var path := "%s/swatches.json" % _out_dir
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(report, "  "))
+		f.close()
+		print("[Swatches]   -> %s" % path)
+	print("[Swatches] worst channel delta %d (tolerance %d): %s" % [
+		worst, SWATCH_TOLERANCE, "PASS" if worst <= SWATCH_TOLERANCE else "FAIL"])
+	if worst > SWATCH_TOLERANCE and _strict():
+		push_error("[Swatches] --strict: worst delta %d over tolerance %d" % [
+			worst, SWATCH_TOLERANCE])
+		get_tree().quit(1)
+
+
+## A 9x9 mean around a point, in sRGB as the frame stores it.
+##
+## Nine across because a single pixel on a software rasteriser is one sample of
+## a dithered edge; nine is a flat field's mean and still well inside the
+## smallest swatch on screen.
+func _sample_at(image: Image, at: Vector2) -> Color:
+	var cx := clampi(int(round(at.x)), 4, image.get_width() - 5)
+	var cy := clampi(int(round(at.y)), 4, image.get_height() - 5)
+	var r := 0.0
+	var g := 0.0
+	var b := 0.0
+	for dy in range(-4, 5):
+		for dx in range(-4, 5):
+			var c := image.get_pixel(cx + dx, cy + dy)
+			r += c.r
+			g += c.g
+			b += c.b
+	return Color(r / 81.0, g / 81.0, b / 81.0)
+
+
+## `--strict` turns a swatch miss into a non-zero exit, which is what makes the
+## sheet a gate rather than a report.
+func _strict() -> bool:
+	return OS.get_cmdline_user_args().has("--strict")
+
+
+## _save() takes a name and shoots; this takes a frame already in hand, so the
+## pixels that are reported are the pixels that were written.
+func _save_image(image: Image, file_name: String) -> void:
+	var path := "%s/%s.png" % [_out_dir, file_name]
+	var err := image.save_png(path)
+	if err != OK:
+		push_warning("[Gallery] could not write %s: %s" % [path, error_string(err)])
+		return
+	_written += 1
+	print("[Gallery]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
 
 
 # --- Animation strips ---------------------------------------------------------
@@ -1069,14 +1421,22 @@ func _build_wall() -> void:
 ## The winding identity is the mesher's: (p1 - p0) x (p2 - p0) == -normal is
 ## "clockwise seen from outside", which is the face Godot draws. Points are
 ## reversed rather than eyeballed if the quad comes out invisible.
-func _flat_mesh(points: Array, normal: Vector3, color: Color) -> MeshInstance3D:
+## `wire` false pushes the colour RAW, skipping Look.to_wire. Only the ramp
+## sheet does that, and only because its whole job is to measure what the
+## renderer does to a value between push_back and the screen - a measurement
+## that our own conversion would sit in the middle of.
+func _flat_mesh(points: Array, normal: Vector3, color: Color,
+		wire := true) -> MeshInstance3D:
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var colors := PackedColorArray()
+	# sRGB on the wire, exactly as every mesh builder in the game does it, so
+	# the pad and the swatches travel the path the terrain travels.
+	var pushed := Look.to_wire(color) if wire else color
 	for p in points:
 		verts.push_back(p)
 		normals.push_back(normal)
-		colors.push_back(color)
+		colors.push_back(pushed)
 	var indices := PackedInt32Array([0, 1, 2, 0, 2, 3])
 	var cross := (verts[1] - verts[0]).cross(verts[2] - verts[0]).normalized()
 	if cross.dot(normal) > 0.0:
@@ -1091,11 +1451,12 @@ func _flat_mesh(points: Array, normal: Vector3, color: Color) -> MeshInstance3D:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
-	var mat := StandardMaterial3D.new()
-	mat.vertex_color_use_as_albedo = true
-	mat.roughness = 1.0
-	mat.metallic_specular = 0.0
-	mesh.surface_set_material(0, mat)
+	# THE POSTER MATERIAL, not a StandardMaterial3D (look v2 Stage 0, Q8). The
+	# pad, the wall and the swatch quads are the ground the characters stand on
+	# and the field a colour is judged against; drawn through anything but the
+	# ramp they are a different world, and Look.predict() would not apply to
+	# them.
+	mesh.surface_set_material(0, Look.opaque_material())
 
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh

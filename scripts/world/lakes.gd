@@ -388,7 +388,7 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			]:
 				verts.push_back(p)
 				normals.push_back(Vector3.UP)
-				colors.push_back(color)
+				colors.push_back(Look.to_wire(color))
 			indices.push_back(first)
 			indices.push_back(first + 1)
 			indices.push_back(first + 2)

@@ -37,6 +37,13 @@ class_name Look
 ## record: the Compatibility renderer ignores colour-space hints. The globals
 ## follow the same rule - SkyCycle converts before it publishes - so there is
 ## one convention and no hint for a renderer to ignore.
+##
+## ... AND sRGB ON THE WIRE. The one exception, added in look v2 Stage 0: a
+## vertex colour is converted back to sRGB by Look.to_wire() at the moment it is
+## pushed into a mesh, because the renderer decodes an 8-bit vertex colour on
+## the way to ALBEDO. Everything upstream of that push is still linear and all
+## the colour arithmetic still happens there. What is authored is what is on
+## screen, and the swatch sheet proves it every stage.
 
 
 # --- The ramp ----------------------------------------------------------------
@@ -49,6 +56,29 @@ global uniform float kubik_fog_start;
 global uniform float kubik_fog_end;
 global uniform float kubik_fog_bands;
 global uniform float kubik_night;
+global uniform float kubik_shade_desat;
+global uniform vec4 kubik_fog_dark;
+global uniform vec4 kubik_water;
+
+// THE ALBEDO, LINEAR, set by every fragment() and read by light().
+//
+// It does not travel in ALBEDO, and that is deliberate: the renderer multiplies
+// whatever light() writes by ALBEDO, so a light function that needs the albedo
+// in a form OTHER than a plain scale - and the ink formula does, it desaturates
+// it - cannot put it there without it being applied a second time. Every
+// fragment() therefore sets ALBEDO to white, hands the real colour over here,
+// and light() owns the whole expression. That is correct whether or not the
+// renderer re-applies ALBEDO, which is the one thing the two renderers were
+// found to disagree about.
+varying vec3 v_albedo;
+
+// The inverse of the push conversion (see Look.to_wire). Vertex colours travel
+// sRGB on the wire and the engine decodes ALBEDO for us; anything that is NOT
+// ALBEDO - EMISSION, most of all - has to decode for itself or it glows at its
+// sRGB value, which is far too bright.
+vec3 kubik_to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
 """
 
 ## THREE TONES. A face is lit, half-lit, or in shade, and nothing in between.
@@ -69,9 +99,12 @@ global uniform float kubik_night;
 ## makes a fire the one warm thing in a cool night rather than a second sun.
 const RAMP := """
 const float BAND_LIT = 0.50;
-const float BAND_HALF = 0.12;
+const float BAND_HALF = 0.22;
 const float BAND_HALF_LEVEL = 0.55;
 const float BAND_EDGE = 0.03;
+// The lit band pushed toward white. 0 turns it off. Mirrored by Look.LIT_BLEACH
+// for Look.predict(); change one, change both.
+const float LIT_BLEACH = 0.10;
 
 float poster_band(float ndl) {
 	float lit = smoothstep(BAND_LIT - BAND_EDGE, BAND_LIT + BAND_EDGE, ndl);
@@ -82,10 +115,27 @@ float poster_band(float ndl) {
 void light() {
 	float ndl = clamp(dot(NORMAL, LIGHT), 0.0, 1.0) * ATTENUATION;
 	float band = poster_band(ndl);
+	// LIGHT_COLOR is the light's colour times its energy times PI. The PI is
+	// the Lambert normalisation, and a poster does not want it: it made every
+	// lit surface 3.14x its authored value and every constant downstream was
+	// chosen to cancel it. Divide it out here, once, and an authored colour
+	// lit at noon lands at authored * sun * energy.
+	vec3 L = LIGHT_COLOR / PI;
+	// SHADE IS AN INK. The shade side keeps the surface's LUMINANCE and takes
+	// the ink's HUE - which is what a printed shadow does and what a multiply
+	// cannot do. Desaturate toward the surface's own luminance, then colour
+	// the result with the ink. The lit side is pushed a little toward white,
+	// the way a poster's lit face is paper showing through.
+	//
+	// v_albedo, not ALBEDO: see the note in HEADER. ALBEDO is white and this
+	// function owns the whole expression, so nothing is applied twice.
 	if (LIGHT_IS_DIRECTIONAL) {
-		DIFFUSE_LIGHT += ALBEDO * mix(kubik_shade.rgb, LIGHT_COLOR, band);
+		float lum = dot(v_albedo, vec3(0.2126, 0.7152, 0.0722));
+		vec3 shade_alb = mix(v_albedo, vec3(lum), kubik_shade_desat);
+		vec3 lit_alb = mix(v_albedo, vec3(1.0), LIT_BLEACH);
+		DIFFUSE_LIGHT += mix(shade_alb * kubik_shade.rgb, lit_alb * L, band);
 	} else {
-		DIFFUSE_LIGHT += ALBEDO * LIGHT_COLOR * band;
+		DIFFUSE_LIGHT += v_albedo * L * band;
 	}
 }
 """
@@ -117,7 +167,9 @@ render_mode cull_back, ambient_light_disabled, specular_disabled;
 """ + HEADER + FOG_FN + """
 void fragment() {
 	// The vertex colour IS the albedo. There are no textures in this world.
-	ALBEDO = COLOR.rgb;
+	// It arrives sRGB on the wire (Look.to_wire) and is decoded here, once.
+	v_albedo = kubik_to_linear(COLOR.rgb);
+	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
 	FOG = poster_fog(VERTEX);
@@ -136,7 +188,8 @@ shader_type spatial;
 render_mode blend_mix, depth_draw_opaque, cull_disabled, ambient_light_disabled, specular_disabled;
 """ + HEADER + FOG_FN + """
 void fragment() {
-	ALBEDO = COLOR.rgb;
+	v_albedo = kubik_to_linear(COLOR.rgb);
+	ALBEDO = vec3(1.0);
 	ALPHA = COLOR.a;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
@@ -314,16 +367,83 @@ static func _make(code: String) -> ShaderMaterial:
 	return m
 
 
+# --- The wire ------------------------------------------------------------------
+
+## THE ONE CONVERSION, and the only one in the whole colour path.
+##
+## Every palette in the game is stored LINEAR and every multiplier that acts on
+## a colour - baked AO, the far field's skirt and band, aspect tint, jitter - is
+## a linear multiplication, exactly as it was. This is the last thing that
+## happens to a vertex colour before push_back, and it exists because the
+## renderer treats an 8-bit vertex colour as sRGB and decodes it on the way to
+## ALBEDO. Push linear and it is decoded a second time; push sRGB and what
+## arrives at ALBEDO is what was authored.
+##
+## LINEAR MATHS, sRGB ON THE WIRE. If you find yourself converting anywhere
+## else, something is wrong: there is one conversion and this is it.
+static func to_wire(c: Color) -> Color:
+	return c.linear_to_srgb()
+
+
 # --- Publishing ---------------------------------------------------------------
 
 ## Write the time-of-day globals. Called by SkyCycle.apply() every frame with
 ## colours that are ALREADY LINEAR - see the note at the top.
-static func publish(shade_linear: Color, fog_linear: Color,
+static func publish(kf: Dictionary,
 		fog_start_m: float, fog_end_m: float, fog_bands: int) -> void:
-	RenderingServer.global_shader_parameter_set(&"kubik_shade",
-		Vector4(shade_linear.r, shade_linear.g, shade_linear.b, 1.0))
-	RenderingServer.global_shader_parameter_set(&"kubik_fog_color",
-		Vector4(fog_linear.r, fog_linear.g, fog_linear.b, 1.0))
+	_set_color(&"kubik_shade", kf["shade"])
+	_set_color(&"kubik_fog_color", kf["fog"])
+	_set_color(&"kubik_fog_dark", kf["fog_dark"])
+	_set_color(&"kubik_water", kf["water"])
+	RenderingServer.global_shader_parameter_set(&"kubik_shade_desat", kf["shade_desat"])
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_start", fog_start_m)
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_end", fog_end_m)
 	RenderingServer.global_shader_parameter_set(&"kubik_fog_bands", float(maxi(fog_bands, 1)))
+
+
+static func _set_color(name: StringName, c: Color) -> void:
+	RenderingServer.global_shader_parameter_set(name, Vector4(c.r, c.g, c.b, 1.0))
+
+
+## Mirrors RAMP's LIT_BLEACH. Change one, change both - Look.predict() reads
+## this and the shader reads the constant in RAMP, and the swatch sheet is what
+## catches them drifting apart.
+const LIT_BLEACH := 0.10
+
+
+# --- The prediction -----------------------------------------------------------
+
+## Luminance, Rec. 709, on a LINEAR colour. The shade mix keeps this and takes
+## the ink's hue - see RAMP.
+static func luma(c: Color) -> float:
+	return c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722
+
+
+## What RAMP puts on screen for a linear albedo, in sRGB, for a given sun state.
+##
+## MIRRORS RAMP LINE FOR LINE: change one, change both. This exists so the
+## swatch sheet and the shader cannot drift - the sheet calls this, the shader
+## IS this, and Stage 0's whole claim ("what is authored is what is on screen")
+## is the two agreeing to within 6 units per channel on both renderers.
+##
+## `lit` is the band the surface is in: true for band 1.0 (n.l over BAND_LIT),
+## false for band 0.0 (the shade band). The half-lit band is deliberately not
+## predicted - the sheet only shoots the two ends, because the middle is a mix
+## of them and proves nothing the ends do not.
+static func predict(albedo_linear: Color, lit: bool,
+		sun_linear: Color, energy: float, shade_linear: Color,
+		shade_desat: float, lit_bleach: float) -> Color:
+	var out: Color
+	if lit:
+		var bleached := albedo_linear.lerp(Color(1.0, 1.0, 1.0), lit_bleach)
+		out = Color(bleached.r * sun_linear.r * energy,
+			bleached.g * sun_linear.g * energy,
+			bleached.b * sun_linear.b * energy)
+	else:
+		var l := luma(albedo_linear)
+		var desat := albedo_linear.lerp(Color(l, l, l), shade_desat)
+		out = Color(desat.r * shade_linear.r,
+			desat.g * shade_linear.g,
+			desat.b * shade_linear.b)
+	return Color(clampf(out.r, 0.0, 1.0), clampf(out.g, 0.0, 1.0),
+		clampf(out.b, 0.0, 1.0)).linear_to_srgb()

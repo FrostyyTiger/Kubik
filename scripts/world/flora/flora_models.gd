@@ -615,6 +615,9 @@ static func _emit_face(pos: Vector3i, face: int, color: Color, unit: float,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
 	var n := Vector3(FACE_NORMALS[face])
 	var first := verts.size()
+	# sRGB on the wire, once, at the push - see Look.to_wire. The alpha rides
+	# through untouched: it is the emissive flag, not a colour.
+	var wire := Look.to_wire(color)
 	for corner in FACES[face]:
 		# The model's origin is its bottom centre, so x and z are centred on
 		# the voxel column the instance stands on and y starts at the ground.
@@ -623,7 +626,7 @@ static func _emit_face(pos: Vector3i, face: int, color: Color, unit: float,
 			(float(pos.y) + corner.y) * unit,
 			(float(pos.z) + corner.z - 0.5) * unit))
 		normals.push_back(n)
-		colors.push_back(color)
+		colors.push_back(wire)
 	indices.push_back(first)
 	indices.push_back(first + 1)
 	indices.push_back(first + 2)
@@ -709,7 +712,7 @@ void fragment() {
 	// this is zero for every plant that is not meant to glow, zero for all of
 	// them by day, and needs no second material, no second mesh and no branch
 	// anywhere in the placement rules.
-	EMISSION = COLOR.rgb * COLOR.a * kubik_night * night_life * 2.0;
+	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * kubik_night * night_life * 2.0;
 	// Distance in bands, like everything else - see Look.
 	FOG = poster_fog(VERTEX);
 }
@@ -750,6 +753,12 @@ uniform float night_life = 1.0;
 
 varying float v_glow;
 
+// sRGB on the wire, as everywhere else. ALBEDO is decoded by the engine;
+// EMISSION is not, so it decodes here. Same function as Look.HEADER's.
+vec3 kubik_to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
 void vertex() {
 	// PHASE FROM THE WORLD POSITION, so every firefly drifts and blinks on its
 	// own schedule without anything having to store a per-instance number.
@@ -778,10 +787,12 @@ void vertex() {
 }
 
 void fragment() {
+	// The 0.15 is a darkening of the BODY and belongs in linear, so it is
+	// applied to the decoded colour and handed back to ALBEDO on the wire.
 	ALBEDO = COLOR.rgb * 0.15;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	EMISSION = COLOR.rgb * v_glow * 3.0;
+	EMISSION = kubik_to_linear(COLOR.rgb) * v_glow * 3.0;
 }
 """
 

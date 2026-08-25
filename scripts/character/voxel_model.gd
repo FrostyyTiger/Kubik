@@ -373,7 +373,8 @@ static func _emit_face(p: Vector3i, d: int, s: int, solid: Dictionary,
 		# in linear space - a plain scale, not a blend towards a darker colour,
 		# so it stays correct if the palette is re-authored.
 		var shade := 1.0 - ao_strength * (1.0 - float(level) / float(AO_OPEN))
-		colors.push_back(Color(color.r * shade, color.g * shade, color.b * shade, color.a))
+		colors.push_back(Look.to_wire(
+			Color(color.r * shade, color.g * shade, color.b * shade, color.a)))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)

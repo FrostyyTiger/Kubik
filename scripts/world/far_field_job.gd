@@ -417,10 +417,10 @@ func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color
 	for p in [p0, p1, p2, p3]:
 		verts.push_back(p)
 		normals.push_back(normal)
-		colors.push_back(Block.jitter(shaded,
+		colors.push_back(Look.to_wire(Block.jitter(shaded,
 			int(round(p.x * inv_bs)), int(round(p.z * inv_bs)), generator.world_seed,
 			config.color_jitter_blocks, config.color_jitter_value,
-			config.color_jitter_hue))
+			config.color_jitter_hue)))
 	indices.push_back(first)
 	indices.push_back(first + 1)
 	indices.push_back(first + 2)

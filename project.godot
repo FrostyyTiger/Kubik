@@ -84,6 +84,30 @@ kubik_fog_bands={
 "value": 6.0
 }
 
+; LOOK V2. How far the shade side is desaturated toward its own luminance
+; before the ink colours it (rule 1, sharpened): the shade band keeps the
+; surface's LUMINANCE and takes the ink's HUE, which a multiply cannot do.
+; Per keyframe - 0.55 by day, 0.75 at night - so the night is greyer.
+kubik_shade_desat={
+"type": "float",
+"value": 0.55
+}
+
+; The fog colour one band darker. Figures fog toward this and terrain toward
+; kubik_fog_color, so a character at distance stays a step darker than the
+; ground behind it instead of dissolving into it.
+kubik_fog_dark={
+"type": "vec4",
+"value": Vector4(0.30, 0.34, 0.42, 1.0)
+}
+
+; The water's colour for the hour, published so lakes.gd does not have to own a
+; time-of-day table of its own. Used from Stage 4.
+kubik_water={
+"type": "vec4",
+"value": Vector4(0.07, 0.15, 0.26, 1.0)
+}
+
 [threading]
 
 ; Chunk generation and chunk meshing both run as LOW priority worker tasks, and

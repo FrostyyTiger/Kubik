@@ -330,8 +330,10 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 			origin.x + int(p.x), origin.z + int(p.z), world_seed,
 			config.color_jitter_blocks, config.color_jitter_value,
 			config.color_jitter_hue)
-		colors.push_back(Color(
-			tinted.r * shade, tinted.g * shade, tinted.b * shade, tinted.a))
+		# sRGB on the wire: the AO multiply above is linear, this is the one
+		# conversion, and it is the last thing before the push. See Look.to_wire.
+		colors.push_back(Look.to_wire(Color(
+			tinted.r * shade, tinted.g * shade, tinted.b * shade, tinted.a)))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)
