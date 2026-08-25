@@ -256,7 +256,8 @@ static func bounds(voxels: Array) -> Array:
 ## Shared across every part of every character - the colour is in the
 ## vertices, so one material serves every palette.
 static func material() -> Material:
-	return Look.opaque_material()
+	# A figure, not the ground - see Look.figure_material().
+	return Look.figure_material()
 
 
 ## Mesh a voxel list into an ArrayMesh, in metres, with baked corner AO.
@@ -373,7 +374,8 @@ static func _emit_face(p: Vector3i, d: int, s: int, solid: Dictionary,
 		# in linear space - a plain scale, not a blend towards a darker colour,
 		# so it stays correct if the palette is re-authored.
 		var shade := 1.0 - ao_strength * (1.0 - float(level) / float(AO_OPEN))
-		colors.push_back(Color(color.r * shade, color.g * shade, color.b * shade, color.a))
+		colors.push_back(Look.to_wire(
+			Color(color.r * shade, color.g * shade, color.b * shade, color.a)))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)

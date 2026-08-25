@@ -213,6 +213,16 @@ func _choose_vantages() -> Array:
 		"eye_cell": postcard["eye"],
 		"distance": 0.0, "height": 15.0,
 	})
+	# The same postcard at dusk (look v2 Stage 2). The ranges and the sky are
+	# what this plan changes most, and they change most at the ends of the day.
+	shots.append({
+		"name": "14-postcard-dusk",
+		"note": "shot 6's vantage at dusk, 0.74",
+		"target": postcard["look_at"],
+		"eye_cell": postcard["eye"],
+		"distance": 0.0, "height": 15.0,
+		"time": 0.74,
+	})
 
 	# --- Foliage v1 Stage 1: four vantage points about what grows -----------
 	#
@@ -318,6 +328,21 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 		"eye_m": meadow_eye,
 		"target": _along(meadow_eye, _hashed_heading(8), 16.0, 0.5),
 		"time": 0.95,
+	})
+
+	# THE TWO ENDS OF THE DAY, added by look v2 Stage 2 (tech plan Q15).
+	#
+	# Dawn is not dusk played backwards - it has its own keyframe now, cooler
+	# and pinker - and until look v2 there was no shot in which anyone could
+	# see that. Both reuse a vantage that already exists so they are directly
+	# comparable with their noon twin: 13 is shot 1's meadow, 14 is shot 6's
+	# postcard.
+	out.append({
+		"name": "13-meadow-dawn",
+		"note": "shot 1's meadow at dawn, 0.24",
+		"eye_m": meadow_eye,
+		"target": _along(meadow_eye, _hashed_heading(8), 16.0, 0.5),
+		"time": 0.24,
 	})
 	return out
 

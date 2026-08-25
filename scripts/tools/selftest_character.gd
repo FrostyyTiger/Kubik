@@ -254,17 +254,25 @@ func _test_mesher_ao():
 	return 1 if bad > 0 else 0
 
 
+## THE AO MULTIPLIER IS LINEAR AND THE WIRE IS sRGB.
+##
+## Look v2 Stage 0 made every mesh builder convert its final colour with
+## Look.to_wire() at the push, so a vertex colour read back out of an ArrayMesh
+## is sRGB. Baked AO is still a plain linear multiplication and these two are
+## still measuring it, so they decode first. The assertions above are unchanged
+## and are not loosened - the tolerance is still one 8-bit step (see the note on
+## RGBA8 storage in _test_part_ao).
 func _darkest(mesh: ArrayMesh) -> float:
 	var out := 2.0
 	for c in (_mesh_arrays(mesh)[Mesh.ARRAY_COLOR] as PackedColorArray):
-		out = minf(out, c.r)
+		out = minf(out, c.srgb_to_linear().r)
 	return out
 
 
 func _lightest(mesh: ArrayMesh) -> float:
 	var out := -1.0
 	for c in (_mesh_arrays(mesh)[Mesh.ARRAY_COLOR] as PackedColorArray):
-		out = maxf(out, c.r)
+		out = maxf(out, c.srgb_to_linear().r)
 	return out
 
 

@@ -188,6 +188,34 @@ a `class_name` - the editor keeps the global class cache in `.godot/`, and a
 game started without it fails to parse the first script that names a new
 class.
 
+### Both renderers
+
+The game is played on **Forward+** and shot on **Compatibility**, and the two
+have been found to disagree about colour more than once. Anything that touches
+a colour path is checked on both:
+
+```
+godot --path . -- --tour --seed 42 --label <name>
+godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
+```
+
+### The swatch check
+
+The one gate that says whether an authored colour is the colour on screen:
+
+```
+godot --path . scenes/character/gallery.tscn -- --sheet swatches --strict
+```
+
+Eight authored colours drawn lit and in shade, sampled out of the frame and
+compared with `Look.predict()`, which mirrors the lighting ramp line for line.
+Every swatch must land within **6 sRGB units per channel**; `--strict` makes a
+miss a non-zero exit. Run it on both renderers after any change to a palette, a
+shader, a mesh builder or the time-of-day table. `--sheet swatch-ramp` is the
+same instrument one level down: it measures what the renderer does to a value
+between `push_back` and the screen, and it is what to reach for when the
+swatches miss and it is not obvious why.
+
 ### Testing multiplayer locally
 
 In the editor: **Debug -> Run Multiple Instances -> 2 instances**, then F5.

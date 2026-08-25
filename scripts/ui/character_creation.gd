@@ -167,6 +167,10 @@ func _build_ui() -> void:
 	# The preview sits in a PanelContainer, so the theme's ink border and paper
 	# margin frame it like a mounted print.
 	var frame := PanelContainer.new()
+	# THE STEPPED CORNER (look v2 Stage 6). Ink, then gold inset 5, then paper
+	# inset 10, each at a smaller radius - a printed mount steps in, it does
+	# not have one rounded edge.
+	frame.add_theme_stylebox_override("panel", DecoPanel.stepped())
 	frame.add_child(_build_preview())
 	columns.add_child(frame)
 

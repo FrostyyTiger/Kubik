@@ -10,7 +10,8 @@ The stack, in model voxels:
     head   [50, 72) 22
 """
 
-from .voxlib import Part, gd_file, S, s, M, E, W, C, c, L, B, X
+from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+                     S, s, M, E, W, H, C, c, L, B, X)
 
 HEAD_SIZE = (28, 25, 17)
 HEAD_ANCHOR = (14, 0, 9)
@@ -36,17 +37,17 @@ def head() -> Part:
     p.prism((6, 22), (NECK, 25), (1, 17), S, chamfer=CHAMFER,
             bottom=JAW_INSETS, top=CROWN_INSETS)
     p.note(NECK, "the chin, stepped in twice")
-    p.front_paint(8, (10, 18), M)
+    # Five wide, centred on the elf's face (look v2 Stage 5).
+    p.front_paint(8, (11, 16), M)
     p.note(8, "the mouth")
     p.box((13, 15), (11, 14), (0, 1), S)
     p.note(11, "the nose")
-    for x0 in (16, 8):
-        p.repaint((x0, x0 + 4), (13, 17), (1, 2), W)
-    p.repaint((16, 18), (13, 15), (1, 2), E)
-    p.repaint((10, 12), (13, 15), (1, 2), E)
+    # 2 x 4 solid iris, one voxel proud, gap 6 (look v2 Stage 5); the old
+    # 4 x 4 whites are cleared back to skin first.
+    solid_eyes(p, 14, 13, 1, gap=6, clear=((8, 20), (13, 17), (1, 2)))
     p.note(13, "eyes, the iris rows")
-    p.repaint((16, 21), (BROW_Y, BROW_Y + 1), (1, 2), s)
-    p.repaint((7, 12), (BROW_Y, BROW_Y + 1), (1, 2), s)
+    hair_brow(p, (16, 21), BROW_Y, 1)
+    hair_brow(p, (7, 12), BROW_Y, 1)
     p.note(BROW_Y, "the brows")
     # THE EARS. Six out at eye level, four above that, two at the crown, four
     # deep - a blade on the side of the head, not a slab through it. Column

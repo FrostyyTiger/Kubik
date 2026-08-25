@@ -151,13 +151,23 @@ static func masks_for(gen: TerrainGenerator, config: WorldgenConfig) -> Masks:
 ## anything at all; a second decides what. That keeps the cost of an empty
 ## block to a single hash however many models a zone can grow, and it means
 ## raising the variety of a zone never raises its triangle count.
-## MEADOW WAS 0.50 through foliage v1 and look v1 took a third off it: at one
-## tuft on every second block the meadow close-up read as confetti, and the
-## poster wants a colour field with drifts on it. The flowers did not thin
-## with it - see _meadow(), which grows them denser inside a patch instead.
+## MEADOW WAS 0.50 through foliage v1, look v1 took a third off it to 0.34 - at
+## one tuft on every second block the meadow close-up read as confetti - and
+## look v2 Stage 4 puts it back to 0.50 on Marcel's call. The two decisions
+## disagree, and the reason v2 wins is that v1 judged the density through the
+## broken colour transfer: a tuft that arrived on screen at double its authored
+## saturation stood out from the field far harder than the authored colour does.
+## The flowers did not thin with it either way - see _meadow(), which grows them
+## denser inside a patch instead.
+##
+## The plan asks for 0.50 "inside 12 m of the player". Placement is world-space
+## and has no distance ramp - a tuft either exists in a column or does not, and
+## which columns carry one cannot depend on where anybody is standing without
+## two players seeing different meadows. So it is the flat number, judged on
+## 8-meadow-closeup, exactly as the plan's fallback says.
 const ZONE_DENSITY := {
 	TerrainGenerator.ZONE_SHORE: 0.35,
-	TerrainGenerator.ZONE_MEADOW: 0.34,
+	TerrainGenerator.ZONE_MEADOW: 0.50,
 	TerrainGenerator.ZONE_FOREST: 0.24,
 	TerrainGenerator.ZONE_ALPINE: 0.24,
 	TerrainGenerator.ZONE_HEATH: 0.26,

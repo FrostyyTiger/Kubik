@@ -125,7 +125,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
 		# y = 8, the mouth
-		["............................", "........SSMMMMMMMMSS........",
+		["............................", "........SSSSMMMMMSSS........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
@@ -172,7 +172,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
 		# y = 13, eyes, the iris rows
-		[".............SS.............", "........WWEESSSSEEWW........",
+		[".........EE..SS..EE.........", "........SSSSSSSSSSSS........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
@@ -182,7 +182,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
 		# y = 14, the ears, six voxels out
-		["............................", "........WWEESSSSEEWW........",
+		[".........EE......EE.........", "........SSSSSSSSSSSS........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "SSSSSSSSSSSSSSSSSSSSSSSSSSSS",
@@ -191,7 +191,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
-		["............................", "........WWWWSSSSWWWW........",
+		[".........EE......EE.........", "........SSSSSSSSSSSS........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "SSSSSSSSSSSSSSSSSSSSSSSSSSSS",
@@ -200,7 +200,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
-		["............................", "........WWWWSSSSWWWW........",
+		[".........EW......WE.........", "........SSSSSSSSSSSS........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "SSSSSSSSSSSSSSSSSSSSSSSSSSSS",
@@ -210,7 +210,7 @@ const HEAD := {
 		 "......SSSSSSSSSSSSSSSS......", ".......SSSSSSSSSSSSSS.......",
 		 "........SSSSSSSSSSSS........"],
 		# y = 17, the brows
-		["............................", "........ssssSSSSssss........",
+		["............................", "........HHHHSSSSHHHH........",
 		 ".......SSSSSSSSSSSSSS.......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "......SSSSSSSSSSSSSSSS......",
 		 "......SSSSSSSSSSSSSSSS......", "SSSSSSSSSSSSSSSSSSSSSSSSSSSS",

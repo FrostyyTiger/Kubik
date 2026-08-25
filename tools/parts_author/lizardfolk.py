@@ -9,7 +9,8 @@ The stack, in model voxels:
     head   [42, 60) 18
 """
 
-from .voxlib import Part, gd_file, S, s, M, E, W, C, c, B, X, T
+from .voxlib import (Part, gd_file, solid_eyes,
+                     S, s, M, E, W, C, c, B, X, T)
 
 HEAD_SIZE = (16, 18, 24)
 HEAD_ANCHOR = (8, 0, 16)
@@ -43,12 +44,14 @@ def head() -> Part:
     p.repaint((5, 7), (11, 12), (0, 1), s)
     p.repaint((9, 11), (11, 12), (0, 1), s)
     p.note(11, "the top of the snout, with nostrils")
-    # Eyes on the front of the SKULL, above the snout.
-    for x0 in (10, 2):
-        p.repaint((x0, x0 + 4), (12, 16), (8, 9), W)
-    p.repaint((10, 12), (12, 14), (8, 9), E)
-    p.repaint((4, 6), (12, 14), (8, 9), E)
+    # Eyes on the front of the SKULL, above the snout: 2 x 4 solid iris, one
+    # voxel proud, gap 6, exactly as the other three (look v2 Stage 5). Low z
+    # is the front here as everywhere, so proud is z = 7.
+    solid_eyes(p, 8, 12, 8, gap=6, clear=((2, 14), (12, 16), (8, 9)))
     p.note(12, "eyes on the front of the skull, above the snout")
+    # NO HAIR BROW. The lizardfolk has no hair over the brow - the crest is its
+    # hair - so the spec's "one row of H, or none" is none, and the brow ridge
+    # stays the shaded skin it has always been.
     p.repaint((10, 15), (16, 17), (8, 9), s)
     p.repaint((1, 6), (16, 17), (8, 9), s)
     p.note(16, "the brow ridge, and the crown")

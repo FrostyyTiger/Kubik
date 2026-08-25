@@ -148,8 +148,20 @@ const LEATHER_HEX := "#3A2A1E"
 const BELT_HEX := "#5A4632"
 
 ## Per-race tunic, where the race has one. Elf green, dwarf brown, human and
-## lizardfolk the default.
-const TUNIC_HEX := ["#7A6A4F", "#5C7A5A", "#6B4F3A", "#7A6A4F"]
+## lizardfolk a warm near-black.
+##
+## LOOK V2 STAGE 5 DARKENED ALL FOUR, and the reason is arithmetic rather than
+## taste. The plan asks that cloth and skin cross a value ratio of 0.5 or lower
+## - one at most half the other - for EVERY skin a player can pick. Each race's
+## five skins span a wide band of luminance (the human's from 0.033 to 0.632),
+## so a tunic clears all five only by sitting below the darkest or above the
+## lightest. Above is impossible for every race except the lizardfolk, and only
+## just. Below works for all four, and these are the values that do it: worst
+## ratio 0.47 / 0.47 / 0.48 / 0.48 against the darkest skin of each race.
+##
+## Hue is each race's own, unchanged - the elf is still green and the dwarf
+## still brown; only the value moved.
+const TUNIC_HEX := ["#262119", "#465C44", "#34271C", "#302A1F"]
 
 
 # --- Options -----------------------------------------------------------------

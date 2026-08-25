@@ -10,6 +10,9 @@ extends Control
 @onready var _quit_button: Button = $Center/VBox/QuitButton
 @onready var _address_edit: LineEdit = $Center/VBox/AddressEdit
 @onready var _status: Label = $Center/VBox/Status
+@onready var _backdrop: PosterBackdrop = $Backdrop
+@onready var _title: Label = $Center/VBox/Title
+@onready var _subtitle: Label = $Center/VBox/Subtitle
 
 static var _launch_handled := false
 
@@ -23,6 +26,16 @@ func _ready() -> void:
 	# next Host will fail with "port already in use".
 	if Net.is_online():
 		Net.leave()
+
+	# THE TITLE BAND (look v2 Stage 6). Paper caps on an ink band, the subtitle
+	# in gold under it, and the band positioned from the Title label's real
+	# rect rather than from a fraction of the window - the VBox owns where the
+	# type is, and a band that misses the type it carries is worse than none.
+	_title.add_theme_color_override("font_color", Deco.PAPER)
+	_subtitle.add_theme_color_override("font_color", Deco.GOLD)
+	_place_title_band()
+	get_tree().get_root().size_changed.connect(_place_title_band)
+	_title.resized.connect(_place_title_band)
 
 	_character_button.pressed.connect(_on_character_pressed)
 	_host_button.pressed.connect(_on_host_pressed)
@@ -157,3 +170,20 @@ func _set_busy(busy: bool, message: String) -> void:
 	_join_button.disabled = busy
 	_address_edit.editable = not busy
 	_status.text = message
+
+
+## Put the backdrop's ink band behind the title, once the VBox has laid out.
+##
+## Deferred because a Control's rect is not final until the container has run,
+## and _ready() is before that.
+func _place_title_band() -> void:
+	_place_band.call_deferred()
+
+
+func _place_band() -> void:
+	if _backdrop == null or _title == null:
+		return
+	var r := _title.get_global_rect()
+	if r.size.y <= 0.0:
+		return
+	_backdrop.set_title_band(r)

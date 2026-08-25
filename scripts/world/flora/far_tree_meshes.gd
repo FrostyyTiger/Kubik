@@ -163,9 +163,10 @@ static func _tri(verts: PackedVector3Array, normals: PackedVector3Array,
 	if n == Vector3.ZERO:
 		n = Vector3.UP
 	verts.push_back(a); verts.push_back(b); verts.push_back(c)
+	var wire := Look.to_wire(color)
 	for i in 3:
 		normals.push_back(n)
-		colors.push_back(color)
+		colors.push_back(wire)
 
 
 static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,
@@ -186,4 +187,5 @@ static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,
 ## on, and a far tree that shaded differently from the hill it stands on would
 ## be the seam the whole look pass exists to remove.
 static func material() -> Material:
-	return Look.opaque_material()
+	# A figure, not the ground - see Look.figure_material().
+	return Look.figure_material()

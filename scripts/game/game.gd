@@ -85,6 +85,7 @@ func _ready() -> void:
 	# Wind and night are LOCAL knobs and live on the shared flora materials, so
 	# they are pushed once here and again whenever the F4 panel moves.
 	FloraModels.apply_local_knobs(config)
+	Look.apply_local_knobs(config)
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -576,6 +577,7 @@ func _on_config_changed() -> void:
 	# a column contains, so they land with the next column the player walks
 	# into rather than immediately.
 	FloraModels.apply_local_knobs(config)
+	Look.apply_local_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
 
 
