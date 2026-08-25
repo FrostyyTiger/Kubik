@@ -81,9 +81,12 @@ const TABLE := [
 	{
 		"name": "elf",
 		"total": 36, "legs": 12, "torso": 10, "head": 9,
-		"torso_w": 6, "torso_d": 4, "head_w": 8, "head_d": 8,
-		"leg_w": 3, "arm_len": 11, "arm_w": 2,
-		"neck": 2, "ear_out": 2,
+		# torso 5 and legs 2, narrowed from the table's 6 and 3 in silhouette
+		# pass 3 - see PartsElf. "Width" is on the plan's own list of features
+		# an elf may be exaggerated by.
+		"torso_w": 5, "torso_d": 4, "head_w": 8, "head_d": 8,
+		"leg_w": 2, "arm_len": 11, "arm_w": 2,
+		"neck": 2, "ear_out": 3,
 		"lean_deg": 0.0,
 		"silhouette": "tall and narrow, ears",
 	},
@@ -105,7 +108,7 @@ const TABLE := [
 		"total": 30, "legs": 9, "torso": 10, "head": 9,
 		"torso_w": 8, "torso_d": 5, "head_w": 8, "head_d": 8,
 		"leg_w": 3, "arm_len": 9, "arm_w": 3,
-		"snout": 4, "tail_len": 14, "tail_bones": 3,
+		"snout": 4, "tail_len": 14, "tail_segments": [5, 5, 4],
 		"lean_deg": 8.0,
 		"silhouette": "tail, crest, snout",
 	},
@@ -400,18 +403,33 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 	# The tail is a CHAIN, and the chain machinery is generic because the
 	# critter in Stage 13 needs it too. Bones are named `<chain>_1..n` and the
 	# animator finds them by that name alone.
-	var tail_bones: int = t.get("tail_bones", 0)
-	if tail_bones > 0:
-		var seg := float(t.get("tail_len", 12)) / float(tail_bones)
-		for i in tail_bones:
-			out.append({
-				"name": "tail_%d" % (i + 1),
-				"parent": "hips" if i == 0 else "tail_%d" % i,
-				# The first link starts at the back of the pelvis; the rest
-				# follow their parent's own length.
-				"rest": Vector3(0, 0, float(torso_d) * 0.5, ) * V if i == 0 else Vector3(0, 0, seg) * V,
-				"part": "tail_%d" % (i + 1),
-			})
+	# SEGMENT LENGTHS ARE TABLED, not divided out. 14 voxels over three bones
+	# is 4.67 each, and a part cannot be 4.67 voxels deep - so the table gives
+	# the three lengths that add to 14 and each bone's rest offset is the
+	# PREVIOUS segment's length. The chain is then continuous by construction
+	# rather than by three numbers happening to agree.
+	var segments: Array = t.get("tail_segments", [])
+	for i in segments.size():
+		out.append({
+			"name": "tail_%d" % (i + 1),
+			"parent": "hips" if i == 0 else "tail_%d" % i,
+			# The first link starts at the back of the pelvis, a little above
+			# the hip pivot; the rest follow their parent's own length.
+			"rest": (Vector3(0, 1, float(torso_d) * 0.5) if i == 0
+				else Vector3(0, 0, float(segments[i - 1]))) * V,
+			"part": "tail_%d" % (i + 1),
+		})
+
+	# Hair and beard hang off the head in ITS frame, so both bones sit exactly
+	# on the head bone and the parts carry their own offsets. Optional, because
+	# "none" is a real answer for a human's beard and for every race that has
+	# no crest - Rig says nothing about an optional bone with no part.
+	if hair_count(race) > 0:
+		out.append({"name": "hair", "parent": "head", "rest": Vector3.ZERO,
+			"part": "hair", "optional": true})
+	if beard_count(race) > 0:
+		out.append({"name": "beard", "parent": "head", "rest": Vector3.ZERO,
+			"part": "beard", "optional": true})
 
 	out.append_array(socket_table(race, build))
 	return out
@@ -444,12 +462,11 @@ const SOCKET_NAMES := ["hand_r", "hand_l", "neck", "chest", "back", "belt"]
 
 ## Which races have their OWN parts, rather than borrowing the human's.
 ##
-## Stage 8 builds the elf, dwarf and lizardfolk and flips these to true, at
-## which point the height and completeness self-tests start biting on them
-## automatically. A flag rather than a `race == HUMAN` scattered through the
-## tests: there is one place to change when a part set lands, and no way for a
-## test to be left excluding a race that now exists.
-const HAS_PART_SET := [true, false, false, false]
+## All four, since Stage 8. The flag stays because it is what the height and
+## completeness self-tests gate on: one place to change when a part set lands,
+## and no way for a test to be left quietly excluding a race that now exists.
+## Stage 13's critter is not a race and does not appear here.
+const HAS_PART_SET := [true, true, true, true]
 
 static func has_part_set(race: int) -> bool:
 	return HAS_PART_SET[valid_race(race)]
@@ -465,12 +482,33 @@ static func part_set(race: int, build := STOCKY) -> Dictionary:
 	if build == LEAN and has_lean(race):
 		return PartsHumanLean.PARTS
 	match valid_race(race):
-		HUMAN:
-			return PartsHuman.PARTS
+		ELF:
+			return PartsElf.PARTS
+		DWARF:
+			return PartsDwarf.PARTS
+		LIZARDFOLK:
+			return PartsLizardfolk.PARTS
 		_:
-			_warn_once(name_of(race),
-				"[Races] no part set for %s yet - using the human's" % name_of(race))
 			return PartsHuman.PARTS
+
+
+## The part set for one CHARACTER, with its chosen hair and beard resolved in.
+##
+## The rig is built from (bone table, part set), and neither of those knows
+## which hair a player picked - so the choice is resolved HERE, once, into a
+## part set that already has "hair" and "beard" in it. That keeps the def out
+## of Rig entirely: a rig builds whatever parts it is handed and has no opinion
+## about where they came from, which is what lets the critter in Stage 13 use
+## the same class with no hair at all.
+static func parts_for(def: CharacterDef) -> Dictionary:
+	var out := part_set(def.race, def.build).duplicate()
+	var hair = PartsHair.hair_part(def.race, def.hair)
+	if hair != null:
+		out["hair"] = hair
+	var beard = PartsHair.beard_part(def.race, def.beard)
+	if beard != null:
+		out["beard"] = beard
+	return out
 
 
 ## Warn about a missing part set ONCE per key, not once per build.

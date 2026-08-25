@@ -67,12 +67,17 @@ func set_target(st: Dictionary) -> void:
 		position = _target_position
 		rotation.y = _target_yaw
 
-	if st.has("a"):
-		_apply_appearance(st["a"])
+	# NAME BEFORE APPEARANCE. The two arrive in the same row and the order
+	# does not matter to the player, but _apply_appearance logs who this peer
+	# turned out to be, and doing it the other way round made every one of
+	# those lines say "unnamed" - the name does not ride in the appearance
+	# bytes, it is a separate field.
 	if st.has("n"):
 		var wanted: String = st["n"]
 		if _nametag.text != wanted:
 			_nametag.text = wanted
+	if st.has("a"):
+		_apply_appearance(st["a"])
 
 	var state := LocomotionState.new()
 	var velocity: Vector3 = st.get("v", Vector3.ZERO)
@@ -94,7 +99,8 @@ func _apply_appearance(bytes: PackedByteArray) -> void:
 	# 1.5 m dwarf's tag would otherwise float a metre over him and a 2.25 m
 	# elf's would be inside his skull.
 	_nametag.position.y = Races.height_m(def.race) + 0.3
-	print("[RemotePlayer] peer %d is a %s" % [peer_id, def.describe()])
+	print("[RemotePlayer] peer %d (%s) is a %s %s" % [
+		peer_id, _nametag.text, Races.BUILD_NAMES[def.build], Races.name_of(def.race)])
 
 
 func _process(delta: float) -> void:

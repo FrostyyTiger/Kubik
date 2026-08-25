@@ -134,22 +134,28 @@ func _sheets() -> Dictionary:
 		"anim-jump": _sheet_anim_jump,
 		"anim-poses": _sheet_anim_poses,
 		"study": _sheet_study,
+		"silhouettes": _sheet_silhouettes,
 		"masks-40": _sheet_masks_40,
 	}
 
 
 # --- Sheets -----------------------------------------------------------------
 
-## A single character at 3 m, front and three-quarter. NOT part of the plan's
-## sheet list - it is the working shot, the one you look at while deciding
-## whether a face reads at all, before asking whether it reads at 15 m.
+## The lineup as close as the frame allows, from four sides. NOT part of the
+## plan's sheet list - it is the working shot, the one you look at while
+## deciding whether a face reads at all, before asking whether it reads at
+## 15 m. The PROFILE view is where the lizardfolk's tail and snout live, and
+## they are invisible in every other sheet.
 func _sheet_closeup() -> void:
-	_set_lineup(_lineup_defs())
-	await _shoot("closeup-front", 3.0)
+	var defs := _lineup_defs()
+	_set_lineup(defs)
+	await _shoot_row("closeup-front", defs.size())
 	_face(FACING_CAMERA + deg_to_rad(35.0))
-	await _shoot("closeup-three-quarter", 3.0)
+	await _shoot_row("closeup-three-quarter", defs.size())
+	_face(FACING_CAMERA + deg_to_rad(90.0))
+	await _shoot_row("closeup-profile", defs.size())
 	_face(0.0)
-	await _shoot("closeup-back", 3.0)
+	await _shoot_row("closeup-back", defs.size())
 
 
 func _sheet_lineup_front() -> void:
@@ -510,6 +516,30 @@ func _set_time(t: float) -> void:
 	_sky.apply()
 
 
+## THE ACCEPTANCE TEST'S FIRST SENTENCE.
+##
+## "Standing in the meadow at dusk with the four races lined up 40 m away,
+## Marcel can name each one without walking closer." Three distances because
+## 15 m is where a face still matters, 40 m is where only the outline does, and
+## 80 m is where the plan wants to know whether anything survives at all.
+##
+## Each distance is shot twice: against the sky, where a silhouette is a dark
+## shape on a bright field, and against the stone wall, where it is a dark
+## shape on a dark field. A silhouette that reads against sky can vanish
+## completely against rock, and half of what the 40 m dusk test is really
+## asking is which one you are looking at.
+func _sheet_silhouettes() -> void:
+	_set_time(0.82)
+	for distance in [15.0, 40.0, 80.0]:
+		_set_lineup(_lineup_defs())
+		_wall.visible = false
+		await _shoot("silhouettes-%d" % int(distance), distance)
+		_wall.visible = true
+		await _shoot("silhouettes-%d-hill" % int(distance), distance)
+	_wall.visible = false
+	_set_time(-1.0)
+
+
 # --- The silhouette metric ----------------------------------------------------
 #
 # THE TEST THE WHOLE RACE DESIGN HANGS ON. DESIGN.md asks for "strong distinct
@@ -539,6 +569,24 @@ const MASK_THRESHOLD := 0.75
 
 func _sheet_masks_40() -> void:
 	var defs := _lineup_defs()
+
+	# The sheet itself: the whole lineup as masks, for looking at.
+	_enter_mask_mode()
+	_set_lineup(defs)
+	await _shoot("masks-40", MASK_DISTANCE)
+	_leave_mask_mode()
+
+	# THE JUDGED MEASUREMENT IS FRONT-ON, because that is what a lineup at 40 m
+	# is. The three-quarter one is reported beside it and is not a second gate:
+	# it exists because two of the lizardfolk's three differentiating features -
+	# the tail and the snout - are PROFILE features that a front-on mask cannot
+	# see at all, and a number that structurally cannot see a tail should say so
+	# rather than be quietly believed.
+	await _report_masks(defs, 0.0, "front on", true)
+	await _report_masks(defs, 35.0, "three-quarter", false)
+
+
+func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> void:
 	var names := PackedStringArray()
 	var masks := []
 	# The capsule is in the comparison because "is a character more readable
@@ -546,15 +594,10 @@ func _sheet_masks_40() -> void:
 	# it is the only baseline that exists.
 	for def in defs:
 		names.append(_mask_name(def))
-		masks.append(await _mask_of(def))
+		masks.append(await _mask_of(def, yaw_deg))
 	names.append("capsule")
-	masks.append(await _mask_of(null))
-
-	# The sheet itself: the whole lineup as masks, for looking at.
-	_enter_mask_mode()
-	_set_lineup(defs)
-	await _shoot("masks-40", MASK_DISTANCE)
-	_leave_mask_mode()
+	masks.append(await _mask_of(null, yaw_deg))
+	print("[Gallery] --- %s%s ---" % [label, "" if judged else " (reported, not judged)"])
 
 	# THE TARGET IS ABOUT RACE PAIRS, and only about race pairs.
 	#
@@ -574,9 +617,9 @@ func _sheet_masks_40() -> void:
 	for i in masks.size():
 		for j in range(i + 1, masks.size()):
 			var iou := _mask_iou(masks[i], masks[j])
-			var judged := _is_race_pair(defs, i, j)
+			var is_pair := judged and _is_race_pair(defs, i, j)
 			var flag := ""
-			if judged:
+			if is_pair:
 				race_pairs += 1
 				if iou >= 0.70:
 					flag = "  OVER"
@@ -588,7 +631,7 @@ func _sheet_masks_40() -> void:
 				flag = "  (reference, not judged)"
 			print("[Gallery]   %-22s vs %-22s  %.3f%s" % [names[i], names[j], iou, flag])
 	if race_pairs == 0:
-		print("[Gallery]   only one race has parts so far - no race pair to judge yet")
+		print("[Gallery]   nothing judged in this view")
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
@@ -610,9 +653,15 @@ func _mask_name(def) -> String:
 
 
 ## One subject, rendered as a mask and cropped to its own bounding box.
-func _mask_of(def) -> Dictionary:
+func _mask_of(def, yaw_deg := 0.0) -> Dictionary:
 	_enter_mask_mode()
 	_set_lineup([def])
+	if yaw_deg != 0.0:
+		_face(FACING_CAMERA + deg_to_rad(yaw_deg))
+	# The camera has to be where the metric says it is, not wherever the last
+	# sheet left it.
+	_camera.global_position = Vector3(0.0, _lineup_chest_height(), SUBJECT_Z + MASK_DISTANCE)
+	_camera.look_at(Vector3(0.0, _lineup_chest_height(), SUBJECT_Z), Vector3.UP)
 	var image := await _capture()
 	_leave_mask_mode()
 	return _crop_mask(image)

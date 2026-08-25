@@ -57,7 +57,7 @@ func build(new_def: CharacterDef) -> void:
 
 	rig.build(
 		Races.bone_table(def.race, def.build),
-		Races.part_set(def.race, def.build),
+		Races.parts_for(def),
 		Races.palette(def.race, def.skin, def.hair_color, def.eyes),
 		_config.ao_strength,
 		Races.hips_pitch_rad(def.race))
@@ -128,5 +128,5 @@ func triangle_count() -> int:
 	return rig.triangle_count() if rig != null else 0
 
 
-func height_m() -> float:
-	return rig.height_m() if rig != null else 0.0
+func height_m(include_ornaments := false) -> float:
+	return rig.height_m(include_ornaments) if rig != null else 0.0

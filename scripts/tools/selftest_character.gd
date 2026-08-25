@@ -470,7 +470,7 @@ func _rig_completeness_for(entry: Dictionary, totals: PackedStringArray) -> int:
 	var rig: Rig = view.rig
 
 	var table := Races.bone_table(entry["race"], entry["build"])
-	var parts := Races.part_set(entry["race"], entry["build"])
+	var parts := Races.parts_for(_def_for(entry))
 	var transforms_only := 0
 	# `bone_entry`, not `entry` - the parameter is already called that, and
 	# GDScript rejects the shadow rather than quietly picking one.
@@ -483,6 +483,8 @@ func _rig_completeness_for(entry: Dictionary, totals: PackedStringArray) -> int:
 			continue
 		if bone_entry.get("socket", false):
 			continue
+		if bone_entry.get("optional", false) and not parts.has(bone_entry.get("part", "")):
+			continue  # "none" is a real answer - see Races.bone_table
 		var part_name: String = bone_entry.get("part", "")
 		if part_name.is_empty():
 			# Legal: a race whose stack leaves no room for a pelvis has a hips
@@ -550,7 +552,9 @@ func _test_character_height():
 			print("  the %s is already %d triangles, over the 6000 budget" % [
 				_build_name(entry), tris])
 			bad += 1
-		report.append("%s %.2fm/%d" % [_build_name(entry), got, tris])
+		var crown := view.height_m(true)
+		report.append("%s %.2fm/%d%s" % [_build_name(entry), got, tris,
+			"" if is_equal_approx(crown, got) else " (%.2f with crest)" % crown])
 		view.free()
 	print("character height: %s, %d checks failed" % [
 		String(" ").join(report), bad])

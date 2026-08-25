@@ -72,11 +72,12 @@ func build(bone_table: Array, part_set: Dictionary, palette: Dictionary,
 		if part_name.is_empty():
 			continue  # a bone that is only a transform, like a pelvis-less hips
 		if not part_set.has(part_name):
-			# Once per part name: a lizardfolk built from the human part set
-			# is missing three tail parts, and rebuilding it a hundred times in
-			# a test is not three hundred pieces of news.
-			Races._warn_once("rig:" + part_name,
-				"[Rig] no part named %s for bone %s" % [part_name, bone_name])
+			# An OPTIONAL bone with no part is not news: a human whose beard is
+			# "none" has a beard bone and nothing to hang on it, and that is
+			# the answer rather than a missing file.
+			if not entry.get("optional", false):
+				Races._warn_once("rig:" + part_name,
+					"[Rig] no part named %s for bone %s" % [part_name, bone_name])
 			continue
 		_attach_part(node, bone_name, part_set[part_name], part_name,
 			entry.get("mirror", false), palette, ao_strength)
@@ -209,14 +210,26 @@ func triangle_count() -> int:
 	return total
 
 
+## Bones that are decoration on top of a body rather than part of it.
+const ORNAMENT_BONES := ["hair", "beard"]
+
 ## The tallest point of the built rig, in metres above its own origin.
 ##
 ## Measured from the actual mesh AABBs in the actual pose - which is what makes
 ## the height self-test worth running. A height computed from the race table
 ## would only prove the race table agrees with itself.
-func height_m() -> float:
+##
+## HAIR AND CRESTS ARE EXCLUDED BY DEFAULT, because the race table measures a
+## race at the CROWN - the plan says exactly that for the lizardfolk, and it is
+## the only definition that survives contact with a crest: four voxels of fin
+## would otherwise make a lizardfolk 2.14 m in the height test and 1.88 m in
+## every other sentence about it. Pass `true` for the silhouette's real extent,
+## which is what the mask metric sees.
+func height_m(include_ornaments := false) -> float:
 	var top := 0.0
 	for bone_name in meshes:
+		if not include_ornaments and bone_name in ORNAMENT_BONES:
+			continue
 		var mi: MeshInstance3D = meshes[bone_name]
 		var to_rig := transform_to_rig(mi)
 		var aabb := mi.get_aabb()
