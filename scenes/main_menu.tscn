@@ -1,6 +1,8 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/ui/main_menu.gd" id="1_menu"]
+[ext_resource type="Script" path="res://scripts/ui/poster_backdrop.gd" id="2_backdrop"]
+[ext_resource type="Script" path="res://scripts/ui/deco_rule.gd" id="3_rule"]
 
 [node name="MainMenu" type="Control"]
 layout_mode = 3
@@ -11,14 +13,14 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_menu")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Backdrop" type="Control" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.09, 0.11, 0.13, 1)
+script = ExtResource("2_backdrop")
 
 [node name="Center" type="CenterContainer" parent="."]
 layout_mode = 1
@@ -30,60 +32,73 @@ grow_vertical = 2
 
 [node name="VBox" type="VBoxContainer" parent="Center"]
 layout_mode = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
+
+[node name="RuleTop" type="Control" parent="Center/VBox"]
+custom_minimum_size = Vector2(420, 9)
+layout_mode = 2
+script = ExtResource("3_rule")
 
 [node name="Title" type="Label" parent="Center/VBox"]
 layout_mode = 2
-theme_override_font_sizes/font_size = 44
+theme_type_variation = &"TitleLabel"
 text = "KUBIK"
 horizontal_alignment = 1
+uppercase = true
+
+[node name="RuleBottom" type="Control" parent="Center/VBox"]
+custom_minimum_size = Vector2(420, 9)
+layout_mode = 2
+script = ExtResource("3_rule")
 
 [node name="Subtitle" type="Label" parent="Center/VBox"]
-modulate = Color(1, 1, 1, 0.6)
 layout_mode = 2
-text = "co-op voxel exploration"
+theme_type_variation = &"SectionLabel"
+theme_override_font_sizes/font_size = 16
+text = "Co-op voxel exploration"
 horizontal_alignment = 1
+uppercase = true
 
 [node name="CharacterLine" type="Label" parent="Center/VBox"]
-modulate = Color(0.75, 0.85, 1, 1)
 layout_mode = 2
+theme_type_variation = &"AccentLabel"
 text = "..."
 horizontal_alignment = 1
 
 [node name="Spacer" type="Control" parent="Center/VBox"]
-custom_minimum_size = Vector2(0, 16)
+custom_minimum_size = Vector2(0, 18)
 layout_mode = 2
 
 [node name="CharacterButton" type="Button" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 44)
+custom_minimum_size = Vector2(300, 46)
 layout_mode = 2
-text = "Character"
+text = "CHARACTER"
 
 [node name="HostButton" type="Button" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 44)
+custom_minimum_size = Vector2(300, 46)
 layout_mode = 2
-text = "Host game"
+text = "HOST GAME"
 
 [node name="JoinButton" type="Button" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 44)
+custom_minimum_size = Vector2(300, 46)
 layout_mode = 2
-text = "Join game"
+text = "JOIN GAME"
 
 [node name="AddressEdit" type="LineEdit" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 0)
+custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
 text = "127.0.0.1"
 placeholder_text = "host address"
 alignment = 1
 
 [node name="QuitButton" type="Button" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 44)
+custom_minimum_size = Vector2(300, 46)
 layout_mode = 2
-text = "Quit"
+text = "QUIT"
 
 [node name="Status" type="Label" parent="Center/VBox"]
-custom_minimum_size = Vector2(280, 48)
-modulate = Color(1, 0.85, 0.5, 1)
+custom_minimum_size = Vector2(300, 48)
 layout_mode = 2
+theme_type_variation = &"StatusLabel"
 horizontal_alignment = 1
 autowrap_mode = 3

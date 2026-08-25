@@ -29,6 +29,12 @@ Net="*res://scripts/net/net_manager.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+[gui]
+
+; The poster. Every Control in the game inherits it; a screen opts OUT of the
+; look rather than into it. See docs/plans/look-v1.md, Stage 7.
+theme/custom="res://assets/ui/deco_theme.tres"
+
 [shader_globals]
 
 ; HOW DARK IT IS, 0 by day and 1 at night, written once per frame by SkyCycle
