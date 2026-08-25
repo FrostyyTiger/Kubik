@@ -694,6 +694,17 @@ on being done.
   more binary gate — which by the note in `decide()` costs almost nothing,
   because binary gates are tested after the roll.
 - **The far ring will draw them automatically.** It walks the same candidates.
+- **VEGETATION IS CURRENTLY SYMMETRIC AT EVERY WORLD EDGE, and `CLAUDE.md`
+  now says the edges are not.** The snag and krummholz weights ride on
+  `TerrainGenerator.wildness_at()`, which is a Chebyshev distance from the
+  CENTRE of the map - so all four edges get the same wilder, deader forest.
+  That was correct when every edge was impassable peaks. The Second Age's
+  coast edge would get it too, and a coast should not be the wildest place in
+  the world; if anything it is the opposite. Nothing here hardcodes "edge =
+  mountains", but nothing here knows the difference either, and whichever plan
+  makes an edge into a coast will want to look at
+  `TreePlacement._forest_species()` and at `wildness_snag` /
+  `wildness_krummholz` while it is in there.
 - **Watch the sky reserve.** `WorldgenConfig.REF_MAX_TREE_BLOCKS` and
   `TreeSpecies.max_height()` have to agree, and the `sky reserve` self-test is
   what keeps them agreeing. If a water plan adds a tall species, that test is
