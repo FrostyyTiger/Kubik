@@ -140,6 +140,7 @@ func _sheets() -> Dictionary:
 		"masks-options": _sheet_masks_options,
 		"gear": _sheet_gear,
 		"critter": _sheet_critter,
+		"budget": _sheet_budget,
 	}
 
 
@@ -542,6 +543,79 @@ func _sheet_silhouettes() -> void:
 		await _shoot("silhouettes-%d-hill" % int(distance), distance)
 	_wall.visible = false
 	_set_time(-1.0)
+
+
+# --- The budget -----------------------------------------------------------------
+
+## What a character actually costs, measured rather than predicted.
+##
+## TWO NUMBERS PER CHARACTER, and they answer different questions. The mesh
+## count comes from the ArrayMesh index arrays and is what the model IS; the
+## renderer count comes from RENDER_TOTAL_PRIMITIVES_IN_FRAME with the pad
+## subtracted and is what the GPU is ASKED FOR.
+##
+## THE SECOND IS TWICE THE FIRST, AND THAT IS CORRECT: the sun casts shadows,
+## so every triangle is submitted once for the shadow map and once for the
+## scene. Worth knowing before anyone reads the drawn column as a model being
+## twice the size it is - and worth watching, because a THIRD copy would mean
+## something is genuinely being drawn twice, which is what the eyes-closed head
+## variant would do if it were ever left visible alongside the open one.
+##
+## The budget is 6000 triangles for a stocky character with hair and beard, and
+## it is the MESH column that is judged against it.
+func _sheet_budget() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	# The pad and the wall have to be paid for once and subtracted, and the
+	# renderer needs a frame with nothing on the pad to tell us what that is.
+	var empty := await _primitives()
+	print("[Gallery] triangle budget, 6000 per stocky character with hair and beard:")
+	print("[Gallery]   %-22s %8s %8s   (drawn = mesh x 2, the shadow pass)" % [
+		"", "mesh", "drawn"])
+	print("[Gallery]   %-22s %8s %8d" % ["(pad and sky alone)", "-", empty])
+
+	var worst := 0
+	var worst_name := ""
+	for def: CharacterDef in _lineup_defs():
+		for gear in [false, true]:
+			_set_lineup([def])
+			var view: CharacterView = _subjects_root.get_child(0)
+			view.set_gear_placeholders(gear)
+			var drawn := await _primitives()
+			var mesh_tris := view.triangle_count()
+			var label := "%s%s" % [_mask_name(def), " + gear" if gear else ""]
+			print("[Gallery]   %-22s %8d %8d%s" % [label, mesh_tris, drawn - empty,
+				"   OVER" if mesh_tris > 6000 else ""])
+			if not gear and mesh_tris > worst:
+				worst = mesh_tris
+				worst_name = _mask_name(def)
+
+	# The critter is not a character and has no budget of its own, but the
+	# first-enemy plan will want the number.
+	for child in _subjects_root.get_children():
+		child.free()
+	var rig := Rig.new()
+	rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+		PartsCritter.palette(), CharacterConfig.load_or_default().ao_strength)
+	var holder := Node3D.new()
+	holder.add_child(rig)
+	holder.position = Vector3(0.0, 0.0, SUBJECT_Z)
+	_subjects_root.add_child(holder)
+	var critter_drawn := await _primitives()
+	print("[Gallery]   %-22s %8d %8d" % ["critter (not a budget)",
+		rig.triangle_count(), critter_drawn - empty])
+
+	print("[Gallery]   worst character: %s at %d triangles, budget 6000" % [
+		worst_name, worst])
+
+
+## Triangles the renderer drew this frame. Needs a real frame to have happened,
+## which is why this awaits the same way a capture does.
+func _primitives() -> int:
+	for i in SETTLE_FRAMES:
+		await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	return int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 
 
 # --- The critter ---------------------------------------------------------------

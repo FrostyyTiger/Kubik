@@ -220,15 +220,29 @@ func rest_pose() -> void:
 
 # --- Facts, for the self-tests and the budget --------------------------------
 
-## Total triangles across every part. Measured from the meshes rather than
-## predicted from the voxel count, because face culling is exactly the thing
-## a prediction would get wrong.
+## Total triangles across every part AND anything hanging on a socket.
+##
+## Measured from the meshes rather than predicted from the voxel count, because
+## face culling is exactly the thing a prediction would get wrong - and the
+## attachments are counted because a budget that ignored what a character is
+## carrying would be a budget for an unarmed one.
+##
+## The eyes-closed head variant is NOT counted: it exists but is hidden, and
+## exactly one of the two heads is visible at any moment.
 func triangle_count() -> int:
 	var total := 0
 	for bone_name in meshes:
-		var mesh: ArrayMesh = (meshes[bone_name] as MeshInstance3D).mesh
-		for s in mesh.get_surface_count():
-			total += mesh.surface_get_arrays(s)[Mesh.ARRAY_INDEX].size() / 3
+		total += _triangles_of(meshes[bone_name])
+	for socket_name in attachments:
+		total += _triangles_of(attachments[socket_name])
+	return total
+
+
+func _triangles_of(node: MeshInstance3D) -> int:
+	var total := 0
+	var mesh: ArrayMesh = node.mesh
+	for s in mesh.get_surface_count():
+		total += mesh.surface_get_arrays(s)[Mesh.ARRAY_INDEX].size() / 3
 	return total
 
 

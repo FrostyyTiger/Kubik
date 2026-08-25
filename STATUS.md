@@ -1,5 +1,8 @@
 # Terrain v2 — run status
 
+*Character v1 ran the same night on `feat/character-v1` — see
+`docs/status/character-v1.md`.*
+
 Unattended run of `docs/plans/terrain-v2.md`, 2026-08-24, on the Linux box.
 All fourteen stages attempted, committed one per stage on `feat/terrain-v2`.
 **Not merged to `main`** — that is your call, as it was for v1.

@@ -505,6 +505,31 @@ static func _apply_wave(pose: Dictionary, config: CharacterConfig, t: float,
 ## This is the cheapest thing in the file and the one that does the most: a
 ## character whose head turns to where you are looking reads as present, and
 ## one whose head is welded forward reads as a puppet.
+##
+##
+## TODO(marcel): let the torso follow the head past the clamp.
+##
+## The head yaw is clamped at `look_yaw_deg`, 60 degrees, and past that the
+## head simply stops - so looking hard over your shoulder gives you a character
+## staring at a fixed angle while the camera keeps going. A person does not do
+## that: the head runs out of neck and the SHOULDERS start to come round.
+##
+##   Hint: the clamp is applied in update(). Keep the unclamped angle too, and
+##   here, give the torso a fraction of the OVERFLOW:
+##
+##       var over := yaw_unclamped - yaw_clamped
+##       pose["torso"] = {"rot": Vector3(pitch_term, over * 0.4, 0.0)}
+##
+##   0.4 is a starting point. Past about 0.6 the character starts to look like
+##   it is turning to walk that way, which is a different animation.
+##
+## Watch it on the F8 panel with look_yaw_deg turned down to about 25, where
+## the overflow is large enough to see in a couple of seconds. The arms hang
+## off the torso, so they come round with it for free - which is most of why
+## this reads as a body and not as a swivelling head.
+##
+## Fallback: the head clamps and the body does not move, which is what is here
+## and is what most games do.
 static func _apply_head_look(pose: Dictionary, extra: Dictionary) -> void:
 	var yaw: float = float(extra.get("look_yaw", 0.0))
 	var pitch: float = float(extra.get("look_pitch", 0.0))

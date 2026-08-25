@@ -47,6 +47,14 @@ Terrain moved to the front because items 2 and 3 both need somewhere to happen -
 readable geography with flat valley floors to fight and camp on. It is a
 prerequisite, not a detour.
 
+**Character v1 ran on its own branch for the same reason.** It is not on this
+list and it jumped the queue, on the argument that items 2 and 3 both need it
+first: the first enemy needs an animated rig pipeline that is provably not
+humanoid-only, and the campfire is sold on "your character sitting at the fire
+IS the progress screen", which needs a character, a sit pose and gear sockets.
+All three exist now, plus four races, a creation screen and appearance sync. See
+`docs/plans/character-v1.md` and `docs/status/character-v1.md`.
+
 Terrain v1 delivered a walking third-person player as a side effect, and v2
 added sprint, but both on **local physics only**. Rewiring it into the
 host-authoritative input path is a carried ticket, not done.

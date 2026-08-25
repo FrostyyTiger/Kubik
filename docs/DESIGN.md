@@ -120,13 +120,46 @@ legs as separate parts.
 - **Customisation** = palette swaps plus part picks.
 - **Gear** = models attached to bones, or part swaps.
 
-Target height ~24-32 model voxels. *(Unconfirmed - the spec was truncated at
-this number. Verify before building anything on it.)*
+**Settled by character v1.** One model voxel is **1/8 of a block, 6.25 cm**, and
+a human is **32 voxels = 2.00 m**. Characters and terrain therefore do not share
+a voxel grid, and the chunk mesher is not the character mesher: two systems, not
+one, and they meet only in the material and the baked-AO rule.
 
-Implication worth stating outright: at 4 terrain blocks (2 m) tall, a 24-32
-voxel character means **model voxels are roughly 6-8x finer than world blocks**.
-Characters and terrain therefore do not share a voxel grid, and the chunk mesher
-is not the character mesher. Two systems, not one.
+The four races, at the crown, all built and measured:
+
+| Race | Height | Silhouette |
+| --- | --- | --- |
+| Human | 32 vox, 2.00 m | the reference: square shoulders |
+| Elf | 36 vox, 2.25 m | tall and narrow, ears three voxels out each side |
+| Dwarf | 24 vox, 1.50 m | as wide as it is tall, and always bearded |
+| Lizardfolk | 30 vox, 1.88 m | tail, crest, snout, leaning 8 degrees forward |
+
+**The collider is identical for every race** - a capsule, radius 0.4 m, height
+2.0 m, with the camera pivot at 1.5 m. Race is never a stat: the dwarf's head
+sits at 1.5 m inside a 2 m capsule and the elf's pokes 0.25 m above it, and both
+are cosmetic by decision. No per-race number appears in `player.gd`.
+
+**Two proportion schemes exist for the human**, stocky (Cube World, big head,
+short legs) and lean (naturalistic). Both are 2.00 m, both run on the same rig
+and the same animator, and they differ only in their part sets. **Default
+stocky; lean built for comparison; the decision is pending** - see
+`docs/status/character-v1.md`, which is waiting on exactly this.
+
+### Parts are data
+
+Every voxel of every part is authored as **ASCII slices in semantic slots** -
+`S` skin, `H` hair, `E` iris, `C` cloth, and nine more - never as colours and
+never as box primitives in code. The same voxels through a different resolve
+table are a different-looking character, which is what makes a palette swap free
+and what lets the creation screen rebuild the model on every click.
+
+### The drop-in rule
+
+If `assets/characters/<race>/<part>.vox` exists, it **replaces the ASCII part of
+that name at load, with no code change**. MagicaVoxel art whose palette indices
+1 to 13 are the thirteen slots takes skin and hair swaps exactly as ASCII does;
+art in arbitrary colours still loads and simply does not. See
+`assets/characters/README.md`.
 
 ## Characters and saves
 
