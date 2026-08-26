@@ -135,11 +135,23 @@ const TREE_RESERVE_MARGIN := 3.0
 ## radius in chunks, fog end in metres. Ultra is 800 and not a round 1000
 ## because at 1:4 a 350 m mountain frames from about 750 m: the view distance
 ## and the scale of the terrain are matched on purpose.
+## THE THREE DISTANCES MOVE TOGETHER, and world feel v1 Stage 7 is where they
+## were finally written down in one place.
+##
+##   radius     the voxels. Quadratic and CPU: this is the real quality dial.
+##   fog_end    how far you can see. GPU vertices and nothing at load, because
+##              the far field is built in LOD rings.
+##   far_tree   how far the forest goes. Past this a wooded ridge is bare.
+##
+## They have to agree or the world ends visibly: fog past the far trees is a
+## bald mountain in plain view, far trees past the fog are triangles drawn for
+## nobody, and a camera far plane short of the fog - which is what shipped
+## until Stage 0 - is a wall with nothing behind it.
 const VIEW_PRESETS := [
-	{"name": "low", "radius": 6, "fog_end": 400.0},
-	{"name": "medium", "radius": 8, "fog_end": 500.0},
-	{"name": "high", "radius": 12, "fog_end": 600.0},
-	{"name": "ultra", "radius": 16, "fog_end": 800.0},
+	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 200.0},
+	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 300.0},
+	{"name": "high", "radius": 12, "fog_end": 800.0, "far_tree": 400.0},
+	{"name": "ultra", "radius": 16, "fog_end": 1000.0, "far_tree": 500.0},
 ]
 
 ## view_distance value meaning "leave the numbers below exactly as they are".
@@ -1022,8 +1034,12 @@ const PROPERTIES: PackedStringArray = [
 ## plants that were there rather than reshuffling the ones that are.
 @export var flora_draw_fraction := 1.0
 
-## Outer edge of the far-tree ring, in metres. Stage 7.
-@export var far_tree_m := 300.0
+## Outer edge of the far-tree ring, in metres.
+##
+## A PRESET FIELD since world feel v1 Stage 7 - it used to be one number for
+## every quality level, so High's forest stopped at 300 m while its fog ran to
+## 600 and now 800. See VIEW_PRESETS.
+@export var far_tree_m := 400.0
 
 ## Sway. 0 disables the wind shader entirely.
 @export var wind_strength := 1.0
@@ -1207,6 +1223,7 @@ func apply_view_preset() -> void:
 	voxel_radius_chunks = preset["radius"]
 	fog_end_m = preset["fog_end"]
 	fog_start_m = fog_end_m * FOG_START_RATIO
+	far_tree_m = preset["far_tree"]
 
 
 ## Name of the current preset, for the debug readout and the boot log.

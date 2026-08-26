@@ -575,3 +575,58 @@ old-growth grove no more *closed* than an ordinary one - **0.553 against
 closure went back to 0.694 for about 500 ms of 48 m settle and two more frames
 over 33 ms. The wrong turn is left in the comment where it happened, because
 the next person to see `max_reach` grow will have the same idea.
+
+---
+
+## Stage 7 - The view
+
+**Shipped.** `VIEW_PRESETS` gains a `far_tree` field, so the three distances
+that have to agree are declared in one table instead of two files:
+
+| preset | radius | fog_end | far_tree |
+| --- | --- | --- | --- |
+| low | 6 | 400 | 200 |
+| medium | 8 | 500 | 300 |
+| **high** | 12 | **800** (was 600) | **400** (was 300) |
+| **ultra** | 16 | **1000** (was 800) | **500** |
+
+`far_tree_m` used to be one number for every quality level, so High's forest
+stopped at 300 m while its fog ran to 600 - a wooded ridge went bald halfway to
+the horizon. The camera's far plane needed no change at all: Stage 0 made it
+`fog_end_m * 1.25`, so it followed on its own. The boot line now reads
+`view distance high: voxel radius 12 chunks (96 m), fog 800 m, camera far
+1000 m`, which is the whole chain in one line.
+
+### It is nearly free
+
+| | Stage 6 | **Stage 7** |
+| --- | --- | --- |
+| 48 m settle, outward | 9,325 ms | **9,367 ms** (+0.4%) |
+| initial load, wall | 24.6 s | **24.8 s** |
+| far-field vertices | - | **103,608** |
+| holes | 0 | **0** |
+| frames over 33 ms | 3 | **1** |
+| `frontier_m` p10 | 56 m | **56 m** |
+
+The plan's condition was that High goes back to `far_tree` 300 if the settle
+regressed by more than 10%. It regressed by **0.4%**, so **High keeps 400 m**.
+That the fog can go from 600 to 800 m for nothing is the LOD rings doing their
+job - the far field is roughly logarithmic in distance, and 103,608 vertices is
+where the plan expected it (~100k).
+
+### The new vantage
+
+`16-spawn-postcard`: stand where the player starts, look at the highest ground
+in the world. It is the second half of Marcel's morning test - "the mountain
+still framed from the meadow" - and it is the shot the fog change is for. At
+fog_end 600 the summit was beyond the fog from spawn, so the postcard could
+only be taken by walking to a lake.
+
+**Eye**, `build/tour/feel-7/16-spawn-postcard.png`: a meadow foreground, a
+forested slope to the right with the treeline and the rock above it, snow peaks
+to the left at the limit of the fog, a cream horizon band and the sun's rays
+over it. Nothing is clipped.
+
+**Tuned blind**, all of it: Compatibility on llvmpipe. **For Marcel:** the
+meadow tufts read as a grey speckle at this density in this shot - it is the
+"confetti" note from look v2's Stage 4 again, now over a wider view.

@@ -347,6 +347,25 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 	# the half of "envelop" that height alone does not answer. Shot 7 looks
 	# level and cuts the crowns off at the top of the frame by construction;
 	# this one asks whether there is any sky overhead at all.
+	# THE MOUNTAIN, FROM THE MEADOW YOU START IN (world feel v1 Stage 7).
+	#
+	# The second half of Marcel's morning test, and the one the fog change is
+	# for: at fog_end 600 the summit the spawn search guarantees is there was
+	# beyond the fog from spawn, so the postcard could only be taken by walking
+	# to a lake. This stands where the player starts and looks at the highest
+	# ground in the world - if it does not frame, the view distance is too
+	# short whatever the other shots say.
+	var summit_m := _cell_to_metres(hm, _find_summit(hm), cfg)
+	var spawn_eye := _to_metres(gen.spawn_block,
+		gen.surface_at(float(gen.spawn_block.x), float(gen.spawn_block.y)), cfg) \
+		+ Vector3(0.0, EYE_LEVEL_M, 0.0)
+	out.append({
+		"name": "16-spawn-postcard",
+		"note": "the summit, framed from where the player starts",
+		"eye_m": spawn_eye,
+		"target": summit_m,
+	})
+
 	out.append({
 		"name": "15-under-canopy",
 		"note": "the densest grove, looking up 30 degrees - is there sky?",
