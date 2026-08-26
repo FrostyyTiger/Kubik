@@ -180,37 +180,37 @@ const SALT_MOUND := 216
 ## you have to reconstruct the tree from before you know whether it is wrong.
 const SPECIES := [
 	{
-		"name": "spruce", "height": Vector2i(13, 21), "crown": Vector2i(2, 4),
+		"read": 1.0, "name": "spruce", "height": Vector2i(13, 21), "crown": Vector2i(2, 4),
 		"shape": SHAPE_WHORL_CONE, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "beech", "height": Vector2i(10, 16), "crown": Vector2i(4, 6),
+		"read": 1.0, "name": "beech", "height": Vector2i(10, 16), "crown": Vector2i(4, 6),
 		"shape": SHAPE_DOME, "fill": 1.0,
 		"leaves": Block.LEAVES_BEECH, "leaves_b": Block.LEAVES_BEECH_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "larch", "height": Vector2i(12, 20), "crown": Vector2i(2, 3),
+		"read": 1.0, "name": "larch", "height": Vector2i(12, 20), "crown": Vector2i(2, 3),
 		"shape": SHAPE_WHORL_CONE, "fill": 0.6,
 		"leaves": Block.LEAVES_LARCH, "leaves_b": Block.LEAVES_LARCH_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "krummholz", "height": Vector2i(3, 6), "crown": Vector2i(3, 5),
+		"read": 0.0, "name": "krummholz", "height": Vector2i(3, 6), "crown": Vector2i(3, 5),
 		"shape": SHAPE_MOUND, "fill": 0.82,
 		"leaves": Block.LEAVES_PINE, "leaves_b": Block.LEAVES_PINE_B,
 		"trunk_id": Block.TRUNK, "slope": 55.0,
 	},
 	{
-		"name": "birch", "height": Vector2i(10, 16), "crown": Vector2i(2, 3),
+		"read": 0.5, "name": "birch", "height": Vector2i(10, 16), "crown": Vector2i(2, 3),
 		"shape": SHAPE_SLENDER, "fill": 0.7,
 		"leaves": Block.LEAVES_BIRCH, "leaves_b": Block.LEAVES_BIRCH_B,
 		"trunk_id": Block.TRUNK_BIRCH, "slope": 40.0,
 	},
 	{
-		"name": "snag", "height": Vector2i(6, 14), "crown": Vector2i(0, 0),
+		"read": 0.0, "name": "snag", "height": Vector2i(6, 14), "crown": Vector2i(0, 0),
 		"shape": SHAPE_BARE, "fill": 0.0,
 		"leaves": Block.AIR, "leaves_b": Block.AIR,
 		"trunk_id": Block.TRUNK_DEAD, "slope": 45.0,
@@ -221,19 +221,42 @@ const SPECIES := [
 		# table to decide how much empty sky the world reserves above the
 		# terrain - and a hero whose real size exceeded what the table admits
 		# would have its crown cut off by a chunk that was never queued.
-		"name": "hero", "height": Vector2i(16, 42), "crown": Vector2i(3, 8),
+		"read": 1.0, "name": "hero", "height": Vector2i(16, 42), "crown": Vector2i(3, 8),
 		"shape": SHAPE_HERO, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
 		"trunk_id": Block.TRUNK, "slope": 30.0,
 	},
 ]
 
-## Total height at or above which a trunk is 2 x 2 rather than 1 x 1.
+## Trunk width by total height, in blocks: a tree at or above the first number
+## gets a trunk that many voxels square.
 ##
-## A 20-block tree on a 1-block stalk reads as a lollipop. Real trunk diameter
-## scales with height, and at 1:4 the first place that becomes visible is
-## around 8 m of tree - which is 16 blocks.
+## A 20-block tree on a 1-block stalk reads as a lollipop, and once the forest
+## doubles (world feel v1 Stage 5) a 2 x 2 trunk under a 60-block spruce reads
+## as one too. Real trunk diameter scales with height; this is that, as data
+## rather than as one threshold.
+##
+## Read top down - the first row a height clears wins.
+const TRUNK_TIERS := [
+	{"height": 48, "width": 4},
+	{"height": 32, "width": 3},
+	{"height": 16, "width": 2},
+]
+
+## Kept for anything still asking the old yes/no question.
 const THICK_TRUNK_HEIGHT := 16
+
+
+## How many voxels square a trunk of this height is. Heroes are never under 3.
+static func trunk_width(height: int, species: int) -> int:
+	var w := 1
+	for tier in TRUNK_TIERS:
+		if height >= int(tier["height"]):
+			w = int(tier["width"])
+			break
+	if species == HERO:
+		w = maxi(w, 3)
+	return w
 
 
 ## The table with `tree_size_scale` applied.
@@ -244,17 +267,30 @@ const THICK_TRUNK_HEIGHT := 16
 ## about it would grow different trees while the handshake reported a match.
 static func table(config: WorldgenConfig) -> Array:
 	var scale: float = config.tree_size_scale
-	if is_equal_approx(scale, 1.0):
+	var read: float = config.tree_read_scale
+	if is_equal_approx(scale, 1.0) and is_equal_approx(read, 1.0):
 		return SPECIES
 	var out := []
 	for row in SPECIES:
 		var copy: Dictionary = (row as Dictionary).duplicate()
+		# TWO SCALES, COMPOSED PER SPECIES (world feel v1 Stage 5).
+		#
+		# tree_size_scale is what the LAND says: derived from world_scale, it
+		# keeps a tree the right size against a mountain. tree_read_scale is
+		# what the PLAYER says: a tree is the one object read against both, and
+		# at 1:4 land scale a spruce was 7 player-heights where a real one is
+		# 25. The land is not rescaled; the trees are.
+		#
+		# `read` is how much of that a species takes: 1.0 for the forest
+		# proper, 0.5 for birch, 0.0 for krummholz and snags - a knee-high
+		# alpine shrub at twice the size is not a bigger shrub, it is a tree.
+		var f: float = scale * (1.0 + (read - 1.0) * float(row.get("read", 0.0)))
 		copy["height"] = Vector2i(
-			maxi(1, int(round(float(row["height"].x) * scale))),
-			maxi(1, int(round(float(row["height"].y) * scale))))
+			maxi(1, int(round(float(row["height"].x) * f))),
+			maxi(1, int(round(float(row["height"].y) * f))))
 		copy["crown"] = Vector2i(
-			int(round(float(row["crown"].x) * scale)),
-			int(round(float(row["crown"].y) * scale)))
+			int(round(float(row["crown"].x) * f)),
+			int(round(float(row["crown"].y) * f)))
 		out.append(copy)
 	return out
 
@@ -349,6 +385,7 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 		# twice the size of everything around it standing on the same stalk as
 		# everything around it is the one way to make it look wrong.
 		"thick": species == HERO or height >= THICK_TRUNK_HEIGHT,
+		"trunk_width": trunk_width(height, species),
 		"cell": Vector2i(cell_x, cell_z),
 		"seed": world_seed,
 	}
@@ -630,16 +667,21 @@ static func _disc(writer, cx: int, y: int, cz: int, r: int,
 static func _draw_trunk(writer, bx: int, ground: int, bz: int, top_y: int,
 		params: Dictionary) -> int:
 	var id: int = params["trunk_id"]
-	var thick: bool = params["thick"]
+	# WIDTH, NOT A FLAG (world feel v1 Stage 5). One threshold was enough while
+	# the tallest tree was 42 blocks; with the forest at x2 and old growth at
+	# x3 a 2 x 2 trunk under a 60-block spruce reads as a lollipop again. See
+	# TRUNK_TIERS.
+	var w: int = int(params.get("trunk_width", 2 if params.get("thick", false) else 1))
 	var drawn := 0
 	for y in range(ground + 1, top_y + 1):
-		writer.set_block(bx, y, bz, id, false)
-		drawn += 1
-		if thick:
-			writer.set_block(bx + 1, y, bz, id, false)
-			writer.set_block(bx, y, bz + 1, id, false)
-			writer.set_block(bx + 1, y, bz + 1, id, false)
-			drawn += 3
+		# Always to +X and +Z, so a wide trunk grows out of the same cell
+		# corner every time - which matters for the jitter bound in the
+		# placement rules: two neighbouring wide trunks must not be able to
+		# close the gap between them.
+		for dz in w:
+			for dx in w:
+				writer.set_block(bx + dx, y, bz + dz, id, false)
+				drawn += 1
 	return drawn
 
 
@@ -679,6 +721,7 @@ static func stamp_specimen(writer, species: int, bx: int, ground: int, bz: int,
 	params["crown"] = int(round(lerpf(
 		float(row["crown"].x), float(row["crown"].y), t)))
 	params["thick"] = species == HERO or params["height"] >= THICK_TRUNK_HEIGHT
+	params["trunk_width"] = trunk_width(int(params["height"]), species)
 
 	var blocks := draw(writer, species, bx, ground, bz, params, cfg)
 	return {

@@ -342,6 +342,19 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 	# see that. Both reuse a vantage that already exists so they are directly
 	# comparable with their noon twin: 13 is shot 1's meadow, 14 is shot 6's
 	# postcard.
+	# UNDER THE CANOPY (world feel v1 Stage 5). Standing where the trees are
+	# thickest, looking UP thirty degrees - which is the only way to photograph
+	# the half of "envelop" that height alone does not answer. Shot 7 looks
+	# level and cuts the crowns off at the top of the frame by construction;
+	# this one asks whether there is any sky overhead at all.
+	out.append({
+		"name": "15-under-canopy",
+		"note": "the densest grove, looking up 30 degrees - is there sky?",
+		"eye_m": forest_eye,
+		"target": _along(forest_eye, _densest_heading(gen, cfg, forest_eye),
+			18.0, 18.0 * tan(deg_to_rad(30.0))),
+	})
+
 	out.append({
 		"name": "13-meadow-dawn",
 		"note": "shot 1's meadow at dawn, 0.24",

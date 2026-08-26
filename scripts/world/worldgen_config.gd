@@ -492,7 +492,7 @@ const FOG_START_RATIO := 0.4
 # --- Content ----------------------------------------------------------------
 
 ## One candidate tree per this many blocks, in both x and z.
-@export var tree_cell_blocks := 4
+@export var tree_cell_blocks := 8
 
 ## Global multiplier on the whole placement product. 0 empties the world of
 ## trees, 1 is the tuned density, 2 doubles it.
@@ -525,23 +525,23 @@ const FOG_START_RATIO := 0.4
 ## forest, which is what makes it a forest you cannot see through rather than
 ## an orchard - and the edge value is what keeps the treeline a thinning rather
 ## than a boundary.
-@export var tree_base_forest := 0.45
-@export var tree_base_forest_edge := 0.10
+@export var tree_base_forest := 0.80
+@export var tree_base_forest_edge := 0.20
 
 ## Meadow. Two orders of magnitude below the forest on purpose: a meadow with
 ## trees scattered through it is not a meadow. These are the lone beech and the
 ## birch at the margin, and there should be room to see between them.
-@export var tree_base_meadow := 0.008
+@export var tree_base_meadow := 0.004
 
 ## The shore band - birch only - and how far above a lake's shore level it
 ## reaches, in blocks.
-@export var tree_base_shore := 0.06
+@export var tree_base_shore := 0.03
 @export var tree_shore_blocks := 12.0
 
 ## Krummholz above the forest, through alpine and heath. Fades to nothing at
 ## the midpoint of the two bands together, so the last twisted pines give out
 ## well below the rock.
-@export var tree_base_alpine := 0.05
+@export var tree_base_alpine := 0.025
 
 ## GROVES: forest clumps, ~90 m across. `grove_share` of the forest is inside a
 ## grove and grows at full probability; the rest grows at `grove_floor` of it.
@@ -598,7 +598,7 @@ const FOG_START_RATIO := 0.4
 ## 2 blocks between trunk centres. Raise the jitter and trees start to touch,
 ## and a forest you cannot walk through is a wall, not a forest - which the
 ## traversal probe is what actually checks.
-@export var tree_jitter_blocks := 1
+@export var tree_jitter_blocks := 2
 
 ## How much wildness adds to the snag and krummholz weights at the far edge of
 ## the world, taken from spruce.
@@ -626,6 +626,24 @@ const FOG_START_RATIO := 0.4
 ## 1.0 means the table as authored, which is sized for world_scale 4 - see
 ## apply_world_scale(), which sets this rather than leaving it at 1.
 @export var tree_size_scale := 1.0
+
+## HOW MUCH CLOSER TO THE PLAYER'S SCALE A TREE IS DRAWN THAN THE LAND IS.
+##
+## World feel v1 Stage 5, and it is the row DESIGN.md's Scale table did not
+## have. The land is read against the landscape at 1:4; the player is read
+## against themselves at 1:1. A tree is the one object read against BOTH - a
+## spruce is three per cent of the ridge behind it, which is exactly right, and
+## seven player-heights tall, where a real spruce is twenty-five.
+##
+## So the trees scale and the land does not. `tree_size_scale` is what the land
+## asks for and is derived in apply_world_scale(); this is what the player asks
+## for, and the two COMPOSE per species in TreeSpecies.table() - each row taking
+## the share of this its "read" field allows. Krummholz and snags take none of
+## it: a knee-high alpine shrub at twice the size is not a bigger shrub.
+##
+## In PROPERTIES because it is a SHAPE knob: two machines that disagreed about
+## it would grow different forests while the handshake reported a match.
+@export var tree_read_scale := 2.0
 
 ## A basin smaller than this many coarse cells is a puddle, not a lake, and is
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
@@ -887,7 +905,7 @@ const PROPERTIES: PackedStringArray = [
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
 	"share_heath", "share_rock", "share_snow",
 	"zone_blend_blocks", "zone_dither_blocks",
-	"tree_cell_blocks", "tree_size_scale", "tree_density_scale",
+	"tree_cell_blocks", "tree_size_scale", "tree_read_scale", "tree_density_scale",
 	"tree_base_forest", "tree_base_forest_edge", "tree_base_meadow",
 	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
 	"grove_freq", "grove_share", "grove_floor",
@@ -1091,8 +1109,13 @@ func apply_world_scale() -> void:
 	# terrain passes through are built, so headroom is free.
 	#
 	# AFTER the tree scale, not before: the tallest tree is a function of it.
+	# THE COMPOSED MAXIMUM, not the land's alone (world feel v1 Stage 5). The
+	# tallest species takes the full read scale, so the sky the world reserves
+	# has to clear tree_size_scale * tree_read_scale - and a ceiling derived
+	# from the land alone would cut the crown off every hero.
 	var needed := max_altitude \
-		+ REF_MAX_TREE_BLOCKS * tree_size_scale + TREE_RESERVE_MARGIN + 16.0
+		+ REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale \
+		+ TREE_RESERVE_MARGIN + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a

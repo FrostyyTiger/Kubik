@@ -634,20 +634,27 @@ class LooseWriter extends RefCounted:
 ## two mutually dependent for the sake of an integer. This is the cheaper half
 ## of that trade - the coupling is a test rather than an import, and the test
 ## says exactly what breaks.
+## THE COMPOSED MAXIMUM SINCE WORLD FEEL V1 STAGE 5. There are two scales now -
+## what the land asks for and what the player asks for - and the reserve has to
+## clear their product, because the tallest species takes the full read scale.
 func _test_sky_reserve():
 	var bad := 0
+	var checked := 0
 	for scale in [0.5, 1.0, 1.7, 2.5]:
-		var cfg := WorldgenConfig.new()
-		cfg.tree_size_scale = scale
-		var needed := TreeSpecies.max_height(cfg)
-		var reserved := int(ceil(
-			WorldgenConfig.REF_MAX_TREE_BLOCKS * scale
-			+ WorldgenConfig.TREE_RESERVE_MARGIN))
-		if needed > reserved:
-			print("  scale %.2f: table needs %d blocks, config reserves %d" % [
-				scale, needed, reserved])
-			bad += 1
-	print("sky reserve: 4 scales checked, %d short" % bad)
+		for read in [1.0, 2.0, 3.0]:
+			var cfg := WorldgenConfig.new()
+			cfg.tree_size_scale = scale
+			cfg.tree_read_scale = read
+			var needed := TreeSpecies.max_height(cfg)
+			var reserved := int(ceil(
+				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * read
+				+ WorldgenConfig.TREE_RESERVE_MARGIN))
+			checked += 1
+			if needed > reserved:
+				print("  scale %.2f read %.1f: table needs %d blocks, config reserves %d" % [
+					scale, read, needed, reserved])
+				bad += 1
+	print("sky reserve: %d scale/read pairs checked, %d short" % [checked, bad])
 	return bad
 
 

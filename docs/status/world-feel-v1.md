@@ -374,3 +374,73 @@ jump.
 **Gates:** self-tests green including the new `edit while cached`; flora probe
 0 ms of grass after terrain on the return leg; worldgen probe `76cccdb6` /
 `da8868d1` / 73,675 trees / spawn `(-44, -124)`.
+
+---
+
+## Stage 5 - Trees at 1:2
+
+**The forest scales. The land does not.** `world_scale` is untouched and the
+heightmap hash is unchanged; this is the first stage that moves the config hash
+and the tree count, and it moves them once.
+
+**Shipped.**
+
+- `WorldgenConfig.tree_read_scale := 2.0`, a PROPERTIES knob - what the PLAYER
+  asks for, beside `tree_size_scale`, which is what the LAND asks for. The two
+  **compose per species** in `TreeSpecies.table()`.
+- `SPECIES` gains a `"read"` field, 0 to 1: spruce, beech, larch and hero
+  **1.0** (x2); birch **0.5** (x1.5); krummholz and snag **0.0** - a knee-high
+  alpine shrub at twice the size is not a bigger shrub.
+- `TRUNK_TIERS` replaces the single `THICK_TRUNK_HEIGHT` flag: >= 16 blocks ->
+  2x2, >= 32 -> 3x3, >= 48 -> 4x4, heroes never under 3. `_draw_trunk()` takes
+  a width.
+- The lattice: `tree_cell_blocks` 4 -> **8**, `tree_jitter_blocks` 1 -> **2**,
+  `tree_base_forest` 0.45 -> **0.80**, `tree_base_forest_edge` 0.10 -> **0.20**,
+  and meadow / shore / alpine bases halved to 0.004 / 0.03 / 0.025 so their
+  counts per hectare hold on the coarser lattice.
+- `apply_world_scale()`'s ceiling and the **`sky reserve` self-test** both take
+  the **composed** maximum. The test now walks 12 scale/read pairs instead of 4.
+
+### The numbers
+
+| | Stage 4 | **Stage 5** |
+| --- | --- | --- |
+| config hash | `da8868d1` | **`5bb0a556`** |
+| heightmap hash | `76cccdb6` | **`76cccdb6`** - unchanged |
+| spawn | `(-44, -124)` | **`(-44, -124)`** - unchanged |
+| trees on seed 42 | 73,675 | **31,224** |
+| tree scan | 25.7 s | **11.3 s** |
+| gen per chunk | 9.42 ms | **15.48 ms** |
+| 48 m settle, outward | 7,858 - 8,316 ms | **9,989 ms** |
+| holes / frames over 33 ms | 0 / 1-2 | **0 / 0** |
+
+Tree count is inside the plan's 25,000-40,000 window. Spruce is now 26-42
+blocks - 13-21 m, about 12 player-heights against the 7 it was.
+
+### The settle regressed 22%, and that is a finding rather than a retreat
+
+The plan: *"if `48 m settle` regresses by more than 20% against Stage 4, that
+is a finding for Marcel, not a reason to shrink the trees."* It is **22%**
+(8,150 -> 9,989 ms). Recorded; nothing was shrunk.
+
+Where it went is visible in the two rows above it: there are **58% fewer
+trees** and the whole-world tree scan is **more than twice as fast**, but a
+chunk that does contain trees now costs 15.5 ms against 9.4, because the trees
+in it are eight times the volume. Fewer, bigger, and the per-chunk cost is
+what streaming feels.
+
+**Holes stayed at 0 and frames over 33 ms went back to 0**, which is the part
+that matters: the forest got three times the size without breaking the hard
+rule Stage 3 established.
+
+### The eye
+
+`build/tour/feel-5/15-under-canopy.png` - a new vantage, standing where the
+trees are thickest and looking **up 30 degrees**, because shot 7 looks level
+and cuts the crowns off at the top of the frame by construction. It shows
+trunks as columns filling the frame, a canopy closed overhead with almost no
+sky through it, and a shaded floor. That is T3's "envelop" - height AND
+closure - and it is the first time this project has had a picture of it.
+
+**Gates:** self-test all passed including the widened `sky reserve`; stream
+probe `--strict` PASS.
