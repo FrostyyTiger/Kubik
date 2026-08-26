@@ -692,6 +692,10 @@ func _submit_column(col: Vector2i) -> void:
 	job.config = config
 	job.world_seed = world_seed
 	job.neighbours = _column_neighbour_chunks(col)
+	# Read on the MAIN THREAD, here, because it is a global shader parameter
+	# and a worker may not call RenderingServer. See
+	# ChunkMesher._under_canopy().
+	job.shade_ink = Look.shade_ink()
 	_in_flight[col] = {
 		"task": WorkerThreadPool.add_task(job.run, false, "kubik column"),
 		"job": job,

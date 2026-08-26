@@ -562,6 +562,15 @@ static func accent_color(elevation: float, morning := false) -> Color:
 	return (SkyCycle.keyframe_at(elevation, morning)["accent"] as Color).linear_to_srgb()
 
 
+## The shade ink SkyCycle last published, linear. For anything that authors a
+## colour rather than lighting one - the understorey, world feel v1 Stage 6.
+static func shade_ink() -> Color:
+	var v = RenderingServer.global_shader_parameter_get(&"kubik_shade")
+	if typeof(v) == TYPE_VECTOR4:
+		return Color(v.x, v.y, v.z, 1.0)
+	return Color(0.25, 0.29, 0.55, 1.0)
+
+
 # --- The wire ------------------------------------------------------------------
 
 ## THE ONE CONVERSION, and the only one in the whole colour path.

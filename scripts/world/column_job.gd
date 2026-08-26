@@ -56,6 +56,14 @@ var neighbours := {}
 ## "faces": PackedVector3Array}. Only the chunks that were actually built.
 var built := {}
 
+## How much of this column's sky its own trees cover, 0 to 1. Decided by the
+## tree scan and used to shade the ground under them.
+var canopy_cover := 0.0
+
+## The shade ink, captured on the MAIN THREAD at submit time. See
+## ChunkMesher._under_canopy() for why it is not read here.
+var shade_ink := Color(0.25, 0.29, 0.55, 1.0)
+
 var gen_usec := 0
 var tree_usec := 0
 var mesh_usec := 0
@@ -65,9 +73,31 @@ var _chunks := {}
 
 func run() -> void:
 	var t0 := Time.get_ticks_usec()
+	# THE SKY IS NOT GENERATED, ONLY RESERVED.
+	#
+	# cy_range runs from below the ground to above the tallest tree the world
+	# could grow, because a crown must not be cut off by a chunk nobody built.
+	# But a chunk whose BOTTOM is above the highest ground in this column
+	# contains no terrain at all - only whatever a tree writes into it later -
+	# so running the generator over its 4,096 voxels writes air 4,096 times.
+	#
+	# It has to EXIST, because the tree writer needs somewhere to put a crown.
+	# It does not have to be generated. Chunk.new() is already all air.
+	#
+	# This is what makes a generous reserve free, and world feel v1 Stage 6 is
+	# where that stopped being theoretical: old growth raised max_tree_height()
+	# by half, which lengthened cy_range, which added a full generation pass
+	# per column per extra chunk - ten of twelve 48 m jumps stopped settling
+	# inside a minute.
+	var span := generator.column_surface_range(chunk_x, chunk_z)
+	var sky_from := int(floor(span.y)) + 1
 	for cy in cy_range:
 		var chunk := Chunk.new(Vector3i(chunk_x, cy, chunk_z))
-		generator.generate_ground_into(chunk)
+		if cy * Chunk.SIZE <= sky_from:
+			generator.generate_ground_into(chunk)
+		else:
+			chunk.has_air = true
+			chunk.has_solid = false
 		_chunks[cy] = chunk
 	var t1 := Time.get_ticks_usec()
 	gen_usec = t1 - t0
@@ -75,7 +105,9 @@ func run() -> void:
 	# ONCE FOR THE WHOLE COLUMN. See the note at the top.
 	var writer := TreeSpecies.ColumnWriter.new()
 	writer.bind(_chunks)
-	TreePlacement.stamp_column(writer, generator, chunk_x, chunk_z)
+	# The cover comes back from the same scan that stamped the trees, so the
+	# understorey costs nothing beyond a sum. See TreePlacement.stamp_column().
+	canopy_cover = TreePlacement.stamp_column(writer, generator, chunk_x, chunk_z)
 	var t2 := Time.get_ticks_usec()
 	tree_usec = t2 - t1
 
@@ -90,7 +122,8 @@ func run() -> void:
 		if cy > ceiling:
 			continue
 		var chunk: Chunk = _chunks[cy]
-		var arrays := ChunkMesher.build_arrays(chunk, _solid_at, config, world_seed)
+		var arrays := ChunkMesher.build_arrays(
+			chunk, _solid_at, config, world_seed, canopy_cover, shade_ink)
 		built[cy] = {
 			"chunk": chunk,
 			"arrays": arrays,

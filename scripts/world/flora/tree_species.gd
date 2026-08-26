@@ -308,7 +308,12 @@ static func table(config: WorldgenConfig) -> Array:
 static func max_height(config: WorldgenConfig) -> int:
 	var tallest := 0
 	for row in table(config):
-		tallest = maxi(tallest, row["height"].y + 3)
+		# AND OLD GROWTH, for the same reason max_reach() takes it: the scale
+		# is applied per tree, not in the table.
+		var h := float(row["height"].y)
+		h *= 1.0 + (maxf(config.old_growth_scale, 1.0) - 1.0) \
+			* float(row.get("read", 0.0))
+		tallest = maxi(tallest, int(ceil(h)) + 3)
 	return tallest
 
 
@@ -317,11 +322,24 @@ static func max_height(config: WorldgenConfig) -> int:
 static func max_reach(config: WorldgenConfig) -> int:
 	var widest := 0
 	for row in table(config):
-		widest = maxi(widest, row["crown"].y)
-	# A 2 x 2 trunk occupies one block further out than the cell it is rooted
-	# in, and a mound's raggedness never exceeds its radius - so the crown
-	# maximum plus one is a true bound on how far a tree can write.
-	return widest + 1
+		# AND OLD GROWTH, whose crowns are old_growth_scale times the table's -
+		# applied per tree in params_for(), so a bound taken from the table
+		# alone is not a bound at all, and the symptom is a crown clipped at a
+		# column boundary in some groves on the side away from the trunk.
+		#
+		# This margin is paid by EVERY column in the world, so it is the one
+		# place an old-growth knob costs something everywhere.
+		var c := float(row["crown"].y)
+		c *= 1.0 + (maxf(config.old_growth_scale, 1.0) - 1.0) \
+			* float(row.get("read", 0.0))
+		widest = maxi(widest, int(ceil(c)))
+	# A wide trunk occupies blocks further out than the cell it is rooted in,
+	# and a mound's raggedness never exceeds its radius - so the crown maximum
+	# plus the widest trunk is a true bound on how far a tree can write.
+	var widest_trunk := 1
+	for tier in TRUNK_TIERS:
+		widest_trunk = maxi(widest_trunk, int(tier["width"]))
+	return widest + widest_trunk
 
 
 # --- One tree's parameters --------------------------------------------------
@@ -331,15 +349,34 @@ static func max_reach(config: WorldgenConfig) -> int:
 ## Pure, and the whole determinism contract rests on that: two machines, two
 ## chunk build orders and two hemispheres of the map all call this with the
 ## same three integers and get the same tree back.
+## `extra` is a further size multiplier on top of the table - old growth, at
+## world feel v1 Stage 6. It takes the species' own `read` share exactly as
+## tree_read_scale does, so krummholz and snags are the same size in an old
+## wood as anywhere else: an ancient forest is ancient trees, and a shrub that
+## has been there a long time is still a shrub.
 static func params_for(species: int, cell_x: int, cell_z: int,
-		world_seed: int, config: WorldgenConfig) -> Dictionary:
+		world_seed: int, config: WorldgenConfig, extra := 1.0) -> Dictionary:
 	var rows := table(config)
 	var row: Dictionary = rows[species]
 
-	var height := WorldHash.hash_range(cell_x, cell_z, world_seed, SALT_HEIGHT,
-		row["height"].x, row["height"].y)
-	var crown := WorldHash.hash_range(cell_x, cell_z, world_seed, SALT_CROWN,
-		row["crown"].x, row["crown"].y)
+	# OLD GROWTH GROWS IN BOTH DIRECTIONS, and getting here took one wrong turn
+	# worth recording. Crowns were briefly left unscaled, because scaling them
+	# grows TreeSpecies.max_reach() - the margin every column in the world
+	# widens its candidate scan by - and Stage 6 was at that moment showing 73
+	# frames over 33 ms and ten of twelve jumps failing to settle. The crowns
+	# were not the cause; a RenderingServer call on a worker thread was (see
+	# ChunkMesher._under_canopy). With that fixed the margin is affordable, and
+	# height alone left an old-growth grove no more CLOSED than an ordinary one
+	# - 0.553 against 0.517 - which is most of what old growth is for.
+	var f := 1.0
+	if not is_equal_approx(extra, 1.0):
+		f = 1.0 + (extra - 1.0) * float(row.get("read", 0.0))
+	var height := int(round(float(WorldHash.hash_range(
+		cell_x, cell_z, world_seed, SALT_HEIGHT,
+		row["height"].x, row["height"].y)) * f))
+	var crown := int(round(float(WorldHash.hash_range(
+		cell_x, cell_z, world_seed, SALT_CROWN,
+		row["crown"].x, row["crown"].y)) * f))
 	var draw_species := species
 	var leaves_row := row
 

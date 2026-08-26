@@ -551,7 +551,41 @@ const FOG_START_RATIO := 0.4
 ## no edges - which is why the old one read as wallpaper however dense it got.
 @export var grove_freq := 0.005556
 @export var grove_share := 0.35
+## TODO(marcel): at x2 trees, the floor no longer opens the wood.
+##
+## grove_floor is what a candidate OUTSIDE a grove is multiplied by, and 0.35
+## was chosen when a spruce was 13-21 blocks. World feel v1 Stage 6 measured
+## canopy closure for the first time and the number between groves is **0.37**,
+## against a target of 0.20 - so the places that are supposed to be the open
+## wood between groves are now half-roofed, because the same 35% of candidates
+## grow trees three times the volume.
+##
+## It cannot be fixed by tuning the groves: raising old growth's closure and
+## opening the space between them pull the same lever in opposite directions.
+## It is a design question - how open is the wood between groves meant to be? -
+## and the answer is probably somewhere around 0.20, but that changes where
+## every tree outside a grove stands and is not a number to move blind on a
+## box with no GPU.
+##
+## The measurement to re-run after changing it:
+##   godot --headless --path . --script scripts/tools/worldgen_probe.gd \
+##       -- --seed 42 --canopy
 @export var grove_floor := 0.35
+
+## OLD GROWTH (world feel v1 Stage 6). What share of groves are the old kind,
+## how much bigger their trees are on top of tree_read_scale, and how many of
+## their candidates survive.
+##
+## T5: contrast is what makes huge read. A third of groves at x3 against two
+## thirds at x2 is a forest with old growth IN it; every grove at x2.3 would
+## just be a forest with slightly bigger trees. The thinning is what stops the
+## bigger crowns from becoming one solid roof - fewer trunks, further apart,
+## crowns that touch rather than merge.
+##
+## PROPERTIES, all three: they decide where blocks go.
+@export var old_growth_share := 0.33
+@export var old_growth_scale := 1.5
+@export var old_growth_keep := 0.55
 
 ## GLADES: clearings inside the forest, ~160 m across. The top `glade_share` of
 ## the mask grows nothing at all.
@@ -866,6 +900,14 @@ const FOG_START_RATIO := 0.4
 ## has a line under it. 1.0 is off.
 @export var contact_band := 0.72
 
+## HOW DARK THE GROUND GOES UNDER A CLOSED CANOPY, at full cover.
+##
+## World feel v1 Stage 6, and a LOCAL knob: it is a rendering decision, it does
+## not move a block, and two machines disagreeing about it is a difference of
+## taste rather than of world. On F4. Tuned blind on this box - if 0.35 reads
+## as mud on a real GPU, 0.25.
+@export var canopy_shade := 0.35
+
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
 ##
@@ -919,6 +961,7 @@ const PROPERTIES: PackedStringArray = [
 	"tree_base_forest", "tree_base_forest_edge", "tree_base_meadow",
 	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
 	"grove_freq", "grove_share", "grove_floor",
+	"old_growth_share", "old_growth_scale", "old_growth_keep",
 	"glade_freq", "glade_share",
 	"tree_max_slope_deg", "tree_bench_avoid",
 	"tree_spawn_clear_m", "tree_spawn_ramp_m",
@@ -998,7 +1041,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
-	"grain_amount", "grain_hue", "grain_sparse", "contact_band",
+	"grain_amount", "grain_hue", "grain_sparse", "contact_band", "canopy_shade",
 ]
 
 
@@ -1123,8 +1166,19 @@ func apply_world_scale() -> void:
 	# tallest species takes the full read scale, so the sky the world reserves
 	# has to clear tree_size_scale * tree_read_scale - and a ceiling derived
 	# from the land alone would cut the crown off every hero.
+	# AND OLD GROWTH, which is a third multiplier (world feel v1 Stage 6).
+	#
+	# This over-reserves: the hero is the tallest species and heroes are never
+	# old growth, so no tree is actually read_scale * old_growth_scale tall.
+	# Over-reserving used to cost real chunks; since Stage 2 it costs nothing
+	# at all, because ColumnJob builds only up to the highest solid block a
+	# column actually contains and this is merely the bound it may not exceed.
+	# Free safety is worth taking - the alternative is a reserve that is
+	# correct today and silently short the moment someone raises a knob, with
+	# a flat-topped tree in some columns as the only symptom.
 	var needed := max_altitude \
 		+ REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale \
+			* maxf(old_growth_scale, 1.0) \
 		+ TREE_RESERVE_MARGIN + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
 

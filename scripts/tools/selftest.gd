@@ -646,13 +646,42 @@ func _test_sky_reserve():
 			cfg.tree_size_scale = scale
 			cfg.tree_read_scale = read
 			var needed := TreeSpecies.max_height(cfg)
+			# The same expression apply_world_scale() reserves with, including
+			# old growth - max_height() takes it, so this must too.
 			var reserved := int(ceil(
 				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * read
+					* maxf(cfg.old_growth_scale, 1.0)
 				+ WorldgenConfig.TREE_RESERVE_MARGIN))
 			checked += 1
 			if needed > reserved:
 				print("  scale %.2f read %.1f: table needs %d blocks, config reserves %d" % [
 					scale, read, needed, reserved])
+				bad += 1
+	# OLD GROWTH IS A THIRD SCALE (world feel v1 Stage 6) and the reserve has to
+	# cover it too. It happens to be safe today because the hero takes the full
+	# read scale and nothing else is old growth AND a hero - a spruce at
+	# 21 x 2 x 1.5 = 63 blocks against the hero's 42 x 2 = 84 - but "happens to
+	# be" is exactly the kind of thing that stops being true when someone
+	# raises old_growth_scale, and the symptom is a flat-topped tree in some
+	# columns rather than an error.
+	for scale in [1.0, 2.0]:
+		for og in [1.5, 2.0, 3.0]:
+			var cfg2 := WorldgenConfig.new()
+			cfg2.tree_read_scale = scale
+			cfg2.old_growth_scale = og
+			var tallest := 0
+			for row in TreeSpecies.table(cfg2):
+				var h: int = int(row["height"].y)
+				if int(row["name"] == "hero") == 0:
+					h = int(round(float(h) * (1.0 + (og - 1.0) * float(row.get("read", 0.0)))))
+				tallest = maxi(tallest, h)
+			var reserved2 := int(ceil(
+				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * maxf(og, 1.0)
+				+ WorldgenConfig.TREE_RESERVE_MARGIN))
+			checked += 1
+			if tallest > reserved2:
+				print("  read %.1f old growth %.1f: tallest %d blocks, config reserves %d" % [
+					scale, og, tallest, reserved2])
 				bad += 1
 	print("sky reserve: %d scale/read pairs checked, %d short" % [checked, bad])
 	return bad

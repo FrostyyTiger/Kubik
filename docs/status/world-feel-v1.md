@@ -487,3 +487,91 @@ band or a box canyon defeats that whatever the trees do. Either the world has a
 place a player cannot get past, or the probe needs real pathing - and which of
 those it is has to be answered before "spawn to the four corners" can be a gate
 on anything.
+
+---
+
+## Stage 6 - Old growth, and the understorey
+
+**Shipped.**
+
+- **Grove type.** `TreePlacement.is_old_growth()` hashes the GROVE's own cell -
+  quantised to `1/grove_freq`, the scale the grove mask varies on - so a whole
+  wood is one kind and the boundary is a district edge rather than a speckle.
+  `old_growth_share := 0.33`, `old_growth_scale := 1.5` (x3 against look v2's
+  trees, composed with `tree_read_scale`), `old_growth_keep := 0.55`.
+- Old-growth species shift: birch is re-rolled to spruce or beech (birch is a
+  pioneer, and a closed canopy is what it is not), and some larch becomes snag.
+- **`--canopy`** on the worldgen probe: stamps the columns around a grove into
+  a scratch writer and casts 64 rays from eye height in a 60-degree cone. "No
+  sky overhead", as a number, runnable blind.
+- **The understorey.** Each column's canopy cover comes back from the same
+  tree scan that stamps it, and the turf takes the shade ink's HUE at
+  `cover * canopy_shade`, keeping luminance - an authoring step in the same
+  place baked AO happens, so look v2's rule 4 is untouched and the swatch sheet
+  does not move.
+- `canopy_shade := 0.25`, a LOCAL knob on F4.
+
+### The numbers
+
+| | Stage 5 | **Stage 6** |
+| --- | --- | --- |
+| config hash | `5bb0a556` | **`dbf9369c`** |
+| heightmap hash | `76cccdb6` | **`76cccdb6`** - unchanged |
+| trees on seed 42 | 31,224 | **28,383** |
+| initial load, wall | 30.1 s | **24.6 s** |
+| gen per chunk | 15.17 ms | **7.66 ms** |
+| 48 m settle, outward | 9,989 ms | **9,325 ms** |
+| holes | 0 | **0** |
+| frames over 33 ms | 0 | **3** |
+| `frontier_m` p10 | 40 - 48 m | **56 m** |
+
+**Stage 6 is faster than Stage 5**, which is not what a stage that triples a
+third of the forest should be - see the bug below.
+
+### Closure, measured
+
+| | measured | target |
+| --- | --- | --- |
+| old growth | **0.694** | >= 0.85 |
+| ordinary grove | **0.523** | >= 0.60 |
+| between groves | **0.373** | <= 0.20 |
+
+All three miss. The **ordering is right** - old growth is measurably more
+closed than an ordinary grove, which is more closed than the space between -
+so the mechanism works and the magnitudes do not. The one that matters most is
+the third: **the wood between groves no longer opens**, and that is a design
+question rather than a tuning, left as `TODO(marcel)` at `grove_floor`.
+
+### Three bugs, and the order they were found in matters
+
+**1. A RenderingServer call on a worker thread, once per VERTEX.**
+`_under_canopy()` read the shade ink from a global shader parameter, which
+means `RenderingServer` - which a worker must never touch. Nothing looked
+broken: the world still loaded, the self-tests still passed, the colours were
+right. It took **466 seconds** instead of 30, ten of twelve 48 m jumps stopped
+settling inside a minute, and the worst frame was **268 ms**. The ink is
+captured on the main thread in `World._submit_column()` now and passed down.
+
+**2. The sky was being generated, not just reserved.** `ColumnJob` ran the
+generator over every chunk in `cy_range`, including the ones entirely above the
+ground, writing air into 4,096 voxels at a time. Stage 2's ceiling stopped them
+being *meshed*; it never stopped them being *built*. Old growth made it visible
+by raising `max_tree_height()` by half. Fixed, and it is why gen per chunk
+**halved** (15.17 -> 7.66 ms) in a stage that made the trees bigger.
+
+**3. `max_reach()` and `max_height()` did not know about old growth.** The
+scale is applied per tree in `params_for()`, so a bound read off the table was
+not a bound: crowns clipped at column boundaries, and the sky reserve short.
+Both take it now, and the reserve's self-test walks 18 scale/read/old-growth
+combinations instead of 4 - it caught the shortfall immediately at
+`old_growth_scale` 3.0.
+
+### One wrong turn, recorded
+
+Between finding bug 1 and fixing it, crowns were left unscaled by old growth on
+the theory that `max_reach` was the cost. It was not. Height alone left an
+old-growth grove no more *closed* than an ordinary one - **0.553 against
+0.517** - which is most of what old growth is for. Crowns are scaled again;
+closure went back to 0.694 for about 500 ms of 48 m settle and two more frames
+over 33 ms. The wrong turn is left in the comment where it happened, because
+the next person to see `max_reach` grow will have the same idea.
