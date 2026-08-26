@@ -17,7 +17,7 @@ extends CharacterBody3D
 
 ## Metres per second on flat ground. Blocks are 0.5 m, so this is faster in
 ## blocks than it looks: 5 m/s is 10 blocks a second.
-const WALK_SPEED := 5.0
+const WALK_SPEED := Locomotion.WALK_SPEED
 
 ## SET BY TRAVERSAL, NOT BY REALISM, and worth knowing that before judging it.
 ##
@@ -31,23 +31,23 @@ const WALK_SPEED := 5.0
 ## character, and it will look fast. The alternative is a world that takes
 ## twenty minutes to cross, which is the Cube World 2019 failure the plan
 ## names by name. Speed is the cheaper mistake.
-const SPRINT_MULTIPLIER := 2.6
+const SPRINT_MULTIPLIER := Locomotion.SPRINT_MULTIPLIER
 
 ## For lining up a screenshot, or edging along a ledge.
-const PRECISION_MULTIPLIER := 0.3
+const PRECISION_MULTIPLIER := Locomotion.PRECISION_MULTIPLIER
 
 ## Deliberately above Earth gravity. Real 9.8 makes a jump feel like it is
 ## happening underwater, because a game character's jump is much shorter than a
 ## real one and the arc has to be compressed to match.
-const GRAVITY := 22.0
-const JUMP_HEIGHT := 1.1
+const GRAVITY := Locomotion.GRAVITY
+const JUMP_HEIGHT := Locomotion.JUMP_HEIGHT
 
 ## How high a ledge the player walks up without jumping, in metres.
 ##
 ## This one number is the difference between voxel terrain being walkable and
 ## being infuriating. Blocks are 0.5 m, so ANY slope is a staircase of 0.5 m
 ## steps, and a capsule with no step logic stops dead at every one of them.
-const MAX_STEP := 0.55
+const MAX_STEP := Locomotion.MAX_STEP
 
 ## How fast the body turns to face where it is going.
 const TURN_SMOOTHING := 12.0
@@ -58,7 +58,7 @@ const PITCH_MAX_DEG := 35.0
 
 ## Flight speed multiplier, so noclip is useful for crossing a 3 km world.
 ## Sprint multiplies it too, which is how you get across the map in a hurry.
-const FLY_SPEED := 18.0
+const FLY_SPEED := Locomotion.FLY_SPEED
 
 @onready var _pivot: Node3D = $CamPivot
 @onready var _arm: SpringArm3D = $CamPivot/SpringArm3D
@@ -258,75 +258,56 @@ func _physics_process(delta: float) -> void:
 		_publish_locomotion()
 		return
 
-	if noclip:
-		_fly(delta)
-	else:
-		_walk(delta)
+	# Noclip goes through the same step, as a bit on the input - so a flying
+	# client is a client the host can still simulate rather than a special
+	# case in two places.
+	_walk(delta)
 	_publish_locomotion()
 
 
-func _walk(delta: float) -> void:
-	var wish := _wish_direction()
-
-	velocity.x = wish.x * WALK_SPEED * _speed_multiplier()
-	velocity.z = wish.z * WALK_SPEED * _speed_multiplier()
-
-	if is_on_floor():
-		if jump_override:
-			jump_override = false
-			velocity.y = sqrt(2.0 * GRAVITY * JUMP_HEIGHT)
-		elif Input.is_physical_key_pressed(KEY_SPACE):
-			# v = sqrt(2gh) - the speed you need to leave the ground at to
-			# reach exactly JUMP_HEIGHT, rather than a number picked by feel
-			# that changes meaning the moment gravity is retuned.
-			velocity.y = sqrt(2.0 * GRAVITY * JUMP_HEIGHT)
-	else:
-		velocity.y -= GRAVITY * delta
-
-	_step_up(delta)
-	move_and_slide()
-	_face_movement(wish, delta)
-
-
-## Walk up a ledge instead of stopping dead at it.
+## THE RULES ARE NOT HERE ANY MORE (world feel v1 Stage 10). They are in
+## Locomotion, and the host runs the same step for every remote peer - so what
+## this body predicts is what the host computes, rather than two
+## implementations of the same paragraph drifting apart.
 ##
-## Godot's CharacterBody3D has no stair stepping, and voxel terrain is nothing
-## but stairs - every slope is a run of 0.5 m steps. The test is deliberately
-## the whole thing: if the move is blocked from here but the SAME move from
-## MAX_STEP higher is clear, then what blocked us was a step and not a wall,
-## and we can rise onto it. A real wall blocks both, so this cannot be used to
-## climb one.
-func _step_up(delta: float) -> void:
-	if not is_on_floor():
-		return
-	var motion := Vector3(velocity.x, 0.0, velocity.z) * delta
-	if motion.length_squared() < 0.000001:
-		return
-	if not test_move(global_transform, motion):
-		return  # nothing in the way
-
-	var raised := global_transform.translated(Vector3.UP * MAX_STEP)
-	if test_move(raised, motion):
-		return  # still blocked from up there, so it is a wall
-
-	# floor_snap_length pulls us back down onto the step's surface on the next
-	# move_and_slide, so this does not leave the player floating.
-	global_position.y += MAX_STEP
+## What is still here is everything that is about being THIS player: reading a
+## keyboard, owning a camera, and turning the body to face where it is going.
+func _walk(delta: float) -> void:
+	var input := current_input()
+	Locomotion.step(self, input, delta)
+	_face_movement(Vector3(input.wish.x, 0.0, input.wish.y), delta)
 
 
-func _fly(delta: float) -> void:
+## What this player is asking for, this tick, in the form that goes on the wire.
+##
+## Public because Game sends it: the client's whole contribution to the
+## simulation is this struct, thirty times a second.
+func current_input() -> Locomotion.Input:
+	var out := Locomotion.Input.new()
 	var wish := _wish_direction()
-	var dir := Vector3(wish.x, 0.0, wish.z)
-	# Vertical is along the WORLD up axis, not the camera's, so looking down
-	# does not turn Space into "fly forwards".
-	if Input.is_physical_key_pressed(KEY_SPACE):
-		dir += Vector3.UP
-	if Input.is_physical_key_pressed(KEY_CTRL):
-		dir -= Vector3.UP
-	if dir != Vector3.ZERO:
-		dir = dir.normalized()
-	velocity = dir * FLY_SPEED * _speed_multiplier()
-	global_position += velocity * delta
+	out.wish = Vector2(wish.x, wish.z)
+	out.look = rotation.y
+	var bits := 0
+	# sprint_override and jump_override are how the probes drive a player with
+	# no keyboard attached, and they have to be read HERE rather than deeper in
+	# because from here on the input struct is the only thing the rules see.
+	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
+		bits |= Locomotion.BIT_SPRINT
+	if Input.is_physical_key_pressed(KEY_ALT):
+		bits |= Locomotion.BIT_PRECISION
+	if jump_override or Input.is_physical_key_pressed(KEY_SPACE):
+		jump_override = false
+		bits |= Locomotion.BIT_JUMP
+	if noclip:
+		bits |= Locomotion.BIT_FLY
+		if Input.is_physical_key_pressed(KEY_CTRL):
+			bits |= Locomotion.BIT_DOWN
+	out.bits = bits
+	return out
+
+
+
+
 
 
 ## Desired horizontal direction, in world space, relative to where the camera
@@ -458,25 +439,6 @@ func _pose_key(keycode: int) -> bool:
 ## Counts the wave down, because the wave is the one pose that stops on its
 ## own and the animator must not be the thing that decides a player's state.
 var _wave_left := 0.0
-
-
-## Multiplier applied to the base speed this frame. Applies to walking and to
-## flight both.
-##
-## This was a TODO(marcel) exercise and terrain v2's plan claims it explicitly -
-## the single exception it makes to its own rule about leaving the exercises
-## alone - because a 3 km world without sprint is the traversal failure the
-## whole stage exists to avoid.
-##
-## Sprint is checked FIRST so that holding both keys is not ambiguous.
-func _speed_multiplier() -> float:
-	if sprint_override:
-		return SPRINT_MULTIPLIER
-	if Input.is_physical_key_pressed(KEY_SHIFT):
-		return SPRINT_MULTIPLIER
-	if Input.is_physical_key_pressed(KEY_ALT):
-		return PRECISION_MULTIPLIER
-	return 1.0
 
 
 func _mouse_captured() -> bool:
