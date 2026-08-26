@@ -773,3 +773,166 @@ character moves freely, over the same terrain, and still goes in circles.
 updated to say so. Nothing in `player.gd` was changed: there was no regression
 to fix, and the plan's rule for this stage - one constant or it is a recorded
 finding - did not need to be invoked.
+
+## Stage 10 - The carried ticket, closed
+
+**Shipped**, in three commits, because the wire change is only readable next to
+the thing that makes it safe.
+
+`README.md` called this the largest provisional bit in the codebase: a client
+simulated its own body and told the host where it had ended up, so "where is
+peer 3" was whatever peer 3 said it was, and every combat and creature plan was
+queued behind it. `_srv_report_state` is gone. `_srv_report_input` carries
+`{"w": wish, "b": bits, "l": look}` at the session's sync rate,
+`unreliable_ordered`, and the host steps an invisible `PlayerSim` per remote
+peer through the same `Locomotion.step` the client predicts with.
+
+### One implementation, and three things that had to move to make that true
+
+The claim is not "the rules are in one file". It is that what the client
+predicts and what the host computes are the same arithmetic. Three things were
+still outside it and each would have been a silent divergence:
+
+| moved into `Locomotion` | what it would have cost |
+| --- | --- |
+| `floor_snap_length`, `floor_max_angle` | a host capsule that snaps over a different distance drifts by a step height per slope, and never looks like a settings bug |
+| `face_yaw()` | the table carries body yaw; two derivations means watching a friend's shoulders point where their feet are not |
+| the capsule and its **offset** | see the buried body below |
+
+The pose id is packed into bits 5-7 of the same byte, so the payload stays the
+three keys the plan specifies. A pose is expression, not physics: the host
+relays it rather than deriving it.
+
+Input is sampled **once per tick** in `player.gd`, with a **jump latch**.
+Physics runs at 60 Hz and packets go out at 20; a tap of Space that begins and
+ends between two packets was predicted locally and never sent, and the host's
+correction for a jump that did not happen is a full jump height of error.
+
+### Three divergences caught by reading, not by testing
+
+Written down because none of them would have failed a test, and all three were
+found by reading the extraction back against the shipped code:
+
+- `FLY_SPEED` was written as **6.0** against a shipped **18.0**.
+- `speed_multiplier` resolved precision before sprint. `_locomotion_mode()`
+  picks the *animation* sprint-first, so that ordering would have played a
+  sprint cycle over a body moving at 0.3x - the exact disagreement that
+  function's own comment promises cannot happen.
+- Noclip's descend was folded onto the precision bit, which would have made
+  flying down a third the speed of flying up.
+
+### The pair probe, and what eleven runs cost
+
+`--pair-probe` launches a second headless Godot as a client and has it sprint
+100 m out and walk back under host authority. It took **eleven runs at about
+nine minutes each** before it produced a number, and the reason is worth
+recording: "the peer is not moving" has at least four causes and they are
+indistinguishable from outside the process.
+
+| what it looked like | what it was |
+| --- | --- |
+| the input RPC is broken | a client that has **joined** is not **ready** - while it generates its own world its packets do not reach the host at all. 78 `rpc_id` calls, **9** arrivals, no error on either side, and the backlog flushed the instant generation finished. It reproduced with the RPC forced `reliable`, which is what ruled out the transfer mode and ENet's throttle. |
+| the movement step is broken | the capsule was **buried**. `player.tscn`'s Collider carries a y offset of 1 - the body origin is at the FEET - and that fact lived in the scene file and nowhere else. A shape built in code and centred on the origin puts half the body underground. It read as `is_on_floor()`, took its input, set 13 m/s, and moved nowhere. |
+| the movement step is broken | peers spawned **inside the host**. Everything spawns at `spawn_position_m()`, so the second body to arrive arrives inside the first: `hit Player, normal (0, 1, 0)` - standing on its head, wedged for the whole run. |
+| the input never arrives | the **hold window measured the wrong thing**. See below. |
+
+Each of those took a run to distinguish. The diagnostic line on `PlayerSim` is
+longer than a debug line usually deserves for exactly that reason, and it is
+kept.
+
+### The hold window, which is a real finding and not a probe artefact
+
+`HOLD_MS` was 200 - six packets at the 30 Hz the plan asks for. But the interval
+between packets is not the send *rate*, it is the **sender's frame time**, and a
+host only hears a peer when it polls, once per its own frame. With two engines
+on one box the host's frames averaged **595 ms**, so every input was over 200 ms
+old before physics looked at it, every tick took the stale path, and a peer
+sprinting flat out was simulated standing still - with `wish (1.0, 0.0)` sitting
+right there in the struct.
+
+The window is now `max(500 ms, three of the host's own frames)`. **A host cannot
+honestly call a peer silent in less time than it takes to look twice.** This is
+not only about slow boxes: a host that hitches for 300 ms while loading a chunk
+should not stop every peer in the session dead for the duration.
+
+### What the probe decided, and what it refused to decide
+
+```
+client: 100 m out and back, 8935 samples
+client: prediction error  median 3.900 m  p95 7.486 m  max 9.968 m
+client: lowest point 28.5 m, surface there 28.5 m
+host:   647 chunks loaded, 66 built for its ring
+host:   its own frames averaged 595 ms over the run
+PASS on everything this box can decide; prediction error INCONCLUSIVE
+```
+
+**PASS**: the client travelled the full 100 m and back under host authority, and
+never went below the surface - which is the collision ring working, 66 chunks of
+it. **INCONCLUSIVE**: 3.90 m of median error at sprint is **300 ms of lag**
+against a host whose frames averaged 595 ms. The error tracks the host's own
+frame time, so the thresholds measure how fast two engines run on one machine,
+not whether prediction works. Same call as Stage 9's physics probe, and the
+probe now prints the arithmetic rather than a verdict it cannot support. The
+hard failures - through the world, never travelled - are checked separately and
+are not excused by latency.
+
+**Marcel: this is the one number in night 2 that needs a real machine.** Run
+`godot --path . -- --host --seed 42 --pair-probe` on the Windows box; the limits
+in the probe (0.5 m median, 2 m worst) are the plan's and are untouched.
+
+### The solo numbers did not regress, and proving that took a worktree
+
+The plan requires the host's own numbers to hold with no client connected. The
+stream probe came back **holes 1, frames over 33 ms 103, initial load 123.1 s** -
+against night 1's 0, 1 and 24.8 s, which reads as a catastrophic regression.
+
+It is not. Stage 9's commit, checked out into a worktree and run on this box
+**within the hour**, gives:
+
+| | load | holes | frames > 33 ms | worst frame | 48 m settle (out/back) |
+| --- | --- | --- | --- | --- | --- |
+| night 1 / Stage 9, when recorded | 24.8 s | 0 | 1 | - | 10.5 s |
+| **Stage 9 commit, re-run today** | **123.4 s** | **4** | **104** | 680 ms | 13.9 / 13.7 s |
+| **Stage 10** | **123.1 s** | **1** | **103** | 709 ms | 13.9 / 13.6 s |
+
+Stage 10 is indistinguishable from its own baseline and marginally better on
+holes. The box is about five times slower today than when night 1's numbers
+were taken, with identical per-chunk worker cost (8.3 ms) - it is starvation,
+not per-chunk work. **Config `dbf9369c`, heightmap `76cccdb6`, spawn
+`(-44, -124)`, 2,370 chunks: the world did not move.**
+
+The lesson is the one Stage 5 already taught and this stage had to learn again:
+**a number from a different day is not a baseline.** Twenty-five minutes of
+worktree turned a reported regression into a measured non-event.
+
+### Also
+
+- **The journal** (habit 2): `scripts/game/journal.gd`, host-side, in memory,
+  logging `peer_joined` and `peer_left`. No file - session v1 gives it one, and
+  a persistence format invented before there is anything to persist is a format
+  that gets thrown away.
+- **A `locomotion parity` self-test**, which took three attempts and whose first
+  two would both have read as passes. Two capsules spawned inside each other
+  shoved one another to a standstill and reported a perfect 0.000000 m drift;
+  separating them revealed that `selftest.tscn`'s root is a plain `Node` with no
+  `World3D` at all, so `move_and_slide` is a no-op there. It now judges the step
+  by the velocity `_walk` computes and by the fly path, which writes position
+  itself - covering everything except ground contact, which the pair probe
+  gates. The `facing` test now calls `Locomotion.face_yaw()` instead of
+  re-typing its arithmetic.
+- `Locomotion.Input` had to be renamed **`Intent`**: it shadowed Godot's native
+  `Input` singleton, and the error - `argument 2 should be "Input" but is
+  "Input"` - only appeared once `player.gd` was loaded by a real scene, not by
+  the self-tests.
+- **`--pair-probe` takes no scene argument**, unlike every other probe here.
+  Opening `game.tscn` directly skips the main menu, and the main menu is what
+  opens the ENet socket; a host started that way is `Net.host_offline()` and the
+  only symptom is the client logging "connection failed" where nobody is
+  reading.
+
+### One TODO(marcel)
+
+`sim_radius_chunks := 4` (32 m) is a guess that the probe could not test: on a
+box where the host runs at 595 ms frames, a peer outruns any ring, and the
+number that matters is how far a body travels between the moment it nears the
+edge and the moment the next ring lands. It is marked in `worldgen_config.gd`.

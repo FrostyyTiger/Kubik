@@ -374,12 +374,28 @@ docs/plans/          implementation plans
 Things that work but are explicitly not final. They are marked in the source at
 the point where they need replacing.
 
-- **Players report position, not input.** Still true, and now the largest
-  carried ticket. The player is a physics body, but it is simulated locally and
-  the client sends the result. `Game._srv_report_state` is the function to
-  replace: it should carry input, and the host should simulate. The shape is
-  already right — the host owns and distributes the table — only the payload is
-  wrong.
+- **~~Players report position, not input.~~ CLOSED in world feel v1 Stage 10.**
+  Clients send input (`Game._srv_report_input`), the host simulates every remote
+  body through the same `Locomotion.step` the client predicts with, and the host
+  broadcasts the result. A client can still only move itself, and now it can
+  only move itself the way the rules allow. The host also streams a
+  collision-only ring around every peer so there is ground under them —
+  `WorldgenConfig.sim_radius_chunks`.
+- **No rollback on the client.** What replaced the carried ticket is not the
+  whole of client-side prediction. The local body predicts with the same step,
+  and when the host's position for it arrives the client eases (under 2 m) or
+  snaps (over) — see `Game._reconcile`. It does not replay the inputs the host
+  had not yet processed when it sent that position, so a correction lands where
+  the player *was* rather than where they will be.
+
+  The shape a rollback would take, so the next person does not have to
+  rediscover it: a sequence number on each input; a ring buffer of the last N
+  inputs on the client; the host echoing the last sequence it consumed in the
+  table row; and on a correction, snap to the authoritative state and re-run
+  every buffered input newer than the echoed sequence. About forty lines. It is
+  not worth them until there is something in the world worth being precise
+  about — the error it removes is the error a player only notices when
+  something is shooting at them.
 - **Worldgen is GDScript, and GDScript is serialised across the worker pool.**
   Measured in world feel v1: 3,742 chunks × 7.6 ms of worker time, in 29.5 s of
   wall clock — about **one** effective worker thread whatever the job cap says.

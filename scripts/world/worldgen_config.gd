@@ -188,6 +188,15 @@ const FOG_START_RATIO := 0.4
 ##
 ## LOCAL, not a world fact: it changes what the host streams, never what the
 ## world contains, so a host with a different value generates the same world.
+##
+## TODO(marcel): 4 is a guess and the pair probe could not test it. The number
+## that matters is how far a body travels between nearing the edge of its ring
+## and the next ring landing, and on this box the host ran at 595 ms frames -
+## where a sprinting peer outruns any ring you care to name. On a machine that
+## holds 60 fps, walk a peer away from the host and watch `--pair-probe`'s
+## "chunks built for its ring" against the moment it falls: if it never falls,
+## try 3 and find the edge, because every chunk of this is collision the host
+## builds for terrain nobody looks at.
 @export var sim_radius_chunks := 4
 
 ## How many chunks of solid rock to build below the surface. The world is 320
