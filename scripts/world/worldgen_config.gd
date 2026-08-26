@@ -173,6 +173,23 @@ const FOG_START_RATIO := 0.4
 ## Driven by view_distance unless that is VIEW_CUSTOM.
 @export var voxel_radius_chunks := 12
 
+## The collision-only ring the HOST streams around each remote peer, in chunks
+## (world feel v1 Stage 10).
+##
+## THIS IS THE COST OF AUTHORITY. The host simulates every peer's body, and a
+## body needs ground: the host loads columns around ITS OWN player, so a friend
+## 500 m away would be standing on nothing and would fall out of the world.
+##
+## It is small - 4 chunks is 32 m - because nothing is being LOOKED at. No mesh
+## is uploaded and no flora is grown; the columns exist so a capsule has a
+## trimesh under it. All it has to cover is how far a body can move between the
+## moment it approaches the edge and the moment the next ring lands, and at
+## sprint that is a couple of seconds.
+##
+## LOCAL, not a world fact: it changes what the host streams, never what the
+## world contains, so a host with a different value generates the same world.
+@export var sim_radius_chunks := 4
+
 ## How many chunks of solid rock to build below the surface. The world is 320
 ## blocks tall but nobody can see the bottom 250 of it, so building a full
 ## vertical column would be ~4x the chunks for no visible difference.
@@ -1051,7 +1068,7 @@ const PROPERTIES: PackedStringArray = [
 const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life",
-	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
+	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"ao_strength", "msaa_level",

@@ -15,6 +15,10 @@ var chunk: Chunk
 ## the two is the upload queue, which can be many frames deep during a load.
 var collision_applied := false
 
+## False on a node built for collision only - see apply_arrays(). The world
+## upgrades these when the host's own player comes near enough to see them.
+var mesh_built := true
+
 var _block_size := 1.0
 var _config: WorldgenConfig = null
 var _world_seed := 0
@@ -59,8 +63,16 @@ func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int) -> void:
 ## buffer (ChunkMesher.faces_from). Passing it in leaves the main thread one
 ## allocation and one memcpy instead of a walk over every index; omit it and
 ## the shape is derived here, which is what the edit path does.
-func apply_arrays(arrays: Array, faces := PackedVector3Array()) -> void:
-	mesh = ChunkMesher.arrays_to_mesh(arrays)
+## `want_mesh` false builds the COLLIDER ONLY (world feel v1 Stage 10). The
+## host streams a small ring of columns around every remote peer so their body
+## has ground under it, and nobody on the host's machine is looking at that
+## ground - it is 500 m away and behind the fog. The arrays are still built,
+## because the faces are derived from them, but no ArrayMesh is uploaded and
+## nothing is drawn. That is the whole saving: the mesh upload is the part that
+## touches the rendering server.
+func apply_arrays(arrays: Array, faces := PackedVector3Array(),
+		want_mesh := true) -> void:
+	mesh = ChunkMesher.arrays_to_mesh(arrays) if want_mesh else null
 	if faces.is_empty():
 		_apply_collision()
 	else:
@@ -69,6 +81,9 @@ func apply_arrays(arrays: Array, faces := PackedVector3Array()) -> void:
 		_collider.shape = shape
 	chunk.dirty = false
 	collision_applied = true
+	# Remembered so the world can tell a column that was never drawn from one
+	# that has nothing to draw - an all-air chunk also has a null mesh.
+	mesh_built = want_mesh
 
 
 ## Park this node in the cache, or bring it back (world feel v1 Stage 4).
@@ -94,6 +109,10 @@ func rebuild(world_solid: Callable) -> void:
 	_apply_collision()
 	chunk.dirty = false
 	collision_applied = true
+	# This is also the UPGRADE path for a collision-only chunk: it re-meshes
+	# from the voxels, which the node already has, rather than sending the
+	# column back through generation and the tree scan.
+	mesh_built = true
 
 
 ## The collision shape is generated FROM the visible mesh, so the two can never

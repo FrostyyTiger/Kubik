@@ -80,6 +80,35 @@ const CAPSULE_RADIUS := 0.4
 const CAPSULE_HEIGHT := 2.0
 const FLOOR_MAX_ANGLE_DEG := 55.0
 
+## Where the capsule sits relative to the body's origin.
+##
+## THE ORIGIN IS AT THE FEET, which is a fact stored in player.tscn - its
+## Collider carries `transform ... 0, 1, 0` - and in no code anywhere. The
+## host's sim body builds its shape in code, and a shape centred on the origin
+## instead of raised by this puts the bottom half of the capsule underground.
+##
+## That is not a subtle failure and it did not look like one either. The buried
+## body was `is_on_floor()`, took its input, set a velocity of 13 m/s, and
+## ended every tick at exactly the position it started at, because the ground
+## it was standing in blocked it in every horizontal direction. step_up then
+## lifted it 0.55 m, once, and it stayed stuck. The pair probe's host row read
+## "on floor, velocity 0" for two and a half thousand ticks while the input
+## channel showed a thousand correctly-decoded sprint packets arriving.
+const CAPSULE_CENTRE_Y := CAPSULE_HEIGHT * 0.5
+
+
+## Build the collision shape a body of this kind needs, positioned correctly.
+## player.tscn does the same thing in scene form; this is for bodies that have
+## no scene, and the two must not disagree.
+static func make_collider() -> CollisionShape3D:
+	var shape := CollisionShape3D.new()
+	var capsule := CapsuleShape3D.new()
+	capsule.radius = CAPSULE_RADIUS
+	capsule.height = CAPSULE_HEIGHT
+	shape.shape = capsule
+	shape.position = Vector3(0.0, CAPSULE_CENTRE_Y, 0.0)
+	return shape
+
 
 ## How fast a body turns to face where it is going, per second.
 const TURN_SMOOTHING := 12.0

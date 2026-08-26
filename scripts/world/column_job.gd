@@ -64,6 +64,13 @@ var canopy_cover := 0.0
 ## ChunkMesher._under_canopy() for why it is not read here.
 var shade_ink := Color(0.25, 0.29, 0.55, 1.0)
 
+## False for a column the host is building only so a remote peer's body has
+## ground under it (world feel v1 Stage 10). The arrays are built either way -
+## the collision faces are derived from them - but World does not upload a mesh
+## for one. The job itself does not branch on this; it carries it so the main
+## thread knows what it asked for by the time the column lands.
+var mesh := true
+
 var gen_usec := 0
 var tree_usec := 0
 var mesh_usec := 0

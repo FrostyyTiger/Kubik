@@ -70,6 +70,12 @@ const FREES_PER_FRAME := 32
 ## sprint hit 50.7 ms frames. Spread, it does not.
 const RESTORES_PER_FRAME := 8
 
+## Collision-only columns given their mesh in one frame, at most. Same reason
+## and same shape as RESTORES_PER_FRAME: re-meshing a column is six or seven
+## main-thread uploads, and a peer walking towards the host can hand over
+## dozens of columns at once.
+const UPGRADES_PER_FRAME := 2
+
 ## Flora columns kept hidden after they leave the far ring, most recent last.
 ##
 ## 1024, measured. The far disc is about 800 columns and a 48 m move replaces
@@ -141,6 +147,19 @@ var _queued := {}
 ## Chunk-space column the loaded region is centred on. Stage 4's player drives
 ## it; until then it stays at the spawn column.
 var _center := Vector2i.ZERO
+
+## HOST ONLY, and empty in every other case. The chunk column each remote peer's
+## simulated body is standing in - see set_sim_centres() and
+## WorldgenConfig.sim_radius_chunks.
+var _sim_centres: Array[Vector2i] = []
+
+## Columns that were built for collision only and have no mesh. A column in
+## here that comes inside the host's own disc is upgraded rather than rebuilt.
+var _collision_only := {}
+
+## Columns waiting to be given the mesh they were not built with. Drained a few
+## per frame like the cache restores, because a mesh is a main-thread upload.
+var _upgrade_queue: Array[Vector2i] = []
 
 ## Emitted once, for the first full load. With streaming the queue empties
 ## every time the player stops walking, and a signal that fired then would have
@@ -366,6 +385,7 @@ func _process(delta: float) -> void:
 	_submit_jobs()
 	_submit_flora()
 	_drain_restores()
+	_drain_upgrades()
 	_drain_frees()
 
 	# THE FAR MESH AND THE IMPOSTORS FOLLOW THE FRONTIER. Both used to key off
@@ -696,10 +716,73 @@ func _submit_column(col: Vector2i) -> void:
 	# and a worker may not call RenderingServer. See
 	# ChunkMesher._under_canopy().
 	job.shade_ink = Look.shade_ink()
+	# A column wanted only by a peer's collision ring is built without a mesh.
+	# The arrays are still produced - the faces come from them - but nothing is
+	# uploaded to the rendering server. See ChunkNode.apply_arrays().
+	job.mesh = not _collision_only.has(col)
 	_in_flight[col] = {
 		"task": WorkerThreadPool.add_task(job.run, false, "kubik column"),
 		"job": job,
 	}
+
+
+## Is this column inside the host's own visible disc?
+func _inside_disc(col: Vector2i, radius_sq: int) -> bool:
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	return dx * dx + dz * dz <= radius_sq
+
+
+## WHERE THE HOST'S SIMULATED PEERS ARE (world feel v1 Stage 10).
+##
+## Set by Game once per sync tick from the PlayerSim bodies, in chunk columns.
+## Empty on a client and on a host playing alone, and in both of those cases
+## every line this touches is a loop over nothing.
+##
+## Refreshes the region when the set changes, because a peer crossing a chunk
+## boundary is exactly as much a reason to stream as the local player doing it.
+func set_sim_centres(cols: Array[Vector2i]) -> void:
+	if cols == _sim_centres:
+		return
+	_sim_centres = cols.duplicate()
+	refresh_region()
+
+
+## Every column inside sim_radius_chunks of any simulated peer, clipped to the
+## world. A dictionary because two peers standing together would otherwise
+## queue the overlap twice.
+func _sim_ring_columns(lo: int, hi: int) -> Dictionary:
+	var out := {}
+	if _sim_centres.is_empty():
+		return out
+	var r: int = config.sim_radius_chunks
+	var r_sq := r * r
+	for centre in _sim_centres:
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if dx * dx + dz * dz > r_sq:
+					continue
+				var cx := centre.x + dx
+				var cz := centre.y + dz
+				if cx < lo or cx > hi or cz < lo or cz > hi:
+					continue
+				out[Vector2i(cx, cz)] = true
+	return out
+
+
+## HOOK: give a column the mesh it was built without. A few per frame, because
+## every one of them is a main-thread upload - the same reason the cache
+## restores are budgeted.
+func _drain_upgrades() -> void:
+	var done := 0
+	while not _upgrade_queue.is_empty() and done < UPGRADES_PER_FRAME:
+		var col: Vector2i = _upgrade_queue.pop_front()
+		for cy in _column_chunk_range(col.x, col.y):
+			var node: ChunkNode = _chunk_nodes.get(Vector3i(col.x, cy, col.y))
+			if node == null or node.mesh_built:
+				continue
+			node.rebuild(Callable(self, "is_solid_world"))
+		done += 1
 
 
 ## Is every chunk this column would build already loaded?
@@ -857,7 +940,7 @@ func _collect_chunks(started: int, budget: int) -> void:
 			if edited:
 				node.rebuild(Callable(self, "is_solid_world"))
 			else:
-				node.apply_arrays(entry["arrays"], entry["faces"])
+				node.apply_arrays(entry["arrays"], entry["faces"], job.mesh)
 			_built += 1
 		_mesh_ms += Time.get_ticks_usec() - t_upload
 		_columns_built += 1
@@ -1140,7 +1223,37 @@ func refresh_region() -> void:
 		_build_queue.append(col)
 		_queued[col] = true
 
-	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
+	# THE PEERS' RINGS, ADDED AFTER THE FRONTIER SCAN AND NOT BEFORE.
+	#
+	# The frontier (Stage 3) is about what the LOCAL player can see - it is
+	# what the far field cuts its hole to. A ring 500 m away is not part of
+	# that and folding it into the sector counts would tell the far field to
+	# leave a hole around a friend nobody is looking at.
+	var spare := {}
+	for col in _sim_ring_columns(lo, hi):
+		spare[col] = true
+		if wanted.has(col):
+			continue  # already the host's own, and meshed
+		wanted[col] = true
+		if _column_loaded(col) or _in_flight.has(col) or _queued.has(col):
+			continue
+		_build_queue.append(col)
+		_queued[col] = true
+		# Marked BEFORE the job is submitted, because _submit_column reads it
+		# to decide whether to mesh.
+		_collision_only[col] = true
+
+	# A collision-only column the host's own player has now walked up to needs
+	# its mesh. Re-meshed from the voxels it already has rather than rebuilt:
+	# generation and the tree scan are the expensive halves and their answers
+	# have not changed.
+	for col in _collision_only.keys():
+		if _column_loaded(col) and _inside_disc(col, radius_sq):
+			_collision_only.erase(col)
+			if not _upgrade_queue.has(col):
+				_upgrade_queue.append(col)
+
+	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS, -1, spare)
 	_refresh_flora()
 
 	# Nearest-first, so the world grows outward from the player rather than
@@ -1334,16 +1447,25 @@ func _column_chunk_range(cx: int, cz: int) -> Array:
 ## columns are dropped, and it is tighter (world feel v1 Stage 4). A column in
 ## the trailing band that was never built should not be built when the player
 ## pauses - the player is not going to look at it.
-func _free_distant_chunks(keep_radius: int, prune_radius: int = -1) -> void:
+## `spare` is the columns that must survive regardless of distance: since world
+## feel v1 Stage 10 that is the collision rings around remote peers, which are
+## by definition far outside the host's own radius. Without it they would be
+## queued by every refresh and parked by the same refresh - a treadmill that
+## builds a friend's ground over and over and never lets them stand on it.
+func _free_distant_chunks(keep_radius: int, prune_radius: int = -1,
+		spare: Dictionary = {}) -> void:
 	var keep_sq := keep_radius * keep_radius
 	var prune_sq := (prune_radius * prune_radius) if prune_radius > 0 else keep_sq
 	var doomed: Array[Vector3i] = []
 	for pos in _chunks:
+		var col := Vector2i(pos.x, pos.z)
+		if spare.has(col):
+			continue
 		var dx: int = pos.x - _center.x
 		var dz: int = pos.z - _center.y
 		# Never free a chunk a worker is still reading. It will drift out of
 		# range again on the next refresh, by which time its job is done.
-		if dx * dx + dz * dz > keep_sq and not _in_flight.has(Vector2i(pos.x, pos.z)):
+		if dx * dx + dz * dz > keep_sq and not _in_flight.has(col):
 			doomed.append(pos)
 	for pos in doomed:
 		var chunk: Chunk = _chunks[pos]
@@ -1377,7 +1499,7 @@ func _free_distant_chunks(keep_radius: int, prune_radius: int = -1) -> void:
 		for col in _build_queue:
 			var dx: int = col.x - _center.x
 			var dz: int = col.y - _center.y
-			if dx * dx + dz * dz <= prune_sq:
+			if spare.has(col) or dx * dx + dz * dz <= prune_sq:
 				still.append(col)
 			else:
 				_queued.erase(col)

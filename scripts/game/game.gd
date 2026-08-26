@@ -80,6 +80,19 @@ var _journal := Journal.new()
 var _fix_remaining := Vector3.ZERO
 var _fix_left := 0.0
 
+## CLIENT ONLY. The last authoritative row the host sent for us.
+var _last_authority := {}
+
+## CLIENT ONLY. How many input packets we have put on the wire. Probe
+## diagnostics; see PlayerSim.packets for the other end of the same count.
+var _inputs_sent := 0
+
+## HOST ONLY. Every input RPC that arrived, whichever peer it was for, and the
+## id of the last sender. Probe diagnostics: an input that arrives but reaches
+## no sim looks exactly like an input that never arrived.
+var _inputs_received := 0
+var _last_sender := 0
+
 var _slab_present := false
 var _sync_accum := 0.0
 var _join_retry := 0.0
@@ -156,6 +169,9 @@ func _ready() -> void:
 		_start_stream_probe.call_deferred()
 	elif "--physics-probe" in OS.get_cmdline_user_args():
 		_start_physics_probe.call_deferred()
+	elif ("--pair-probe" in OS.get_cmdline_user_args()
+			or "--pair-client" in OS.get_cmdline_user_args()):
+		_start_pair_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -212,6 +228,10 @@ func _process(delta: float) -> void:
 	if Net.is_host():
 		# Every remote body, as the host's physics left it.
 		_publish_sim_states()
+		# ...and the ground under them. THE COST OF AUTHORITY: the world
+		# streams around the local player, so a peer 500 m away has nothing to
+		# stand on until the host builds it. See WorldgenConfig.sim_radius_chunks.
+		_world.set_sim_centres(_sim_columns())
 		# The host is the only one that assembles and distributes the table.
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
@@ -345,6 +365,17 @@ func _start_physics_probe() -> void:
 	probe.run(_world, _player)
 
 
+## Hand the session to the pair probe - see scripts/tools/pair_probe.gd. Both
+## halves of it run through here; the probe decides which one it is.
+func _start_pair_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := PairProbe.new()
+	probe.name = "PairProbe"
+	add_child(probe)
+	probe.run(_world, _player, self)
+
+
 ## Hand the session to the streaming probe - see scripts/tools/stream_probe.gd.
 func _start_stream_probe() -> void:
 	$HUD.visible = false
@@ -449,6 +480,7 @@ func _publish_local_state() -> void:
 	else:
 		var wire := _player.wire_input()
 		_srv_report_input.rpc_id(1, wire.wish, wire.bits, wire.look)
+		_inputs_sent += 1
 		# Cycling the character on the F8 panel mid-session should be visible
 		# to everyone else. Comparing eight bytes per tick is free; the RPC
 		# only goes out when they actually differ.
@@ -468,6 +500,7 @@ func _publish_local_state() -> void:
 ## host computes rather than something it is told.
 @rpc("any_peer", "call_remote", "unreliable_ordered")
 func _srv_report_input(wish: Vector2, bits: int, look: float) -> void:
+	_inputs_received += 1
 	if not Net.is_host():
 		return
 	var input := Locomotion.Intent.new()
@@ -479,12 +512,27 @@ func _srv_report_input(wish: Vector2, bits: int, look: float) -> void:
 	input.look = look
 	# The sender id comes from the network layer and cannot be spoofed, so a
 	# client can only ever move itself.
-	_sim_for(multiplayer.get_remote_sender_id()).receive(input)
+	_last_sender = multiplayer.get_remote_sender_id()
+	_sim_for(_last_sender).receive(input)
+
+
+## How far from the spawn point a joining peer's body is placed.
+##
+## NOT ZERO, AND THIS IS A REAL BUG AND NOT A PROBE ONE. Everything spawns at
+## `spawn_position_m()`, so the second body to arrive arrives inside the first.
+## The pair probe found it the hard way: the peer's body landed on top of the
+## host's own capsule - `hit Player ... normal (0, 1, 0)`, standing on its head
+## - and was wedged there for the whole run. It was `is_on_floor()`, it took
+## its input, it set a velocity of 13 m/s, and it moved nowhere, because
+## move_and_slide could not get it off the thing it was standing on.
+##
+## 2 m is clear of two 0.8 m-wide capsules with room to spare.
+const SPAWN_RING_M := 2.0
 
 
 ## The host's body for a peer, made on first contact.
 ##
-## Spawned at the world's spawn point, which is the one place the host is
+## Spawned near the world's spawn point, which is the one place the host is
 ## guaranteed to have ground - a body created under a peer who is already
 ## somewhere else would fall through a world nobody has streamed. Stage 10's
 ## collision ring is what makes anywhere else safe.
@@ -494,7 +542,12 @@ func _sim_for(peer_id: int) -> PlayerSim:
 	var sim := PlayerSim.new()
 	sim.setup(peer_id)
 	_sims_root.add_child(sim)
-	sim.global_position = _world.spawn_position_m(SPAWN_CLEARANCE)
+	# Placed around the spawn point rather than on it. The angle comes from the
+	# peer id so it is stable for a given peer and spreads four of them out
+	# without anyone having to keep a list of who is standing where.
+	var angle := float(peer_id % 360) * TAU / 360.0
+	sim.global_position = _world.spawn_position_m(SPAWN_CLEARANCE) + Vector3(
+		cos(angle) * SPAWN_RING_M, 0.0, sin(angle) * SPAWN_RING_M)
 	_sims[peer_id] = sim
 	print("[Game] simulating peer %d from %.0f, %.0f" % [
 		peer_id, sim.global_position.x, sim.global_position.z])
@@ -637,6 +690,7 @@ const FIX_SNAP_M := 2.0
 const FIX_EASE_SECONDS := 0.1
 
 func _reconcile(row: Dictionary) -> void:
+	_last_authority = row
 	var authoritative: Vector3 = row.get("p", _player.global_position)
 	var error := _player.global_position.distance_to(authoritative)
 	if error < FIX_IGNORE_M:
@@ -695,6 +749,51 @@ func _on_peer_left(peer_id: int) -> void:
 			_sims[peer_id].queue_free()
 			_sims.erase(peer_id)
 	_update_status()
+
+
+## The chunk column each simulated peer is standing in. Typed, because World
+## compares this against the set it already has and an untyped array never
+## compares equal to a typed one.
+func _sim_columns() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		var p := sim.global_position
+		var bx := int(floor(p.x / config.block_size))
+		var bz := int(floor(p.z / config.block_size))
+		out.append(Vector2i(
+			Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE)))
+	return out
+
+
+## The host's authoritative row for one peer, or an empty dictionary. Read by
+## the pair probe; the table itself stays private.
+func peer_row(peer_id: int) -> Dictionary:
+	return _states.get(peer_id, {})
+
+
+## What the host's body for that peer was last told. Probe diagnostics only.
+func peer_input_line(peer_id: int) -> String:
+	if not _sims.has(peer_id):
+		return "no sim, %d inputs from %d" % [_inputs_received, _last_sender]
+	return "%s; %d in from %d, %d sims" % [
+		(_sims[peer_id] as PlayerSim).debug_line(),
+		_inputs_received, _last_sender, _sims.size()]
+
+
+## CLIENT ONLY. The last row the host sent for US - what it believes we are
+## doing, as opposed to what we predicted. Empty until the first one arrives.
+##
+## Kept as a field rather than only consumed by _reconcile() because the size
+## of the gap between this and the local body is the number Stage 10 is judged
+## on, and it belongs on the F3 readout as much as in a probe.
+func last_authority() -> Dictionary:
+	return _last_authority
+
+
+## CLIENT ONLY. Input packets sent so far.
+func inputs_sent() -> int:
+	return _inputs_sent
 
 
 ## HOST ONLY, and read by the pair probe. See journal.gd.

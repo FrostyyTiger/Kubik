@@ -1148,6 +1148,7 @@ func _test_locomotion_parity():
 	for i in 2:
 		var b := CharacterBody3D.new()
 		Locomotion.configure_body(b)
+		b.add_child(Locomotion.make_collider())
 		add_child(b)
 		b.global_position = Vector3.ZERO
 		bodies.append(b)
@@ -1177,6 +1178,15 @@ func _test_locomotion_parity():
 	# THE FLY PATH, which writes global_position itself and so is the one part
 	# of the step that moves a body with no space to move in. Same sequence,
 	# same comparison.
+	#
+	# Measured as a DISPLACEMENT from wherever the walk phase left the bodies,
+	# not from the origin: whether move_and_slide did anything above depends on
+	# whether this scene has a physics space, and that is not what this half is
+	# testing.
+	var fly_from: Array[Vector3] = [
+		(bodies[0] as CharacterBody3D).global_position,
+		(bodies[1] as CharacterBody3D).global_position,
+	]
 	for tick in 30:
 		var intent := Locomotion.Intent.new()
 		intent.wish = Vector2(0.0, -1.0)
@@ -1186,8 +1196,8 @@ func _test_locomotion_parity():
 		var wired := Locomotion.Intent.from_dict(intent.to_dict())
 		Locomotion.step(bodies[0], intent, delta)
 		Locomotion.step(bodies[1], wired, delta)
-	var pos_a: Vector3 = (bodies[0] as CharacterBody3D).global_position
-	var pos_b: Vector3 = (bodies[1] as CharacterBody3D).global_position
+	var pos_a: Vector3 = (bodies[0] as CharacterBody3D).global_position - fly_from[0]
+	var pos_b: Vector3 = (bodies[1] as CharacterBody3D).global_position - fly_from[1]
 	var pos_drift := pos_a.distance_to(pos_b)
 
 	print("locomotion parity: walk vel %s (drift %.6f), fly moved %.2f m (drift %.6f)" % [
