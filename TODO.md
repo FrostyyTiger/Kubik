@@ -11,7 +11,7 @@ has one owner per wave; everyone else adds a file plus a one-line hook.
 
 - [x] `feat/flora-streaming` lands on main (merged 2026-08-25)
 - [x] **A. Look v2** - ran 2026-08-25, merged (`docs/plans/look-v2.md`)
-- [ ] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - night 1: chunk streaming keeps up with sprint, never a hole, trees at 1:2 with old-growth groves and a closed canopy, fog to 800 m; night 2: Jolt, host-authoritative input (D1 pulled forward), boulders and logs as co-op bodies, slope momentum
+- [~] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - **night 1 DONE** on `feat/world-feel-v1`, 2026-08-26: one job per column, the frontier (holes 126 -> 0), a chunk cache, trees at 1:2, old-growth groves, the understorey, fog to 800 m. `docs/status/world-feel-v1.md`. Night 2 not started: Jolt, host-authoritative input (D1 pulled forward), boulders and logs as co-op bodies, slope momentum
 
 ## Wave 1 - after flora lands  `C || D || B`
 

@@ -199,6 +199,25 @@ godot --path . -- --tour --seed 42 --label <name>
 godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
 ```
 
+### The streaming probe
+
+Whether the ground keeps up with the player, which is a different question from
+whether it arrives at all:
+
+```
+godot --headless --path . -- --host --seed 42 --stream-probe
+godot --headless --path . -- --host --seed 42 --stream-probe --strict
+```
+
+Twelve 48 m jumps, then a 13 m/s sprint 240 m out and back in real frames,
+sampled four times a second. It reports how far ahead the collidable ground
+reaches, how many wanted columns are neither voxels nor far mesh (**holes** —
+this must be zero), the worst frame, and chunks built per second. `--strict`
+makes a hole or a frame over 33 ms a non-zero exit.
+
+`--flora-probe` is the same shape for ground cover, and
+`--traverse --view low` walks the map diagonal.
+
 ### The swatch check
 
 The one gate that says whether an authored colour is the colour on screen:
@@ -361,18 +380,23 @@ the point where they need replacing.
   replace: it should carry input, and the host should simulate. The shape is
   already right — the host owns and distributes the table — only the payload is
   wrong.
-- **Chunk generation is on the main thread.** Meshing moved to worker threads in
-  terrain v1 and is now 0.2 ms per chunk; generating the voxels is what the
-  frame budget goes on, at ~3.4 ms per chunk. Threading it too is the single
-  biggest remaining performance win and is not free — chunk data would no
-  longer exist at submit time, which changes how edits are replayed.
+- **Worldgen is GDScript, and GDScript is serialised across the worker pool.**
+  Measured in world feel v1: 3,742 chunks × 7.6 ms of worker time, in 29.5 s of
+  wall clock — about **one** effective worker thread whatever the job cap says.
+  So the levers are how much work a chunk costs and how few chunks there are,
+  not parallelism. Moving generation and meshing into a GDExtension is the next
+  one and it is named in `docs/status/world-feel-v1.md` with the per-phase
+  timings that would justify it.
 - **The block texture is unused.** Terrain is flat vertex colour, so
   `assets/textures/block_placeholder.png` and its committed `.import` settings
   are not read by anything. Both are kept because a texture atlas with per-face
   UVs is still on the roadmap and the import settings were the fiddly part.
 - **Water is scenery.** Flat, translucent, no physics, no swimming.
 - **The far field is a separate mesh from the voxels**, so there is a visible
-  seam where one gives way to the other. See `STATUS.md`.
+  seam where one gives way to the other. Since world feel v1 the seam is where
+  the voxels have actually ARRIVED rather than where they are expected — see
+  "the frontier rule" in `docs/DESIGN.md` — so it moves, but there is never a
+  hole in it.
 
 ## Roadmap
 

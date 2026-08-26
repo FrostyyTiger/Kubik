@@ -54,6 +54,20 @@ here on this list is filled by what a playtest taught us.
    has every number, every check that failed and why, and one BLOCKING finding
    for the Windows box.
 
+   **World feel v1 - the ground keeps up, the forest closes over** ran on
+   2026-08-26 on `feat/world-feel-v1`; night 1 (Stages 0-8) is done and night 2
+   (physics) has not started. [plans/world-feel-v1.md](plans/world-feel-v1.md).
+   The column became the unit of work, which stamps a column's trees once
+   instead of once per chunk and stops building the sky at all - initial load
+   28.9 s -> 24.8 s and chunks at spawn 3,742 -> 2,370 with the trees three
+   times the size. The far mesh and the impostor ring now follow the LOADED
+   frontier rather than the nominal radius, which took holes from 126 of 144
+   sprint samples to zero and made "never a hole, at any speed" a hard rule
+   rather than a hope. Trees are drawn at 1:2 against the player with a third
+   of groves at 1:1.33 old growth, and the ground under a closed canopy takes
+   the shade ink. `docs/status/world-feel-v1.md` has every number, three bugs
+   worth reading about, and three open items in `STATUS.md`.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or
@@ -127,6 +141,15 @@ Deliberately not here:
 
 Not rejected, not queued. Nothing moves up from here without a playtest saying
 it should.
+
+- **A GDExtension for chunk generation and meshing.** World feel v1 measured
+  what everything else is bounded by: GDScript is serialised across the worker
+  pool, so 3,742 chunks x 7.6 ms of work took 29.5 s of wall clock on about one
+  effective thread. Every streaming improvement in that plan came from doing
+  less work, because doing it in parallel is not available. Moving the two hot
+  loops to a GDExtension is the only lever left that changes the shape of the
+  curve, and it would pay for the second that "never a hole" costs several
+  times over.
 
 - **The shore's width.** `SHORE` is one block of grey gravel round every lake,
   and look v2 made it a colour that reads (`#91948E`) rather than a sandy tan -

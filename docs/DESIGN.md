@@ -295,6 +295,15 @@ at all. You cannot find a depression by looking at one chunk.
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
 Terrain generation targets are in `plans/terrain-v2.md`.
 
+**THE FRONTIER RULE, world feel v1: never a hole, at any speed.** The far mesh
+and the impostor ring cut their inner edge to where the voxels have ACTUALLY
+arrived - `World.loaded_frontier()`, sixteen angular sectors - and not to the
+radius where the voxels are merely expected. Keyed to the radius, the hole
+moved the instant the player crossed a chunk boundary and the voxels arrived
+seconds later, so the ground ahead of a moving player was neither far mesh nor
+voxels. That was 126 of 144 sprint samples with a hole in them; it is now zero,
+and it is a hard rule rather than a target: overlap is invisible, a gap is not.
+
 ### Scale: the world is 1:4 against reality
 
 Every object in the world is a quarter of its real-world size, and the value of
@@ -304,7 +313,7 @@ small world - it reads as a broken one.
 
 | Thing | In game | Real equivalent |
 | --- | --- | --- |
-| Tree | 5 - 10.5 m | 26 - 42 m spruce, beech, larch |
+| Tree | 13 - 21 m (old growth 19.5 - 31.5 m) | 26 - 42 m spruce, beech, larch |
 | Grass tuft, flower | 15 - 55 cm | the same, at 1:1 |
 | Largest lake | ~116 m across | ~400 m tarn |
 | Mountain relief | ~350 m | ~1400 m |
@@ -321,12 +330,37 @@ object is read against**:
 
 | Read against | Scale | Examples |
 | --- | --- | --- |
-| The landscape, from across a valley | 1:4 | terrain, lakes, **trees** |
+| The landscape, from across a valley | 1:4 | terrain, lakes |
 | The player, from two metres away | 1:1 | the character, **grass, flowers, ferns, boulders** |
+| **Both** | **1:2** | **trees** |
 
-A tree is landscape. You judge it against the slope it stands on and the
-treeline above it, so it is drawn at 1:4 like the mountain behind it, and a
-10.5 m spruce reads as a 42 m spruce.
+**The third row is world feel v1 (2026-08-26), and it is the one this table
+was missing.** A tree is the one object read against BOTH. From across a valley
+you judge it against the ridge behind it; standing under it you judge it
+against yourself. At 1:4 it was right against the ridge - three per cent of it,
+which is exactly real - and seven player-heights tall, where a real spruce is
+twenty-five. It read as a shrub you happened to be standing near.
+
+So the trees are drawn at **1:2** and the land is not rescaled. `world_scale`
+stays 4 and was not relitigated: rescaling the land would move every lake,
+every zone threshold and every slope in the world to fix an object that is one
+row of this table. `WorldgenConfig.tree_read_scale` (2.0) composes with
+`tree_size_scale` per species in `TreeSpecies.table()`, and each species takes
+the share its `read` field allows - spruce, beech, larch and the hero all of
+it, birch half, krummholz and snags none. A knee-high alpine shrub at twice the
+size is not a bigger shrub; it is a tree.
+
+**Old growth is a second tier on top.** About a third of groves are old growth
+(`old_growth_share`), their trees a further 1.5x - so 1:1.33 against the
+player, a 31 m spruce - with fewer trunks, further apart, and crowns that
+touch. Contrast is what makes huge read: a forest where every tree is a bit
+bigger is a forest with bigger trees, and a forest where one grove in three is
+enormous is a forest with old growth in it.
+
+A tree at 1:2 is still landscape at distance. You judge it against the slope it
+stands on and the treeline above it, and a 21 m spruce still reads as a 42 m
+spruce from across the valley - because at that range what you are comparing is
+its share of the ridge, and that has not changed.
 
 A grass tuft is not. Nobody ever compares a blade of grass to a mountain -
 they compare it to their own boots. A 30 cm tuft drawn at 1:4 is 7.5 cm, which

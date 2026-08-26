@@ -630,3 +630,82 @@ over it. Nothing is clipped.
 **Tuned blind**, all of it: Compatibility on llvmpipe. **For Marcel:** the
 meadow tufts read as a grey speckle at this density in this shot - it is the
 "confetti" note from look v2's Stage 4 again, now over a wider view.
+
+---
+
+## Stage 8 - Docs, night 1
+
+- `docs/DESIGN.md` "Scale" gains its **third row** - read against both, trees,
+  at 1:2 - with the argument, the old-growth tier, and the sentence that the
+  land is not rescaled and was not relitigated. The tree row's numbers move to
+  13-21 m (old growth 19.5-31.5). "Rendering is voxels near the player" gains
+  **the frontier rule**.
+- `README.md`: "Chunk generation is on the main thread" is gone - it has been
+  false since terrain v2 - and is replaced by what world feel v1 actually
+  measured, that GDScript is serialised across the pool at about one effective
+  thread. The streaming probe joins "Running it"; the far-field seam line is
+  rewritten around the frontier.
+- `docs/IDEAS.md`: a night 1 note under Next 3, and **the GDExtension** under
+  Someday with the measurement that justifies it.
+- `TODO.md`: A2 marked night-1-done.
+- `STATUS.md` rewritten, with **three open items for Marcel** at the top.
+
+---
+
+# The morning message
+
+**1. Where it is.** Branch `feat/world-feel-v1`, nine commits, **not merged**.
+`main` is untouched. Night 1 (Stages 0-8) is complete; night 2 (Stages 9-13,
+physics) has not started and, per the plan, starts from this branch rather than
+from `main`.
+
+**2. The three shots to open first.**
+
+- `build/tour/feel-5/15-under-canopy.png` - standing where the trees are
+  thickest, looking up. Trunks as columns, a canopy closed overhead, almost no
+  sky. That is T3's "envelop" and the first picture the project has had of it.
+- `build/tour/feel-7/16-spawn-postcard.png` - the summit, framed from where the
+  player starts. The second half of the morning test, and the shot fog at 800 m
+  is for.
+- `build/tour/feel-6/7-forest-interior.png` - the understorey: shaded floor,
+  mushrooms, huge trunks.
+
+**3. What the plan asked for, and what happened.**
+
+| | baseline | night 1 |
+| --- | --- | --- |
+| holes in a 240 m sprint (of 144 samples) | **126** | **0** |
+| frames over 33 ms | **43** (worst 70.6 ms) | **1** |
+| 48 m settle, outward | 8,857 ms | 9,367 ms |
+| initial load, wall | 28.9 s | **24.8 s** |
+| chunks at spawn | 3,742 | **2,370** |
+| trees on seed 42 | 73,675 | **28,383** |
+| spruce, against the player | 7:1 | **12:1** (old growth 18:1) |
+| High fog | 600 m | **800 m** |
+| camera far plane | **400 m** (a literal, three ways wrong) | 1000 m, derived |
+
+The 48 m settle is the one number that went the wrong way, by 6%, and it bought
+the frontier: the far mesh rebuilds on frontier movement now rather than on a
+centre crossing.
+
+**4. Three bugs found by measuring rather than by looking.**
+
+- **A `RenderingServer` call on a worker thread, once per vertex** (Stage 6).
+  Nothing looked broken - the world loaded, the tests passed, the colours were
+  right. It took 466 seconds instead of 30.
+- **The sky was generated, not just reserved** (Stage 6). Stage 2's ceiling
+  stopped air chunks being meshed and never stopped them being built.
+- **The camera's far plane was set in three places** (Stage 0), none of which
+  agreed, and the tour had its own - so no tour shot had ever been taken
+  through the camera that had the bug.
+
+**5. Two wrong turns, both left in the comments where they happened.**
+
+- `tree_jitter_blocks` was moved to 1 on the plan's own remedy for a
+  walkability failure that predates every tree change in the plan. Moved back.
+- Old-growth crowns were left unscaled on the theory that `max_reach` was the
+  cost of a 466-second load. It was not, and height alone left an old-growth
+  grove no more closed than an ordinary one.
+
+**6. What is left.** The three open items in `STATUS.md` - the traversal probe,
+canopy closure, and the velocity bias - and night 2.
