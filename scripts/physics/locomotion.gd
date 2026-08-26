@@ -26,7 +26,7 @@ class_name Locomotion
 ##
 ## The one thing it does NOT do is decide what the input is. A client reads a
 ## keyboard; the host reads the last packet a peer sent. Both hand over the same
-## `Input` struct, and this cannot tell them apart - which is what makes solo
+## `Intent` struct, and this cannot tell them apart - which is what makes solo
 ## play (a host with zero clients, moving its own body through this same step)
 ## the same code path as everything else.
 
@@ -59,6 +59,58 @@ const BIT_FLY := 8
 ## a third of the speed of flying upwards.
 const BIT_DOWN := 16
 
+## Pose id, packed into the SAME byte at bits 5-7 rather than travelling as a
+## field of its own, which is what keeps the input payload the three keys the
+## plan specifies: a wish, a byte and a yaw.
+##
+## A pose is EXPRESSION, not physics - sitting, waving, downed - so unlike
+## every other bit here the host does not derive it, it relays it. There is
+## nothing to validate beyond the range, and `from_state_byte` already clamps
+## a pose id this build does not know about back to POSE_NONE.
+const POSE_SHIFT := 5
+
+
+## The body settings both sides must agree on.
+##
+## These lived in `player.gd:_ready()`, and leaving them there would have been
+## the subtlest possible desync: identical rules, identical inputs, and a host
+## capsule that snapped to the floor over a different distance than the client's
+## would drift by a step height per slope and never look like a settings bug.
+const CAPSULE_RADIUS := 0.4
+const CAPSULE_HEIGHT := 2.0
+const FLOOR_MAX_ANGLE_DEG := 55.0
+
+
+## How fast a body turns to face where it is going, per second.
+const TURN_SMOOTHING := 12.0
+
+
+## The body yaw one tick later, given where it is pointing now and where it is
+## going. Returns rather than assigns, so the caller decides what it is the
+## yaw OF - `player.gd` writes it onto a visible mesh, the host writes it into
+## the table for other machines to render.
+##
+## It is in here for the same reason the speeds are: the table's "y" is body
+## yaw, so if the host derived facing differently from the client, every peer
+## would watch a friend's shoulders point somewhere their feet were not.
+static func face_yaw(current: float, wish: Vector2, delta: float) -> float:
+	if wish.length_squared() < 0.01:
+		return current
+	# NEGATED - see the long note in player.gd:_face_movement for why, and for
+	# the self-test that checks it against Godot's own Vector3.FORWARD.
+	var target := atan2(-wish.x, -wish.y)
+	# Frame-rate independent smoothing - see RemotePlayer for why this shape
+	# rather than lerp(current, target, 0.1).
+	return lerp_angle(current, target, 1.0 - exp(-TURN_SMOOTHING * delta))
+
+
+static func configure_body(body: CharacterBody3D) -> void:
+	# Terrain is a staircase of half-metre steps and the capsule must stay
+	# glued to it going downhill, or walking down any slope turns into a
+	# sequence of small hops.
+	body.floor_snap_length = MAX_STEP
+	body.floor_max_angle = deg_to_rad(FLOOR_MAX_ANGLE_DEG)
+
 
 ## One tick of intent. Everything the rules need that is not on the body.
 ##
@@ -66,7 +118,7 @@ const BIT_DOWN := 16
 ## it before sending, because the host does not know where a client's camera is
 ## pointing and should not have to. `look` is the yaw the body faces, which the
 ## host needs only to write into the table for other peers to render.
-class Input extends RefCounted:
+class Intent extends RefCounted:
 	var wish := Vector2.ZERO
 	var bits := 0
 	var look := 0.0
@@ -86,13 +138,19 @@ class Input extends RefCounted:
 	func descending() -> bool:
 		return bits & BIT_DOWN != 0
 
+	func pose() -> int:
+		return (bits >> POSE_SHIFT) & 7
+
+	func set_pose(id: int) -> void:
+		bits = (bits & ~(7 << POSE_SHIFT)) | ((clampi(id, 0, 7) & 7) << POSE_SHIFT)
+
 	## The wire form: three fields, no allocation on the receiving side beyond
 	## this object.
 	func to_dict() -> Dictionary:
 		return {"w": wish, "b": bits, "l": look}
 
-	static func from_dict(d: Dictionary) -> Input:
-		var out := Input.new()
+	static func from_dict(d: Dictionary) -> Intent:
+		var out := Intent.new()
 		out.wish = d.get("w", Vector2.ZERO)
 		out.bits = int(d.get("b", 0))
 		out.look = float(d.get("l", 0.0))
@@ -106,7 +164,7 @@ class Input extends RefCounted:
 ## still uses to pick the animation. If this resolved precision first the body
 ## would move at 0.3x while the legs played a sprint cycle - the exact
 ## disagreement that function's comment promises cannot happen.
-static func speed_multiplier(input: Input) -> float:
+static func speed_multiplier(input: Intent) -> float:
 	if input.sprinting():
 		return SPRINT_MULTIPLIER
 	if input.precision():
@@ -119,14 +177,14 @@ static func speed_multiplier(input: Input) -> float:
 ## `body` is moved in place - `velocity` and `global_position` are the state.
 ## Returns nothing, because everything a caller needs afterwards it reads off
 ## the body, which is also what the host writes into the table.
-static func step(body: CharacterBody3D, input: Input, delta: float) -> void:
+static func step(body: CharacterBody3D, input: Intent, delta: float) -> void:
 	if input.flying():
 		_fly(body, input, delta)
 		return
 	_walk(body, input, delta)
 
 
-static func _walk(body: CharacterBody3D, input: Input, delta: float) -> void:
+static func _walk(body: CharacterBody3D, input: Intent, delta: float) -> void:
 	var wish := Vector3(input.wish.x, 0.0, input.wish.y)
 	var speed := WALK_SPEED * speed_multiplier(input)
 
@@ -173,7 +231,7 @@ static func step_up(body: CharacterBody3D, delta: float) -> void:
 ## written down as a debug ALLOWANCE rather than as a rule, because a client
 ## asking to fly is exactly the thing authority is supposed to refuse. It stays
 ## until there is something to cheat at.
-static func _fly(body: CharacterBody3D, input: Input, delta: float) -> void:
+static func _fly(body: CharacterBody3D, input: Intent, delta: float) -> void:
 	var dir := Vector3(input.wish.x, 0.0, input.wish.y)
 	if input.jumping():
 		dir += Vector3.UP

@@ -55,6 +55,7 @@ func _ready() -> void:
 		"flora winding": _test_flora_winding,
 		"boulder two tone": _test_boulder_two_tone,
 		"edit while cached": _test_edit_while_cached,
+		"locomotion parity": _test_locomotion_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -1080,8 +1081,12 @@ func _test_facing():
 	for degrees in [0, 45, 90, 135, 180, 225, 270, 315, 23, 197]:
 		var a := deg_to_rad(float(degrees))
 		var wish := Vector3(sin(a), 0.0, cos(a))
-		# The expression from Player._face_movement().
-		var yaw := atan2(-wish.x, -wish.z)
+		# THE SHIPPED FUNCTION, not a copy of its expression. Since world feel
+		# v1 Stage 10 the facing rule lives in Locomotion because the host has
+		# to turn a remote peer's body the same way, and a test that re-typed
+		# the arithmetic here would have gone on passing if that move had
+		# changed it. A huge delta so one step converges.
+		var yaw := Locomotion.face_yaw(0.0, Vector2(wish.x, wish.z), 100.0)
 		var facing := (Basis(Vector3.UP, yaw) * Vector3.FORWARD).normalized()
 		checked += 1
 		if facing.distance_to(wish.normalized()) > 0.0001:
@@ -1100,4 +1105,129 @@ func _test_facing():
 		checked, bad, "180 degrees out as described" if old_was_wrong else "FINE - the fix may be wrong"])
 	if not old_was_wrong:
 		bad += 1
+	return 1 if bad > 0 else 0
+
+
+## THE HOST AND THE CLIENT MUST COMPUTE THE SAME THING (world feel v1 Stage 10).
+##
+## Stage 10's whole claim is that there is one movement implementation, so what
+## a client predicts is what the host computes. That claim is worth exactly as
+## much as the evidence for it, and "I refactored it into one file" is not
+## evidence - `player.gd` and `player_sim.gd` still each build an intent, and
+## either could build it differently.
+##
+## WHAT THIS TEST DOES NOT COVER, AND WHY - because two attempts at covering
+## it failed in ways worth writing down rather than deleting.
+##
+## selftest.tscn's root is a plain `Node`, so this scene has no World3D and
+## therefore no physics space. `move_and_slide()` is a no-op here and
+## `is_on_floor()` is always false. The harness is also synchronous on purpose
+## (see the note in _ready() about untyped tests and crash detection), so it
+## could not step a space even if it had one. Ground contact, `step_up` and
+## jumping are NOT tested here; the pair probe, which runs two real engines,
+## is what gates them.
+##
+## ATTEMPT ONE put two capsules on a box floor and reported a perfect
+## 0.000000 m drift - because the two bodies had spawned inside each other and
+## shoved each other to a standstill. 0.65 m travelled in a second that should
+## have covered eight, and the drift check passed and proved nothing.
+## ATTEMPT TWO separated them and dropped the floor, and they travelled 0.000 m:
+## that was the missing space. Both attempts would have looked like passes
+## without the "did it move at all" check, which is the only reason this test
+## is worth having at all.
+##
+## So it judges the step by the two things that ARE real without a space: the
+## VELOCITY `_walk` computes before handing over to move_and_slide, and the
+## POSITION the fly path writes directly. Between them they cover wish
+## direction, both speed multipliers, gravity, the fly branch and the wire
+## round trip - everything except ground contact.
+func _test_locomotion_parity():
+	var bad := 0
+
+	var bodies := []
+	for i in 2:
+		var b := CharacterBody3D.new()
+		Locomotion.configure_body(b)
+		add_child(b)
+		b.global_position = Vector3.ZERO
+		bodies.append(b)
+
+	# A sequence with something interesting in it: walk, then sprint, then let
+	# go. Sixty ticks at the physics rate.
+	var delta := 1.0 / 60.0
+	for tick in 60:
+		var intent := Locomotion.Intent.new()
+		intent.wish = Vector2(1.0, 0.0)
+		if tick >= 20:
+			intent.bits |= Locomotion.BIT_SPRINT
+		if tick >= 50:
+			intent.wish = Vector2.ZERO
+		# The SECOND body is stepped from a wire round trip of the same intent,
+		# which is the path a real remote peer's input takes.
+		var wired := Locomotion.Intent.from_dict(intent.to_dict())
+		if wired.bits != intent.bits or wired.wish != intent.wish:
+			bad += 1
+		Locomotion.step(bodies[0], intent, delta)
+		Locomotion.step(bodies[1], wired, delta)
+
+	var vel_a: Vector3 = (bodies[0] as CharacterBody3D).velocity
+	var vel_b: Vector3 = (bodies[1] as CharacterBody3D).velocity
+	var vel_drift := vel_a.distance_to(vel_b)
+
+	# THE FLY PATH, which writes global_position itself and so is the one part
+	# of the step that moves a body with no space to move in. Same sequence,
+	# same comparison.
+	for tick in 30:
+		var intent := Locomotion.Intent.new()
+		intent.wish = Vector2(0.0, -1.0)
+		intent.bits = Locomotion.BIT_FLY
+		if tick >= 15:
+			intent.bits |= Locomotion.BIT_SPRINT
+		var wired := Locomotion.Intent.from_dict(intent.to_dict())
+		Locomotion.step(bodies[0], intent, delta)
+		Locomotion.step(bodies[1], wired, delta)
+	var pos_a: Vector3 = (bodies[0] as CharacterBody3D).global_position
+	var pos_b: Vector3 = (bodies[1] as CharacterBody3D).global_position
+	var pos_drift := pos_a.distance_to(pos_b)
+
+	print("locomotion parity: walk vel %s (drift %.6f), fly moved %.2f m (drift %.6f)" % [
+		vel_a, vel_drift, -pos_a.z, pos_drift])
+	if vel_drift > 0.000001 or pos_drift > 0.000001:
+		print("  the two sides disagree - the step is not deterministic")
+		bad += 1
+	# The last ten walk ticks had a zero wish, so horizontal velocity must have
+	# been zeroed and vertical must be falling - and the two together prove the
+	# walk branch ran rather than returning early.
+	if not is_equal_approx(vel_a.x, 0.0) or vel_a.y > -1.0:
+		print("  the walk step did not run: velocity %s" % vel_a)
+		bad += 1
+	# 15 ticks at FLY_SPEED plus 15 at sprint, over 30/60 of a second.
+	var expect_fly: float = (Locomotion.FLY_SPEED * 15.0
+		+ Locomotion.FLY_SPEED * Locomotion.SPRINT_MULTIPLIER * 15.0) * delta
+	if absf(-pos_a.z - expect_fly) > 0.001:
+		print("  the fly step moved %.3f m, expected %.3f m" % [-pos_a.z, expect_fly])
+		bad += 1
+
+	# Every bit survives the round trip on its own, including the pose field
+	# that shares the byte.
+	var probe := Locomotion.Intent.new()
+	probe.bits = (Locomotion.BIT_SPRINT | Locomotion.BIT_JUMP
+		| Locomotion.BIT_PRECISION | Locomotion.BIT_FLY | Locomotion.BIT_DOWN)
+	probe.set_pose(LocomotionState.POSE_WAVE)
+	var back := Locomotion.Intent.from_dict(probe.to_dict())
+	if not (back.sprinting() and back.jumping() and back.precision()
+			and back.flying() and back.descending()
+			and back.pose() == LocomotionState.POSE_WAVE):
+		print("  a bit did not survive the wire: %d -> %d" % [probe.bits, back.bits])
+		bad += 1
+	# Sprint must beat precision, because _locomotion_mode() picks the
+	# animation that way and the two must not disagree.
+	var both := Locomotion.Intent.new()
+	both.bits = Locomotion.BIT_SPRINT | Locomotion.BIT_PRECISION
+	if not is_equal_approx(Locomotion.speed_multiplier(both), Locomotion.SPRINT_MULTIPLIER):
+		print("  sprint does not beat precision - the legs will outrun the body")
+		bad += 1
+
+	for body in bodies:
+		(body as Node).queue_free()
 	return 1 if bad > 0 else 0

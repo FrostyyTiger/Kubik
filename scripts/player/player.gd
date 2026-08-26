@@ -50,7 +50,7 @@ const JUMP_HEIGHT := Locomotion.JUMP_HEIGHT
 const MAX_STEP := Locomotion.MAX_STEP
 
 ## How fast the body turns to face where it is going.
-const TURN_SMOOTHING := 12.0
+const TURN_SMOOTHING := Locomotion.TURN_SMOOTHING
 
 const MOUSE_SENSITIVITY := 0.0025
 const PITCH_MIN_DEG := -70.0
@@ -89,6 +89,12 @@ var sprint_override := false
 ## a probe that never jumps measures a world nobody plays in.
 var jump_override := false
 
+## This tick's input, sampled once - see _sample_input().
+var _input := Locomotion.Intent.new()
+
+## A jump that has been predicted locally but not yet put on the wire.
+var _jump_pending := false
+
 ## A static pose, when something has asked for one. Scaffolding until the
 ## campfire owns sit and the death design owns downed - see the debug keys.
 var pose := LocomotionState.POSE_NONE
@@ -112,11 +118,9 @@ func _ready() -> void:
 	# This is the player's own character, so it is the one that has to get out
 	# of the way when the camera ends up inside its head.
 	_view.local = true
-	# Terrain is a staircase of half-metre steps and the capsule must stay
-	# glued to it going downhill, or walking down any slope turns into a
-	# sequence of small hops.
-	floor_snap_length = MAX_STEP
-	floor_max_angle = deg_to_rad(55.0)
+	# Set from Locomotion, not here, so the host's sim capsule for a remote
+	# peer is configured by the same line. See Locomotion.configure_body().
+	Locomotion.configure_body(self)
 	# The arm casts from inside the player's own capsule, so without this it
 	# collides with the player and jams the camera at zero distance.
 	_arm.add_excluded_object(get_rid())
@@ -243,6 +247,8 @@ func _physics_process(delta: float) -> void:
 		if _wave_left <= 0.0 and pose == LocomotionState.POSE_WAVE:
 			pose = LocomotionState.POSE_NONE
 
+	_sample_input()
+
 	if not _mouse_captured() and wish_override == Vector3.ZERO:
 		# Cursor released means a menu or a panel has focus. Walking on while
 		# someone types a seed into a text field is not helpful.
@@ -253,7 +259,7 @@ func _physics_process(delta: float) -> void:
 		if not noclip:
 			velocity.x = 0.0
 			velocity.z = 0.0
-			velocity.y -= GRAVITY * delta
+			velocity.y -= Locomotion.GRAVITY * delta
 			move_and_slide()
 		_publish_locomotion()
 		return
@@ -263,6 +269,67 @@ func _physics_process(delta: float) -> void:
 	# case in two places.
 	_walk(delta)
 	_publish_locomotion()
+
+
+## SAMPLED ONCE PER TICK, and that is not a tidiness point.
+##
+## The keyboard is read here and nowhere else, because two things want this
+## input at two different rates: the local body predicts with it every physics
+## tick, and Game sends it to the host thirty times a second. Reading the keys
+## twice would be harmless for held keys and wrong for anything edge-triggered
+## - jump_override in particular is consumed by whoever reads it first, so the
+## sender and the prediction would each sometimes get a jump the other did not.
+func _sample_input() -> void:
+	var out := Locomotion.Intent.new()
+	var wish := _wish_direction()
+	out.wish = Vector2(wish.x, wish.z)
+	# The LOOK yaw, not the body's. The body's is derived from travel and the
+	# host derives it the same way; where this player is aiming is the part the
+	# host cannot know.
+	out.look = _yaw
+	var bits := 0
+	# sprint_override and jump_override are how the probes drive a player with
+	# no keyboard attached, and they have to be read HERE rather than deeper in
+	# because from here on the input struct is the only thing the rules see.
+	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
+		bits |= Locomotion.BIT_SPRINT
+	if Input.is_physical_key_pressed(KEY_ALT):
+		bits |= Locomotion.BIT_PRECISION
+	if jump_override or Input.is_physical_key_pressed(KEY_SPACE):
+		jump_override = false
+		bits |= Locomotion.BIT_JUMP
+		# THE LATCH, and without it a tap of Space is a jump that happens on
+		# this machine and not on the host. Physics runs at 60 Hz and input
+		# goes out at 30, so a press that begins and ends between two packets
+		# is predicted here and never sent - and the host's correction for a
+		# body that did not jump is a full jump height of error, which is a
+		# snap. The latch keeps the bit set until it has actually been sent.
+		_jump_pending = true
+	if noclip:
+		bits |= Locomotion.BIT_FLY
+		if Input.is_physical_key_pressed(KEY_CTRL):
+			bits |= Locomotion.BIT_DOWN
+	out.bits = bits
+	out.set_pose(pose)
+	_input = out
+
+
+## What this player is asking for right now. Used for local prediction.
+func current_input() -> Locomotion.Intent:
+	return _input
+
+
+## The same, for the wire, with any jump that has not been sent yet folded in.
+## Clears the latch, so exactly one packet carries each press.
+func wire_input() -> Locomotion.Intent:
+	var out := Locomotion.Intent.new()
+	out.wish = _input.wish
+	out.look = _input.look
+	out.bits = _input.bits
+	if _jump_pending:
+		out.bits |= Locomotion.BIT_JUMP
+		_jump_pending = false
+	return out
 
 
 ## THE RULES ARE NOT HERE ANY MORE (world feel v1 Stage 10). They are in
@@ -278,32 +345,6 @@ func _walk(delta: float) -> void:
 	_face_movement(Vector3(input.wish.x, 0.0, input.wish.y), delta)
 
 
-## What this player is asking for, this tick, in the form that goes on the wire.
-##
-## Public because Game sends it: the client's whole contribution to the
-## simulation is this struct, thirty times a second.
-func current_input() -> Locomotion.Input:
-	var out := Locomotion.Input.new()
-	var wish := _wish_direction()
-	out.wish = Vector2(wish.x, wish.z)
-	out.look = rotation.y
-	var bits := 0
-	# sprint_override and jump_override are how the probes drive a player with
-	# no keyboard attached, and they have to be read HERE rather than deeper in
-	# because from here on the input struct is the only thing the rules see.
-	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
-		bits |= Locomotion.BIT_SPRINT
-	if Input.is_physical_key_pressed(KEY_ALT):
-		bits |= Locomotion.BIT_PRECISION
-	if jump_override or Input.is_physical_key_pressed(KEY_SPACE):
-		jump_override = false
-		bits |= Locomotion.BIT_JUMP
-	if noclip:
-		bits |= Locomotion.BIT_FLY
-		if Input.is_physical_key_pressed(KEY_CTRL):
-			bits |= Locomotion.BIT_DOWN
-	out.bits = bits
-	return out
 
 
 
@@ -354,10 +395,10 @@ func _face_movement(wish: Vector3, delta: float) -> void:
 	# along the wish direction. A visual check with a marker mesh was the other
 	# option and is a weaker one - it confirms the same identity by eye, and
 	# only for the handful of directions you happen to try.
-	var target := atan2(-wish.x, -wish.z)
-	# Frame-rate independent smoothing - see RemotePlayer for why this shape
-	# rather than lerp(current, target, 0.1).
-	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
+	# The arithmetic moved to Locomotion.face_yaw() in Stage 10, because the
+	# host has to turn a remote peer's body the same way. The reasoning above
+	# is the reasoning for that function.
+	rotation.y = Locomotion.face_yaw(rotation.y, Vector2(wish.x, wish.z), delta)
 
 
 ## Everything the animator is allowed to know about what this body is doing.

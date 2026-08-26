@@ -27,6 +27,11 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
+
+## Built in code rather than put in the scene, because it only ever has
+## children on a host and an empty node in every client's scene tree is a
+## thing somebody eventually wonders about.
+var _sims_root: Node3D = null
 @onready var _debug: DebugHUD = $DebugHUD
 @onready var _sky: SkyCycle = $SkyCycle
 
@@ -60,6 +65,20 @@ var _players := {}
 ## _srv_report_state would wipe a peer's appearance twenty times a second and
 ## the symptom would be a friend flickering back to the default human.
 var _states := {}
+
+## HOST ONLY. peer_id -> PlayerSim. The authoritative body for each remote
+## peer; the table rows above are read off these.
+var _sims := {}
+
+## HOST ONLY. See journal.gd - habit 2 of the three.
+var _journal := Journal.new()
+
+## CLIENT ONLY. The part of a correction not yet applied, and how long is
+## left to apply it in. An OFFSET rather than a destination, because the body
+## goes on walking while the correction eases and a destination would drag it
+## back to where it was when the packet arrived.
+var _fix_remaining := Vector3.ZERO
+var _fix_left := 0.0
 
 var _slab_present := false
 var _sync_accum := 0.0
@@ -114,6 +133,11 @@ func _ready() -> void:
 	_debug.config_reload_requested.connect(_on_config_reload_requested)
 
 	_world.generation_finished.connect(_on_world_ready)
+	_sims_root = Node3D.new()
+	_sims_root.name = "Sims"
+	add_child(_sims_root)
+
+	Net.peer_joined.connect(_on_peer_joined)
 	Net.peer_left.connect(_on_peer_left)
 	Net.host_disconnected.connect(_on_host_disconnected)
 
@@ -172,6 +196,8 @@ func _process(delta: float) -> void:
 		# the player has gone far enough to be worth a rebuild.
 		_far_trees.update(_player.global_position)
 	_release_player_when_ground_exists()
+	if Net.is_client():
+		_advance_correction(delta)
 
 	# A session we are no longer part of has nothing to sync, and calling rpc()
 	# without a live peer is an engine error, not a no-op.
@@ -184,6 +210,8 @@ func _process(delta: float) -> void:
 	_sync_accum = 0.0
 	_publish_local_state()
 	if Net.is_host():
+		# Every remote body, as the host's physics left it.
+		_publish_sim_states()
 		# The host is the only one that assembles and distributes the table.
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
@@ -388,30 +416,39 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 
 # --- Player position sync ---------------------------------------------------
 #
-# PROVISIONAL. Clients currently report their CAMERA POSITION, because a
-# noclip debug camera has no movement rules a host could validate. When the
-# real player becomes a physics body this channel becomes:
+# THE CARRIED TICKET, CLOSED (world feel v1 Stage 10). This channel used to
+# carry a client's own POSITION, which meant "where is peer 3" was whatever
+# peer 3 said it was, and README.md called it the largest provisional bit in
+# the codebase. It now carries INPUT:
 #
-#     client sends INPUT -> host simulates -> host broadcasts the position
+#     client sends input -> host simulates -> host broadcasts the position
 #
-# The shape is already right - the host owns and distributes the table - only
-# the payload changes. _srv_report_state is the function to replace.
+# The shape did not change - the host still owns and distributes the table -
+# only the payload and where the simulation runs. The sender id comes from the
+# network layer and cannot be spoofed, so a client can still only ever move
+# itself, and now it can only move itself the way the rules allow.
+#
+# WHAT IS STILL PROVISIONAL is the correction: a client that is told it is
+# somewhere else eases or snaps, and does not replay the inputs the host had
+# not yet processed. See _reconcile().
 
 func _publish_local_state() -> void:
-	var pos := _player.global_position
-	var yaw := _player.rotation.y
-	var st := _player.locomotion_state()
 	if Net.is_host():
-		# The host writes its own row directly, appearance and all - there is
-		# nobody to announce to.
+		# THE HOST'S OWN ROW IS STILL READ OFF ITS OWN BODY, and that is not an
+		# exception to the rule this stage exists for. Solo play is a host with
+		# zero clients, the local player IS the host's body, and there is
+		# nothing between the two to lie. Appearance goes in directly for the
+		# same reason: there is nobody to announce it to.
+		var st := _player.locomotion_state()
 		_merge_state(Net.local_peer_id(), {
-			"p": pos, "y": yaw, "v": _player.velocity,
+			"p": _player.global_position, "y": _player.rotation.y,
+			"v": _player.velocity,
 			"s": st.to_state_byte(), "l": st.look_yaw,
 			"a": _player.appearance_bytes(), "n": _player.display_name(),
 		})
 	else:
-		_srv_report_state.rpc_id(1, pos, yaw, _player.velocity,
-			st.to_state_byte(), st.look_yaw)
+		var wire := _player.wire_input()
+		_srv_report_input.rpc_id(1, wire.wish, wire.bits, wire.look)
 		# Cycling the character on the F8 panel mid-session should be visible
 		# to everyone else. Comparing eight bytes per tick is free; the RPC
 		# only goes out when they actually differ.
@@ -420,15 +457,60 @@ func _publish_local_state() -> void:
 			_announce_appearance()
 
 
+## A CLIENT SAYS WHAT IT WANTS. Thirty times a second, unreliable_ordered -
+## a dropped input is superseded by the next one 33 ms later, and PlayerSim
+## holds the last one for 200 ms so the gap is invisible.
+##
+## Nothing is validated. There is nothing in an input to validate: the worst a
+## client can claim is that it is holding every key at once, which is a thing
+## it could do with its hands. Everything that USED to need validating -
+## position, velocity, whether that jump was possible - is now something the
+## host computes rather than something it is told.
 @rpc("any_peer", "call_remote", "unreliable_ordered")
-func _srv_report_state(pos: Vector3, yaw: float, vel: Vector3,
-		state_byte: int, look_yaw: float) -> void:
+func _srv_report_input(wish: Vector2, bits: int, look: float) -> void:
 	if not Net.is_host():
 		return
+	var input := Locomotion.Intent.new()
+	# Normalised here rather than trusted: a wish of length 40 would otherwise
+	# be a speed hack costing one line of client code. It is the only thing in
+	# the payload that has a legal range at all.
+	input.wish = wish.limit_length(1.0)
+	input.bits = bits
+	input.look = look
 	# The sender id comes from the network layer and cannot be spoofed, so a
 	# client can only ever move itself.
-	_merge_state(multiplayer.get_remote_sender_id(), {
-		"p": pos, "y": yaw, "v": vel, "s": state_byte, "l": look_yaw})
+	_sim_for(multiplayer.get_remote_sender_id()).receive(input)
+
+
+## The host's body for a peer, made on first contact.
+##
+## Spawned at the world's spawn point, which is the one place the host is
+## guaranteed to have ground - a body created under a peer who is already
+## somewhere else would fall through a world nobody has streamed. Stage 10's
+## collision ring is what makes anywhere else safe.
+func _sim_for(peer_id: int) -> PlayerSim:
+	if _sims.has(peer_id):
+		return _sims[peer_id]
+	var sim := PlayerSim.new()
+	sim.setup(peer_id)
+	_sims_root.add_child(sim)
+	sim.global_position = _world.spawn_position_m(SPAWN_CLEARANCE)
+	_sims[peer_id] = sim
+	print("[Game] simulating peer %d from %.0f, %.0f" % [
+		peer_id, sim.global_position.x, sim.global_position.z])
+	return sim
+
+
+## Read every simulated body into the table. Called once per sync tick, not
+## once per physics tick: the table is what goes on the wire, and the wire runs
+## at SYNC_HZ.
+func _publish_sim_states() -> void:
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		var st := sim.locomotion_state()
+		_merge_state(peer_id, {
+			"p": sim.global_position, "y": sim.rotation.y, "v": sim.velocity,
+			"s": st.to_state_byte(), "l": st.look_yaw})
 
 
 ## A CLIENT SAYS WHAT IT LOOKS LIKE. Once on joining, and again if it changes.
@@ -485,7 +567,11 @@ func _apply_states(states: Dictionary) -> void:
 	var me := Net.local_peer_id()
 	for pid in states:
 		if pid == me:
-			continue  # We do not render ourselves.
+			# We do not RENDER ourselves - but since Stage 10 the host is the
+			# authority on where we are, so this row is a correction.
+			if Net.is_client():
+				_reconcile(states[pid])
+			continue
 		var st: Dictionary = states[pid]
 		# The WHOLE row. RemotePlayer decides what it can use, which is what
 		# lets the payload grow without this function growing with it.
@@ -516,10 +602,86 @@ func _remove_player(peer_id: int) -> void:
 	_players.erase(peer_id)
 
 
+## THE HOST DISAGREES WITH US ABOUT WHERE WE ARE.
+##
+## The local body keeps predicting - you do not want a third of a second of
+## input latency on your own legs - so it and the host are always slightly
+## apart, and the question is only what to do about how far apart.
+##
+## THREE BANDS, and the reason there are three rather than a lerp is that the
+## right response genuinely differs in kind:
+##
+##   under 0.25 m   nothing. This is the normal state. Physics runs at 60 Hz
+##                  and input goes out at 30, so the host is always about one
+##                  packet behind, and at sprint that is a few centimetres.
+##                  Correcting it would be a permanent tremble.
+##   under 2 m      ease over 100 ms. Something real happened - a jump the host
+##                  resolved differently, a step the two capsules took at
+##                  different moments - and it has to be fixed, but a teleport
+##                  of a metre is far more jarring than a fast slide.
+##   over 2 m       snap. At this distance the two simulations are telling
+##                  different stories and there is nothing to preserve. Easing
+##                  would drag the player through whatever is in between,
+##                  which on voxel terrain is usually rock.
+##
+## NO ROLLBACK, and this is written down as provisional. A real client-side
+## prediction replays the inputs the host had not yet processed when it sent
+## this position, so the correction lands where the player will be rather than
+## where they were. That needs an input sequence number, a ring buffer of the
+## last N inputs on the client, and the host echoing the last sequence it
+## consumed - about forty lines, and none of them useful until there is
+## something in the world worth being precise about. The shape is recorded in
+## README.md so the next person does not have to rediscover it.
+const FIX_IGNORE_M := 0.25
+const FIX_SNAP_M := 2.0
+const FIX_EASE_SECONDS := 0.1
+
+func _reconcile(row: Dictionary) -> void:
+	var authoritative: Vector3 = row.get("p", _player.global_position)
+	var error := _player.global_position.distance_to(authoritative)
+	if error < FIX_IGNORE_M:
+		return
+	if error > FIX_SNAP_M:
+		_player.global_position = authoritative
+		_player.velocity = row.get("v", Vector3.ZERO)
+		_fix_remaining = Vector3.ZERO
+		_fix_left = 0.0
+		return
+	# Replaces any correction still in flight rather than adding to it: this
+	# packet is newer and already accounts for wherever the previous one left
+	# us. Accumulating them would over-correct by a whole packet each time.
+	_fix_remaining = authoritative - _player.global_position
+	_fix_left = FIX_EASE_SECONDS
+
+
+## Slide the last correction in. Runs on the frame, not the physics tick,
+## because it is about what the player SEES; the body's own step has already
+## happened by the time this moves it.
+func _advance_correction(delta: float) -> void:
+	if _fix_left <= 0.0:
+		return
+	if delta >= _fix_left:
+		# The last frame of the ease pays whatever is left, so the correction
+		# is exact no matter how the frames divided it.
+		_player.global_position += _fix_remaining
+		_fix_remaining = Vector3.ZERO
+		_fix_left = 0.0
+		return
+	var step := _fix_remaining * (delta / _fix_left)
+	_player.global_position += step
+	_fix_remaining -= step
+	_fix_left -= delta
+
+
 ## The host quit or crashed. The world was theirs, so there is nothing sensible
 ## to keep playing - back to the menu, which explains why.
 func _on_host_disconnected() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+
+
+func _on_peer_joined(peer_id: int) -> void:
+	if Net.is_host():
+		_journal.log_event("peer_joined", {"peer": peer_id})
 
 
 func _on_peer_left(peer_id: int) -> void:
@@ -527,7 +689,17 @@ func _on_peer_left(peer_id: int) -> void:
 	# capsule right away rather than waiting for the next sync.
 	_states.erase(peer_id)
 	_remove_player(peer_id)
+	if Net.is_host():
+		_journal.log_event("peer_left", {"peer": peer_id})
+		if _sims.has(peer_id):
+			_sims[peer_id].queue_free()
+			_sims.erase(peer_id)
 	_update_status()
+
+
+## HOST ONLY, and read by the pair probe. See journal.gd.
+func journal() -> Journal:
+	return _journal
 
 
 # --- Tuning loop ------------------------------------------------------------
