@@ -54,10 +54,19 @@ func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int) -> void:
 ## Install a mesh built on a worker thread. This half of meshing has to happen
 ## on the main thread because ArrayMesh and the physics shape both talk to
 ## servers that are not safe to call from anywhere else - which is exactly why
-## MeshJob hands back arrays rather than a mesh.
-func apply_arrays(arrays: Array) -> void:
+## ColumnJob hands back arrays rather than a mesh.
+## `faces` is the triangle soup the worker already derived from the index
+## buffer (ChunkMesher.faces_from). Passing it in leaves the main thread one
+## allocation and one memcpy instead of a walk over every index; omit it and
+## the shape is derived here, which is what the edit path does.
+func apply_arrays(arrays: Array, faces := PackedVector3Array()) -> void:
 	mesh = ChunkMesher.arrays_to_mesh(arrays)
-	_apply_collision()
+	if faces.is_empty():
+		_apply_collision()
+	else:
+		var shape := ConcavePolygonShape3D.new()
+		shape.set_faces(faces)
+		_collider.shape = shape
 	chunk.dirty = false
 	collision_applied = true
 

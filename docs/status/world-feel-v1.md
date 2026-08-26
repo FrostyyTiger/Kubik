@@ -93,3 +93,109 @@ this; it is a look v2-era far-field artefact and is not this stage's.
 worldgen probe `76cccdb6` / `da8868d1` / 73,675 trees / spawn `(-44, -124)` -
 unchanged, as a stage that touches no worldgen must leave them. Tour `feel-0`,
 14 shots.
+
+---
+
+## Stages 1 and 2 - one task per chunk, then the column as the unit of work
+
+**One commit, and the reason is that Stage 2 rewrites what Stage 1 builds.**
+Stage 1's `ChunkJob` was replaced by `ColumnJob` within the hour; the two
+interleave in the same functions of `world.gd` and cannot be separated after
+the fact. Stage 1's *reasoning* survives in `ColumnJob` and in
+`ChunkMesher.faces_from()`; the intermediate class does not.
+
+### Stage 1 did almost nothing, and that is the finding
+
+`ChunkJob` merged generation and meshing into one worker task and moved the
+collision-face derivation onto the worker too. Measured against the baseline:
+
+| | baseline | Stage 1 |
+| --- | --- | --- |
+| 48 m settle, outward | 8,857 ms | **8,681 ms** |
+| `built/s` at sprint | 87 - 106 | **83 - 114** |
+| main-thread upload per chunk | 0.18 ms | **0.12 ms** |
+| chunks in 29 s wall | 3,742 | 3,742 |
+
+**~1.0x, against a verify condition of 1.5x.** The plan requires that be
+recorded with the per-phase timings before Stage 2 starts, so:
+
+3,742 chunks x 7.6 ms of worker time = 28.4 s of work, in 29.5 s of wall clock.
+**That is ~1.0 effective worker threads.** GDScript is serialised across the
+pool in this build - the plan says so in its own analysis, and this measures
+it - so removing a main-thread round trip removes latency that was never the
+constraint. The only real win was 0.06 ms per chunk of upload.
+
+A cap sweep says the same thing: `max_jobs_in_flight` 6 gives a 48 m settle of
+8,617 ms against 4's 8,681. The cap is not the lever, exactly as the plan says.
+**Kept at 4.**
+
+**What follows:** on a serialised pool only *less total work* helps. That is
+Stage 2, and it is why Stage 1 is worth having anyway - you cannot stamp a
+column's trees once if the unit of work is a chunk.
+
+### Stage 2 is the lever
+
+`ColumnJob` builds every chunk of a column in one task, stamps the column's
+trees **once** through a `TreeSpecies.ColumnWriter` that spans all of them, and
+applies the **ceiling**: chunks above the highest solid block the column
+actually contains are not built at all - no node, no mesh, no collider, no
+entry in `_chunks`. `World.is_chunk_collidable()` answers true for them once
+the column has landed, because there is nothing to stand on and nothing
+missing.
+
+The build queue, the in-flight set and the "is it here" questions are all
+columns now; `_loaded_columns` is its own set, because a column's sky chunks
+never appear in `_chunks` by design.
+
+| | baseline | Stage 1 | **Stage 2** |
+| --- | --- | --- | --- |
+| 48 m settle, outward | 8,857 ms | 8,681 ms | **6,912 ms** |
+| 48 m settle, back | 7,332 ms | 7,064 ms | **5,644 ms** |
+| frames over 33 ms | 43 | 52 | **0** |
+| worst frame | 70.6 ms | 77.5 ms | **18.8 - 31.2 ms** |
+| chunks at spawn | 3,742 | 3,742 | **2,328** |
+| chunks per column | ~7 | ~7 | **~5.2** |
+| initial load, wall | 28.9 s | 29.5 s | **21.8 s** |
+| `frontier_m` p10 | 40.0 m | 32 - 40 m | **40 - 48 m** |
+
+**The crossing budget is already met, three stages early.** Stage 4 exists to
+get frames over 33 ms to zero; Stage 2 did it, because a crossing no longer
+creates ~170 chunk nodes - it creates the chunks of ~24 columns, and the
+ceiling removed a third of those.
+
+**The 3.0 s target is NOT met.** The plan asks for a 48 m settle at or under
+3.0 s from Stages 1 and 2 together; it is **6.9 s**, down 22% from 8.9. Per the
+plan the number is recorded, the radius is not touched (that is S6, after Stage
+4), and the run goes on.
+
+### The flora probe reads as a regression and is not one
+
+`--flora-probe` reports **1,337 ms of grass after terrain** on the outward leg
+where it used to report 0. The grass did not get slower; the ground got
+faster, so grass that used to finish inside the terrain's long tail now
+finishes after it. End to end, per jump:
+
+| jump | before | Stage 2 |
+| --- | --- | --- |
+| out 1 | 6,207 ms | **5,636 ms** |
+| out 2 | 7,937 ms | **7,042 ms** |
+| out 3 | 8,219 ms | **7,185 ms** |
+| out 4 | 8,371 ms | **7,479 ms** |
+| out 5 | 9,599 ms | **8,864 ms** |
+| out 6 | 10,396 ms | **9,517 ms** |
+
+Every jump is faster, the instance counts are identical to the plant (39,610 /
+39,325 / 39,417 / ...), and the return leg is still 0 ms with 0 columns
+rebuilt. The plan's "unchanged or better" holds on the number that means
+anything.
+
+**Gates:** self-test all passed (including `edit during generation`, which now
+covers a window spanning a whole column's voxels, trees and meshes); character
+self-test 28 all passed; worldgen probe `76cccdb6` / `da8868d1` / 73,675 trees
+/ spawn `(-44, -124)` - unchanged, as they must be until Stage 5.
+
+**Two bugs this pass introduced and fixed.** Removing `_gen_in_flight` left
+both probes asking for a set that no longer existed, so `_terrain_idle()` was
+false forever and the first Stage 1 probe reported a settle of `-1 ms`. And the
+`_gen_in_flight` -> `_in_flight` collapse briefly gave `world.gd` two variables
+of the same name.

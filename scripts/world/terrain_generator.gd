@@ -1029,7 +1029,21 @@ func danger_at(bx: float, bz: float) -> float:
 ## altitude is a property of the COLUMN: computing it once and then walking
 ## down costs one heightmap lookup and one noise sample per column, instead of
 ## one per voxel. At 16 blocks tall that is a 16x saving on the hot path.
+## Voxels AND the trees that reach into them. The whole of a chunk.
+##
+## SPLIT IN WORLD FEEL V1 STAGE 2. The ground and the trees are separate calls
+## now, because a ColumnJob generates every chunk of a column and then stamps
+## the column's trees ONCE across all of them - where this path stamps each
+## chunk separately and re-runs the candidate scan every time. This entry point
+## stays for the edit path, the far-field probes and the self-tests, which all
+## want one chunk in isolation and are not on the streaming budget.
 func generate_into(chunk: Chunk) -> void:
+	generate_ground_into(chunk)
+	_place_trees(chunk)
+
+
+## The ground only: everything a chunk is before anything grows on it.
+func generate_ground_into(chunk: Chunk) -> void:
 	var origin := chunk.origin()
 
 	# MOST CHUNKS ARE SOLID ROCK. A column is built from the tree tops down to
@@ -1093,8 +1107,6 @@ func generate_into(chunk: Chunk) -> void:
 
 	chunk.has_air = has_air
 	chunk.has_solid = has_solid
-
-	_place_trees(chunk)
 	chunk.dirty = true
 
 

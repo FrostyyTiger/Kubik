@@ -71,6 +71,44 @@ class ChunkWriter extends RefCounted:
 		chunk.set_voxel(lx, ly, lz, id)
 
 
+## A writer that spans every chunk of ONE COLUMN, so a column's trees can be
+## stamped once instead of once per chunk.
+##
+## WHY THIS EXISTS (world feel v1 Stage 2). stamp_chunk() scans
+## (16 + 2 * max_reach)^2 / cell^2 candidate cells and calls decide() for each,
+## and the six or seven chunks of a column each did it again - the same cells,
+## the same answers, six or seven times. Tree stamping is half the generation
+## cost, so that was a third of the whole streaming budget spent re-deciding
+## trees that had already been decided.
+##
+## It clips exactly as ChunkWriter does: a block outside every chunk of this
+## column is dropped, because the column that owns it will stamp the same tree
+## itself. stamp_cell() must produce the same tree for every column that sees
+## it, which is why nothing in this class is readable from there.
+class ColumnWriter extends RefCounted:
+	## chunk y index -> Chunk. Only the chunks the column actually built; a
+	## block above the ceiling has nowhere to go and is dropped, which is what
+	## makes the sky reserve a ceiling rather than a build list.
+	var chunks := {}
+
+	func bind(p_chunks: Dictionary) -> void:
+		chunks = p_chunks
+
+	func set_block(bx: int, by: int, bz: int, id: int, only_air: bool) -> void:
+		var chunk: Chunk = chunks.get(Chunk.floor_div(by, Chunk.SIZE))
+		if chunk == null:
+			return
+		var origin := chunk.origin()
+		var lx := bx - origin.x
+		var ly := by - origin.y
+		var lz := bz - origin.z
+		if not Chunk.in_bounds(lx, ly, lz):
+			return
+		if only_air and chunk.voxels[Chunk.index(lx, ly, lz)] != Block.AIR:
+			return
+		chunk.set_voxel(lx, ly, lz, id)
+
+
 # --- Species ids ------------------------------------------------------------
 #
 # Indices into SPECIES. They are NOT block ids and never cross the network, so

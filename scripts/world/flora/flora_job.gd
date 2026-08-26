@@ -3,7 +3,7 @@ extends RefCounted
 
 ## One chunk column's ground cover, packed for the renderer, on a worker thread.
 ##
-## THE SAME SHAPE AS MeshJob, FOR THE SAME REASON. Everything a worker touches
+## THE SAME SHAPE AS ColumnJob, FOR THE SAME REASON. Everything a worker touches
 ## has to be reachable without the scene tree and stable for the whole life of
 ## the job, and nothing a worker produces may touch the rendering server. So
 ## this captures what it needs at submit time, returns plain packed arrays, and

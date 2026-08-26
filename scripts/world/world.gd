@@ -83,7 +83,7 @@ var config: WorldgenConfig = null
 
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
-var _build_queue: Array[Vector3i] = []
+var _build_queue: Array[Vector2i] = []
 
 ## Mirror of _build_queue, for membership tests only. refresh_region() asks
 ## "is this already queued" once per wanted chunk, and Array.has() is a linear
@@ -101,15 +101,24 @@ var _center := Vector2i.ZERO
 ## Game re-running its spawn logic for the rest of the session.
 var _initial_load_reported := false
 
-## chunk position -> {"task": int, "job": GenJob}. Chunks whose voxels are
-## being built by the worker pool and which therefore DO NOT EXIST YET in
-## _chunks. Everything that asks "is this chunk here" has to know about this
-## set as well, which is most of the cost of Stage 3.
-var _gen_in_flight := {}
-
-## chunk position -> {"task": int, "job": MeshJob}. Chunks whose voxels exist
-## and whose mesh is being built by the worker pool.
+## COLUMN (Vector2i of chunk x,z) -> {"task": int, "job": ColumnJob}. Columns
+## whose chunks - voxels, trees, meshes and collision faces - are being built
+## by the worker pool, and which therefore DO NOT EXIST YET in _chunks.
+## Everything that asks "is this chunk here" has to know about this set too.
+##
+## ONE SET, AND IT IS A COLUMN, since world feel v1 Stages 1 and 2. There were
+## two sets keyed by chunk, one per phase, and a chunk moved between them
+## through the main thread. See ColumnJob.
 var _in_flight := {}
+
+## Columns whose chunks have all landed. The unit of work is the column, so
+## "is this here" is a column question - and it has to be its own set rather
+## than a test on _chunks, because a column's SKY chunks are deliberately never
+## built (see ColumnJob's ceiling) and would never appear there.
+var _loaded_columns := {}
+
+## Columns built since the world was, for the ms-per-column readout.
+var _columns_built := 0
 
 ## The low-poly terrain beyond the voxel radius. Everything the player can see
 ## but not touch.
@@ -243,7 +252,7 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 func _process(delta: float) -> void:
 	_track_frame(delta)
 	if _build_queue.is_empty() and _in_flight.is_empty() \
-			and _gen_in_flight.is_empty() and _flora_queue.is_empty() \
+			and _flora_queue.is_empty() \
 			and _flora_in_flight.is_empty():
 		return
 
@@ -303,7 +312,7 @@ func has_chunk(chunk_pos: Vector3i) -> bool:
 
 ## Queued or out at the worker pool: no voxels yet, but there will be.
 func is_chunk_pending(chunk_pos: Vector3i) -> bool:
-	return _gen_in_flight.has(chunk_pos)
+	return _in_flight.has(Vector2i(chunk_pos.x, chunk_pos.z))
 
 
 ## Is there something to STAND ON in this chunk yet? Stricter than has_chunk():
@@ -312,7 +321,14 @@ func is_chunk_pending(chunk_pos: Vector3i) -> bool:
 ## to ask this one, or it puts the body in the ground.
 func is_chunk_collidable(chunk_pos: Vector3i) -> bool:
 	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
-	return node != null and node.collision_applied
+	if node != null:
+		return node.collision_applied
+	# A CHUNK THAT WAS NEVER BUILT BECAUSE IT IS ALL AIR answers true once its
+	# column has landed (world feel v1 Stage 2). There is nothing to stand on
+	# in it and nothing missing from it, and the alternative - answering false
+	# forever for every sky chunk - would tell the stream probe the world has a
+	# hole in it wherever the ceiling did its job.
+	return _loaded_columns.has(Vector2i(chunk_pos.x, chunk_pos.z))
 
 
 func is_world_ready() -> bool:
@@ -345,9 +361,10 @@ func reset() -> void:
 	_flora_triangles = 0
 	_flora_ms = 0
 	_flora_built = 0
-	_gen_in_flight.clear()
 	_build_queue.clear()
 	_queued.clear()
+	_loaded_columns.clear()
+	_columns_built = 0
 	_edits.clear()
 	_total_ms = 0
 	_built = 0
@@ -363,7 +380,7 @@ func reset() -> void:
 ## before it takes a picture of it.
 func is_idle() -> bool:
 	return generator != null and _build_queue.is_empty() \
-		and _in_flight.is_empty() and _gen_in_flight.is_empty() \
+		and _in_flight.is_empty() \
 		and _flora_queue.is_empty() and _flora_in_flight.is_empty()
 
 
@@ -407,8 +424,10 @@ func last_timings() -> Dictionary:
 		# which is the right number for "did the world arrive" and the wrong
 		# one for "is it keeping up NOW" - a 20-second load buries a two-second
 		# stall. These are the live ones.
-		"gen_in_flight": _gen_in_flight.size(),
-		"mesh_in_flight": _in_flight.size(),
+		"columns_in_flight": _in_flight.size(),
+		"columns_built": _columns_built,
+		"ms_per_column": (float(_gen_ms) / 1000.0 / float(maxi(_columns_built, 1))),
+		"chunks_per_column": (float(_built) / float(maxi(_columns_built, 1))),
 		"built": _built,
 		"freed_last_crossing": _freed_last_crossing,
 		"refresh_ms": _refresh_ms,
@@ -429,15 +448,15 @@ func last_timings() -> Dictionary:
 ## was protecting the frame from nothing and stalling the pipeline to do it.
 func _submit_jobs() -> void:
 	while not _build_queue.is_empty() and _jobs_in_flight() < _max_jobs_in_flight:
-		var chunk_pos: Vector3i = _build_queue.pop_front()
-		_queued.erase(chunk_pos)
-		if _chunks.has(chunk_pos) or _gen_in_flight.has(chunk_pos):
+		var col: Vector2i = _build_queue.pop_front()
+		_queued.erase(col)
+		if _in_flight.has(col) or _column_loaded(col):
 			continue
-		_submit_generation(chunk_pos)
+		_submit_column(col)
 
 
 func _jobs_in_flight() -> int:
-	return _gen_in_flight.size() + _in_flight.size() + _flora_in_flight.size()
+	return _in_flight.size() + _flora_in_flight.size()
 
 
 ## HOOK 1 OF 4: submit. Hand queued flora columns to the worker pool.
@@ -499,66 +518,191 @@ func _flora_dirty(col: Vector2i) -> void:
 	_flora_queued[col] = true
 
 
-## PHASE ONE. Hand a chunk's voxels to the worker pool.
+## Hand a whole COLUMN - every chunk of it - to the worker pool.
 ##
-## The chunk object exists from here on, but it is NOT in _chunks and its
-## contents are undefined until the job completes - the worker is writing into
-## it. Nothing may read it in the meantime, which is the whole reason it is
-## held in _gen_in_flight rather than published early.
-func _submit_generation(chunk_pos: Vector3i) -> void:
-	var job := GenJob.new()
-	job.chunk = Chunk.new(chunk_pos)
-	job.generator = generator
-	_gen_in_flight[chunk_pos] = {
-		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk gen"),
-		"job": job,
-	}
-
-
-## PHASE TWO. The voxels have arrived; publish the chunk and mesh it.
-func _submit_mesh(chunk: Chunk) -> void:
-	var chunk_pos := chunk.chunk_pos
-
-	# The node exists immediately, with no mesh. That keeps the bookkeeping in
-	# one place: everything downstream can assume a chunk in _chunks has a node
-	# in _chunk_nodes, whether or not its mesh has arrived yet.
-	var node := ChunkNode.new()
-	node.setup(chunk, config, world_seed)
-	add_child(node)
-	_chunk_nodes[chunk_pos] = node
-
-	var job := MeshJob.new()
-	job.chunk = chunk
+## ONE TASK PER COLUMN (world feel v1 Stage 2). See ColumnJob for why: the tree
+## candidate scan was being re-run once per chunk of the column, and it is half
+## the generation cost.
+##
+## None of the column's chunks is in _chunks until the job completes - the
+## worker is writing into them - which is why the column is held in _in_flight
+## and nothing may read it in the meantime.
+##
+## THE NODES ARE NOT CREATED HERE. They are created at collection with the
+## meshes already in hand, which is also where the ceiling is applied: a chunk
+## the job decided was all air gets no node at all.
+func _submit_column(col: Vector2i) -> void:
+	var job := ColumnJob.new()
+	job.chunk_x = col.x
+	job.chunk_z = col.y
+	job.cy_range = _column_chunk_range(col.x, col.y)
 	job.generator = generator
 	job.config = config
 	job.world_seed = world_seed
-	job.neighbours = _face_neighbour_chunks(chunk_pos)
-	_in_flight[chunk_pos] = {
-		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk mesh"),
+	job.neighbours = _column_neighbour_chunks(col)
+	_in_flight[col] = {
+		"task": WorkerThreadPool.add_task(job.run, false, "kubik column"),
 		"job": job,
 	}
 
 
-## Install meshes for jobs the pool has finished with.
+## Is every chunk this column would build already loaded?
+##
+## Asked instead of `_chunks.has(pos)` because the unit of work is the column:
+## a column is loaded when its chunks are there, and "there" includes the sky
+## chunks the ceiling decided not to build, which will never appear in _chunks.
+## The cheap test is the surface chunk - the one a column always has.
+func _column_loaded(col: Vector2i) -> bool:
+	return _loaded_columns.has(col)
+
+
+## The chunks of the four neighbouring columns that already exist, for this
+## column's mesher to ask about the blocks along its edges. Anything missing
+## falls back to the generator, which gives the same answer the real chunk
+## will - which is why the edge of the loaded region does not sprout a wall of
+## faces.
+func _column_neighbour_chunks(col: Vector2i) -> Dictionary:
+	var out := {}
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n := col + d
+		for cy in _column_chunk_range(n.x, n.y):
+			var pos := Vector3i(n.x, cy, n.y)
+			var chunk: Chunk = _chunks.get(pos)
+			if chunk != null:
+				out[pos] = chunk
+	return out
+
+
+## Find the basins and put water in them.
+func _build_lakes() -> void:
+	lakes = Lakes.new()
+	lakes.compute(generator.heightmap, config)
+	# The generator needs them back, so it can fade the detail layer out at the
+	# water line. Strictly one-way and strictly in this order: lakes are found
+	# in the coarse heightmap, and the coarse heightmap must never depend on
+	# them or the two would be defined in terms of each other.
+	generator.lakes = lakes
+
+	# Spawn is chosen from the finished world, because every criterion it has
+	# to satisfy - flat, dry, mountain in view, water within a walk - is a
+	# question about terrain that already exists.
+	var spawn := generator.find_spawn()
+	var report := generator.spawn_report
+	if report.get("ok", false):
+		print("[World] spawn at (%d, %d), altitude %.1f blk, slope %.1f deg" % [
+			spawn.x, spawn.y, report["altitude"], report["slope"]])
+	else:
+		push_warning("[World] NO SPAWN met every criterion - falling back to the origin. %s"
+			% [report.get("failed", {})])
+
+	if _water == null:
+		_water = MeshInstance3D.new()
+		_water.name = "Water"
+		_water.material_override = Lakes.make_material()
+		# Non-interactive, per the design: no physics, no swimming, no
+		# collision shape. It is a surface to look at and stand beside.
+		add_child(_water)
+	_water.mesh = ChunkMesher.arrays_to_mesh(lakes.build_water_arrays(
+		generator.heightmap, config))
+
+	var flooded := 0
+	var area := 0.0
+	for lake in lakes.lakes:
+		flooded += lake["cells"]
+		area += lake["area_m2"]
+	print("[World] %d lakes, %.0f m2 (%.1f%% of the map) in %d ms" % [
+		lakes.lake_count(), area,
+		float(flooded) / float(generator.heightmap.cols * generator.heightmap.cols) * 100.0,
+		lakes.elapsed_ms()])
+
+
+## The worst frame in the last two seconds.
+##
+## A rolling window rather than a max since load: a max since load is a number
+## that only goes up, and after the first hitch it stops telling you whether
+## the thing you just changed made the next one better.
+func _track_frame(delta: float) -> void:
+	var now := Time.get_ticks_msec()
+	_frame_window.append([now, delta * 1000.0])
+	var worst := 0.0
+	var keep := []
+	for f in _frame_window:
+		if now - int(f[0]) <= 2000:
+			keep.append(f)
+			worst = maxf(worst, float(f[1]))
+	_frame_window = keep
+	_max_frame_ms_2s = worst
+
+
+## Install chunks the pool has finished with: publish the voxels, build the
+## node, upload the mesh and set the collider.
 ##
 ## Upload order does not matter to what the world ends up looking like, which
 ## is why walking a Dictionary is acceptable here and is not anywhere in
 ## worldgen: this decides which chunk appears a frame earlier, not what is in
 ## it.
 ##
-## MESHES BEFORE VOXELS, and the order is load-bearing. Both phases draw on
-## one budget, and an uploaded mesh is the only output the player can see or
-## stand on; a published chunk is a promise of one. Generated-first let a
-## busy pool fill the whole budget with publishing and node creation, frame
-## after frame, while finished meshes queued behind it unseen - the world
-## arrived slowly however fast the workers were, and the spawn chunk's
-## collision arrived late enough to drop the player through it. Meshes-first
-## cannot starve generation the same way: when no upload is waiting the
-## first pass costs nothing and the budget falls through to the second.
+## ONE PASS SINCE STAGE 1. There used to be two - meshes before voxels, and
+## the order was load-bearing, because a busy pool could otherwise fill the
+## whole budget with publishing while finished meshes queued behind it unseen.
+## With one job there is one kind of completion and nothing to starve: a chunk
+## arrives finished or it does not arrive.
 func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
-	_collect_meshed(started, budget)
-	_collect_generated(started, budget)
+	_collect_chunks(started, budget)
 	_collect_flora(started, budget)
+
+
+func _collect_chunks(started: int, budget: int) -> void:
+	var done: Array[Vector2i] = []
+	for col in _in_flight:
+		if Time.get_ticks_msec() - started >= budget:
+			break
+		var entry: Dictionary = _in_flight[col]
+		if not WorkerThreadPool.is_task_completed(entry["task"]):
+			continue
+		# Required even for a task already reported complete - it is what
+		# releases the pool's own bookkeeping for it.
+		WorkerThreadPool.wait_for_task_completion(entry["task"])
+		done.append(col)
+
+	for col in done:
+		var job: ColumnJob = _in_flight[col]["job"]
+		_gen_ms += job.gen_usec + job.tree_usec
+		_in_flight.erase(col)
+		_loaded_columns[col] = true
+
+		var t_upload := Time.get_ticks_usec()
+		for cy in job.built:
+			var entry: Dictionary = job.built[cy]
+			var chunk: Chunk = entry["chunk"]
+			var chunk_pos := chunk.chunk_pos
+			_chunks[chunk_pos] = chunk
+
+			# THE EDIT-REPLAY POINT, and the reason it has to be exactly here.
+			#
+			# Every edit accepted while this column was in flight was recorded
+			# in _edits and could not be written into any chunk, because there
+			# was no chunk to write into. This is the first moment there is.
+			#
+			# It does one more thing than it used to: the job built the mesh
+			# from the voxels it generated, so an edit landing in the window
+			# invalidates those arrays - they show the block that was just
+			# broken. The chunk is therefore REMESHED rather than the job's
+			# arrays used, which costs a main-thread mesh for the rare chunk
+			# edited mid-flight - the same cost breaking a block has always had.
+			var edited := _replay_edits_for(chunk)
+
+			var node := ChunkNode.new()
+			node.setup(chunk, config, world_seed)
+			add_child(node)
+			_chunk_nodes[chunk_pos] = node
+			if edited:
+				node.rebuild(Callable(self, "is_solid_world"))
+			else:
+				node.apply_arrays(entry["arrays"], entry["faces"])
+			_built += 1
+		_mesh_ms += Time.get_ticks_usec() - t_upload
+		_columns_built += 1
 
 
 ## HOOK 2 OF 4: collect. Install flora buffers the pool has finished with.
@@ -608,127 +752,6 @@ func _collect_flora(started: int, budget: int) -> void:
 		_flora_triangles += node.triangle_count
 
 
-## The worst frame in the last two seconds.
-##
-## A rolling window rather than a max since load: a max since load is a number
-## that only goes up, and after the first hitch it stops telling you whether
-## the thing you just changed made the next one better.
-func _track_frame(delta: float) -> void:
-	var now := Time.get_ticks_msec()
-	_frame_window.append([now, delta * 1000.0])
-	var worst := 0.0
-	var keep := []
-	for f in _frame_window:
-		if now - int(f[0]) <= 2000:
-			keep.append(f)
-			worst = maxf(worst, float(f[1]))
-	_frame_window = keep
-	_max_frame_ms_2s = worst
-
-
-## Chunks whose voxels have arrived. Publish them, replay their edits, and
-## hand them straight on to phase two.
-func _collect_generated(started: int, budget: int) -> void:
-	var done: Array[Vector3i] = []
-	for chunk_pos in _gen_in_flight:
-		if Time.get_ticks_msec() - started >= budget:
-			break
-		var entry: Dictionary = _gen_in_flight[chunk_pos]
-		if not WorkerThreadPool.is_task_completed(entry["task"]):
-			continue
-		WorkerThreadPool.wait_for_task_completion(entry["task"])
-		done.append(chunk_pos)
-
-	for chunk_pos in done:
-		var job: GenJob = _gen_in_flight[chunk_pos]["job"]
-		var chunk: Chunk = job.chunk
-		_gen_ms += job.elapsed_usec
-		_gen_in_flight.erase(chunk_pos)
-		_chunks[chunk_pos] = chunk
-
-		# THE EDIT-REPLAY POINT, and the reason it has to be exactly here.
-		#
-		# Every edit accepted while this chunk was still generating was
-		# recorded in _edits and could not be written into any chunk, because
-		# there was no chunk to write into. This is the first moment there is.
-		# It has to happen BEFORE the mesh job is submitted, or the mesh would
-		# be built from the unedited voxels and the edit would be invisible
-		# until something else happened to dirty the chunk.
-		_replay_edits_for(chunk)
-
-		var t_upload := Time.get_ticks_usec()
-		_submit_mesh(chunk)
-		_mesh_ms += Time.get_ticks_usec() - t_upload
-
-
-func _collect_meshed(started: int, budget: int) -> void:
-	var done: Array[Vector3i] = []
-	for chunk_pos in _in_flight:
-		if Time.get_ticks_msec() - started >= budget:
-			break
-		var entry: Dictionary = _in_flight[chunk_pos]
-		if not WorkerThreadPool.is_task_completed(entry["task"]):
-			continue
-		# Required even for a task already reported complete - it is what
-		# releases the pool's own bookkeeping for it.
-		WorkerThreadPool.wait_for_task_completion(entry["task"])
-
-		var t_upload := Time.get_ticks_usec()
-		var node: ChunkNode = _chunk_nodes.get(chunk_pos)
-		if node != null and is_instance_valid(node):
-			node.apply_arrays(entry["job"].arrays)
-		_mesh_ms += Time.get_ticks_usec() - t_upload
-		done.append(chunk_pos)
-		_built += 1
-
-	for chunk_pos in done:
-		_in_flight.erase(chunk_pos)
-
-
-## The six chunks sharing a face with this one, for the mesher to ask about
-## neighbours it cannot see itself. Missing ones are simply absent, and the job
-## falls back to the generator for them.
-## Find the basins and put water in them.
-func _build_lakes() -> void:
-	lakes = Lakes.new()
-	lakes.compute(generator.heightmap, config)
-	# The generator needs them back, so it can fade the detail layer out at the
-	# water line. Strictly one-way and strictly in this order: lakes are found
-	# in the coarse heightmap, and the coarse heightmap must never depend on
-	# them or the two would be defined in terms of each other.
-	generator.lakes = lakes
-
-	# Spawn is chosen from the finished world, because every criterion it has
-	# to satisfy - flat, dry, mountain in view, water within a walk - is a
-	# question about terrain that already exists.
-	var spawn := generator.find_spawn()
-	var report := generator.spawn_report
-	if report.get("ok", false):
-		print("[World] spawn at (%d, %d), altitude %.1f blk, slope %.1f deg" % [
-			spawn.x, spawn.y, report["altitude"], report["slope"]])
-	else:
-		push_warning("[World] NO SPAWN met every criterion - falling back to the origin. %s"
-			% [report.get("failed", {})])
-
-	if _water == null:
-		_water = MeshInstance3D.new()
-		_water.name = "Water"
-		_water.material_override = Lakes.make_material()
-		# Non-interactive, per the design: no physics, no swimming, no
-		# collision shape. It is a surface to look at and stand beside.
-		add_child(_water)
-	_water.mesh = ChunkMesher.arrays_to_mesh(lakes.build_water_arrays(
-		generator.heightmap, config))
-
-	var flooded := 0
-	var area := 0.0
-	for lake in lakes.lakes:
-		flooded += lake["cells"]
-		area += lake["area_m2"]
-	print("[World] %d lakes, %.0f m2 (%.1f%% of the map) in %d ms" % [
-		lakes.lake_count(), area,
-		float(flooded) / float(generator.heightmap.cols * generator.heightmap.cols) * 100.0,
-		lakes.elapsed_ms()])
 
 
 func lake_count() -> int:
@@ -761,9 +784,6 @@ func _face_neighbour_chunks(chunk_pos: Vector3i) -> Dictionary:
 ## thrown away - a worker still reading a chunk we are about to drop is exactly
 ## the kind of bug that shows up once a month and never reproduces.
 func _drain_jobs() -> void:
-	for chunk_pos in _gen_in_flight:
-		WorkerThreadPool.wait_for_task_completion(_gen_in_flight[chunk_pos]["task"])
-	_gen_in_flight.clear()
 	for chunk_pos in _in_flight:
 		WorkerThreadPool.wait_for_task_completion(_in_flight[chunk_pos]["task"])
 	_in_flight.clear()
@@ -772,10 +792,9 @@ func _drain_jobs() -> void:
 	_flora_in_flight.clear()
 
 
-func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
-	# Horizontal distance only - vertical order does not change how it looks.
-	var da := (a.x - _center.x) * (a.x - _center.x) + (a.z - _center.y) * (a.z - _center.y)
-	var db := (b.x - _center.x) * (b.x - _center.x) + (b.z - _center.y) * (b.z - _center.y)
+func _nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
+	var da := (a.x - _center.x) * (a.x - _center.x) + (a.y - _center.y) * (a.y - _center.y)
+	var db := (b.x - _center.x) * (b.x - _center.x) + (b.y - _center.y) * (b.y - _center.y)
 	return da < db
 
 
@@ -824,17 +843,16 @@ func refresh_region() -> void:
 			var cz := _center.y + dz
 			if cx < lo or cx > hi or cz < lo or cz > hi:
 				continue  # outside the bounded world
-			for cy in _column_chunk_range(cx, cz):
-				wanted[Vector3i(cx, cy, cz)] = true
+			wanted[Vector2i(cx, cz)] = true
 
-	for pos in wanted:
-		# _gen_in_flight is the third place a chunk can be. Forgetting it here
-		# would queue a second copy of every chunk currently generating, and
-		# the two would race to install a node under the same key.
-		if not _chunks.has(pos) and not _gen_in_flight.has(pos) \
-				and not _queued.has(pos):
-			_build_queue.append(pos)
-			_queued[pos] = true
+	for col in wanted:
+		# _in_flight is the third place a column can be. Forgetting it here
+		# would queue a second copy of every column currently building, and
+		# the two would race to install nodes under the same keys.
+		if _column_loaded(col) or _in_flight.has(col) or _queued.has(col):
+			continue
+		_build_queue.append(col)
+		_queued[col] = true
 
 	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
 	_refresh_flora()
@@ -1034,10 +1052,13 @@ func _free_distant_chunks(keep_radius: int) -> void:
 		var dz: int = pos.z - _center.y
 		# Never free a chunk a worker is still reading. It will drift out of
 		# range again on the next refresh, by which time its job is done.
-		if dx * dx + dz * dz > keep_sq and not _in_flight.has(pos):
+		if dx * dx + dz * dz > keep_sq and not _in_flight.has(Vector2i(pos.x, pos.z)):
 			doomed.append(pos)
 	for pos in doomed:
 		_chunks.erase(pos)
+		# The column goes with its chunks: it is not loaded any more, and the
+		# next refresh must be free to queue it again.
+		_loaded_columns.erase(Vector2i(pos.x, pos.z))
 		var node: ChunkNode = _chunk_nodes.get(pos)
 		if node != null:
 			node.queue_free()
@@ -1047,14 +1068,14 @@ func _free_distant_chunks(keep_radius: int) -> void:
 	# them back when the chunk is regenerated - which is what lets a player
 	# walk away from a hole they dug and find it still there.
 	if not _build_queue.is_empty():
-		var still: Array[Vector3i] = []
-		for pos in _build_queue:
-			var dx: int = pos.x - _center.x
-			var dz: int = pos.z - _center.y
+		var still: Array[Vector2i] = []
+		for col in _build_queue:
+			var dx: int = col.x - _center.x
+			var dz: int = col.y - _center.y
 			if dx * dx + dz * dz <= keep_sq:
-				still.append(pos)
+				still.append(col)
 			else:
-				_queued.erase(pos)
+				_queued.erase(col)
 		_build_queue = still
 
 
@@ -1143,9 +1164,10 @@ func _host_apply_edit(sender_id: int, world_block_pos: Vector3i, block_id: int) 
 	# the edit cannot be applied - but it must still be ACCEPTED, or a player
 	# digging into ground that has just come into range would have the edit
 	# silently dropped, and only sometimes, depending on how busy the pool was.
-	# Recording it is enough: _collect_generated() replays it the moment the
+	# Recording it is enough: _collect_chunks() replays it the moment the
 	# voxels arrive, before the chunk is meshed.
-	var pending := _gen_in_flight.has(Chunk.world_to_chunk(world_block_pos))
+	var cpos_pending := Chunk.world_to_chunk(world_block_pos)
+	var pending := _in_flight.has(Vector2i(cpos_pending.x, cpos_pending.z))
 	if pending:
 		# No way to know whether this changes anything, since the ground it
 		# would change does not exist yet. Accepting a redundant edit costs one
@@ -1173,7 +1195,7 @@ func _validate_edit(_sender_id: int, world_block_pos: Vector3i, block_id: int) -
 	# lost. A chunk that is neither is genuinely out of range and the edit is
 	# refused, which is what stops a client editing the far side of the world.
 	var cpos := Chunk.world_to_chunk(world_block_pos)
-	return has_chunk(cpos) or _gen_in_flight.has(cpos)
+	return has_chunk(cpos) or _in_flight.has(Vector2i(cpos.x, cpos.z))
 
 
 # --- Local application (identical on host and clients) ----------------------
@@ -1332,14 +1354,19 @@ func surface_height_m(wx: int, wz: int) -> float:
 	return generator.surface_at(float(wx), float(wz)) * config.block_size
 
 
-func _replay_edits_for(chunk: Chunk) -> void:
+## Returns true if any edit actually landed in this chunk - which is what tells
+## the caller the mesh its job built is stale. See _collect_chunks().
+func _replay_edits_for(chunk: Chunk) -> bool:
 	if _edits.is_empty():
-		return
+		return false
 	var origin := chunk.origin()
+	var landed := false
 	for pos in _edits:
 		var local: Vector3i = pos - origin
 		if Chunk.in_bounds(local.x, local.y, local.z):
 			chunk.set_voxel(local.x, local.y, local.z, _edits[pos])
+			landed = true
+	return landed
 
 
 ## True once a seed is known, i.e. setup() has been called.

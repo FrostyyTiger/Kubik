@@ -106,5 +106,8 @@ func _jump(to: Vector3, label: String) -> void:
 
 
 func _terrain_idle() -> bool:
-	return _world.queued_chunk_count() == 0 and _world._in_flight.is_empty() \
-		and _world._gen_in_flight.is_empty()
+	# ONE IN-FLIGHT SET SINCE WORLD FEEL V1 STAGE 1. There used to be two, one
+	# per phase; a chunk in flight now means voxels, mesh and collision faces
+	# all still out at the pool. Asking for the set that no longer exists made
+	# this answer false forever, and the probe reported a settle of -1.
+	return _world.queued_chunk_count() == 0 and _world._in_flight.is_empty()

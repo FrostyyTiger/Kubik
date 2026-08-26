@@ -900,7 +900,14 @@ func _test_edit_during_generation():
 		bad += 1
 
 	# Now put exactly that chunk out at the worker pool and leave it there.
-	world._submit_generation(cpos)
+	#
+	# ONE JOB PER COLUMN SINCE WORLD FEEL V1 STAGES 1 AND 2, so the window this
+	# test is about is much LONGER than it was: it covers the whole column's
+	# voxels, its trees and every one of its meshes, and an edit landing in it
+	# invalidates the mesh the job built, not just the voxels. _collect_chunks()
+	# remeshes for exactly that case, and this test is what proves the edit
+	# still wins.
+	world._submit_column(Vector2i(cpos.x, cpos.z))
 
 	# 1. Still no voxels, but the chunk is coming, so the host must accept.
 	if not world._validate_edit(1, block_pos, Block.SNOW):

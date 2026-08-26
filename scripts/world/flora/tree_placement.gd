@@ -179,6 +179,34 @@ static func masks_for(gen: TerrainGenerator) -> Masks:
 ## Stamp every tree that reaches into this chunk.
 ##
 ## The one entry point TerrainGenerator._place_trees() calls.
+## Every tree that reaches into ONE COLUMN, stamped once across all its chunks.
+##
+## The candidate scan is the same one stamp_chunk() does - the column's
+## footprint grown by max_reach - but it happens once for the whole column
+## instead of once per chunk. Same cells, same decide() calls, same trees; a
+## sixth or a seventh of the work.
+static func stamp_column(writer, gen: TerrainGenerator,
+		chunk_x: int, chunk_z: int) -> void:
+	var config := gen.config
+	var cell: int = config.tree_cell_blocks
+	if cell <= 0:
+		return
+
+	var margin := TreeSpecies.max_reach(config) + config.tree_jitter_blocks
+	var masks := masks_for(gen)
+	var ox := chunk_x * Chunk.SIZE
+	var oz := chunk_z * Chunk.SIZE
+
+	var cx0 := Chunk.floor_div(ox - margin, cell)
+	var cx1 := Chunk.floor_div(ox + Chunk.SIZE - 1 + margin, cell)
+	var cz0 := Chunk.floor_div(oz - margin, cell)
+	var cz1 := Chunk.floor_div(oz + Chunk.SIZE - 1 + margin, cell)
+
+	for cz in range(cz0, cz1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			stamp_cell(writer, gen, cx, cz, masks)
+
+
 static func stamp_chunk(chunk: Chunk, gen: TerrainGenerator) -> void:
 	var config := gen.config
 	var cell: int = config.tree_cell_blocks

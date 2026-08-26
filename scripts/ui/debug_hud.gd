@@ -190,9 +190,11 @@ func _compose_readout() -> String:
 			# right now, what the last crossing cost, and the worst frame in
 			# the last two seconds. The averages above say whether the world
 			# arrived; these say whether it is keeping up.
-			lines.append("stream    %d gen / %d mesh in flight, %d built" % [
-				t.get("gen_in_flight", 0), t.get("mesh_in_flight", 0),
-				t.get("built", 0)])
+			lines.append("stream    %d columns in flight, %d chunks built" % [
+				t.get("columns_in_flight", 0), t.get("built", 0)])
+			lines.append("columns   %d built, %.2f ms each on workers, %.1f chunks each" % [
+				t.get("columns_built", 0), t.get("ms_per_column", 0.0),
+				t.get("chunks_per_column", 0.0)])
 			lines.append("crossing  %d freed, %.1f ms refresh, worst frame %.1f ms" % [
 				t.get("freed_last_crossing", 0), t.get("refresh_ms", 0.0),
 				t.get("max_frame_ms", 0.0)])

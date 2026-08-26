@@ -346,6 +346,27 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 ## Wrap finished arrays in an ArrayMesh. MUST run on the main thread - this is
 ## the only part of meshing that touches the rendering server, which is exactly
 ## why build_arrays() returns arrays instead of a mesh.
+## The triangle soup `ArrayMesh.create_trimesh_shape()` would derive: every
+## index expanded to its vertex, three at a time.
+##
+## WHY IT IS HERE AND NOT ON THE MAIN THREAD (world feel v1 Stage 1). Deriving
+## the collision shape from a finished ArrayMesh is pure arithmetic over the
+## index buffer - no server call, no Resource - and it was being done on the
+## main thread for every chunk. On a worker it leaves the main thread
+## `ConcavePolygonShape3D.new()` and `set_faces()`: one allocation and one
+## memcpy. See ChunkNode.apply_arrays().
+static func faces_from(mesh_arrays: Array) -> PackedVector3Array:
+	if mesh_arrays.is_empty():
+		return PackedVector3Array()
+	var verts: PackedVector3Array = mesh_arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = mesh_arrays[Mesh.ARRAY_INDEX]
+	var faces := PackedVector3Array()
+	faces.resize(indices.size())
+	for i in indices.size():
+		faces[i] = verts[indices[i]]
+	return faces
+
+
 static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
 	if arrays.is_empty():
 		return null
