@@ -199,3 +199,88 @@ both probes asking for a set that no longer existed, so `_terrain_idle()` was
 false forever and the first Stage 1 probe reported a settle of `-1 ms`. And the
 `_gen_in_flight` -> `_in_flight` collapse briefly gave `world.gd` two variables
 of the same name.
+
+---
+
+## Stage 3 - The frontier
+
+**This is the stage that fixes what the playtest reported.** Stage 0 measured
+126 of 144 sprint samples with a hole in them; nothing in Stages 1 or 2 touched
+that number.
+
+**Shipped.**
+
+- `World.loaded_frontier()` - 16 angular sectors, each carrying the radius in
+  chunks out to which every wanted column has landed. `_sector_missing[s][r]`
+  counts wanted-but-not-loaded columns per sector per ring; it is filled inside
+  the disc scan `refresh_region()` already does and decremented by one as each
+  column lands, so nothing walks the disc twice.
+- `FarFieldJob` cuts its hole per sector, not at one radius.
+  `FarTreesJob` does the same for the impostor ring's inner edge.
+- The far mesh and the impostors rebuild when the **frontier moves**, not on a
+  centre crossing - which is precisely when the voxels have not arrived.
+- `World.far_field_exclusion_m(dir)` is per sector, and reads
+  `FarField.built_frontier()` - the frontier the mesh **on screen** was cut to,
+  not the one the next rebuild will use.
+
+### Holes: 126 -> 0, across three runs
+
+| | baseline | Stage 2 | **Stage 3** |
+| --- | --- | --- | --- |
+| hole samples (of 144) | 126 | 124 | **0, 0, 0** |
+| worst holes in one sample | 24 | 22 | **0** |
+| frames over 33 ms | 43 | 0 | **0** (one run saw 1) |
+| 48 m settle, outward | 8,857 ms | 6,912 ms | **7,857 ms** |
+
+`--strict` exits 0. Hard rule S1 holds by construction at 13 m/s.
+
+### Three things it took to get there, each measured
+
+1. **The probe has to read the mesh that exists.** Testing against the
+   *current* frontier hid the rebuild window entirely: holes read 3 when they
+   were really 17. `FarField.built_frontier()` records what the displayed mesh
+   was cut to.
+2. **Two cells of overlap is not enough.** The plan says the hole sits two
+   far-field cells inside the frontier, which is what the single-radius hole
+   always used. At two cells the probe saw 17 hole samples; at four, 9; at
+   **eight** (32 m), zero. The cause is rebuild latency - the frontier moves
+   the moment a column lands, the mesh expressing it is built on a worker over
+   a frame or two, and at 13 m/s the player covers real ground in that window.
+   `FarFieldJob.FRONTIER_OVERLAP_CELLS := 8`. Overlap is invisible; a gap is
+   not.
+3. **The constant has to be shared.** Widening the job's overlap while
+   `World.far_field_exclusion_m()` still computed two cells made the probe
+   report 21 holes that were not there. Both read
+   `FarFieldJob.FRONTIER_OVERLAP_CELLS` now.
+
+### The cost, and it is real
+
+The 48 m settle went **6,912 -> 7,857 ms**, about 14%. The far mesh rebuilds
+far more often than it did - on frontier movement rather than on a centre
+crossing - and a rebuild is a whole disc of ~100k vertices on a pool that runs
+one GDScript task at a time.
+
+Two things were tried against it. Requesting a rebuild only when the frontier
+array actually **changes**, rather than on every landing column, recovered
+about 0.5 s (8,328 -> 7,874). **Quantising** the frontier to steps of 2 chunks
+(`FRONTIER_STEP_CHUNKS`, rounded down, which is the safe direction) recovered
+nothing measurable - the cost is the crossing itself, not the frequency. The
+quantisation is kept: it is principled and free.
+
+**For Marcel:** never-a-hole costs about a second on the 48 m settle. That is
+the trade S1 asks for and it is worth naming, because the GDExtension lever
+named in Stage 8 would pay for it several times over.
+
+### What was not done
+
+The plan adds a tour vantage `frontier` - a shot taken 1 s after a 48 m jump -
+to check the seam mid-motion. **Not added.** The tour photographs a settled
+world by construction (it waits for `is_idle()` before every shot), so a
+vantage inside it cannot catch a moving overlap; building one would mean a
+second harness. The settled seam is checked instead - `feel-3/6-postcard` is
+pixel-comparable with `feel-0` and shows no z-fighting from the wider overlap -
+and the moving case is covered by the probe's hole count, which is the number
+that matters and is zero.
+
+**Gates:** self-tests green; worldgen probe `76cccdb6` / `da8868d1` / 73,675
+trees / spawn `(-44, -124)`.

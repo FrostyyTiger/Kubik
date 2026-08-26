@@ -198,6 +198,15 @@ func _compose_readout() -> String:
 			lines.append("crossing  %d freed, %.1f ms refresh, worst frame %.1f ms" % [
 				t.get("freed_last_crossing", 0), t.get("refresh_ms", 0.0),
 				t.get("max_frame_ms", 0.0)])
+			if world.has_method("loaded_frontier"):
+				var f: PackedInt32Array = world.loaded_frontier()
+				if not f.is_empty():
+					var lo := f[0]
+					var hi := f[0]
+					for v in f:
+						lo = mini(lo, v)
+						hi = maxi(hi, v)
+					lines.append("frontier  %d-%d chunks over 16 sectors" % [lo, hi])
 			if t.get("cached_chunks", 0) > 0:
 				lines.append("cache     %d chunks" % t.get("cached_chunks", 0))
 		if world.has_method("far_field_vertices"):

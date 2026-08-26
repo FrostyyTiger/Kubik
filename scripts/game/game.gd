@@ -133,6 +133,9 @@ func _ready() -> void:
 			_world.world_seed, _world.config.hash_key()])
 		_far_trees.setup(_world.generator, _world.config)
 		_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
+		# The impostor ring cuts its inner edge to the frontier, so it wants to
+		# know when the frontier moves (world feel v1 Stage 3).
+		_world.frontier_moved.connect(_on_frontier_moved)
 		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
@@ -301,6 +304,14 @@ func _start_stream_probe() -> void:
 	probe.name = "StreamProbe"
 	add_child(probe)
 	probe.run(_world, _player)
+
+
+## The loaded frontier moved: hand the impostor ring the new one. The ring
+## rebuilds on its own schedule (REBUILD_STEP_M); this only keeps the array it
+## will use current.
+func _on_frontier_moved() -> void:
+	if _far_trees != null:
+		_far_trees.frontier = _world.loaded_frontier()
 
 
 # --- Join handshake ---------------------------------------------------------

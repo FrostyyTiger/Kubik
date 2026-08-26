@@ -36,6 +36,11 @@ var config: WorldgenConfig = null
 
 ## Inner and outer radius of the ring, in blocks.
 var inner_blocks := 0.0
+
+## Per-sector radius in CHUNKS out to which the real trees have landed. A
+## candidate inside its own sector's frontier is covered by a real tree and is
+## skipped; one outside it is not, whatever the nominal radius says.
+var frontier := PackedInt32Array()
 var outer_blocks := 0.0
 
 ## How far in from the inner edge impostors fade up to full size, in blocks.
@@ -106,7 +111,18 @@ func run() -> void:
 			var dx := float(cx * cell - center.x)
 			var dz := float(cz * cell - center.y)
 			var d_sq := dx * dx + dz * dz
-			if d_sq < inner_sq or d_sq > outer_sq:
+			if d_sq > outer_sq:
+				continue
+			# THE INNER EDGE IS PER SECTOR (world feel v1 Stage 3): a candidate
+			# is skipped only where the real tree that would replace it has
+			# actually landed.
+			var inner_here_sq := inner_sq
+			if not frontier.is_empty():
+				var s := World.frontier_sector_of(
+					int(cx * cell - center.x), int(cz * cell - center.y))
+				var f := float(frontier[s] * Chunk.SIZE)
+				inner_here_sq = f * f
+			if d_sq < inner_here_sq:
 				continue
 			# The LOD. Skipping on the cell's own parity rather than on a
 			# counter means which trees survive does not depend on where the

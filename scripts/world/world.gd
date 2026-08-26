@@ -1,6 +1,10 @@
 class_name World
 extends Node3D
 
+## The loaded frontier moved: the far mesh and the impostor ring both cut their
+## inner edge to it, so both want to know. Emitted at most once a frame.
+signal frontier_moved
+
 ## Owns every loaded chunk and is the only place voxels are allowed to change.
 ##
 ## Real editable voxels exist only near the player - a disc of chunk columns
@@ -119,6 +123,41 @@ var _loaded_columns := {}
 
 ## Columns built since the world was, for the ms-per-column readout.
 var _columns_built := 0
+
+## THE FRONTIER (world feel v1 Stage 3). How far out, per angular sector, every
+## wanted column has actually landed.
+##
+## WHY IT EXISTS. The far mesh used to cut its hole at one radius the instant
+## the centre column changed - `voxel_radius - 2 cells`, everywhere at once -
+## on the assumption that the voxels had it covered. Ahead of a moving player
+## they do not: the hole moves the moment you cross a boundary and the voxels
+## arrive seconds later, so the ground in front of you is neither far mesh nor
+## voxels. That is what the Stage 0 baseline measured as 126 of 144 samples
+## with a hole in them, and it is the "missing ground" the playtest reported.
+##
+## `_sector_missing[sector][ring]` counts wanted columns at that ring in that
+## sector which are NOT loaded. It is filled once per crossing inside the scan
+## refresh_region() already does, and adjusted by one as each column lands - so
+## nothing scans the disc twice. The frontier of a sector is the first ring
+## with a missing column in it.
+const FRONTIER_SECTORS := 16
+
+## The frontier is reported in steps of this many chunks. See _recompute_frontier().
+const FRONTIER_STEP_CHUNKS := 2
+
+var _sector_missing := []
+var _frontier := PackedInt32Array()
+var _frontier_dirty := true
+
+## Set when a column lands. The far mesh and the impostor ring follow the
+## frontier, so they have to rebuild when it MOVES - not only when the centre
+## column changes, which is what they used to key off. request_rebuild()
+## already coalesces, so this costs one worker rebuild per frontier change at
+## most, and in practice a handful over a 48 m move.
+var _frontier_advanced := false
+
+## The frontier the far mesh was last ASKED for. See _process().
+var _frontier_last_sent := PackedInt32Array()
 
 ## The low-poly terrain beyond the voxel radius. Everything the player can see
 ## but not touch.
@@ -242,7 +281,7 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 		_far_field.rebuilt.connect(_on_far_field_rebuilt)
 		add_child(_far_field)
 	_far_field.setup(generator, config)
-	_far_field.request_rebuild(_center * Chunk.SIZE)
+	_far_field.request_rebuild(_center * Chunk.SIZE, loaded_frontier())
 
 	refresh_region()
 	print("[World] seed %d, %d chunks queued around %s" % [
@@ -263,6 +302,26 @@ func _process(delta: float) -> void:
 	_collect_finished(started, budget)
 	_submit_jobs()
 	_submit_flora()
+
+	# THE FAR MESH AND THE IMPOSTORS FOLLOW THE FRONTIER. Both used to key off
+	# a centre crossing, which is exactly when the voxels have NOT arrived yet;
+	# they now rebuild when the frontier itself moves. request_rebuild()
+	# coalesces, so a burst of landing columns costs one rebuild.
+	if _frontier_advanced:
+		_frontier_advanced = false
+		# ONLY WHEN IT ACTUALLY MOVED. _frontier_advanced is set by every
+		# column that lands, which during a stream is every frame - and asking
+		# for a rebuild every frame keeps a worker permanently busy on the far
+		# mesh, on a pool that runs one GDScript task at a time. Measured: it
+		# cost 1.4 s on the 48 m settle. A sector's frontier changing by a
+		# chunk is the event; a column landing is not.
+		var now := loaded_frontier()
+		if now != _frontier_last_sent:
+			_frontier_last_sent = now
+			if _far_field != null:
+				_far_field.request_rebuild(_center * Chunk.SIZE, now)
+			frontier_moved.emit()
+
 	_total_ms += Time.get_ticks_msec() - started
 
 	if is_idle() and not _initial_load_reported:
@@ -399,16 +458,31 @@ func built_chunk_count() -> int:
 	return _built
 
 
-## How far out, in metres, the far mesh currently declines to draw because the
-## voxels are expected to cover it.
+## How far out, in metres and IN THIS DIRECTION, the far mesh declines to draw
+## because the voxels are expected to cover it.
 ##
-## One radius until Stage 3 makes it per sector; `dir` is taken now so the
-## probe and the HUD do not have to change when it does. A column further out
-## than this is covered by the far mesh, so its absence is not a hole.
-func far_field_exclusion_m(_dir: Vector3) -> float:
+## PER SECTOR SINCE STAGE 3. It used to be one radius everywhere, cut the
+## instant the centre column changed; it is now the frontier of the direction
+## you are asking about, minus the same two-cell overlap. A column further out
+## than this is covered by the far mesh, so its absence is not a hole - which
+## is exactly the question the stream probe asks four times a second.
+func far_field_exclusion_m(dir: Vector3) -> float:
 	if _far_field == null:
 		return 0.0
-	return _far_field.exclusion_blocks() * config.block_size
+	# THE MESH THAT EXISTS, not the frontier that will be used next rebuild. A
+	# rebuild takes a frame or two on a worker and during that window the hole
+	# on screen is the old one - which is precisely the window a hole could
+	# hide in.
+	var f := _far_field.built_frontier()
+	if f.is_empty():
+		return _far_field.exclusion_blocks() * config.block_size
+	var s := frontier_sector_of(int(round(dir.x * 1000.0)), int(round(dir.z * 1000.0)))
+	# THE SAME CONSTANT THE JOB CUT THE MESH WITH. Keeping a second copy of it
+	# here is how the probe came to report 21 holes that were not there: the
+	# job had widened its overlap and this had not.
+	var blocks := maxf(float(f[s] * Chunk.SIZE)
+		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS * config.far_step), 0.0)
+	return blocks * config.block_size
 
 
 ## Averages, not totals: a total tells you the world loaded, a per-chunk
@@ -670,6 +744,8 @@ func _collect_chunks(started: int, budget: int) -> void:
 		_gen_ms += job.gen_usec + job.tree_usec
 		_in_flight.erase(col)
 		_loaded_columns[col] = true
+		_column_landed(col)
+		_frontier_advanced = true
 
 		var t_upload := Time.get_ticks_usec()
 		for cy in job.built:
@@ -792,6 +868,98 @@ func _drain_jobs() -> void:
 	_flora_in_flight.clear()
 
 
+## Which of FRONTIER_SECTORS a column offset falls in, and how far out it is.
+##
+## Static and trivial on purpose: it is called once per wanted column per
+## crossing (~450) and once per far-field quad (~100k), so it must not allocate
+## and must agree exactly between World and FarFieldJob - which is why
+## FarFieldJob calls this one rather than keeping its own copy.
+static func frontier_sector_of(dx: int, dz: int) -> int:
+	var a := atan2(float(dz), float(dx)) + PI
+	var s := int(a / TAU * float(FRONTIER_SECTORS))
+	return clampi(s, 0, FRONTIER_SECTORS - 1)
+
+
+## The radius, in chunks, out to which every wanted column of each sector has
+## landed. Sixteen entries, sector 0 starting at -PI.
+##
+## Behind the player this is simply the unload radius: a column that is not
+## wanted is not missing, so a sector with nothing wanted in it reports the
+## full radius and the far mesh keeps its hole there - which is correct,
+## because the voxels behind you have not gone anywhere.
+func loaded_frontier() -> PackedInt32Array:
+	if _frontier_dirty:
+		_recompute_frontier()
+	return _frontier
+
+
+func _recompute_frontier() -> void:
+	var radius: int = config.voxel_radius_chunks
+	if _sector_missing.is_empty():
+		_reset_sector_missing()
+	_frontier = PackedInt32Array()
+	_frontier.resize(FRONTIER_SECTORS)
+	for s in FRONTIER_SECTORS:
+		var reach := radius
+		var counts: PackedInt32Array = _sector_missing[s]
+		for r in counts.size():
+			if counts[r] > 0:
+				reach = r
+				break
+		# QUANTISED DOWNWARD, in steps of FRONTIER_STEP_CHUNKS. The far mesh is
+		# rebuilt whenever this array changes and a rebuild is a whole disc of
+		# ~100k vertices on a pool that runs one GDScript task at a time - so
+		# reacting to every single chunk of advance cost 1 s on the 48 m
+		# settle. Rounding DOWN is the safe direction: the hole is smaller than
+		# it strictly needs to be, which is overlap, and overlap is invisible.
+		_frontier[s] = (reach / FRONTIER_STEP_CHUNKS) * FRONTIER_STEP_CHUNKS
+	_frontier_dirty = false
+
+
+## Start a fresh count. Called by refresh_region() before its disc scan, which
+## is the one place the wanted set is known.
+func _reset_sector_missing() -> void:
+	var rings: int = config.voxel_radius_chunks + 1
+	_sector_missing = []
+	for s in FRONTIER_SECTORS:
+		var row := PackedInt32Array()
+		row.resize(rings)
+		_sector_missing.append(row)
+	_frontier_dirty = true
+
+
+func _note_column(col: Vector2i, loaded: bool) -> void:
+	if _sector_missing.is_empty():
+		return
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	var ring := int(floor(sqrt(float(dx * dx + dz * dz))))
+	if ring >= config.voxel_radius_chunks + 1:
+		return
+	var s := frontier_sector_of(dx, dz)
+	var row: PackedInt32Array = _sector_missing[s]
+	row[ring] += (0 if loaded else 1)
+	_sector_missing[s] = row
+	_frontier_dirty = true
+
+
+## One column has landed: it is no longer missing from its ring.
+func _column_landed(col: Vector2i) -> void:
+	if _sector_missing.is_empty():
+		return
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	var ring := int(floor(sqrt(float(dx * dx + dz * dz))))
+	if ring >= config.voxel_radius_chunks + 1:
+		return
+	var s := frontier_sector_of(dx, dz)
+	var row: PackedInt32Array = _sector_missing[s]
+	if row[ring] > 0:
+		row[ring] -= 1
+		_sector_missing[s] = row
+		_frontier_dirty = true
+
+
 func _nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
 	var da := (a.x - _center.x) * (a.x - _center.x) + (a.y - _center.y) * (a.y - _center.y)
 	var db := (b.x - _center.x) * (b.x - _center.x) + (b.y - _center.y) * (b.y - _center.y)
@@ -817,7 +985,7 @@ func set_center_from_position(pos_m: Vector3) -> bool:
 	# The voxel hole in the far mesh has moved, so the far mesh is now wrong.
 	# Rebuilding is threaded, so this costs the main thread nothing.
 	if _far_field != null:
-		_far_field.request_rebuild(_center * Chunk.SIZE)
+		_far_field.request_rebuild(_center * Chunk.SIZE, loaded_frontier())
 	return true
 
 
@@ -844,6 +1012,13 @@ func refresh_region() -> void:
 			if cx < lo or cx > hi or cz < lo or cz > hi:
 				continue  # outside the bounded world
 			wanted[Vector2i(cx, cz)] = true
+
+	# The frontier's counts are filled from the SAME scan, so nothing walks the
+	# disc twice. A column already loaded is not missing; everything else is,
+	# until its job lands and _column_landed() takes it off.
+	_reset_sector_missing()
+	for col in wanted:
+		_note_column(col, _column_loaded(col))
 
 	for col in wanted:
 		# _in_flight is the third place a column can be. Forgetting it here
