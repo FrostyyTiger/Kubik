@@ -594,10 +594,20 @@ const FOG_START_RATIO := 0.4
 ##
 ## BOUNDED, AND THE BOUND IS WALKABILITY. Candidates sit every
 ## tree_cell_blocks, so two neighbouring trunks are at least
-## (tree_cell_blocks - 2 * jitter) blocks apart. At cell 4 and jitter 1 that is
-## 2 blocks between trunk centres. Raise the jitter and trees start to touch,
-## and a forest you cannot walk through is a wall, not a forest - which the
-## traversal probe is what actually checks.
+## (tree_cell_blocks - 2 * jitter) blocks apart. Raise the jitter and trees
+## start to touch, and a forest you cannot walk through is a wall, not a
+## forest - which the traversal probe is what actually checks.
+##
+## THE BOUND IS ON CENTRES AND THE TRUNKS HAVE WIDTH SINCE STAGE 5, so the rule
+## for whoever changes this next is that the CLEAR gap is
+## `tree_cell_blocks - 2 * tree_jitter_blocks - max trunk width`, and it has to
+## stay above the player's 0.8 m diameter. At cell 8, jitter 2 and a 3 x 3
+## forest spruce that is 1 block - 0.5 m - which is tight enough to look like
+## the cause of a walkability failure and was investigated as one.
+##
+## It is not the cause. The traversal probe stalls in the same way at Stage 4,
+## BEFORE any tree changed, and gets FURTHER at jitter 2 (1,003 m) than at
+## jitter 1 (875 m). See docs/status/world-feel-v1.md, Stage 5.
 @export var tree_jitter_blocks := 2
 
 ## How much wildness adds to the snag and krummholz weights at the far edge of

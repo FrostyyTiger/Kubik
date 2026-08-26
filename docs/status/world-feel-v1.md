@@ -444,3 +444,46 @@ closure - and it is the first time this project has had a picture of it.
 
 **Gates:** self-test all passed including the widened `sky reserve`; stream
 probe `--strict` PASS.
+
+### The traversal gate fails, and it is not this stage's doing
+
+Stage 5's walkability gate is the traversal probe, and it **fails**:
+
+```
+[Traverse] STUCK - no progress for 150 s
+[Traverse] 233 s for 1,003 m of 4,107 m
+```
+
+The plan names a remedy - *"if a forest blocks it, `tree_jitter_blocks` goes
+back to 1 before anything else moves"* - on the theory that the coarser lattice
+plus the new trunk widths had closed the gaps. The arithmetic supports the
+theory: at cell 8, jitter 2 and a 3 x 3 forest spruce the clear gap is 1 block,
+0.5 m, against a player 0.8 m across.
+
+**The theory is wrong, and it was tested rather than assumed.**
+
+| | distance before stall | ground speed |
+| --- | --- | --- |
+| Stage 4, **before any tree changed** | **606 m** | 3.20 m/s |
+| Stage 5, jitter 1 (the plan's remedy) | 875 m | 4.19 m/s |
+| Stage 5, jitter 2 (the plan's value) | **1,003 m** | 4.31 m/s |
+
+The probe stalls the same way at Stage 4, in a build with the old 73,675 small
+trees, so the stall predates every tree change in this plan. And the bigger
+forest makes it **better**, not worse - 1,003 m against 606 - because there are
+58% fewer trunks to detour round.
+
+`tree_jitter_blocks` is therefore **back at the plan's 2**: the remedy was for a
+regression that did not happen, and applying it would have been tuning against
+a misdiagnosis. Final Stage 5 hashes: config **`5bb0a556`**, heightmap
+`76cccdb6`, **31,224 trees**, spawn `(-44, -124)`.
+
+**FOR MARCEL - a pre-existing finding, outside this plan.** The traversal probe
+cannot cross this world. It gets a quarter of the way to the far corner and
+stops, at every stage tested, with `0 rescues from inside terrain` and 13-14
+detours - so it is not falling through the ground, it is failing to route. Its
+detour logic walks a straight line and side-steps obstacles; a lake, a cliff
+band or a box canyon defeats that whatever the trees do. Either the world has a
+place a player cannot get past, or the probe needs real pathing - and which of
+those it is has to be answered before "spawn to the four corners" can be a gate
+on anything.
