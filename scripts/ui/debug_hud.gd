@@ -224,6 +224,16 @@ func _compose_readout() -> String:
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 
+	# PHYSICS, world feel v1 Stage 9. Active objects is the number that matters
+	# for the chunk cache: a cached column's collider is DISABLED, and the
+	# question that answers is whether a disabled shape actually leaves the
+	# broadphase or merely stops reporting hits. Collision pairs is what a
+	# thousand static trimeshes cost when they are all awake.
+	lines.append("physics   %d active, %d pairs, %d islands" % [
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ACTIVE_OBJECTS),
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_COLLISION_PAIRS),
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ISLAND_COUNT)])
+
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")
 	return String("\n").join(lines)

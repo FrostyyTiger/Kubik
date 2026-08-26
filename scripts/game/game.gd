@@ -86,6 +86,15 @@ func _ready() -> void:
 		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
 		int(config.fog_end_m),
 		int(config.fog_end_m * Player.FAR_PLANE_RATIO)])
+	# WHICH PHYSICS ENGINE IS ACTUALLY RUNNING (world feel v1 Stage 9). Printed
+	# for the same reason the camera's far plane is: it is a project setting
+	# that decides how the world behaves, and a setting nobody can see is a
+	# setting that drifts. Jolt and Godot Physics differ on floor snap, step-up
+	# and sleeping, so a bug report that does not say which one was running is
+	# a bug report that has to be reproduced twice.
+	print("[Game] physics %s at %d Hz" % [
+		ProjectSettings.get_setting("physics/3d/physics_engine", "Default"),
+		Engine.physics_ticks_per_second])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	# The session's config, which may carry CLI overrides the saved file does
@@ -121,6 +130,8 @@ func _ready() -> void:
 		_start_flora_probe.call_deferred()
 	elif "--stream-probe" in OS.get_cmdline_user_args():
 		_start_stream_probe.call_deferred()
+	elif "--physics-probe" in OS.get_cmdline_user_args():
+		_start_physics_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -292,6 +303,16 @@ func _start_flora_probe() -> void:
 	_debug.visible = false
 	var probe := FloraProbe.new()
 	probe.name = "FloraProbe"
+	add_child(probe)
+	probe.run(_world, _player)
+
+
+## Hand the session to the physics probe - see scripts/tools/physics_probe.gd.
+func _start_physics_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := PhysicsProbe.new()
+	probe.name = "PhysicsProbe"
 	add_child(probe)
 	probe.run(_world, _player)
 

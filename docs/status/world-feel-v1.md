@@ -709,3 +709,67 @@ centre crossing.
 
 **6. What is left.** The three open items in `STATUS.md` - the traversal probe,
 canopy closure, and the velocity bias - and night 2.
+
+---
+---
+
+# Night 2 - the world pushes back
+
+Starts from night 1's last commit, as the plan requires: bodies are placed from
+columns night 1 rebuilt the streaming of.
+
+## Stage 9 - Jolt, and nothing else moves
+
+**Shipped.** `project.godot` `[physics] 3d/physics_engine="Jolt Physics"`, tick
+unchanged at 60. Nothing else in the section - everything that behaves
+differently under Jolt is a property of a body, and bodies are configured where
+they are built. The boot line prints the engine and the tick, for the same
+reason it prints the camera's far plane: a setting nobody can see is a setting
+that drifts, and a bug report that does not say which engine was running has to
+be reproduced twice. F4 gains active objects, collision pairs and islands, and
+there is a new `--physics-probe`.
+
+**Nothing moved.** Config `dbf9369c`, heightmap `76cccdb6`, 28,383 trees, spawn
+`(-44, -124)`. Character self-test 28 all passed. Stream probe holes **0**,
+frames over 33 ms **1**; the 48 m settle reads 10,541 ms against Stage 7's
+9,367, which is inside this box's run-to-run spread on a machine that has been
+building worlds for a day - and no chunk count moved.
+
+### The probe cannot answer its own best question, and says so
+
+The plan asks Stage 9 to verify "that a disabled shape leaves the broadphase, by
+count". It cannot be verified yet, and the probe now prints why rather than a
+number that looks like an answer:
+`PhysicsServer3D.get_process_info()` counts **active objects, collision pairs
+and islands** - all properties of the DYNAMIC simulation. A world of static
+trimesh colliders with no rigid bodies in it reports **0, 0, 0** whether the
+cache is empty or holds 2,506 chunks, which is exactly what it reported. The
+counters are real; they are measuring something that does not exist until Stage
+11. **Deferred to Stage 11**, where a boulder resting near a parked column is a
+direct test of it.
+
+What the probe does establish: Jolt loads, the tick is 60, and a loaded world
+standing still for 30 s does not drift by a single object.
+
+### Jolt changes the traversal failure, and the change is the evidence
+
+The plan makes the traversal probe the gate for the player under Jolt. It is a
+**known-broken gate** - open item 1 - so it was run as a before/after against
+night 1 rather than against "corners reached".
+
+| | walked | made good | detours | rescues from inside terrain |
+| --- | --- | --- | --- | --- |
+| night 1, Godot Physics | ~1,000 m | 1,003 m | 14 | 0 |
+| **Stage 9, Jolt** | **2,833 m** | 1,024 m | **58** | **0** |
+
+Under Jolt the player **walks nearly three times as far and detours four times
+as often**, and still converts almost none of it into progress toward the
+corner. That is a much better answer than night 1 had: under Godot Physics the
+character looked wedged, and the honest reading was "either the world has a
+place you cannot get past, or the probe cannot route". Jolt settles it - the
+character moves freely, over the same terrain, and still goes in circles.
+
+**It is the probe's routing, not the world.** Open item 1 in `STATUS.md` is
+updated to say so. Nothing in `player.gd` was changed: there was no regression
+to fix, and the plan's rule for this stage - one constant or it is a recorded
+finding - did not need to be invoked.
