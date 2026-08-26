@@ -54,6 +54,7 @@ func _ready() -> void:
 		"flora removal": _test_flora_removal,
 		"flora winding": _test_flora_winding,
 		"boulder two tone": _test_boulder_two_tone,
+		"edit while cached": _test_edit_while_cached,
 	}
 	var failures := 0
 	for name in tests:
@@ -872,6 +873,76 @@ func _measure_ao_cost():
 ##   3. an edit into a chunk that is neither loaded nor pending is still
 ##      REFUSED. Otherwise "accept pending chunks" would have quietly become
 ##      "accept everything", and a client could edit the far side of the world.
+## AN EDIT MADE WHILE A COLUMN IS PARKED SURVIVES ITS RETURN.
+##
+## World feel v1 Stage 4 stopped freeing columns that leave the unload ring and
+## parks them instead. That creates a third place a chunk can be, and the
+## invariant it has to keep is the same one the in-flight window keeps: a parked
+## chunk is NOT in _chunks, receives no edit directly, and is brought back
+## through the one replay point. If that were wrong, a player would dig a hole,
+## walk away far enough to unload it, come back, and find it filled in - which
+## is the bug this test exists to catch, and it would be invisible in any
+## screenshot.
+func _test_edit_while_cached():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.voxel_radius_chunks = 2
+
+	var world := World.new()
+	world.setup(1234, cfg)
+
+	var surface := int(floor(world.generator.surface_at(0.0, 0.0)))
+	var block_pos := Vector3i(0, surface, 0)
+	var cpos := Chunk.world_to_chunk(block_pos)
+	var col := Vector2i(cpos.x, cpos.z)
+
+	# Build the column and let it land.
+	world._submit_column(col)
+	var spins := 0
+	while not world.has_chunk(cpos) and spins < 5000:
+		world._collect_finished(Time.get_ticks_msec())
+		OS.delay_msec(1)
+		spins += 1
+	if not world.has_chunk(cpos):
+		print("  the column never arrived")
+		bad += 1
+		print("edit while cached: %d checks failed" % bad)
+		return 1
+
+	# Park it, by pretending the player walked a long way off. The centre moves
+	# rather than the radius shrinking to nothing, because a radius of zero
+	# still keeps the centre column - which is the one under test.
+	world._center = Vector2i(1000, 1000)
+	world._free_distant_chunks(2, 2)
+	if world.has_chunk(cpos):
+		print("  the chunk was still in _chunks after being parked")
+		bad += 1
+	if not world._column_cache.has(col):
+		print("  the column was freed rather than parked")
+		bad += 1
+
+	# Edit it while it is parked. The client path records into _edits; there is
+	# no chunk to write into, which is exactly the case under test.
+	world._cl_apply_block(block_pos, Block.SNOW)
+
+	# Bring it back.
+	if not world._restore_column(col):
+		print("  the parked column did not come back")
+		bad += 1
+	var got := world.get_block(block_pos)
+	if got != Block.SNOW:
+		print("  the edit did not survive parking: got %s, wanted snow" % Block.name_of(got))
+		bad += 1
+	if world._cache_chunks != 0:
+		print("  the cache still counts %d chunks after a full restore" % world._cache_chunks)
+		bad += 1
+
+	world.free()
+	print("edit while cached: %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
 func _test_edit_during_generation():
 	var bad := 0
 

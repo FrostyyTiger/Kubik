@@ -71,6 +71,22 @@ func apply_arrays(arrays: Array, faces := PackedVector3Array()) -> void:
 	collision_applied = true
 
 
+## Park this node in the cache, or bring it back (world feel v1 Stage 4).
+##
+## Hidden and with its collider off, a cached chunk costs a hidden
+## MeshInstance3D and a disabled shape - kilobytes of bookkeeping against the
+## milliseconds of a worker the player was waiting on. It is NOT in
+## World._chunks while parked, receives no edits directly, and comes back
+## through the same replay point everything else does.
+func set_parked(parked: bool) -> void:
+	visible = not parked
+	if _collider != null:
+		_collider.disabled = parked
+	# A parked chunk is not standable, and nothing must believe otherwise
+	# between it leaving _chunks and coming back.
+	collision_applied = not parked
+
+
 func rebuild(world_solid: Callable) -> void:
 	# build() returns null for a chunk with no visible faces. Assigning null
 	# clears the mesh, which is exactly what we want.

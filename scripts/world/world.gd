@@ -28,6 +28,48 @@ signal generation_finished(chunk_count: int, elapsed_ms: int)
 ## standing still.
 const UNLOAD_MARGIN_CHUNKS := 2
 
+## THE CHUNK CACHE (world feel v1 Stage 4), counted in CHUNKS.
+##
+## A column leaving the unload ring is not freed: its nodes are hidden, its
+## colliders disabled, and it is parked here. Turning round used to rebuild the
+## trail you had just walked - measured at Stage 0 as every column of the
+## return leg.
+##
+## THE PLAN SAYS 3,000, WITH A 250 MB CEILING ON THE CACHE, and 3,000 is what
+## it is - but only after measuring twice, because the first measurement looked
+## like a fail and was not.
+##
+## Godot's static memory with the cache full is 268.9 MB at 2,996 chunks and
+## 226.1 MB at 1,997. That is the WHOLE PROCESS, not the cache, and the first
+## figure alone reads as over the ceiling. The difference between the two is
+## what isolates it: 42.8 MB per 999 chunks, so the cache is about **86 MB at
+## 2,000 and 128 MB at 3,000** - comfortably inside 250 MB, and the 268.9 was
+## the heightmap, the lakes, the far mesh and the flora buffers.
+##
+## 3,000 chunks is about 600 columns, a few 48 m steps of trail.
+const CHUNK_CACHE_CHUNKS := 3000
+
+## HOW FAR IN FRONT OF A MOVING PLAYER THE QUEUE LEANS, in chunks.
+##
+## The build queue is nearest-first, which is right for a player standing still
+## and wrong for one sprinting: the columns behind them are nearer than the
+## ones they are running at. This biases the sort key along the direction of
+## travel. Zero below WALKING_SPEED, so a standing player is nearest-first
+## exactly as before.
+const STREAM_HEADING_BIAS := 0.0
+const HEADING_MIN_SPEED := 2.0
+
+## Nodes freed in one frame, at most. The rest wait for the next one.
+const FREES_PER_FRAME := 32
+
+## Parked columns brought back in one frame, at most.
+##
+## A crossing can want dozens at once - turning round wants a whole disc - and
+## restoring them all in the frame the centre moved is a hitch of exactly the
+## kind this stage exists to remove. Measured: uncapped, the return leg of a
+## sprint hit 50.7 ms frames. Spread, it does not.
+const RESTORES_PER_FRAME := 8
+
 ## Flora columns kept hidden after they leave the far ring, most recent last.
 ##
 ## 1024, measured. The far disc is about 800 columns and a 48 m move replaces
@@ -158,6 +200,27 @@ var _frontier_advanced := false
 
 ## The frontier the far mesh was last ASKED for. See _process().
 var _frontier_last_sent := PackedInt32Array()
+
+## Parked columns: Vector2i -> {"chunks": {cy: Chunk}, "nodes": {cy: ChunkNode}}.
+## _cache_order is the LRU, oldest first.
+var _column_cache := {}
+var _cache_order: Array[Vector2i] = []
+var _cache_chunks := 0
+
+## Nodes waiting to be freed, spread over frames.
+var _pending_frees: Array[ChunkNode] = []
+
+## Parked columns that are wanted again, waiting their turn. A column here is
+## neither loaded nor queued for a worker: it is built already and is coming
+## back within a few frames.
+var _pending_restores: Array[Vector2i] = []
+var _restore_queued := {}
+
+## Unit vector the player is travelling in, or zero when they are not. Set from
+## successive recentres.
+var _heading := Vector3.ZERO
+var _last_center_m := Vector3.ZERO
+var _have_last_center := false
 
 ## The low-poly terrain beyond the voxel radius. Everything the player can see
 ## but not touch.
@@ -302,6 +365,8 @@ func _process(delta: float) -> void:
 	_collect_finished(started, budget)
 	_submit_jobs()
 	_submit_flora()
+	_drain_restores()
+	_drain_frees()
 
 	# THE FAR MESH AND THE IMPOSTORS FOLLOW THE FRONTIER. Both used to key off
 	# a centre crossing, which is exactly when the voxels have NOT arrived yet;
@@ -424,6 +489,19 @@ func reset() -> void:
 	_queued.clear()
 	_loaded_columns.clear()
 	_columns_built = 0
+	for col in _column_cache:
+		for cy in _column_cache[col]["nodes"]:
+			var n: ChunkNode = _column_cache[col]["nodes"][cy]
+			if is_instance_valid(n):
+				n.queue_free()
+	_column_cache.clear()
+	_cache_order.clear()
+	_cache_chunks = 0
+	_pending_frees.clear()
+	_pending_restores.clear()
+	_restore_queued.clear()
+	_heading = Vector3.ZERO
+	_have_last_center = false
 	_edits.clear()
 	_total_ms = 0
 	_built = 0
@@ -506,7 +584,7 @@ func last_timings() -> Dictionary:
 		"freed_last_crossing": _freed_last_crossing,
 		"refresh_ms": _refresh_ms,
 		"max_frame_ms": _max_frame_ms_2s,
-		"cached_chunks": 0,
+		"cached_chunks": _cache_chunks,
 	}
 
 
@@ -961,9 +1039,24 @@ func _column_landed(col: Vector2i) -> void:
 
 
 func _nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
-	var da := (a.x - _center.x) * (a.x - _center.x) + (a.y - _center.y) * (a.y - _center.y)
-	var db := (b.x - _center.x) * (b.x - _center.x) + (b.y - _center.y) * (b.y - _center.y)
-	return da < db
+	return _queue_key(a) < _queue_key(b)
+
+
+## Distance squared, pulled forward along the direction of travel.
+##
+## `d^2 - bias * dot(offset, heading) * |offset|`: a column straight ahead at
+## radius r scores r^2 - bias*r, which is the score of one about `bias` chunks
+## nearer; a column straight behind is pushed out by the same amount. With no
+## heading it is exactly d^2, which is the nearest-first order a standing
+## player has always had.
+func _queue_key(col: Vector2i) -> float:
+	var dx := float(col.x - _center.x)
+	var dz := float(col.y - _center.y)
+	var d_sq := dx * dx + dz * dz
+	if _heading == Vector3.ZERO:
+		return d_sq
+	var d := sqrt(d_sq)
+	return d_sq - STREAM_HEADING_BIAS * (dx * _heading.x + dz * _heading.z) * d
 
 
 # --- The loaded region ------------------------------------------------------
@@ -975,6 +1068,20 @@ func _nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
 ## Returns true if the region actually moved, so callers can skip the rebuild
 ## work that follows a move (the far-field mesh, in Stage 7).
 func set_center_from_position(pos_m: Vector3) -> bool:
+	# THE HEADING, for the queue's velocity bias. Taken from where the player
+	# has actually been rather than from their velocity vector, because this is
+	# the only thing World is told every frame and a heading that survives one
+	# frame of a jump is a heading that biases the queue the wrong way.
+	if _have_last_center:
+		var d := pos_m - _last_center_m
+		d.y = 0.0
+		var moved := d.length()
+		if moved > 0.0001:
+			var speed := moved / maxf(get_process_delta_time(), 0.0001)
+			_heading = d / moved if speed > HEADING_MIN_SPEED else Vector3.ZERO
+	_last_center_m = pos_m
+	_have_last_center = true
+
 	var bx := int(floor(pos_m.x / config.block_size))
 	var bz := int(floor(pos_m.z / config.block_size))
 	var c := Vector2i(Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE))
@@ -1219,8 +1326,13 @@ func _column_chunk_range(cx: int, cz: int) -> Array:
 	return range(maxi(bottom, 0), mini(top, max_cy) + 1)
 
 
-func _free_distant_chunks(keep_radius: int) -> void:
+## `keep_radius` is the unload ring; `prune_radius` is where QUEUED-but-unbuilt
+## columns are dropped, and it is tighter (world feel v1 Stage 4). A column in
+## the trailing band that was never built should not be built when the player
+## pauses - the player is not going to look at it.
+func _free_distant_chunks(keep_radius: int, prune_radius: int = -1) -> void:
 	var keep_sq := keep_radius * keep_radius
+	var prune_sq := (prune_radius * prune_radius) if prune_radius > 0 else keep_sq
 	var doomed: Array[Vector3i] = []
 	for pos in _chunks:
 		var dx: int = pos.x - _center.x
@@ -1230,14 +1342,28 @@ func _free_distant_chunks(keep_radius: int) -> void:
 		if dx * dx + dz * dz > keep_sq and not _in_flight.has(Vector2i(pos.x, pos.z)):
 			doomed.append(pos)
 	for pos in doomed:
+		var chunk: Chunk = _chunks[pos]
 		_chunks.erase(pos)
+		var col := Vector2i(pos.x, pos.z)
 		# The column goes with its chunks: it is not loaded any more, and the
-		# next refresh must be free to queue it again.
-		_loaded_columns.erase(Vector2i(pos.x, pos.z))
+		# next refresh must be free to queue it again - or to find it parked.
+		_loaded_columns.erase(col)
 		var node: ChunkNode = _chunk_nodes.get(pos)
-		if node != null:
-			node.queue_free()
-			_chunk_nodes.erase(pos)
+		_chunk_nodes.erase(pos)
+		if node == null:
+			continue
+		# PARKED, NOT FREED (world feel v1 Stage 4). Turning round used to
+		# rebuild the trail you had just walked.
+		node.set_parked(true)
+		var entry = _column_cache.get(col)
+		if entry == null:
+			entry = {"chunks": {}, "nodes": {}}
+			_column_cache[col] = entry
+			_cache_order.append(col)
+		entry["chunks"][pos.y] = chunk
+		entry["nodes"][pos.y] = node
+		_cache_chunks += 1
+	_evict_cache()
 	# Edits are NOT dropped with the chunk. _edits is the authoritative
 	# difference between the seed and the world, and _replay_edits_for() puts
 	# them back when the chunk is regenerated - which is what lets a player
@@ -1247,11 +1373,77 @@ func _free_distant_chunks(keep_radius: int) -> void:
 		for col in _build_queue:
 			var dx: int = col.x - _center.x
 			var dz: int = col.y - _center.y
-			if dx * dx + dz * dz <= keep_sq:
+			if dx * dx + dz * dz <= prune_sq:
 				still.append(col)
 			else:
 				_queued.erase(col)
 		_build_queue = still
+
+
+## Bring a parked column back. True if it was there.
+##
+## THE EDITS ARE REPLAYED, always. `_edits` is the authoritative difference
+## between the seed and the world, and replaying it is idempotent - it writes
+## the same value a second time - so replaying all of it is a superset of
+## "the edits accepted since this was cached" and cannot be wrong. A chunk an
+## edit landed in is remeshed, exactly as it is on the streaming path.
+func _restore_column(col: Vector2i) -> bool:
+	var entry = _column_cache.get(col)
+	if entry == null:
+		return false
+	_column_cache.erase(col)
+	_cache_order.erase(col)
+	for cy in entry["chunks"]:
+		var chunk: Chunk = entry["chunks"][cy]
+		var node: ChunkNode = entry["nodes"][cy]
+		var pos := chunk.chunk_pos
+		_chunks[pos] = chunk
+		_chunk_nodes[pos] = node
+		node.set_parked(false)
+		if _replay_edits_for(chunk):
+			node.rebuild(Callable(self, "is_solid_world"))
+		_cache_chunks -= 1
+	_loaded_columns[col] = true
+	_column_landed(col)
+	_frontier_advanced = true
+	return true
+
+
+## Drop the oldest parked columns until the cache is inside its bound.
+func _evict_cache() -> void:
+	while _cache_chunks > CHUNK_CACHE_CHUNKS and not _cache_order.is_empty():
+		var col: Vector2i = _cache_order.pop_front()
+		var entry = _column_cache.get(col)
+		_column_cache.erase(col)
+		if entry == null:
+			continue
+		for cy in entry["nodes"]:
+			# Spread over frames: freeing 600 columns' nodes in one frame is
+			# the hitch this stage exists to remove.
+			_pending_frees.append(entry["nodes"][cy])
+			_cache_chunks -= 1
+
+
+## Bring back a bounded number of parked columns per frame.
+func _drain_restores() -> void:
+	var n := 0
+	while not _pending_restores.is_empty() and n < RESTORES_PER_FRAME:
+		var col: Vector2i = _pending_restores.pop_front()
+		_restore_queued.erase(col)
+		# It may have been evicted, or walked back out of range, since it was
+		# listed. Both are fine: the next refresh decides again.
+		_restore_column(col)
+		n += 1
+
+
+## Free a bounded number of parked nodes per frame.
+func _drain_frees() -> void:
+	var n := 0
+	while not _pending_frees.is_empty() and n < FREES_PER_FRAME:
+		var node: ChunkNode = _pending_frees.pop_back()
+		if is_instance_valid(node):
+			node.queue_free()
+		n += 1
 
 
 func _world_chunk_min() -> int:

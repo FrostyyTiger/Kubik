@@ -259,6 +259,12 @@ func _report() -> void:
 		print("[StreamProbe] %-12s %7.1f m %7.1f m %7d %7d %6.1f ms %7d %9.1f" % [
 			s["label"], s["frontier_min"], s["frontier_p10"], s["hole_samples"],
 			s["worst_holes"], s["max_frame_ms"], s["over_33"], s["built_per_s"]])
+	# THE CACHE'S FOOTPRINT. The plan puts a 250 MB ceiling on it; static memory
+	# at the end of a run that has parked and restored the whole trail is the
+	# cheapest honest measure of it on this box.
+	print("[StreamProbe] cache %d chunks, static memory %.1f MB" % [
+		_world.last_timings().get("cached_chunks", 0),
+		float(Performance.get_monitor(Performance.MEMORY_STATIC)) / 1048576.0])
 	var verdict := "PASS" if not _failed() else "FAIL"
 	print("[StreamProbe] holes %d, frames over 33 ms %d: %s" % [
 		_total_holes(), _total_over_33(), verdict])

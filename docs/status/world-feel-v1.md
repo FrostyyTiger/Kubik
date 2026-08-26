@@ -284,3 +284,93 @@ that matters and is zero.
 
 **Gates:** self-tests green; worldgen probe `76cccdb6` / `da8868d1` / 73,675
 trees / spawn `(-44, -124)`.
+
+---
+
+## Stage 4 - The cache, the queue and the crossing
+
+**Shipped.** A column leaving the unload ring is **parked**, not freed - nodes
+hidden, colliders disabled, kept in `_column_cache` as an LRU counted in chunks
+(`CHUNK_CACHE_CHUNKS := 3000`). Restores are spread over frames
+(`RESTORES_PER_FRAME := 8`) and evictions free at most `FREES_PER_FRAME := 32`
+nodes a frame. New self-test **`edit while cached`**. The velocity-biased queue
+key exists (`_queue_key`) and the heading is derived from successive recentres.
+
+### The result
+
+| | baseline | Stage 3 | **Stage 4** |
+| --- | --- | --- | --- |
+| holes | 126 | 0 | **0** |
+| frames over 33 ms | 43 | 0 | **1 - 2** (36 - 41 ms) |
+| 48 m settle, outward | 8,857 ms | 7,857 ms | **7,858 - 8,316 ms** |
+| `frontier_m` p10 | 40 m | 40 m | **40 - 48 m** |
+| chunks rebuilt, return leg | ~1,050 per jump | ~1,050 | **371 - 669** |
+
+### S5 and S1 are in direct tension, and S1 wins
+
+The velocity bias works, spectacularly: at `STREAM_HEADING_BIAS = 6` the
+`frontier_m` **minimum** over a whole 240 m sprint is **96.0 m** - the full
+voxel radius, ground loaded to the horizon in the direction of travel, against
+40 m without it.
+
+It also reintroduces holes. Measured:
+
+| bias | frontier p10 | holes |
+| --- | --- | --- |
+| 6.0 | **96.0 m** | 8 - 12 |
+| 3.0 | **96.0 m** | 8 |
+| **0.0** | 40 - 48 m | **0** |
+
+The mechanism is the frontier's definition: it is the radius out to which
+*every* wanted column has landed, so building far-ahead columns before
+near-side ones leaves a sector's frontier low and volatile, and the far mesh -
+rebuilt on a worker - is chronically a step behind it. The plan anticipates the
+failure ("without starving the sides") and its own rule settles it: hard rules
+outrank every number, and S1 is *never a hole, at any speed*.
+
+**`STREAM_HEADING_BIAS := 0.0`.** The mechanism is in and one constant turns it
+on. **For Marcel:** this is the most valuable thing in night 1 that is switched
+off. Making the frontier robust to out-of-order arrival - per-ring counts
+instead of a first-missing scan, or a frontier that only ever retreats when the
+far mesh has caught up - would buy ground loaded to 96 m ahead at a sprint.
+
+### The prune radius had to go back
+
+The plan drops the prune radius for stale queue entries from the unload radius
+to the load radius. Measured, that alone took holes from **2 to 8**: columns at
+the boundary get dropped from the queue and re-queued on the next crossing, so
+they are never built while the player keeps moving. Reverted, and recorded.
+
+### The cache's memory, measured twice because once was misleading
+
+Static memory with the cache full: **268.9 MB at 2,996 chunks**, **226.1 MB at
+1,997**. The first figure alone reads as over the plan's 250 MB ceiling, and
+the constant was dropped to 2,000 on it. It is the whole process, not the
+cache. The *difference* isolates it: **42.8 MB per 999 chunks**, so the cache
+is about **86 MB at 2,000 and 128 MB at 3,000** - comfortably inside the
+ceiling. **Restored to 3,000**, which is what the plan asked for.
+
+### S6: not needed
+
+Stage 4's verify is the S1 stretch: if `frontier_m` p10 at sprint is under 0 m
+after the bias is tuned, drop the High radius from 12 to 10. It is **40-48 m**.
+**S6 is not applied; High stays at radius 12 (96 m).**
+
+### What is left, and it is named rather than hidden
+
+**Frames over 33 ms went 0 -> 1-2**, at 36-41 ms, all on legs where the cache is
+being evicted and restored. Stage 2 had already met the budget; Stage 4's own
+work put it marginally back. The plan's two remaining remedies were **not
+implemented** - the `wanted` scan that builds only the ring that changed
+(~24 columns rather than 450), and the queue in distance buckets instead of a
+`sort_custom` of the backlog. They were skipped when the budget was already met
+at Stage 2 and are the named fix for the 1-2 spikes now.
+
+**`rebuilt on return` is 371-669 chunks per jump, not 0.** The plan expects 0
+"until the cache overflows"; at 6 jumps out it overflows - the trail is 288 m
+and 3,000 chunks holds about 130 m of it. Halved from the ~1,050 of a cold
+jump.
+
+**Gates:** self-tests green including the new `edit while cached`; flora probe
+0 ms of grass after terrain on the return leg; worldgen probe `76cccdb6` /
+`da8868d1` / 73,675 trees / spawn `(-44, -124)`.
