@@ -76,9 +76,21 @@ one additive spawn-sync hook in `game.gd`; a read-only heightmap accessor in
 
 ### D. Combat v1 - stats, the light attack, the HUD
 
-Stage 1 is the carried ticket: player input onto the host-authoritative path
-(currently local physics only) - nothing about damage is trustworthy before
-that. Then: stats (health, stamina, mana as one table), damage events through
+**D1 is DONE**, pulled forward into world feel v1 night 2 (2026-08-27):
+clients send input, the host simulates every body, the host broadcasts. Nothing
+about damage was trustworthy before that and now the path exists. What was
+pulled forward is the AUTHORITY only - no stats table, no attack, no HUD bar.
+
+Also delivered there, as physics rather than combat: **ragdoll's prerequisite**.
+Bodies exist, they are host-simulated, and they replicate. The spec, not built:
+*the downed pose becomes a body for 2 s* - on entering POSE_DOWNED the host
+promotes the character capsule to a `WorldBody`-like rigid body with the
+character's mass, lets knockback impulses land on it, and hands control back
+when it settles or the timer expires. The table row and the replication path
+are already there; what is missing is a body whose shape is a capsule rather
+than a convex hull, and a rule for what the animator does while it is one.
+
+Then: stats (health, stamina, mana as one table), damage events through
 the one mutation path, light attack / dodge / block, sword + bow + staff
 feel, fire bolt + frost bolt, hit and downed poses on the procedural
 animator, revive, HUD bars, dropped things fall and settle. Tuned for two
@@ -111,6 +123,19 @@ the three gear slots rendered on the character, wolf drops, the gathering
 RPC at `World.remove_flora_local()`, the first gatherable plants. Gathering
 was parked until something was worth gathering FOR - a campfire that wants
 wood and a bolt that wants a reagent is that. 1 night.
+
+**Felled trees**, specified here and not built. World feel v1 left the `log`
+row in `BodyTable` for it: a gathered tree becomes a `log` body spawned lying
+at the stump, and its trunk is removed from the column through the EDIT path -
+the same path a broken block already takes, so it survives streaming and
+replays on reload like any other edit.
+
+The reason it was not built with the other bodies is worth keeping: a snag is
+not a decoration, it is a tree SPECIES stamped into the chunk as voxels, so
+promoting one at generation time changes what the world contains - and world
+feel v1's hard rule 1 froze the heightmap, the config hash and the tree count
+outside two named stages. Doing it as a gathering EDIT instead sidesteps that
+entirely: the world still generates the tree, and the player removes it.
 
 ### H. Sites v1 - fixed places on a random map, and their names
 
@@ -199,10 +224,13 @@ WAVE 4
   Regions / biome deepening, physics polish - only if a playtest asks
 ```
 
-Critical path: **flora lands -> D (input path) -> playtest 1 -> E -> F ->
-K v0 -> K v1.** Everything else hangs off it in parallel. The single most
-unblocking piece of work is D's first stage - the host-authoritative input
-path - because combat, death, saves and the journal all sit on it.
+Critical path: **flora lands -> ~~D (input path)~~ -> playtest 1 -> E -> F ->
+K v0 -> K v1.** Everything else hangs off it in parallel.
+
+D's first stage - the host-authoritative input path - was the single most
+unblocking piece of work, and it **landed in world feel v1 night 2**. Combat,
+death, saves and the journal were all sitting on it; the next thing on the
+path is playtest 1.
 
 ## 4. Pushbacks, per the `CLAUDE.md` rule
 

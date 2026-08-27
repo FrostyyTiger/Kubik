@@ -17,7 +17,7 @@ extends CharacterBody3D
 
 ## Metres per second on flat ground. Blocks are 0.5 m, so this is faster in
 ## blocks than it looks: 5 m/s is 10 blocks a second.
-const WALK_SPEED := 5.0
+const WALK_SPEED := Locomotion.WALK_SPEED
 
 ## SET BY TRAVERSAL, NOT BY REALISM, and worth knowing that before judging it.
 ##
@@ -31,26 +31,26 @@ const WALK_SPEED := 5.0
 ## character, and it will look fast. The alternative is a world that takes
 ## twenty minutes to cross, which is the Cube World 2019 failure the plan
 ## names by name. Speed is the cheaper mistake.
-const SPRINT_MULTIPLIER := 2.6
+const SPRINT_MULTIPLIER := Locomotion.SPRINT_MULTIPLIER
 
 ## For lining up a screenshot, or edging along a ledge.
-const PRECISION_MULTIPLIER := 0.3
+const PRECISION_MULTIPLIER := Locomotion.PRECISION_MULTIPLIER
 
 ## Deliberately above Earth gravity. Real 9.8 makes a jump feel like it is
 ## happening underwater, because a game character's jump is much shorter than a
 ## real one and the arc has to be compressed to match.
-const GRAVITY := 22.0
-const JUMP_HEIGHT := 1.1
+const GRAVITY := Locomotion.GRAVITY
+const JUMP_HEIGHT := Locomotion.JUMP_HEIGHT
 
 ## How high a ledge the player walks up without jumping, in metres.
 ##
 ## This one number is the difference between voxel terrain being walkable and
 ## being infuriating. Blocks are 0.5 m, so ANY slope is a staircase of 0.5 m
 ## steps, and a capsule with no step logic stops dead at every one of them.
-const MAX_STEP := 0.55
+const MAX_STEP := Locomotion.MAX_STEP
 
 ## How fast the body turns to face where it is going.
-const TURN_SMOOTHING := 12.0
+const TURN_SMOOTHING := Locomotion.TURN_SMOOTHING
 
 const MOUSE_SENSITIVITY := 0.0025
 const PITCH_MIN_DEG := -70.0
@@ -58,7 +58,7 @@ const PITCH_MAX_DEG := 35.0
 
 ## Flight speed multiplier, so noclip is useful for crossing a 3 km world.
 ## Sprint multiplies it too, which is how you get across the map in a hurry.
-const FLY_SPEED := 18.0
+const FLY_SPEED := Locomotion.FLY_SPEED
 
 @onready var _pivot: Node3D = $CamPivot
 @onready var _arm: SpringArm3D = $CamPivot/SpringArm3D
@@ -89,6 +89,21 @@ var sprint_override := false
 ## a probe that never jumps measures a world nobody plays in.
 var jump_override := false
 
+## This tick's input, sampled once - see _sample_input().
+var _input := Locomotion.Intent.new()
+
+## A jump that has been predicted locally but not yet put on the wire.
+var _jump_pending := false
+
+## The surface zone under our feet, set by Game once a frame. -1 until the
+## world has told us; Locomotion reads that as "not slippery", which is the
+## safe answer for a body whose ground nobody has classified yet.
+var ground_zone := -1
+
+## Whether the last step lost its footing. Read by the F3 readout and by the
+## traversal probe, which reports the fraction of a crossing spent sliding.
+var sliding := false
+
 ## A static pose, when something has asked for one. Scaffolding until the
 ## campfire owns sit and the death design owns downed - see the debug keys.
 var pose := LocomotionState.POSE_NONE
@@ -97,6 +112,9 @@ var _yaw := 0.0
 # The pivot's authored offset above the feet, read from the scene at _ready
 # and then carried by hand - see _ready() for why it cannot stay a child.
 var _pivot_offset := Vector3.ZERO
+## How far past the end of the fog the camera still draws. See _ready().
+const FAR_PLANE_RATIO := 1.25
+
 var _pitch := deg_to_rad(-15.0)
 
 
@@ -109,14 +127,24 @@ func _ready() -> void:
 	# This is the player's own character, so it is the one that has to get out
 	# of the way when the camera ends up inside its head.
 	_view.local = true
-	# Terrain is a staircase of half-metre steps and the capsule must stay
-	# glued to it going downhill, or walking down any slope turns into a
-	# sequence of small hops.
-	floor_snap_length = MAX_STEP
-	floor_max_angle = deg_to_rad(55.0)
+	# Set from Locomotion, not here, so the host's sim capsule for a remote
+	# peer is configured by the same line. See Locomotion.configure_body().
+	Locomotion.configure_body(self)
 	# The arm casts from inside the player's own capsule, so without this it
 	# collides with the player and jams the camera at zero distance.
 	_arm.add_excluded_object(get_rid())
+
+	# THE FAR PLANE FOLLOWS THE FOG, and until world feel v1 it did not.
+	#
+	# player.tscn carried `far = 400.0` as a literal while High fog and the far
+	# field both run to 600 m, so on High and Ultra the far ridge was clipped
+	# out of the frame and nobody had ever seen it. The camera has to reach
+	# past the point where fog has finished hiding things, or the fog's last
+	# band is a wall with nothing behind it.
+	#
+	# 1.25x rather than exactly fog_end so the band at the very end of the fog
+	# is drawn rather than clipped mid-fade.
+	apply_view_config(WorldgenConfig.load_or_default())
 
 	# The camera pivot must NOT inherit the body's rotation.
 	#
@@ -228,6 +256,8 @@ func _physics_process(delta: float) -> void:
 		if _wave_left <= 0.0 and pose == LocomotionState.POSE_WAVE:
 			pose = LocomotionState.POSE_NONE
 
+	_sample_input()
+
 	if not _mouse_captured() and wish_override == Vector3.ZERO:
 		# Cursor released means a menu or a panel has focus. Walking on while
 		# someone types a seed into a text field is not helpful.
@@ -238,80 +268,96 @@ func _physics_process(delta: float) -> void:
 		if not noclip:
 			velocity.x = 0.0
 			velocity.z = 0.0
-			velocity.y -= GRAVITY * delta
+			velocity.y -= Locomotion.GRAVITY * delta
 			move_and_slide()
 		_publish_locomotion()
 		return
 
-	if noclip:
-		_fly(delta)
-	else:
-		_walk(delta)
+	# Noclip goes through the same step, as a bit on the input - so a flying
+	# client is a client the host can still simulate rather than a special
+	# case in two places.
+	_walk(delta)
 	_publish_locomotion()
 
 
-func _walk(delta: float) -> void:
-	var wish := _wish_direction()
-
-	velocity.x = wish.x * WALK_SPEED * _speed_multiplier()
-	velocity.z = wish.z * WALK_SPEED * _speed_multiplier()
-
-	if is_on_floor():
-		if jump_override:
-			jump_override = false
-			velocity.y = sqrt(2.0 * GRAVITY * JUMP_HEIGHT)
-		elif Input.is_physical_key_pressed(KEY_SPACE):
-			# v = sqrt(2gh) - the speed you need to leave the ground at to
-			# reach exactly JUMP_HEIGHT, rather than a number picked by feel
-			# that changes meaning the moment gravity is retuned.
-			velocity.y = sqrt(2.0 * GRAVITY * JUMP_HEIGHT)
-	else:
-		velocity.y -= GRAVITY * delta
-
-	_step_up(delta)
-	move_and_slide()
-	_face_movement(wish, delta)
-
-
-## Walk up a ledge instead of stopping dead at it.
+## SAMPLED ONCE PER TICK, and that is not a tidiness point.
 ##
-## Godot's CharacterBody3D has no stair stepping, and voxel terrain is nothing
-## but stairs - every slope is a run of 0.5 m steps. The test is deliberately
-## the whole thing: if the move is blocked from here but the SAME move from
-## MAX_STEP higher is clear, then what blocked us was a step and not a wall,
-## and we can rise onto it. A real wall blocks both, so this cannot be used to
-## climb one.
-func _step_up(delta: float) -> void:
-	if not is_on_floor():
-		return
-	var motion := Vector3(velocity.x, 0.0, velocity.z) * delta
-	if motion.length_squared() < 0.000001:
-		return
-	if not test_move(global_transform, motion):
-		return  # nothing in the way
-
-	var raised := global_transform.translated(Vector3.UP * MAX_STEP)
-	if test_move(raised, motion):
-		return  # still blocked from up there, so it is a wall
-
-	# floor_snap_length pulls us back down onto the step's surface on the next
-	# move_and_slide, so this does not leave the player floating.
-	global_position.y += MAX_STEP
-
-
-func _fly(delta: float) -> void:
+## The keyboard is read here and nowhere else, because two things want this
+## input at two different rates: the local body predicts with it every physics
+## tick, and Game sends it to the host thirty times a second. Reading the keys
+## twice would be harmless for held keys and wrong for anything edge-triggered
+## - jump_override in particular is consumed by whoever reads it first, so the
+## sender and the prediction would each sometimes get a jump the other did not.
+func _sample_input() -> void:
+	var out := Locomotion.Intent.new()
 	var wish := _wish_direction()
-	var dir := Vector3(wish.x, 0.0, wish.z)
-	# Vertical is along the WORLD up axis, not the camera's, so looking down
-	# does not turn Space into "fly forwards".
-	if Input.is_physical_key_pressed(KEY_SPACE):
-		dir += Vector3.UP
-	if Input.is_physical_key_pressed(KEY_CTRL):
-		dir -= Vector3.UP
-	if dir != Vector3.ZERO:
-		dir = dir.normalized()
-	velocity = dir * FLY_SPEED * _speed_multiplier()
-	global_position += velocity * delta
+	out.wish = Vector2(wish.x, wish.z)
+	# The LOOK yaw, not the body's. The body's is derived from travel and the
+	# host derives it the same way; where this player is aiming is the part the
+	# host cannot know.
+	out.look = _yaw
+	var bits := 0
+	# sprint_override and jump_override are how the probes drive a player with
+	# no keyboard attached, and they have to be read HERE rather than deeper in
+	# because from here on the input struct is the only thing the rules see.
+	if sprint_override or Input.is_physical_key_pressed(KEY_SHIFT):
+		bits |= Locomotion.BIT_SPRINT
+	if Input.is_physical_key_pressed(KEY_ALT):
+		bits |= Locomotion.BIT_PRECISION
+	if jump_override or Input.is_physical_key_pressed(KEY_SPACE):
+		jump_override = false
+		bits |= Locomotion.BIT_JUMP
+		# THE LATCH, and without it a tap of Space is a jump that happens on
+		# this machine and not on the host. Physics runs at 60 Hz and input
+		# goes out at 30, so a press that begins and ends between two packets
+		# is predicted here and never sent - and the host's correction for a
+		# body that did not jump is a full jump height of error, which is a
+		# snap. The latch keeps the bit set until it has actually been sent.
+		_jump_pending = true
+	if noclip:
+		bits |= Locomotion.BIT_FLY
+		if Input.is_physical_key_pressed(KEY_CTRL):
+			bits |= Locomotion.BIT_DOWN
+	out.bits = bits
+	out.set_pose(pose)
+	_input = out
+
+
+## What this player is asking for right now. Used for local prediction.
+func current_input() -> Locomotion.Intent:
+	return _input
+
+
+## The same, for the wire, with any jump that has not been sent yet folded in.
+## Clears the latch, so exactly one packet carries each press.
+func wire_input() -> Locomotion.Intent:
+	var out := Locomotion.Intent.new()
+	out.wish = _input.wish
+	out.look = _input.look
+	out.bits = _input.bits
+	if _jump_pending:
+		out.bits |= Locomotion.BIT_JUMP
+		_jump_pending = false
+	return out
+
+
+## THE RULES ARE NOT HERE ANY MORE (world feel v1 Stage 10). They are in
+## Locomotion, and the host runs the same step for every remote peer - so what
+## this body predicts is what the host computes, rather than two
+## implementations of the same paragraph drifting apart.
+##
+## What is still here is everything that is about being THIS player: reading a
+## keyboard, owning a camera, and turning the body to face where it is going.
+func _walk(delta: float) -> void:
+	var input := current_input()
+	sliding = Locomotion.step(self, input, delta, ground_zone)
+	_face_movement(Vector3(input.wish.x, 0.0, input.wish.y), delta)
+
+
+
+
+
+
 
 
 ## Desired horizontal direction, in world space, relative to where the camera
@@ -358,10 +404,10 @@ func _face_movement(wish: Vector3, delta: float) -> void:
 	# along the wish direction. A visual check with a marker mesh was the other
 	# option and is a weaker one - it confirms the same identity by eye, and
 	# only for the handful of directions you happen to try.
-	var target := atan2(-wish.x, -wish.z)
-	# Frame-rate independent smoothing - see RemotePlayer for why this shape
-	# rather than lerp(current, target, 0.1).
-	rotation.y = lerp_angle(rotation.y, target, 1.0 - exp(-TURN_SMOOTHING * delta))
+	# The arithmetic moved to Locomotion.face_yaw() in Stage 10, because the
+	# host has to turn a remote peer's body the same way. The reasoning above
+	# is the reasoning for that function.
+	rotation.y = Locomotion.face_yaw(rotation.y, Vector2(wish.x, wish.z), delta)
 
 
 ## Everything the animator is allowed to know about what this body is doing.
@@ -445,28 +491,18 @@ func _pose_key(keycode: int) -> bool:
 var _wave_left := 0.0
 
 
-## Multiplier applied to the base speed this frame. Applies to walking and to
-## flight both.
-##
-## This was a TODO(marcel) exercise and terrain v2's plan claims it explicitly -
-## the single exception it makes to its own rule about leaving the exercises
-## alone - because a 3 km world without sprint is the traversal failure the
-## whole stage exists to avoid.
-##
-## Sprint is checked FIRST so that holding both keys is not ambiguous.
-func _speed_multiplier() -> float:
-	if sprint_override:
-		return SPRINT_MULTIPLIER
-	if Input.is_physical_key_pressed(KEY_SHIFT):
-		return SPRINT_MULTIPLIER
-	if Input.is_physical_key_pressed(KEY_ALT):
-		return PRECISION_MULTIPLIER
-	return 1.0
-
-
 func _mouse_captured() -> bool:
 	return Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
 
 
 func _capture_mouse(on: bool) -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED if on else Input.MOUSE_MODE_VISIBLE
+
+
+## Set the camera's far plane from the view distance. Called by Game with the
+## session's config - which may carry CLI overrides the saved file does not -
+## and once from _ready() so a scene opened on its own is still right.
+func apply_view_config(config: WorldgenConfig) -> void:
+	if config == null or _camera == null:
+		return
+	_camera.far = config.fog_end_m * FAR_PLANE_RATIO

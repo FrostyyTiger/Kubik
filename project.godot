@@ -35,6 +35,22 @@ window/size/viewport_height=720
 ; look rather than into it. See docs/plans/look-v1.md, Stage 7.
 theme/custom="res://assets/ui/deco_theme.tres"
 
+[physics]
+
+; JOLT (world feel v1 Stage 9, and P3 - Marcel set it explicitly).
+;
+; Godot Physics and Jolt disagree in exactly the places this game lives: stacked
+; static trimesh colliders in the thousands, one CharacterBody3D stepping over
+; half-metre voxel terraces, and - from Stage 11 - rigid bodies that have to go
+; to sleep and stay asleep on a slope. Jolt's broadphase and its sleeping are
+; both better at that, and the plan pulls physics forward precisely because
+; every combat and creature plan is queued behind it.
+;
+; The tick stays 60. Nothing else belongs in this section: everything that
+; behaves differently under Jolt is a property of a body, and bodies are
+; configured where they are built.
+3d/physics_engine="Jolt Physics"
+
 [shader_globals]
 
 ; HOW DARK IT IS, 0 by day and 1 at night, written once per frame by SkyCycle

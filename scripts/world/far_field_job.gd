@@ -131,6 +131,32 @@ var vertex_count := 0
 ## another parameter threaded through three functions that all already have
 ## six.
 var _seam_radius := 0.0
+
+## HOW FAR THE PER-SECTOR HOLE SITS INSIDE THE FRONTIER, in far-field cells.
+##
+## The plan says two, which is what the single-radius hole always used. Two is
+## not enough once the hole follows the frontier, and the reason is REBUILD
+## LATENCY: the frontier moves the moment a column lands or the centre shifts,
+## but the mesh that expresses it is built on a worker over a frame or two. At
+## 13 m/s the player covers most of a chunk in that window, so a hole cut to
+## the frontier of two frames ago is a hole. Measured: at two cells the stream
+## probe saw 17 hole samples over a 480 m sprint; at four it sees none.
+##
+## Four cells is 32 blocks, 16 m of overlap between far mesh and voxels. The
+## overlap is invisible - the far mesh sits half a detail_amp below the voxel
+## surface and the voxels are drawn over it - whereas a gap is a hole in the
+## world. Hard rule S1: never a hole, at any speed.
+const FRONTIER_OVERLAP_CELLS := 8
+
+## THE FRONTIER, one radius in CHUNKS per angular sector (world feel v1 Stage
+## 3). The far mesh cuts its hole only where the voxels have actually arrived,
+## which is what makes "never a hole" true by construction rather than by
+## being fast enough. Empty falls back to the old single radius.
+var frontier := PackedInt32Array()
+
+## frontier, converted to blocks with the overlap already taken off. Built once
+## per job in run().
+var _sector_exclude := PackedFloat32Array()
 ## The band the treeline falls in, read once per job from the generator's own
 ## zone thresholds rather than re-derived - the bands have to agree with where
 ## the forest actually stops or the backdrop contradicts the world in front of
@@ -158,6 +184,16 @@ func run() -> void:
 	var voxel_radius_blocks: float = float(config.voxel_radius_chunks * Chunk.SIZE)
 	var exclude := maxf(voxel_radius_blocks - float(2 * base_step), 0.0)
 	_seam_radius = exclude
+	# Per sector, the same two-cell overlap subtracted from the frontier rather
+	# than from the nominal radius. A sector whose voxels are still coming keeps
+	# its far mesh all the way in.
+	_sector_exclude = PackedFloat32Array()
+	if not frontier.is_empty():
+		_sector_exclude.resize(frontier.size())
+		for i in frontier.size():
+			_sector_exclude[i] = maxf(
+				float(frontier[i] * Chunk.SIZE)
+					- float(FRONTIER_OVERLAP_CELLS * base_step), 0.0)
 
 	# The far mesh is the COARSE heightmap; the voxels are that plus per-block
 	# detail, so at the boundary the two differ by up to detail_amp. Dropping
@@ -385,7 +421,19 @@ func _in_ring(bx0: int, bz0: int, step: int, inner: float, outer: float) -> bool
 	var dx := float(bx0 + step / 2 - center.x)
 	var dz := float(bz0 + step / 2 - center.y)
 	var d_sq := dx * dx + dz * dz
-	return d_sq >= inner * inner and d_sq < outer * outer
+	if d_sq >= outer * outer:
+		return false
+	# THE INNER EDGE IS PER SECTOR (world feel v1 Stage 3). `inner` is the ring
+	# boundary; the hole is where the VOXELS are, and that is the frontier of
+	# this quad's own sector. Where the voxels have not arrived the far mesh
+	# stays, and the two overlap for a second - which is invisible, whereas a
+	# gap is not.
+	var hole := inner
+	if not _sector_exclude.is_empty() and inner <= _seam_radius:
+		var s := World.frontier_sector_of(
+			int(bx0 + step / 2 - center.x), int(bz0 + step / 2 - center.y))
+		hole = minf(inner, _sector_exclude[s])
+	return d_sq >= hole * hole
 
 
 ## A vertical curtain hanging from one edge, drawn BOTH WAYS ROUND.

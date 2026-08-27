@@ -14,6 +14,8 @@ signal rebuilt(vertex_count: int)
 var _job: FarFieldJob = null
 var _task := -1
 var _pending_center := Vector2i.ZERO
+var _pending_frontier := PackedInt32Array()
+var _built_frontier := PackedInt32Array()
 var _has_pending := false
 
 var _heightmap: Heightmap = null
@@ -34,8 +36,9 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 ## Ask for a rebuild centred on this block position. Safe to call every time
 ## the player crosses a chunk boundary; a request arriving while a build is
 ## already running simply replaces the pending one.
-func request_rebuild(center_block: Vector2i) -> void:
+func request_rebuild(center_block: Vector2i, p_frontier := PackedInt32Array()) -> void:
 	_pending_center = center_block
+	_pending_frontier = p_frontier
 	_has_pending = true
 	_start_if_idle()
 
@@ -49,6 +52,12 @@ func _process(_delta: float) -> void:
 	_task = -1
 
 	mesh = ChunkMesher.arrays_to_mesh(_job.arrays)
+	# The frontier THIS MESH was cut to. Not the same as the world's current
+	# one: a rebuild takes a frame or two on a worker, and during that window
+	# what is on screen is the old hole. Anything asking "is this covered right
+	# now" - the stream probe above all - has to ask about the mesh that
+	# exists, not the one being built.
+	_built_frontier = _job.frontier
 	rebuilt.emit(_job.vertex_count)
 	_job = null
 	_start_if_idle()
@@ -63,7 +72,27 @@ func _start_if_idle() -> void:
 	_job.generator = _generator
 	_job.config = _config
 	_job.center = _pending_center
+	_job.frontier = _pending_frontier
 	_task = WorkerThreadPool.add_task(_job.run, false, "kubik far field")
+
+
+## The frontier the mesh CURRENTLY ON SCREEN was cut to. Empty before the first
+## build, and after a reset.
+func built_frontier() -> PackedInt32Array:
+	return _built_frontier
+
+
+## The radius, in blocks, inside which the far mesh declines to draw because
+## the voxels are expected to cover it.
+##
+## Derived the same way FarFieldJob derives it, rather than read back off the
+## last job: the job is null between builds, and a probe asking "is this column
+## covered" needs an answer every frame, not only just after a rebuild.
+func exclusion_blocks() -> float:
+	if _config == null:
+		return 0.0
+	var voxel_radius_blocks := float(_config.voxel_radius_chunks * Chunk.SIZE)
+	return maxf(voxel_radius_blocks - float(2 * _config.far_step), 0.0)
 
 
 ## Block until any build finishes, before the world it reads is thrown away.

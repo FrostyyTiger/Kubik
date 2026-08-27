@@ -3,7 +3,7 @@ extends RefCounted
 
 ## One chunk column's ground cover, packed for the renderer, on a worker thread.
 ##
-## THE SAME SHAPE AS MeshJob, FOR THE SAME REASON. Everything a worker touches
+## THE SAME SHAPE AS ColumnJob, FOR THE SAME REASON. Everything a worker touches
 ## has to be reachable without the scene tree and stable for the whole life of
 ## the job, and nothing a worker produces may touch the rendering server. So
 ## this captures what it needs at submit time, returns plain packed arrays, and
@@ -42,6 +42,15 @@ var draw_fraction := 1.0
 var buffers := {}
 
 ## How many instances were placed, and how many survived draw_fraction.
+## Instances that became bodies rather than decoration, for World to hand to
+## BodyField. See the note in run() about why this happens before the draw
+## fraction.
+var bodies: Array = []
+
+## Build the body list and nothing else - no buffers, no MultiMesh. Set for
+## the columns the host streams around a remote peer.
+var bodies_only := false
+
 var placed := 0
 var drawn := 0
 
@@ -61,8 +70,56 @@ func run() -> void:
 		generator, config, column.x, column.y, removed, edited)
 	placed = instances.size()
 
+	# PROMOTION HAPPENS IN THE LOOP BELOW, BEFORE THE DRAW FRACTION.
+	#
+	# A promoted boulder is not decoration any more - it is a body, drawn by
+	# BodyField as its own node with its own transform, because it is going to
+	# move. Leaving it in the MultiMesh as well would draw the rock twice, and
+	# the copy that is not a body would stay behind when the real one rolled
+	# away.
+	#
+	# BEFORE the draw fraction, and that ordering is the whole correctness
+	# argument. draw_fraction is a LOCAL knob - a machine showing half the grass
+	# shows the same half as any other machine at half, but a machine at 0.5 and
+	# a machine at 1.0 disagree about what is drawn. If promotion were decided
+	# after it, the far ring would promote fewer rocks than the near ring, the
+	# set would change as a player walked towards it, and two peers at different
+	# flora settings would disagree about which boulders exist. Deciding first
+	# makes the body set a function of the world alone.
+	#
+	# IN THE EXISTING LOOP, AND GATED ON THE MODEL, which is not tidiness.
+	# Stage 11 shipped this as a separate pass that called BodyTable.promote()
+	# for every instance and rebuilt the whole array minus the promoted ones -
+	# thousands of calls and thousands of appends per column, on the worker, for
+	# a rule that fires on about one instance in a thousand. A meadow column is
+	# grass; the model compare below rejects all of it for the price of an
+	# integer.
+
 	var by_model := {}
 	for inst in instances:
+		var model: int = inst["model"]
+		if model == FloraModels.BOULDER_M or model == FloraModels.BOULDER_L:
+			var block: Vector2i = inst["block"]
+			var kind := BodyTable.promote(
+				model, block.x, block.y, generator.world_seed, config)
+			if kind >= 0:
+				bodies.append({
+					"id": FloraPlacement.identity(model, block.x, block.y),
+					"kind": kind,
+					"pos": inst["pos"],
+					"yaw": inst["yaw"],
+					"scale": inst["scale"],
+				})
+				continue
+		# BODIES ONLY: the host builds these columns so a REMOTE peer has rocks
+		# to push, and nobody is looking at the grass in them. The placement
+		# scan is the expensive half and has to run either way - promotion is a
+		# function of it - but the packing, the buffers and the MultiMesh upload
+		# are all for something to look at. Same shape as Stage 10c's
+		# collision-only chunks.
+		if bodies_only:
+			continue
+
 		# HASHED, NOT COUNTED. Dropping every Nth instance would make the
 		# survivors depend on iteration order; hashing the position means a
 		# machine at 0.5 hides the same half as any other machine at 0.5,
@@ -73,11 +130,14 @@ func run() -> void:
 			generator.world_seed, SALT_DRAW)
 		if draw_fraction < 1.0 and key >= draw_fraction:
 			continue
-		var model: int = inst["model"]
 		if not by_model.has(model):
 			by_model[model] = []
 		by_model[model].append([key, inst])
 		drawn += 1
+
+	if bodies_only:
+		elapsed_usec = Time.get_ticks_usec() - started
+		return
 
 	# SORTED BY THAT SAME HASH, ascending, so that the first N instances of a
 	# buffer ARE the hashed subset at fraction N / count. That is what lets

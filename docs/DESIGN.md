@@ -295,6 +295,15 @@ at all. You cannot find a depression by looking at one chunk.
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
 Terrain generation targets are in `plans/terrain-v2.md`.
 
+**THE FRONTIER RULE, world feel v1: never a hole, at any speed.** The far mesh
+and the impostor ring cut their inner edge to where the voxels have ACTUALLY
+arrived - `World.loaded_frontier()`, sixteen angular sectors - and not to the
+radius where the voxels are merely expected. Keyed to the radius, the hole
+moved the instant the player crossed a chunk boundary and the voxels arrived
+seconds later, so the ground ahead of a moving player was neither far mesh nor
+voxels. That was 126 of 144 sprint samples with a hole in them; it is now zero,
+and it is a hard rule rather than a target: overlap is invisible, a gap is not.
+
 ### Scale: the world is 1:4 against reality
 
 Every object in the world is a quarter of its real-world size, and the value of
@@ -304,7 +313,7 @@ small world - it reads as a broken one.
 
 | Thing | In game | Real equivalent |
 | --- | --- | --- |
-| Tree | 5 - 10.5 m | 26 - 42 m spruce, beech, larch |
+| Tree | 13 - 21 m (old growth 19.5 - 31.5 m) | 26 - 42 m spruce, beech, larch |
 | Grass tuft, flower | 15 - 55 cm | the same, at 1:1 |
 | Largest lake | ~116 m across | ~400 m tarn |
 | Mountain relief | ~350 m | ~1400 m |
@@ -321,12 +330,37 @@ object is read against**:
 
 | Read against | Scale | Examples |
 | --- | --- | --- |
-| The landscape, from across a valley | 1:4 | terrain, lakes, **trees** |
+| The landscape, from across a valley | 1:4 | terrain, lakes |
 | The player, from two metres away | 1:1 | the character, **grass, flowers, ferns, boulders** |
+| **Both** | **1:2** | **trees** |
 
-A tree is landscape. You judge it against the slope it stands on and the
-treeline above it, so it is drawn at 1:4 like the mountain behind it, and a
-10.5 m spruce reads as a 42 m spruce.
+**The third row is world feel v1 (2026-08-26), and it is the one this table
+was missing.** A tree is the one object read against BOTH. From across a valley
+you judge it against the ridge behind it; standing under it you judge it
+against yourself. At 1:4 it was right against the ridge - three per cent of it,
+which is exactly real - and seven player-heights tall, where a real spruce is
+twenty-five. It read as a shrub you happened to be standing near.
+
+So the trees are drawn at **1:2** and the land is not rescaled. `world_scale`
+stays 4 and was not relitigated: rescaling the land would move every lake,
+every zone threshold and every slope in the world to fix an object that is one
+row of this table. `WorldgenConfig.tree_read_scale` (2.0) composes with
+`tree_size_scale` per species in `TreeSpecies.table()`, and each species takes
+the share its `read` field allows - spruce, beech, larch and the hero all of
+it, birch half, krummholz and snags none. A knee-high alpine shrub at twice the
+size is not a bigger shrub; it is a tree.
+
+**Old growth is a second tier on top.** About a third of groves are old growth
+(`old_growth_share`), their trees a further 1.5x - so 1:1.33 against the
+player, a 31 m spruce - with fewer trunks, further apart, and crowns that
+touch. Contrast is what makes huge read: a forest where every tree is a bit
+bigger is a forest with bigger trees, and a forest where one grove in three is
+enormous is a forest with old growth in it.
+
+A tree at 1:2 is still landscape at distance. You judge it against the slope it
+stands on and the treeline above it, and a 21 m spruce still reads as a 42 m
+spruce from across the valley - because at that range what you are comparing is
+its share of the ridge, and that has not changed.
 
 A grass tuft is not. Nobody ever compares a blade of grass to a mountain -
 they compare it to their own boots. A 30 cm tuft drawn at 1:4 is 7.5 cm, which
@@ -549,7 +583,87 @@ This is the line that keeps "no base building" true. Give players arbitrary
 blocks and someone walls off a cave and calls it home, whether we designed for
 it or not. Restricting the palette means there is nothing to build walls from.
 
-Breaking terrain is a separate question and is not settled.
+Breaking terrain is a separate question and **is now settled - see Physics.**
+
+## Physics
+
+Added in world feel v1, night 2.
+
+### Terrain does not move
+
+**Breaking terrain is decided: no, in v1.** Voxels are edited through the
+request path and never simulated. No physics body is a block, no body's motion
+writes a voxel, and there is no digging.
+
+This is the same line that "no base building" is drawn on, one step further
+out. A world you can dig is a world where the interesting answer to every
+obstacle is "go through it", and the third pillar - THE WORLD IS THE CONTENT -
+only works if the world gets to be an obstacle. It is also the single largest
+piece of streaming complexity the project has managed to avoid.
+
+### What a body is
+
+A short table (`scripts/physics/body_table.gd`), like `Races`:
+
+| kind | promoted from | mass | hold | what it means |
+| --- | --- | --- | --- | --- |
+| boulder_m | `BOULDER_M` decoration | 250 kg | 400 N | one player moves it |
+| boulder_l | `BOULDER_L` decoration | 900 kg | 1000 N | two players move it |
+| log | *(not promoted in v1)* | 120 kg | 150 N | reserved for felled trees |
+
+A fraction of medium and large boulders - `body_fraction`, 0.15 - are pushable
+rather than scenery, decided by a seeded hash so every peer agrees without
+anybody sending a list. **Not all of them**: a world where every boulder rolls
+has no landmarks in it, and you cannot say "meet me at the big rock" if the big
+rock is wherever somebody last shoved it.
+
+A body at rest is FROZEN, not merely asleep. It is solid - you can stand on it
+and walk into it - and it does not move until something clears its hold. That
+is a rule, not an optimisation: a sleeping body wakes on any contact, and a
+boulder on a mountainside that wakes for any reason rolls.
+
+### The push is a co-op rule
+
+Each player leaning on a body contributes **600 N**; the sums are added across
+everyone touching it and compared against the body's `hold`.
+
+- **over the hold** - it wakes and goes.
+- **under the hold** - it stays, and **rocks**: a three-degree tilt toward the
+  push, on every peer's screen.
+
+The rocking half is the design. A boulder that ignores you is scenery; a
+boulder that gives an inch and settles back says *not on your own* without a
+line of UI. This is pillar 1 - BETTER TOGETHER - in the only vocabulary the
+world has, and nothing in the game has to know what "two players" means: the
+accumulator adds up whatever is leaning on the rock, which is why three and
+four players work with no special case.
+
+### Momentum and the slide
+
+Horizontal speed ramps at 40 m/s² and sheds at 30 (a third of that in the air).
+Walking is unchanged; a sprint takes a third of a second to build and 2.8 m to
+shed. A world whose content axis is distance cannot afford a sprint that stops
+dead.
+
+Over **45°** on alpine, rock or snow, a player **slides** downhill at half of
+gravity's downhill component, capped at 8 m/s, and stops stepping up over
+ledges while sliding. Meadow, forest and rock do not slide at any angle: a
+world where every steep face is a slide is a world where you stop trusting
+slopes, and the surfaces that give way are the ones you can see are loose.
+
+Ground friction is per zone - meadow 0.9, forest 0.8, rock 0.7, alpine 0.45,
+snow 0.3 - so a boulder's run-out depends on *where* rather than on how hard it
+was hit.
+
+### The host owns all of it
+
+Bodies are simulated on the host and nowhere else. **No RPC moves a body.** A
+client's push is an *input* - it is walking into the rock - and the host
+measures the contact and applies the impulse. "Move this rock to here" is the
+single most useful message a cheat could send, so it does not exist.
+
+Every physics constant above is a starting value, tuned blind. Nobody has
+pushed a rock yet.
 
 ## Mounts
 
@@ -557,6 +671,19 @@ Planned for v0.3+. Speed and flavour, not a combat system.
 
 ## Multiplayer
 
+- Host-authoritative, and since world feel v1 that is literally true:
+  **clients send input, the host simulates, the host broadcasts.** A client
+  can only move itself, and only the way the rules allow.
+- **Reconciliation.** The local body keeps predicting with the same movement
+  step the host runs, so there is no input latency on your own legs. When the
+  host's position for you arrives: under 0.25 m, nothing (the host is
+  permanently about one packet behind, and correcting that is a tremble); up
+  to 2 m, ease it in over 100 ms; over 2 m, snap, because at that distance the
+  two simulations are telling different stories and easing would drag you
+  through rock. No rollback in v1 - see the README's provisional list.
+- The host streams a small collision ring around every remote peer, so a
+  friend 500 m away has ground under them and rocks to push. That is the cost
+  of authority and it is measured in `--pair-probe`.
 - Host-authoritative. 1 host + up to 3 clients, 4 players maximum.
 - Balanced around 2. Solo runs, but is a dev convenience, not a supported mode.
 - All players must run the same build.

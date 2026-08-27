@@ -135,11 +135,23 @@ const TREE_RESERVE_MARGIN := 3.0
 ## radius in chunks, fog end in metres. Ultra is 800 and not a round 1000
 ## because at 1:4 a 350 m mountain frames from about 750 m: the view distance
 ## and the scale of the terrain are matched on purpose.
+## THE THREE DISTANCES MOVE TOGETHER, and world feel v1 Stage 7 is where they
+## were finally written down in one place.
+##
+##   radius     the voxels. Quadratic and CPU: this is the real quality dial.
+##   fog_end    how far you can see. GPU vertices and nothing at load, because
+##              the far field is built in LOD rings.
+##   far_tree   how far the forest goes. Past this a wooded ridge is bare.
+##
+## They have to agree or the world ends visibly: fog past the far trees is a
+## bald mountain in plain view, far trees past the fog are triangles drawn for
+## nobody, and a camera far plane short of the fog - which is what shipped
+## until Stage 0 - is a wall with nothing behind it.
 const VIEW_PRESETS := [
-	{"name": "low", "radius": 6, "fog_end": 400.0},
-	{"name": "medium", "radius": 8, "fog_end": 500.0},
-	{"name": "high", "radius": 12, "fog_end": 600.0},
-	{"name": "ultra", "radius": 16, "fog_end": 800.0},
+	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 200.0},
+	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 300.0},
+	{"name": "high", "radius": 12, "fog_end": 800.0, "far_tree": 400.0},
+	{"name": "ultra", "radius": 16, "fog_end": 1000.0, "far_tree": 500.0},
 ]
 
 ## view_distance value meaning "leave the numbers below exactly as they are".
@@ -160,6 +172,46 @@ const FOG_START_RATIO := 0.4
 ##
 ## Driven by view_distance unless that is VIEW_CUSTOM.
 @export var voxel_radius_chunks := 12
+
+## The collision-only ring the HOST streams around each remote peer, in chunks
+## (world feel v1 Stage 10).
+##
+## THIS IS THE COST OF AUTHORITY. The host simulates every peer's body, and a
+## body needs ground: the host loads columns around ITS OWN player, so a friend
+## 500 m away would be standing on nothing and would fall out of the world.
+##
+## It is small - 4 chunks is 32 m - because nothing is being LOOKED at. No mesh
+## is uploaded and no flora is grown; the columns exist so a capsule has a
+## trimesh under it. All it has to cover is how far a body can move between the
+## moment it approaches the edge and the moment the next ring lands, and at
+## sprint that is a couple of seconds.
+##
+## LOCAL, not a world fact: it changes what the host streams, never what the
+## world contains, so a host with a different value generates the same world.
+##
+## TODO(marcel): MEASURED AT 3 AND 4, AND THE PROBE STILL CANNOT DECIDE.
+##
+## Forward+, seed 42, same commit, `--pair-probe` with `--set`:
+##
+##     3   PASS   median 0.217 m, worst 1.464 m, 38 chunks built for the ring
+##     4   PASS   median 0.217 m, worst 1.300 m, 46 chunks built for the ring
+##
+## Neither dropped the peer below the surface, so 3 looks like 17% less
+## collision built for terrain nobody looks at, for free.
+##
+## IT IS NOT FREE, AND THE PROBE IS WHY. `PairProbe.SPRINT_OUT_M` is 100.0: the
+## peer turns round at 100 m, and both runs show exactly ONE `floor false`
+## frame - the same step-up at about 40 m. Neither value was ever put under
+## pressure. "3 never fell" means "3 survives a 100 m out-and-back on a 4 ms
+## host", which is not the question.
+##
+## The question is how far a body travels between nearing the edge of its ring
+## and the next ring landing, and answering it needs a LONGER EXCURSION, not
+## another run at 100 m: raise SPRINT_OUT_M to something like 800, or give the
+## probe a sustained-run mode that keeps going until the peer either falls or
+## reaches the world edge, and watch for the first frame where `floor` goes
+## false somewhere that is not a step. Do that before trimming this to 3.
+@export var sim_radius_chunks := 4
 
 ## How many chunks of solid rock to build below the surface. The world is 320
 ## blocks tall but nobody can see the bottom 250 of it, so building a full
@@ -492,7 +544,7 @@ const FOG_START_RATIO := 0.4
 # --- Content ----------------------------------------------------------------
 
 ## One candidate tree per this many blocks, in both x and z.
-@export var tree_cell_blocks := 4
+@export var tree_cell_blocks := 8
 
 ## Global multiplier on the whole placement product. 0 empties the world of
 ## trees, 1 is the tuned density, 2 doubles it.
@@ -525,23 +577,23 @@ const FOG_START_RATIO := 0.4
 ## forest, which is what makes it a forest you cannot see through rather than
 ## an orchard - and the edge value is what keeps the treeline a thinning rather
 ## than a boundary.
-@export var tree_base_forest := 0.45
-@export var tree_base_forest_edge := 0.10
+@export var tree_base_forest := 0.80
+@export var tree_base_forest_edge := 0.20
 
 ## Meadow. Two orders of magnitude below the forest on purpose: a meadow with
 ## trees scattered through it is not a meadow. These are the lone beech and the
 ## birch at the margin, and there should be room to see between them.
-@export var tree_base_meadow := 0.008
+@export var tree_base_meadow := 0.004
 
 ## The shore band - birch only - and how far above a lake's shore level it
 ## reaches, in blocks.
-@export var tree_base_shore := 0.06
+@export var tree_base_shore := 0.03
 @export var tree_shore_blocks := 12.0
 
 ## Krummholz above the forest, through alpine and heath. Fades to nothing at
 ## the midpoint of the two bands together, so the last twisted pines give out
 ## well below the rock.
-@export var tree_base_alpine := 0.05
+@export var tree_base_alpine := 0.025
 
 ## GROVES: forest clumps, ~90 m across. `grove_share` of the forest is inside a
 ## grove and grows at full probability; the rest grows at `grove_floor` of it.
@@ -551,7 +603,56 @@ const FOG_START_RATIO := 0.4
 ## no edges - which is why the old one read as wallpaper however dense it got.
 @export var grove_freq := 0.005556
 @export var grove_share := 0.35
+## TODO(marcel): at x2 trees, the floor no longer opens the wood.
+##
+## grove_floor is what a candidate OUTSIDE a grove is multiplied by, and 0.35
+## was chosen when a spruce was 13-21 blocks. World feel v1 Stage 6 measured
+## canopy closure for the first time and the number between groves is **0.37**,
+## against a target of 0.20 - so the places that are supposed to be the open
+## wood between groves are now half-roofed, because the same 35% of candidates
+## grow trees three times the volume.
+##
+## It cannot be fixed by tuning the groves: raising old growth's closure and
+## opening the space between them pull the same lever in opposite directions.
+## It is a design question - how open is the wood between groves meant to be? -
+## and the answer is probably somewhere around 0.20, but that changes where
+## every tree outside a grove stands and is not a number to move blind on a
+## box with no GPU.
+##
+## The measurement to re-run after changing it:
+##   godot --headless --path . --script scripts/tools/worldgen_probe.gd \
+##       -- --seed 42 --canopy
 @export var grove_floor := 0.35
+
+## OLD GROWTH (world feel v1 Stage 6). What share of groves are the old kind,
+## how much bigger their trees are on top of tree_read_scale, and how many of
+## their candidates survive.
+##
+## T5: contrast is what makes huge read. A third of groves at x3 against two
+## thirds at x2 is a forest with old growth IN it; every grove at x2.3 would
+## just be a forest with slightly bigger trees. The thinning is what stops the
+## bigger crowns from becoming one solid roof - fewer trunks, further apart,
+## crowns that touch rather than merge.
+##
+## PROPERTIES, all three: they decide where blocks go.
+## What fraction of medium and large boulders are PUSHABLE rather than
+## scenery (world feel v1 Stage 11).
+##
+## HASHED, NOT LOCAL (hard rule 5). It changes what the world CONTAINS, not
+## what a machine keeps or shows: two peers at different values would disagree
+## about which rocks move, and the symptom is a friend heaving at a boulder
+## that is scenery on your screen. So it lives in PROPERTIES and moves the
+## config hash.
+##
+## NOT ALL OF THEM, deliberately. A world where every boulder rolls is a world
+## with no landmarks in it - you cannot say "meet me at the big rock" if the
+## big rock is wherever somebody last shoved it. 0.15 leaves the scenery
+## standing and makes the pushable ones a small find.
+@export var body_fraction := 0.15
+
+@export var old_growth_share := 0.33
+@export var old_growth_scale := 1.5
+@export var old_growth_keep := 0.55
 
 ## GLADES: clearings inside the forest, ~160 m across. The top `glade_share` of
 ## the mask grows nothing at all.
@@ -594,11 +695,21 @@ const FOG_START_RATIO := 0.4
 ##
 ## BOUNDED, AND THE BOUND IS WALKABILITY. Candidates sit every
 ## tree_cell_blocks, so two neighbouring trunks are at least
-## (tree_cell_blocks - 2 * jitter) blocks apart. At cell 4 and jitter 1 that is
-## 2 blocks between trunk centres. Raise the jitter and trees start to touch,
-## and a forest you cannot walk through is a wall, not a forest - which the
-## traversal probe is what actually checks.
-@export var tree_jitter_blocks := 1
+## (tree_cell_blocks - 2 * jitter) blocks apart. Raise the jitter and trees
+## start to touch, and a forest you cannot walk through is a wall, not a
+## forest - which the traversal probe is what actually checks.
+##
+## THE BOUND IS ON CENTRES AND THE TRUNKS HAVE WIDTH SINCE STAGE 5, so the rule
+## for whoever changes this next is that the CLEAR gap is
+## `tree_cell_blocks - 2 * tree_jitter_blocks - max trunk width`, and it has to
+## stay above the player's 0.8 m diameter. At cell 8, jitter 2 and a 3 x 3
+## forest spruce that is 1 block - 0.5 m - which is tight enough to look like
+## the cause of a walkability failure and was investigated as one.
+##
+## It is not the cause. The traversal probe stalls in the same way at Stage 4,
+## BEFORE any tree changed, and gets FURTHER at jitter 2 (1,003 m) than at
+## jitter 1 (875 m). See docs/status/world-feel-v1.md, Stage 5.
+@export var tree_jitter_blocks := 2
 
 ## How much wildness adds to the snag and krummholz weights at the far edge of
 ## the world, taken from spruce.
@@ -626,6 +737,24 @@ const FOG_START_RATIO := 0.4
 ## 1.0 means the table as authored, which is sized for world_scale 4 - see
 ## apply_world_scale(), which sets this rather than leaving it at 1.
 @export var tree_size_scale := 1.0
+
+## HOW MUCH CLOSER TO THE PLAYER'S SCALE A TREE IS DRAWN THAN THE LAND IS.
+##
+## World feel v1 Stage 5, and it is the row DESIGN.md's Scale table did not
+## have. The land is read against the landscape at 1:4; the player is read
+## against themselves at 1:1. A tree is the one object read against BOTH - a
+## spruce is three per cent of the ridge behind it, which is exactly right, and
+## seven player-heights tall, where a real spruce is twenty-five.
+##
+## So the trees scale and the land does not. `tree_size_scale` is what the land
+## asks for and is derived in apply_world_scale(); this is what the player asks
+## for, and the two COMPOSE per species in TreeSpecies.table() - each row taking
+## the share of this its "read" field allows. Krummholz and snags take none of
+## it: a knee-high alpine shrub at twice the size is not a bigger shrub.
+##
+## In PROPERTIES because it is a SHAPE knob: two machines that disagreed about
+## it would grow different forests while the handshake reported a match.
+@export var tree_read_scale := 2.0
 
 ## A basin smaller than this many coarse cells is a puddle, not a lake, and is
 ## discarded. 40 cells at 2 m per cell is about 160 m2.
@@ -838,6 +967,14 @@ const FOG_START_RATIO := 0.4
 ## has a line under it. 1.0 is off.
 @export var contact_band := 0.72
 
+## HOW DARK THE GROUND GOES UNDER A CLOSED CANOPY, at full cover.
+##
+## World feel v1 Stage 6, and a LOCAL knob: it is a rendering decision, it does
+## not move a block, and two machines disagreeing about it is a difference of
+## taste rather than of world. On F4. Tuned blind on this box - if 0.35 reads
+## as mud on a real GPU, 0.25.
+@export var canopy_shade := 0.35
+
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
 ##
@@ -887,10 +1024,12 @@ const PROPERTIES: PackedStringArray = [
 	"share_shore", "share_meadow", "share_forest", "share_alpine",
 	"share_heath", "share_rock", "share_snow",
 	"zone_blend_blocks", "zone_dither_blocks",
-	"tree_cell_blocks", "tree_size_scale", "tree_density_scale",
+	"tree_cell_blocks", "tree_size_scale", "tree_read_scale", "tree_density_scale",
 	"tree_base_forest", "tree_base_forest_edge", "tree_base_meadow",
 	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
 	"grove_freq", "grove_share", "grove_floor",
+	"old_growth_share", "old_growth_scale", "old_growth_keep",
+	"body_fraction",
 	"glade_freq", "glade_share",
 	"tree_max_slope_deg", "tree_bench_avoid",
 	"tree_spawn_clear_m", "tree_spawn_ramp_m",
@@ -951,8 +1090,12 @@ const PROPERTIES: PackedStringArray = [
 ## plants that were there rather than reshuffling the ones that are.
 @export var flora_draw_fraction := 1.0
 
-## Outer edge of the far-tree ring, in metres. Stage 7.
-@export var far_tree_m := 300.0
+## Outer edge of the far-tree ring, in metres.
+##
+## A PRESET FIELD since world feel v1 Stage 7 - it used to be one number for
+## every quality level, so High's forest stopped at 300 m while its fog ran to
+## 600 and now 800. See VIEW_PRESETS.
+@export var far_tree_m := 400.0
 
 ## Sway. 0 disables the wind shader entirely.
 @export var wind_strength := 1.0
@@ -964,13 +1107,13 @@ const PROPERTIES: PackedStringArray = [
 const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life",
-	"view_distance", "voxel_radius_chunks", "far_step", "max_jobs_in_flight",
+	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
-	"grain_amount", "grain_hue", "grain_sparse", "contact_band",
+	"grain_amount", "grain_hue", "grain_sparse", "contact_band", "canopy_shade",
 ]
 
 
@@ -1091,8 +1234,24 @@ func apply_world_scale() -> void:
 	# terrain passes through are built, so headroom is free.
 	#
 	# AFTER the tree scale, not before: the tallest tree is a function of it.
+	# THE COMPOSED MAXIMUM, not the land's alone (world feel v1 Stage 5). The
+	# tallest species takes the full read scale, so the sky the world reserves
+	# has to clear tree_size_scale * tree_read_scale - and a ceiling derived
+	# from the land alone would cut the crown off every hero.
+	# AND OLD GROWTH, which is a third multiplier (world feel v1 Stage 6).
+	#
+	# This over-reserves: the hero is the tallest species and heroes are never
+	# old growth, so no tree is actually read_scale * old_growth_scale tall.
+	# Over-reserving used to cost real chunks; since Stage 2 it costs nothing
+	# at all, because ColumnJob builds only up to the highest solid block a
+	# column actually contains and this is merely the bound it may not exceed.
+	# Free safety is worth taking - the alternative is a reserve that is
+	# correct today and silently short the moment someone raises a knob, with
+	# a flat-topped tree in some columns as the only symptom.
 	var needed := max_altitude \
-		+ REF_MAX_TREE_BLOCKS * tree_size_scale + TREE_RESERVE_MARGIN + 16.0
+		+ REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale \
+			* maxf(old_growth_scale, 1.0) \
+		+ TREE_RESERVE_MARGIN + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a
@@ -1120,6 +1279,7 @@ func apply_view_preset() -> void:
 	voxel_radius_chunks = preset["radius"]
 	fog_end_m = preset["fog_end"]
 	fog_start_m = fog_end_m * FOG_START_RATIO
+	far_tree_m = preset["far_tree"]
 
 
 ## Name of the current preset, for the debug readout and the boot log.

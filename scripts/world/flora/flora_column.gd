@@ -35,6 +35,12 @@ var triangle_count := 0
 ## visible_instance_count per slot.
 var draw_fraction := 1.0
 
+## The bodies this column promoted (world feel v1 Stage 11), kept so that a
+## column coming back from the cache can hand them to BodyField again. The
+## plants are cached as MultiMeshes; the bodies were freed on the way out,
+## and no job runs on a cache hit to rebuild them.
+var bodies: Array = []
+
 var _slots := {}   # model id -> MultiMeshInstance3D
 var _counts := {}  # model id -> instances in the buffer (all of them)
 var _block_size := 0.5

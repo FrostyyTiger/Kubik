@@ -1,6 +1,10 @@
 class_name World
 extends Node3D
 
+## The loaded frontier moved: the far mesh and the impostor ring both cut their
+## inner edge to it, so both want to know. Emitted at most once a frame.
+signal frontier_moved
+
 ## Owns every loaded chunk and is the only place voxels are allowed to change.
 ##
 ## Real editable voxels exist only near the player - a disc of chunk columns
@@ -23,6 +27,54 @@ signal generation_finished(chunk_count: int, elapsed_ms: int)
 ## frame - the single most expensive thing the world can do, triggered by
 ## standing still.
 const UNLOAD_MARGIN_CHUNKS := 2
+
+## THE CHUNK CACHE (world feel v1 Stage 4), counted in CHUNKS.
+##
+## A column leaving the unload ring is not freed: its nodes are hidden, its
+## colliders disabled, and it is parked here. Turning round used to rebuild the
+## trail you had just walked - measured at Stage 0 as every column of the
+## return leg.
+##
+## THE PLAN SAYS 3,000, WITH A 250 MB CEILING ON THE CACHE, and 3,000 is what
+## it is - but only after measuring twice, because the first measurement looked
+## like a fail and was not.
+##
+## Godot's static memory with the cache full is 268.9 MB at 2,996 chunks and
+## 226.1 MB at 1,997. That is the WHOLE PROCESS, not the cache, and the first
+## figure alone reads as over the ceiling. The difference between the two is
+## what isolates it: 42.8 MB per 999 chunks, so the cache is about **86 MB at
+## 2,000 and 128 MB at 3,000** - comfortably inside 250 MB, and the 268.9 was
+## the heightmap, the lakes, the far mesh and the flora buffers.
+##
+## 3,000 chunks is about 600 columns, a few 48 m steps of trail.
+const CHUNK_CACHE_CHUNKS := 3000
+
+## HOW FAR IN FRONT OF A MOVING PLAYER THE QUEUE LEANS, in chunks.
+##
+## The build queue is nearest-first, which is right for a player standing still
+## and wrong for one sprinting: the columns behind them are nearer than the
+## ones they are running at. This biases the sort key along the direction of
+## travel. Zero below WALKING_SPEED, so a standing player is nearest-first
+## exactly as before.
+const STREAM_HEADING_BIAS := 0.0
+const HEADING_MIN_SPEED := 2.0
+
+## Nodes freed in one frame, at most. The rest wait for the next one.
+const FREES_PER_FRAME := 32
+
+## Parked columns brought back in one frame, at most.
+##
+## A crossing can want dozens at once - turning round wants a whole disc - and
+## restoring them all in the frame the centre moved is a hitch of exactly the
+## kind this stage exists to remove. Measured: uncapped, the return leg of a
+## sprint hit 50.7 ms frames. Spread, it does not.
+const RESTORES_PER_FRAME := 8
+
+## Collision-only columns given their mesh in one frame, at most. Same reason
+## and same shape as RESTORES_PER_FRAME: re-meshing a column is six or seven
+## main-thread uploads, and a peer walking towards the host can hand over
+## dozens of columns at once.
+const UPGRADES_PER_FRAME := 2
 
 ## Flora columns kept hidden after they leave the far ring, most recent last.
 ##
@@ -83,7 +135,7 @@ var config: WorldgenConfig = null
 
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
-var _build_queue: Array[Vector3i] = []
+var _build_queue: Array[Vector2i] = []
 
 ## Mirror of _build_queue, for membership tests only. refresh_region() asks
 ## "is this already queued" once per wanted chunk, and Array.has() is a linear
@@ -96,20 +148,103 @@ var _queued := {}
 ## it; until then it stays at the spawn column.
 var _center := Vector2i.ZERO
 
+## HOST ONLY, and empty in every other case. The chunk column each remote peer's
+## simulated body is standing in - see set_sim_centres() and
+## WorldgenConfig.sim_radius_chunks.
+var _sim_centres: Array[Vector2i] = []
+
+## Columns that were built for collision only and have no mesh. A column in
+## here that comes inside the host's own disc is upgraded rather than rebuilt.
+var _collision_only := {}
+
+## Columns waiting to be given the mesh they were not built with. Drained a few
+## per frame like the cache restores, because a mesh is a main-thread upload.
+var _upgrade_queue: Array[Vector2i] = []
+
+## Set by Game. World does not own bodies - it owns columns, and a body outlives
+## the column it was born in - so all it does is tell BodyField which columns
+## have arrived and which have gone. See body_field.gd.
+var body_field: BodyField = null
+
 ## Emitted once, for the first full load. With streaming the queue empties
 ## every time the player stops walking, and a signal that fired then would have
 ## Game re-running its spawn logic for the rest of the session.
 var _initial_load_reported := false
 
-## chunk position -> {"task": int, "job": GenJob}. Chunks whose voxels are
-## being built by the worker pool and which therefore DO NOT EXIST YET in
-## _chunks. Everything that asks "is this chunk here" has to know about this
-## set as well, which is most of the cost of Stage 3.
-var _gen_in_flight := {}
-
-## chunk position -> {"task": int, "job": MeshJob}. Chunks whose voxels exist
-## and whose mesh is being built by the worker pool.
+## COLUMN (Vector2i of chunk x,z) -> {"task": int, "job": ColumnJob}. Columns
+## whose chunks - voxels, trees, meshes and collision faces - are being built
+## by the worker pool, and which therefore DO NOT EXIST YET in _chunks.
+## Everything that asks "is this chunk here" has to know about this set too.
+##
+## ONE SET, AND IT IS A COLUMN, since world feel v1 Stages 1 and 2. There were
+## two sets keyed by chunk, one per phase, and a chunk moved between them
+## through the main thread. See ColumnJob.
 var _in_flight := {}
+
+## Columns whose chunks have all landed. The unit of work is the column, so
+## "is this here" is a column question - and it has to be its own set rather
+## than a test on _chunks, because a column's SKY chunks are deliberately never
+## built (see ColumnJob's ceiling) and would never appear there.
+var _loaded_columns := {}
+
+## Columns built since the world was, for the ms-per-column readout.
+var _columns_built := 0
+
+## THE FRONTIER (world feel v1 Stage 3). How far out, per angular sector, every
+## wanted column has actually landed.
+##
+## WHY IT EXISTS. The far mesh used to cut its hole at one radius the instant
+## the centre column changed - `voxel_radius - 2 cells`, everywhere at once -
+## on the assumption that the voxels had it covered. Ahead of a moving player
+## they do not: the hole moves the moment you cross a boundary and the voxels
+## arrive seconds later, so the ground in front of you is neither far mesh nor
+## voxels. That is what the Stage 0 baseline measured as 126 of 144 samples
+## with a hole in them, and it is the "missing ground" the playtest reported.
+##
+## `_sector_missing[sector][ring]` counts wanted columns at that ring in that
+## sector which are NOT loaded. It is filled once per crossing inside the scan
+## refresh_region() already does, and adjusted by one as each column lands - so
+## nothing scans the disc twice. The frontier of a sector is the first ring
+## with a missing column in it.
+const FRONTIER_SECTORS := 16
+
+## The frontier is reported in steps of this many chunks. See _recompute_frontier().
+const FRONTIER_STEP_CHUNKS := 2
+
+var _sector_missing := []
+var _frontier := PackedInt32Array()
+var _frontier_dirty := true
+
+## Set when a column lands. The far mesh and the impostor ring follow the
+## frontier, so they have to rebuild when it MOVES - not only when the centre
+## column changes, which is what they used to key off. request_rebuild()
+## already coalesces, so this costs one worker rebuild per frontier change at
+## most, and in practice a handful over a 48 m move.
+var _frontier_advanced := false
+
+## The frontier the far mesh was last ASKED for. See _process().
+var _frontier_last_sent := PackedInt32Array()
+
+## Parked columns: Vector2i -> {"chunks": {cy: Chunk}, "nodes": {cy: ChunkNode}}.
+## _cache_order is the LRU, oldest first.
+var _column_cache := {}
+var _cache_order: Array[Vector2i] = []
+var _cache_chunks := 0
+
+## Nodes waiting to be freed, spread over frames.
+var _pending_frees: Array[ChunkNode] = []
+
+## Parked columns that are wanted again, waiting their turn. A column here is
+## neither loaded nor queued for a worker: it is built already and is coming
+## back within a few frames.
+var _pending_restores: Array[Vector2i] = []
+var _restore_queued := {}
+
+## Unit vector the player is travelling in, or zero when they are not. Set from
+## successive recentres.
+var _heading := Vector3.ZERO
+var _last_center_m := Vector3.ZERO
+var _have_last_center := false
 
 ## The low-poly terrain beyond the voxel radius. Everything the player can see
 ## but not touch.
@@ -170,6 +305,18 @@ var _wall_start_ms := 0
 var _total_ms := 0
 var _built := 0
 
+## WORLD FEEL V1 STAGE 0 - the live counters behind the F4 readout.
+##
+## The crossing is where a frame is lost, so the two numbers that describe one
+## are kept from the last crossing rather than averaged away: how many nodes it
+## freed and how long refresh_region took. `_max_frame_ms_2s` is a rolling
+## window, because a max since load is a number that only ever goes up and
+## stops meaning anything after the first hitch.
+var _freed_last_crossing := 0
+var _refresh_ms := 0.0
+var _max_frame_ms_2s := 0.0
+var _frame_window := []
+
 ## Split generate from mesh rather than reporting one number. They are tuned by
 ## completely different means - generate by noise layer count, mesh by the
 ## meshing algorithm - and one combined figure hides which of the two just got
@@ -221,16 +368,17 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 		_far_field.rebuilt.connect(_on_far_field_rebuilt)
 		add_child(_far_field)
 	_far_field.setup(generator, config)
-	_far_field.request_rebuild(_center * Chunk.SIZE)
+	_far_field.request_rebuild(_center * Chunk.SIZE, loaded_frontier())
 
 	refresh_region()
 	print("[World] seed %d, %d chunks queued around %s" % [
 		p_seed, _build_queue.size(), _center])
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_track_frame(delta)
 	if _build_queue.is_empty() and _in_flight.is_empty() \
-			and _gen_in_flight.is_empty() and _flora_queue.is_empty() \
+			and _flora_queue.is_empty() \
 			and _flora_in_flight.is_empty():
 		return
 
@@ -241,6 +389,29 @@ func _process(_delta: float) -> void:
 	_collect_finished(started, budget)
 	_submit_jobs()
 	_submit_flora()
+	_drain_restores()
+	_drain_upgrades()
+	_drain_frees()
+
+	# THE FAR MESH AND THE IMPOSTORS FOLLOW THE FRONTIER. Both used to key off
+	# a centre crossing, which is exactly when the voxels have NOT arrived yet;
+	# they now rebuild when the frontier itself moves. request_rebuild()
+	# coalesces, so a burst of landing columns costs one rebuild.
+	if _frontier_advanced:
+		_frontier_advanced = false
+		# ONLY WHEN IT ACTUALLY MOVED. _frontier_advanced is set by every
+		# column that lands, which during a stream is every frame - and asking
+		# for a rebuild every frame keeps a worker permanently busy on the far
+		# mesh, on a pool that runs one GDScript task at a time. Measured: it
+		# cost 1.4 s on the 48 m settle. A sector's frontier changing by a
+		# chunk is the event; a column landing is not.
+		var now := loaded_frontier()
+		if now != _frontier_last_sent:
+			_frontier_last_sent = now
+			if _far_field != null:
+				_far_field.request_rebuild(_center * Chunk.SIZE, now)
+			frontier_moved.emit()
+
 	_total_ms += Time.get_ticks_msec() - started
 
 	if is_idle() and not _initial_load_reported:
@@ -290,7 +461,7 @@ func has_chunk(chunk_pos: Vector3i) -> bool:
 
 ## Queued or out at the worker pool: no voxels yet, but there will be.
 func is_chunk_pending(chunk_pos: Vector3i) -> bool:
-	return _gen_in_flight.has(chunk_pos)
+	return _in_flight.has(Vector2i(chunk_pos.x, chunk_pos.z))
 
 
 ## Is there something to STAND ON in this chunk yet? Stricter than has_chunk():
@@ -299,7 +470,14 @@ func is_chunk_pending(chunk_pos: Vector3i) -> bool:
 ## to ask this one, or it puts the body in the ground.
 func is_chunk_collidable(chunk_pos: Vector3i) -> bool:
 	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
-	return node != null and node.collision_applied
+	if node != null:
+		return node.collision_applied
+	# A CHUNK THAT WAS NEVER BUILT BECAUSE IT IS ALL AIR answers true once its
+	# column has landed (world feel v1 Stage 2). There is nothing to stand on
+	# in it and nothing missing from it, and the alternative - answering false
+	# forever for every sky chunk - would tell the stream probe the world has a
+	# hole in it wherever the ceiling did its job.
+	return _loaded_columns.has(Vector2i(chunk_pos.x, chunk_pos.z))
 
 
 func is_world_ready() -> bool:
@@ -332,9 +510,23 @@ func reset() -> void:
 	_flora_triangles = 0
 	_flora_ms = 0
 	_flora_built = 0
-	_gen_in_flight.clear()
 	_build_queue.clear()
 	_queued.clear()
+	_loaded_columns.clear()
+	_columns_built = 0
+	for col in _column_cache:
+		for cy in _column_cache[col]["nodes"]:
+			var n: ChunkNode = _column_cache[col]["nodes"][cy]
+			if is_instance_valid(n):
+				n.queue_free()
+	_column_cache.clear()
+	_cache_order.clear()
+	_cache_chunks = 0
+	_pending_frees.clear()
+	_pending_restores.clear()
+	_restore_queued.clear()
+	_heading = Vector3.ZERO
+	_have_last_center = false
 	_edits.clear()
 	_total_ms = 0
 	_built = 0
@@ -350,7 +542,7 @@ func reset() -> void:
 ## before it takes a picture of it.
 func is_idle() -> bool:
 	return generator != null and _build_queue.is_empty() \
-		and _in_flight.is_empty() and _gen_in_flight.is_empty() \
+		and _in_flight.is_empty() \
 		and _flora_queue.is_empty() and _flora_in_flight.is_empty()
 
 
@@ -362,6 +554,40 @@ func queued_chunk_count() -> int:
 	return _build_queue.size()
 
 
+## Chunks that have been meshed and uploaded since the world was built. The
+## streaming probe's supply number - `built/s` over a sprint is the whole of
+## what night 1's first half moves.
+func built_chunk_count() -> int:
+	return _built
+
+
+## How far out, in metres and IN THIS DIRECTION, the far mesh declines to draw
+## because the voxels are expected to cover it.
+##
+## PER SECTOR SINCE STAGE 3. It used to be one radius everywhere, cut the
+## instant the centre column changed; it is now the frontier of the direction
+## you are asking about, minus the same two-cell overlap. A column further out
+## than this is covered by the far mesh, so its absence is not a hole - which
+## is exactly the question the stream probe asks four times a second.
+func far_field_exclusion_m(dir: Vector3) -> float:
+	if _far_field == null:
+		return 0.0
+	# THE MESH THAT EXISTS, not the frontier that will be used next rebuild. A
+	# rebuild takes a frame or two on a worker and during that window the hole
+	# on screen is the old one - which is precisely the window a hole could
+	# hide in.
+	var f := _far_field.built_frontier()
+	if f.is_empty():
+		return _far_field.exclusion_blocks() * config.block_size
+	var s := frontier_sector_of(int(round(dir.x * 1000.0)), int(round(dir.z * 1000.0)))
+	# THE SAME CONSTANT THE JOB CUT THE MESH WITH. Keeping a second copy of it
+	# here is how the probe came to report 21 holes that were not there: the
+	# job had widened its overlap and this had not.
+	var blocks := maxf(float(f[s] * Chunk.SIZE)
+		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS * config.far_step), 0.0)
+	return blocks * config.block_size
+
+
 ## Averages, not totals: a total tells you the world loaded, a per-chunk
 ## average tells you whether the next one will arrive in time. The HUD shows
 ## these live and they are the number the performance work in Stage 6 moves.
@@ -371,6 +597,19 @@ func last_timings() -> Dictionary:
 		"gen_ms": float(_gen_ms) / 1000.0 / float(n),
 		"mesh_ms": float(_mesh_ms) / 1000.0 / float(n),
 		"heightmap_ms": _heightmap_ms,
+		# WORLD FEEL V1 STAGE 0. The averages above are cumulative since load,
+		# which is the right number for "did the world arrive" and the wrong
+		# one for "is it keeping up NOW" - a 20-second load buries a two-second
+		# stall. These are the live ones.
+		"columns_in_flight": _in_flight.size(),
+		"columns_built": _columns_built,
+		"ms_per_column": (float(_gen_ms) / 1000.0 / float(maxi(_columns_built, 1))),
+		"chunks_per_column": (float(_built) / float(maxi(_columns_built, 1))),
+		"built": _built,
+		"freed_last_crossing": _freed_last_crossing,
+		"refresh_ms": _refresh_ms,
+		"max_frame_ms": _max_frame_ms_2s,
+		"cached_chunks": _cache_chunks,
 	}
 
 
@@ -386,15 +625,15 @@ func last_timings() -> Dictionary:
 ## was protecting the frame from nothing and stalling the pipeline to do it.
 func _submit_jobs() -> void:
 	while not _build_queue.is_empty() and _jobs_in_flight() < _max_jobs_in_flight:
-		var chunk_pos: Vector3i = _build_queue.pop_front()
-		_queued.erase(chunk_pos)
-		if _chunks.has(chunk_pos) or _gen_in_flight.has(chunk_pos):
+		var col: Vector2i = _build_queue.pop_front()
+		_queued.erase(col)
+		if _in_flight.has(col) or _column_loaded(col):
 			continue
-		_submit_generation(chunk_pos)
+		_submit_column(col)
 
 
 func _jobs_in_flight() -> int:
-	return _gen_in_flight.size() + _in_flight.size() + _flora_in_flight.size()
+	return _in_flight.size() + _flora_in_flight.size()
 
 
 ## HOOK 1 OF 4: submit. Hand queued flora columns to the worker pool.
@@ -421,12 +660,13 @@ func _submit_flora() -> void:
 		_flora_queued.erase(col)
 		if _flora_in_flight.has(col):
 			continue
-		if _flora_fraction_for(col) <= 0.0:
+		if not _wants_flora(col):
 			continue
 		var job := FloraJob.new()
 		job.column = col
 		job.generator = generator
 		job.config = config
+		job.bodies_only = _flora_fraction_for(col) <= 0.0
 		# ALWAYS THE FULL COLUMN. The ring a column is in decides how much of
 		# it is shown, not how much of it is built - see FloraColumn.
 		job.draw_fraction = config.flora_draw_fraction
@@ -456,177 +696,128 @@ func _flora_dirty(col: Vector2i) -> void:
 	_flora_queued[col] = true
 
 
-## PHASE ONE. Hand a chunk's voxels to the worker pool.
+## Hand a whole COLUMN - every chunk of it - to the worker pool.
 ##
-## The chunk object exists from here on, but it is NOT in _chunks and its
-## contents are undefined until the job completes - the worker is writing into
-## it. Nothing may read it in the meantime, which is the whole reason it is
-## held in _gen_in_flight rather than published early.
-func _submit_generation(chunk_pos: Vector3i) -> void:
-	var job := GenJob.new()
-	job.chunk = Chunk.new(chunk_pos)
-	job.generator = generator
-	_gen_in_flight[chunk_pos] = {
-		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk gen"),
-		"job": job,
-	}
-
-
-## PHASE TWO. The voxels have arrived; publish the chunk and mesh it.
-func _submit_mesh(chunk: Chunk) -> void:
-	var chunk_pos := chunk.chunk_pos
-
-	# The node exists immediately, with no mesh. That keeps the bookkeeping in
-	# one place: everything downstream can assume a chunk in _chunks has a node
-	# in _chunk_nodes, whether or not its mesh has arrived yet.
-	var node := ChunkNode.new()
-	node.setup(chunk, config, world_seed)
-	add_child(node)
-	_chunk_nodes[chunk_pos] = node
-
-	var job := MeshJob.new()
-	job.chunk = chunk
+## ONE TASK PER COLUMN (world feel v1 Stage 2). See ColumnJob for why: the tree
+## candidate scan was being re-run once per chunk of the column, and it is half
+## the generation cost.
+##
+## None of the column's chunks is in _chunks until the job completes - the
+## worker is writing into them - which is why the column is held in _in_flight
+## and nothing may read it in the meantime.
+##
+## THE NODES ARE NOT CREATED HERE. They are created at collection with the
+## meshes already in hand, which is also where the ceiling is applied: a chunk
+## the job decided was all air gets no node at all.
+func _submit_column(col: Vector2i) -> void:
+	var job := ColumnJob.new()
+	job.chunk_x = col.x
+	job.chunk_z = col.y
+	job.cy_range = _column_chunk_range(col.x, col.y)
 	job.generator = generator
 	job.config = config
 	job.world_seed = world_seed
-	job.neighbours = _face_neighbour_chunks(chunk_pos)
-	_in_flight[chunk_pos] = {
-		"task": WorkerThreadPool.add_task(job.run, false, "kubik chunk mesh"),
+	job.neighbours = _column_neighbour_chunks(col)
+	# Read on the MAIN THREAD, here, because it is a global shader parameter
+	# and a worker may not call RenderingServer. See
+	# ChunkMesher._under_canopy().
+	job.shade_ink = Look.shade_ink()
+	# A column wanted only by a peer's collision ring is built without a mesh.
+	# The arrays are still produced - the faces come from them - but nothing is
+	# uploaded to the rendering server. See ChunkNode.apply_arrays().
+	job.mesh = not _collision_only.has(col)
+	_in_flight[col] = {
+		"task": WorkerThreadPool.add_task(job.run, false, "kubik column"),
 		"job": job,
 	}
 
 
-## Install meshes for jobs the pool has finished with.
+## Is this column inside the host's own visible disc?
+func _inside_disc(col: Vector2i, radius_sq: int) -> bool:
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	return dx * dx + dz * dz <= radius_sq
+
+
+## WHERE THE HOST'S SIMULATED PEERS ARE (world feel v1 Stage 10).
 ##
-## Upload order does not matter to what the world ends up looking like, which
-## is why walking a Dictionary is acceptable here and is not anywhere in
-## worldgen: this decides which chunk appears a frame earlier, not what is in
-## it.
+## Set by Game once per sync tick from the PlayerSim bodies, in chunk columns.
+## Empty on a client and on a host playing alone, and in both of those cases
+## every line this touches is a loop over nothing.
 ##
-## MESHES BEFORE VOXELS, and the order is load-bearing. Both phases draw on
-## one budget, and an uploaded mesh is the only output the player can see or
-## stand on; a published chunk is a promise of one. Generated-first let a
-## busy pool fill the whole budget with publishing and node creation, frame
-## after frame, while finished meshes queued behind it unseen - the world
-## arrived slowly however fast the workers were, and the spawn chunk's
-## collision arrived late enough to drop the player through it. Meshes-first
-## cannot starve generation the same way: when no upload is waiting the
-## first pass costs nothing and the budget falls through to the second.
-func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
-	_collect_meshed(started, budget)
-	_collect_generated(started, budget)
-	_collect_flora(started, budget)
+## Refreshes the region when the set changes, because a peer crossing a chunk
+## boundary is exactly as much a reason to stream as the local player doing it.
+func set_sim_centres(cols: Array[Vector2i]) -> void:
+	if cols == _sim_centres:
+		return
+	_sim_centres = cols.duplicate()
+	refresh_region()
 
 
-## HOOK 2 OF 4: collect. Install flora buffers the pool has finished with.
+## Every column inside sim_radius_chunks of any simulated peer, clipped to the
+## world. A dictionary because two peers standing together would otherwise
+## queue the overlap twice.
+func _sim_ring_columns(lo: int, hi: int) -> Dictionary:
+	var out := {}
+	if _sim_centres.is_empty():
+		return out
+	var r: int = config.sim_radius_chunks
+	var r_sq := r * r
+	for centre in _sim_centres:
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				if dx * dx + dz * dz > r_sq:
+					continue
+				var cx := centre.x + dx
+				var cz := centre.y + dz
+				if cx < lo or cx > hi or cz < lo or cz > hi:
+					continue
+				out[Vector2i(cx, cz)] = true
+	return out
+
+
+## HOOK: give a column the mesh it was built without. A few per frame, because
+## every one of them is a main-thread upload - the same reason the cache
+## restores are budgeted.
+func _drain_upgrades() -> void:
+	var done := 0
+	while not _upgrade_queue.is_empty() and done < UPGRADES_PER_FRAME:
+		var col: Vector2i = _upgrade_queue.pop_front()
+		for cy in _column_chunk_range(col.x, col.y):
+			var node: ChunkNode = _chunk_nodes.get(Vector3i(col.x, cy, col.y))
+			if node == null or node.mesh_built:
+				continue
+			node.rebuild(Callable(self, "is_solid_world"))
+		done += 1
+
+
+## Is every chunk this column would build already loaded?
 ##
-## LAST of the three, and sharing their budget, for the same reason flora is
-## submitted last: ground the player can stand on outranks grass growing on it.
-## When the terrain has nothing waiting this costs nothing and the whole budget
-## falls through to here.
-func _collect_flora(started: int, budget: int) -> void:
-	var done: Array[Vector2i] = []
-	for col in _flora_in_flight:
-		if Time.get_ticks_msec() - started >= budget:
-			break
-		var entry: Dictionary = _flora_in_flight[col]
-		if not WorkerThreadPool.is_task_completed(entry["task"]):
-			continue
-		WorkerThreadPool.wait_for_task_completion(entry["task"])
-		done.append(col)
-
-	for col in done:
-		var entry: Dictionary = _flora_in_flight[col]
-		var job: FloraJob = entry["job"]
-		_flora_in_flight.erase(col)
-		_flora_ms += job.elapsed_usec
-		_flora_built += 1
-		# The column may have walked out of range while its job was in flight.
-		# Dropping the result is right: nothing is drawing it, and the job will
-		# be resubmitted if the player comes back.
-		if not _wants_flora(col):
-			continue
-		var node: FloraColumn = _flora_nodes.get(col)
-		if node == null:
-			node = _flora_cache.get(col)
-			if node != null:
-				_flora_cache.erase(col)
-				node.visible = true
-			else:
-				node = FloraColumn.new()
-				node.setup(col)
-				add_child(node)
-			_flora_nodes[col] = node
-		_flora_instances -= node.instance_count
-		_flora_triangles -= node.triangle_count
-		node.draw_fraction = _flora_fraction_for(col)
-		node.apply_buffers(job.buffers, config)
-		_flora_instances += node.instance_count
-		_flora_triangles += node.triangle_count
+## Asked instead of `_chunks.has(pos)` because the unit of work is the column:
+## a column is loaded when its chunks are there, and "there" includes the sky
+## chunks the ceiling decided not to build, which will never appear in _chunks.
+## The cheap test is the surface chunk - the one a column always has.
+func _column_loaded(col: Vector2i) -> bool:
+	return _loaded_columns.has(col)
 
 
-## Chunks whose voxels have arrived. Publish them, replay their edits, and
-## hand them straight on to phase two.
-func _collect_generated(started: int, budget: int) -> void:
-	var done: Array[Vector3i] = []
-	for chunk_pos in _gen_in_flight:
-		if Time.get_ticks_msec() - started >= budget:
-			break
-		var entry: Dictionary = _gen_in_flight[chunk_pos]
-		if not WorkerThreadPool.is_task_completed(entry["task"]):
-			continue
-		WorkerThreadPool.wait_for_task_completion(entry["task"])
-		done.append(chunk_pos)
-
-	for chunk_pos in done:
-		var job: GenJob = _gen_in_flight[chunk_pos]["job"]
-		var chunk: Chunk = job.chunk
-		_gen_ms += job.elapsed_usec
-		_gen_in_flight.erase(chunk_pos)
-		_chunks[chunk_pos] = chunk
-
-		# THE EDIT-REPLAY POINT, and the reason it has to be exactly here.
-		#
-		# Every edit accepted while this chunk was still generating was
-		# recorded in _edits and could not be written into any chunk, because
-		# there was no chunk to write into. This is the first moment there is.
-		# It has to happen BEFORE the mesh job is submitted, or the mesh would
-		# be built from the unedited voxels and the edit would be invisible
-		# until something else happened to dirty the chunk.
-		_replay_edits_for(chunk)
-
-		var t_upload := Time.get_ticks_usec()
-		_submit_mesh(chunk)
-		_mesh_ms += Time.get_ticks_usec() - t_upload
+## The chunks of the four neighbouring columns that already exist, for this
+## column's mesher to ask about the blocks along its edges. Anything missing
+## falls back to the generator, which gives the same answer the real chunk
+## will - which is why the edge of the loaded region does not sprout a wall of
+## faces.
+func _column_neighbour_chunks(col: Vector2i) -> Dictionary:
+	var out := {}
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		var n := col + d
+		for cy in _column_chunk_range(n.x, n.y):
+			var pos := Vector3i(n.x, cy, n.y)
+			var chunk: Chunk = _chunks.get(pos)
+			if chunk != null:
+				out[pos] = chunk
+	return out
 
 
-func _collect_meshed(started: int, budget: int) -> void:
-	var done: Array[Vector3i] = []
-	for chunk_pos in _in_flight:
-		if Time.get_ticks_msec() - started >= budget:
-			break
-		var entry: Dictionary = _in_flight[chunk_pos]
-		if not WorkerThreadPool.is_task_completed(entry["task"]):
-			continue
-		# Required even for a task already reported complete - it is what
-		# releases the pool's own bookkeeping for it.
-		WorkerThreadPool.wait_for_task_completion(entry["task"])
-
-		var t_upload := Time.get_ticks_usec()
-		var node: ChunkNode = _chunk_nodes.get(chunk_pos)
-		if node != null and is_instance_valid(node):
-			node.apply_arrays(entry["job"].arrays)
-		_mesh_ms += Time.get_ticks_usec() - t_upload
-		done.append(chunk_pos)
-		_built += 1
-
-	for chunk_pos in done:
-		_in_flight.erase(chunk_pos)
-
-
-## The six chunks sharing a face with this one, for the mesher to ask about
-## neighbours it cannot see itself. Missing ones are simply absent, and the job
-## falls back to the generator for them.
 ## Find the basins and put water in them.
 func _build_lakes() -> void:
 	lakes = Lakes.new()
@@ -670,6 +861,157 @@ func _build_lakes() -> void:
 		lakes.elapsed_ms()])
 
 
+## The worst frame in the last two seconds.
+##
+## A rolling window rather than a max since load: a max since load is a number
+## that only goes up, and after the first hitch it stops telling you whether
+## the thing you just changed made the next one better.
+func _track_frame(delta: float) -> void:
+	var now := Time.get_ticks_msec()
+	_frame_window.append([now, delta * 1000.0])
+	var worst := 0.0
+	var keep := []
+	for f in _frame_window:
+		if now - int(f[0]) <= 2000:
+			keep.append(f)
+			worst = maxf(worst, float(f[1]))
+	_frame_window = keep
+	_max_frame_ms_2s = worst
+
+
+## Install chunks the pool has finished with: publish the voxels, build the
+## node, upload the mesh and set the collider.
+##
+## Upload order does not matter to what the world ends up looking like, which
+## is why walking a Dictionary is acceptable here and is not anywhere in
+## worldgen: this decides which chunk appears a frame earlier, not what is in
+## it.
+##
+## ONE PASS SINCE STAGE 1. There used to be two - meshes before voxels, and
+## the order was load-bearing, because a busy pool could otherwise fill the
+## whole budget with publishing while finished meshes queued behind it unseen.
+## With one job there is one kind of completion and nothing to starve: a chunk
+## arrives finished or it does not arrive.
+func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
+	_collect_chunks(started, budget)
+	_collect_flora(started, budget)
+
+
+func _collect_chunks(started: int, budget: int) -> void:
+	var done: Array[Vector2i] = []
+	for col in _in_flight:
+		if Time.get_ticks_msec() - started >= budget:
+			break
+		var entry: Dictionary = _in_flight[col]
+		if not WorkerThreadPool.is_task_completed(entry["task"]):
+			continue
+		# Required even for a task already reported complete - it is what
+		# releases the pool's own bookkeeping for it.
+		WorkerThreadPool.wait_for_task_completion(entry["task"])
+		done.append(col)
+
+	for col in done:
+		var job: ColumnJob = _in_flight[col]["job"]
+		_gen_ms += job.gen_usec + job.tree_usec
+		_in_flight.erase(col)
+		_loaded_columns[col] = true
+		_column_landed(col)
+		_frontier_advanced = true
+
+		var t_upload := Time.get_ticks_usec()
+		for cy in job.built:
+			var entry: Dictionary = job.built[cy]
+			var chunk: Chunk = entry["chunk"]
+			var chunk_pos := chunk.chunk_pos
+			_chunks[chunk_pos] = chunk
+
+			# THE EDIT-REPLAY POINT, and the reason it has to be exactly here.
+			#
+			# Every edit accepted while this column was in flight was recorded
+			# in _edits and could not be written into any chunk, because there
+			# was no chunk to write into. This is the first moment there is.
+			#
+			# It does one more thing than it used to: the job built the mesh
+			# from the voxels it generated, so an edit landing in the window
+			# invalidates those arrays - they show the block that was just
+			# broken. The chunk is therefore REMESHED rather than the job's
+			# arrays used, which costs a main-thread mesh for the rare chunk
+			# edited mid-flight - the same cost breaking a block has always had.
+			var edited := _replay_edits_for(chunk)
+
+			var node := ChunkNode.new()
+			node.setup(chunk, config, world_seed, job.zone)
+			add_child(node)
+			_chunk_nodes[chunk_pos] = node
+			if edited:
+				node.rebuild(Callable(self, "is_solid_world"))
+			else:
+				node.apply_arrays(entry["arrays"], entry["faces"], job.mesh)
+			_built += 1
+		_mesh_ms += Time.get_ticks_usec() - t_upload
+		_columns_built += 1
+
+
+## HOOK 2 OF 4: collect. Install flora buffers the pool has finished with.
+##
+## LAST of the three, and sharing their budget, for the same reason flora is
+## submitted last: ground the player can stand on outranks grass growing on it.
+## When the terrain has nothing waiting this costs nothing and the whole budget
+## falls through to here.
+func _collect_flora(started: int, budget: int) -> void:
+	var done: Array[Vector2i] = []
+	for col in _flora_in_flight:
+		if Time.get_ticks_msec() - started >= budget:
+			break
+		var entry: Dictionary = _flora_in_flight[col]
+		if not WorkerThreadPool.is_task_completed(entry["task"]):
+			continue
+		WorkerThreadPool.wait_for_task_completion(entry["task"])
+		done.append(col)
+
+	for col in done:
+		var entry: Dictionary = _flora_in_flight[col]
+		var job: FloraJob = entry["job"]
+		_flora_in_flight.erase(col)
+		_flora_ms += job.elapsed_usec
+		_flora_built += 1
+		# The column may have walked out of range while its job was in flight.
+		# Dropping the result is right: nothing is drawing it, and the job will
+		# be resubmitted if the player comes back.
+		if not _wants_flora(col):
+			continue
+		# THE BODIES FIRST, and for a bodies-only column they are all there is.
+		if body_field != null:
+			body_field.column_landed(col, job.bodies)
+		if job.bodies_only:
+			# Nothing is drawn, so there is no FloraColumn to remember them on.
+			# A bodies-only column is re-scanned if it comes back, which is the
+			# right trade: it is not in the cache either.
+			continue
+		var node: FloraColumn = _flora_nodes.get(col)
+		if node == null:
+			node = _flora_cache.get(col)
+			if node != null:
+				_flora_cache.erase(col)
+				node.visible = true
+				if body_field != null:
+					body_field.column_landed(col, node.bodies)
+			else:
+				node = FloraColumn.new()
+				node.setup(col)
+				add_child(node)
+			_flora_nodes[col] = node
+		_flora_instances -= node.instance_count
+		_flora_triangles -= node.triangle_count
+		node.draw_fraction = _flora_fraction_for(col)
+		node.bodies = job.bodies
+		node.apply_buffers(job.buffers, config)
+		_flora_instances += node.instance_count
+		_flora_triangles += node.triangle_count
+
+
+
+
 func lake_count() -> int:
 	return lakes.lake_count() if lakes != null else 0
 
@@ -700,9 +1042,6 @@ func _face_neighbour_chunks(chunk_pos: Vector3i) -> Dictionary:
 ## thrown away - a worker still reading a chunk we are about to drop is exactly
 ## the kind of bug that shows up once a month and never reproduces.
 func _drain_jobs() -> void:
-	for chunk_pos in _gen_in_flight:
-		WorkerThreadPool.wait_for_task_completion(_gen_in_flight[chunk_pos]["task"])
-	_gen_in_flight.clear()
 	for chunk_pos in _in_flight:
 		WorkerThreadPool.wait_for_task_completion(_in_flight[chunk_pos]["task"])
 	_in_flight.clear()
@@ -711,11 +1050,117 @@ func _drain_jobs() -> void:
 	_flora_in_flight.clear()
 
 
-func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
-	# Horizontal distance only - vertical order does not change how it looks.
-	var da := (a.x - _center.x) * (a.x - _center.x) + (a.z - _center.y) * (a.z - _center.y)
-	var db := (b.x - _center.x) * (b.x - _center.x) + (b.z - _center.y) * (b.z - _center.y)
-	return da < db
+## Which of FRONTIER_SECTORS a column offset falls in, and how far out it is.
+##
+## Static and trivial on purpose: it is called once per wanted column per
+## crossing (~450) and once per far-field quad (~100k), so it must not allocate
+## and must agree exactly between World and FarFieldJob - which is why
+## FarFieldJob calls this one rather than keeping its own copy.
+static func frontier_sector_of(dx: int, dz: int) -> int:
+	var a := atan2(float(dz), float(dx)) + PI
+	var s := int(a / TAU * float(FRONTIER_SECTORS))
+	return clampi(s, 0, FRONTIER_SECTORS - 1)
+
+
+## The radius, in chunks, out to which every wanted column of each sector has
+## landed. Sixteen entries, sector 0 starting at -PI.
+##
+## Behind the player this is simply the unload radius: a column that is not
+## wanted is not missing, so a sector with nothing wanted in it reports the
+## full radius and the far mesh keeps its hole there - which is correct,
+## because the voxels behind you have not gone anywhere.
+func loaded_frontier() -> PackedInt32Array:
+	if _frontier_dirty:
+		_recompute_frontier()
+	return _frontier
+
+
+func _recompute_frontier() -> void:
+	var radius: int = config.voxel_radius_chunks
+	if _sector_missing.is_empty():
+		_reset_sector_missing()
+	_frontier = PackedInt32Array()
+	_frontier.resize(FRONTIER_SECTORS)
+	for s in FRONTIER_SECTORS:
+		var reach := radius
+		var counts: PackedInt32Array = _sector_missing[s]
+		for r in counts.size():
+			if counts[r] > 0:
+				reach = r
+				break
+		# QUANTISED DOWNWARD, in steps of FRONTIER_STEP_CHUNKS. The far mesh is
+		# rebuilt whenever this array changes and a rebuild is a whole disc of
+		# ~100k vertices on a pool that runs one GDScript task at a time - so
+		# reacting to every single chunk of advance cost 1 s on the 48 m
+		# settle. Rounding DOWN is the safe direction: the hole is smaller than
+		# it strictly needs to be, which is overlap, and overlap is invisible.
+		_frontier[s] = (reach / FRONTIER_STEP_CHUNKS) * FRONTIER_STEP_CHUNKS
+	_frontier_dirty = false
+
+
+## Start a fresh count. Called by refresh_region() before its disc scan, which
+## is the one place the wanted set is known.
+func _reset_sector_missing() -> void:
+	var rings: int = config.voxel_radius_chunks + 1
+	_sector_missing = []
+	for s in FRONTIER_SECTORS:
+		var row := PackedInt32Array()
+		row.resize(rings)
+		_sector_missing.append(row)
+	_frontier_dirty = true
+
+
+func _note_column(col: Vector2i, loaded: bool) -> void:
+	if _sector_missing.is_empty():
+		return
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	var ring := int(floor(sqrt(float(dx * dx + dz * dz))))
+	if ring >= config.voxel_radius_chunks + 1:
+		return
+	var s := frontier_sector_of(dx, dz)
+	var row: PackedInt32Array = _sector_missing[s]
+	row[ring] += (0 if loaded else 1)
+	_sector_missing[s] = row
+	_frontier_dirty = true
+
+
+## One column has landed: it is no longer missing from its ring.
+func _column_landed(col: Vector2i) -> void:
+	if _sector_missing.is_empty():
+		return
+	var dx := col.x - _center.x
+	var dz := col.y - _center.y
+	var ring := int(floor(sqrt(float(dx * dx + dz * dz))))
+	if ring >= config.voxel_radius_chunks + 1:
+		return
+	var s := frontier_sector_of(dx, dz)
+	var row: PackedInt32Array = _sector_missing[s]
+	if row[ring] > 0:
+		row[ring] -= 1
+		_sector_missing[s] = row
+		_frontier_dirty = true
+
+
+func _nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
+	return _queue_key(a) < _queue_key(b)
+
+
+## Distance squared, pulled forward along the direction of travel.
+##
+## `d^2 - bias * dot(offset, heading) * |offset|`: a column straight ahead at
+## radius r scores r^2 - bias*r, which is the score of one about `bias` chunks
+## nearer; a column straight behind is pushed out by the same amount. With no
+## heading it is exactly d^2, which is the nearest-first order a standing
+## player has always had.
+func _queue_key(col: Vector2i) -> float:
+	var dx := float(col.x - _center.x)
+	var dz := float(col.y - _center.y)
+	var d_sq := dx * dx + dz * dz
+	if _heading == Vector3.ZERO:
+		return d_sq
+	var d := sqrt(d_sq)
+	return d_sq - STREAM_HEADING_BIAS * (dx * _heading.x + dz * _heading.z) * d
 
 
 # --- The loaded region ------------------------------------------------------
@@ -727,6 +1172,20 @@ func _nearer_to_centre(a: Vector3i, b: Vector3i) -> bool:
 ## Returns true if the region actually moved, so callers can skip the rebuild
 ## work that follows a move (the far-field mesh, in Stage 7).
 func set_center_from_position(pos_m: Vector3) -> bool:
+	# THE HEADING, for the queue's velocity bias. Taken from where the player
+	# has actually been rather than from their velocity vector, because this is
+	# the only thing World is told every frame and a heading that survives one
+	# frame of a jump is a heading that biases the queue the wrong way.
+	if _have_last_center:
+		var d := pos_m - _last_center_m
+		d.y = 0.0
+		var moved := d.length()
+		if moved > 0.0001:
+			var speed := moved / maxf(get_process_delta_time(), 0.0001)
+			_heading = d / moved if speed > HEADING_MIN_SPEED else Vector3.ZERO
+	_last_center_m = pos_m
+	_have_last_center = true
+
 	var bx := int(floor(pos_m.x / config.block_size))
 	var bz := int(floor(pos_m.z / config.block_size))
 	var c := Vector2i(Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE))
@@ -737,13 +1196,15 @@ func set_center_from_position(pos_m: Vector3) -> bool:
 	# The voxel hole in the far mesh has moved, so the far mesh is now wrong.
 	# Rebuilding is threaded, so this costs the main thread nothing.
 	if _far_field != null:
-		_far_field.request_rebuild(_center * Chunk.SIZE)
+		_far_field.request_rebuild(_center * Chunk.SIZE, loaded_frontier())
 	return true
 
 
 ## Bring the loaded set in line with where the centre now is: queue what is
 ## missing inside the radius, free what has fallen well outside it.
 func refresh_region() -> void:
+	var _refresh_t0 := Time.get_ticks_usec()
+	var _freed_before := _chunk_nodes.size()
 	var radius: int = config.voxel_radius_chunks
 	var radius_sq := radius * radius
 	var lo := _world_chunk_min()
@@ -761,24 +1222,65 @@ func refresh_region() -> void:
 			var cz := _center.y + dz
 			if cx < lo or cx > hi or cz < lo or cz > hi:
 				continue  # outside the bounded world
-			for cy in _column_chunk_range(cx, cz):
-				wanted[Vector3i(cx, cy, cz)] = true
+			wanted[Vector2i(cx, cz)] = true
 
-	for pos in wanted:
-		# _gen_in_flight is the third place a chunk can be. Forgetting it here
-		# would queue a second copy of every chunk currently generating, and
-		# the two would race to install a node under the same key.
-		if not _chunks.has(pos) and not _gen_in_flight.has(pos) \
-				and not _queued.has(pos):
-			_build_queue.append(pos)
-			_queued[pos] = true
+	# The frontier's counts are filled from the SAME scan, so nothing walks the
+	# disc twice. A column already loaded is not missing; everything else is,
+	# until its job lands and _column_landed() takes it off.
+	_reset_sector_missing()
+	for col in wanted:
+		_note_column(col, _column_loaded(col))
 
-	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS)
+	for col in wanted:
+		# _in_flight is the third place a column can be. Forgetting it here
+		# would queue a second copy of every column currently building, and
+		# the two would race to install nodes under the same keys.
+		if _column_loaded(col) or _in_flight.has(col) or _queued.has(col):
+			continue
+		_build_queue.append(col)
+		_queued[col] = true
+
+	# THE PEERS' RINGS, ADDED AFTER THE FRONTIER SCAN AND NOT BEFORE.
+	#
+	# The frontier (Stage 3) is about what the LOCAL player can see - it is
+	# what the far field cuts its hole to. A ring 500 m away is not part of
+	# that and folding it into the sector counts would tell the far field to
+	# leave a hole around a friend nobody is looking at.
+	var spare := {}
+	for col in _sim_ring_columns(lo, hi):
+		spare[col] = true
+		if wanted.has(col):
+			continue  # already the host's own, and meshed
+		wanted[col] = true
+		if _column_loaded(col) or _in_flight.has(col) or _queued.has(col):
+			continue
+		_build_queue.append(col)
+		_queued[col] = true
+		# Marked BEFORE the job is submitted, because _submit_column reads it
+		# to decide whether to mesh.
+		_collision_only[col] = true
+
+	# A collision-only column the host's own player has now walked up to needs
+	# its mesh. Re-meshed from the voxels it already has rather than rebuilt:
+	# generation and the tree scan are the expensive halves and their answers
+	# have not changed.
+	for col in _collision_only.keys():
+		if _column_loaded(col) and _inside_disc(col, radius_sq):
+			_collision_only.erase(col)
+			if not _upgrade_queue.has(col):
+				_upgrade_queue.append(col)
+
+	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS, -1, spare)
 	_refresh_flora()
 
 	# Nearest-first, so the world grows outward from the player rather than
 	# popping in in some arbitrary order.
 	_build_queue.sort_custom(Callable(self, "_nearer_to_centre"))
+
+	# What this crossing cost, for the F4 readout. Stage 4 is the stage that
+	# has to bring both of these down; this is where they are measured.
+	_freed_last_crossing = maxi(_freed_before - _chunk_nodes.size(), 0)
+	_refresh_ms = float(Time.get_ticks_usec() - _refresh_t0) / 1000.0
 
 
 ## HOOK 3 OF 4: free, and queue. Bring the flora columns in line with where the
@@ -832,6 +1334,9 @@ func _refresh_flora() -> void:
 					_flora_cache.erase(col)
 					_flora_nodes[col] = node
 					node.visible = true
+					# Its bodies were freed when it was cached; put them back.
+					if body_field != null:
+						body_field.column_landed(col, node.bodies)
 					_flora_instances += node.instance_count
 					_flora_triangles += node.triangle_count
 			if node == null:
@@ -845,6 +1350,17 @@ func _refresh_flora() -> void:
 				node.set_fraction(fraction)
 				_flora_instances += node.instance_count
 				_flora_triangles += node.triangle_count
+
+	# THE PEERS' BODY RINGS. Queued like any other flora column and then not
+	# drawn - see _flora_bodies_only(). They are deliberately not in `wanted`
+	# above, because `wanted` drives the draw fraction and these are not drawn.
+	for col in _sim_ring_columns(_world_chunk_min(), _world_chunk_max()):
+		if wanted.has(col) or _flora_nodes.has(col) or _flora_cache.has(col):
+			continue
+		if _flora_in_flight.has(col) or _flora_queued.has(col):
+			continue
+		_flora_queue.append(col)
+		_flora_queued[col] = true
 
 	# Out of both rings, with hysteresis: keep a column a margin past the far
 	# ring so a player on the boundary does not evict and restore it every
@@ -864,8 +1380,28 @@ func _refresh_flora() -> void:
 		_flora_nodes.erase(col)
 		node.visible = false
 		_flora_cache[col] = node
+		# THE BODIES STAY WITH THE CACHED PLANTS, and getting this wrong cost
+		# 37% of chunk throughput.
+		#
+		# This used to free them here, on the argument that a body is cheap to
+		# rebuild and a broadphase entry is not free. That argument is fine and
+		# the PLACE was wrong: the flora cache exists precisely BECAUSE columns
+		# churn in and out of the drawn set constantly during a sprint - night 1
+		# measured it and cached them for exactly that reason - so freeing
+		# bodies on this boundary meant destroying and rebuilding nodes,
+		# collision shapes and physics registrations, on the main thread, over
+		# and over, all the way across a crossing.
+		#
+		# A cached body is FROZEN, which is its resting state anyway (see
+		# WorldBody.shove), so it costs a broadphase entry and no solver time.
+		# They are freed when the column is actually EVICTED from the cache,
+		# below, which is where "cheap to rebuild" was always the right trade.
 	while _flora_cache.size() > FLORA_CACHE_COLUMNS:
 		var oldest: Vector2i = _flora_cache.keys()[0]
+		# EVICTED, not merely hidden - this is where the column really goes,
+		# and where its bodies go with it. See the note above.
+		if body_field != null:
+			body_field.column_left(oldest)
 		_flora_cache[oldest].queue_free()
 		_flora_cache.erase(oldest)
 
@@ -917,6 +1453,31 @@ func _flora_fraction_for(col: Vector2i) -> float:
 	return 0.0
 
 
+## Is this column wanted ONLY so a remote peer has bodies to push?
+##
+## THE GAP THIS CLOSES (world feel v1 Stage 11). Bodies are promoted out of the
+## flora scan, so they exist where flora is built - and flora is built around
+## the LOCAL player. Stage 10c gave a remote peer a collision-only ring so it
+## has ground; without this it would have ground and no rocks, and every
+## boulder it could see on its own screen would be one the host was not
+## simulating. Walking up to a rock and finding it welded to the floor is a
+## worse bug than the cost of fixing it.
+##
+## The cost is the placement scan and nothing else - no buffers, no MultiMesh,
+## no upload - which is the same trade Stage 10c made for meshes. See
+## FloraJob.bodies_only.
+func _flora_bodies_only(col: Vector2i) -> bool:
+	if _sim_centres.is_empty() or _flora_fraction_for(col) > 0.0:
+		return false
+	var r: int = config.sim_radius_chunks
+	for centre in _sim_centres:
+		var dx := col.x - centre.x
+		var dz := col.y - centre.y
+		if dx * dx + dz * dz <= r * r:
+			return true
+	return false
+
+
 static func _fraction_matches(have: float, want: float) -> bool:
 	return absf(have - want) < 0.001
 
@@ -928,7 +1489,7 @@ func _flora_nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
 
 
 func _wants_flora(col: Vector2i) -> bool:
-	return _flora_fraction_for(col) > 0.0
+	return _flora_fraction_for(col) > 0.0 or _flora_bodies_only(col)
 
 
 ## Instances currently drawn, and columns holding them. For the F3 readout.
@@ -958,36 +1519,133 @@ func _column_chunk_range(cx: int, cz: int) -> Array:
 	return range(maxi(bottom, 0), mini(top, max_cy) + 1)
 
 
-func _free_distant_chunks(keep_radius: int) -> void:
+## `keep_radius` is the unload ring; `prune_radius` is where QUEUED-but-unbuilt
+## columns are dropped, and it is tighter (world feel v1 Stage 4). A column in
+## the trailing band that was never built should not be built when the player
+## pauses - the player is not going to look at it.
+## `spare` is the columns that must survive regardless of distance: since world
+## feel v1 Stage 10 that is the collision rings around remote peers, which are
+## by definition far outside the host's own radius. Without it they would be
+## queued by every refresh and parked by the same refresh - a treadmill that
+## builds a friend's ground over and over and never lets them stand on it.
+func _free_distant_chunks(keep_radius: int, prune_radius: int = -1,
+		spare: Dictionary = {}) -> void:
 	var keep_sq := keep_radius * keep_radius
+	var prune_sq := (prune_radius * prune_radius) if prune_radius > 0 else keep_sq
 	var doomed: Array[Vector3i] = []
 	for pos in _chunks:
+		var col := Vector2i(pos.x, pos.z)
+		if spare.has(col):
+			continue
 		var dx: int = pos.x - _center.x
 		var dz: int = pos.z - _center.y
 		# Never free a chunk a worker is still reading. It will drift out of
 		# range again on the next refresh, by which time its job is done.
-		if dx * dx + dz * dz > keep_sq and not _in_flight.has(pos):
+		if dx * dx + dz * dz > keep_sq and not _in_flight.has(col):
 			doomed.append(pos)
 	for pos in doomed:
+		var chunk: Chunk = _chunks[pos]
 		_chunks.erase(pos)
+		var col := Vector2i(pos.x, pos.z)
+		# The column goes with its chunks: it is not loaded any more, and the
+		# next refresh must be free to queue it again - or to find it parked.
+		_loaded_columns.erase(col)
 		var node: ChunkNode = _chunk_nodes.get(pos)
-		if node != null:
-			node.queue_free()
-			_chunk_nodes.erase(pos)
+		_chunk_nodes.erase(pos)
+		if node == null:
+			continue
+		# PARKED, NOT FREED (world feel v1 Stage 4). Turning round used to
+		# rebuild the trail you had just walked.
+		node.set_parked(true)
+		var entry = _column_cache.get(col)
+		if entry == null:
+			entry = {"chunks": {}, "nodes": {}}
+			_column_cache[col] = entry
+			_cache_order.append(col)
+		entry["chunks"][pos.y] = chunk
+		entry["nodes"][pos.y] = node
+		_cache_chunks += 1
+	_evict_cache()
 	# Edits are NOT dropped with the chunk. _edits is the authoritative
 	# difference between the seed and the world, and _replay_edits_for() puts
 	# them back when the chunk is regenerated - which is what lets a player
 	# walk away from a hole they dug and find it still there.
 	if not _build_queue.is_empty():
-		var still: Array[Vector3i] = []
-		for pos in _build_queue:
-			var dx: int = pos.x - _center.x
-			var dz: int = pos.z - _center.y
-			if dx * dx + dz * dz <= keep_sq:
-				still.append(pos)
+		var still: Array[Vector2i] = []
+		for col in _build_queue:
+			var dx: int = col.x - _center.x
+			var dz: int = col.y - _center.y
+			if spare.has(col) or dx * dx + dz * dz <= prune_sq:
+				still.append(col)
 			else:
-				_queued.erase(pos)
+				_queued.erase(col)
 		_build_queue = still
+
+
+## Bring a parked column back. True if it was there.
+##
+## THE EDITS ARE REPLAYED, always. `_edits` is the authoritative difference
+## between the seed and the world, and replaying it is idempotent - it writes
+## the same value a second time - so replaying all of it is a superset of
+## "the edits accepted since this was cached" and cannot be wrong. A chunk an
+## edit landed in is remeshed, exactly as it is on the streaming path.
+func _restore_column(col: Vector2i) -> bool:
+	var entry = _column_cache.get(col)
+	if entry == null:
+		return false
+	_column_cache.erase(col)
+	_cache_order.erase(col)
+	for cy in entry["chunks"]:
+		var chunk: Chunk = entry["chunks"][cy]
+		var node: ChunkNode = entry["nodes"][cy]
+		var pos := chunk.chunk_pos
+		_chunks[pos] = chunk
+		_chunk_nodes[pos] = node
+		node.set_parked(false)
+		if _replay_edits_for(chunk):
+			node.rebuild(Callable(self, "is_solid_world"))
+		_cache_chunks -= 1
+	_loaded_columns[col] = true
+	_column_landed(col)
+	_frontier_advanced = true
+	return true
+
+
+## Drop the oldest parked columns until the cache is inside its bound.
+func _evict_cache() -> void:
+	while _cache_chunks > CHUNK_CACHE_CHUNKS and not _cache_order.is_empty():
+		var col: Vector2i = _cache_order.pop_front()
+		var entry = _column_cache.get(col)
+		_column_cache.erase(col)
+		if entry == null:
+			continue
+		for cy in entry["nodes"]:
+			# Spread over frames: freeing 600 columns' nodes in one frame is
+			# the hitch this stage exists to remove.
+			_pending_frees.append(entry["nodes"][cy])
+			_cache_chunks -= 1
+
+
+## Bring back a bounded number of parked columns per frame.
+func _drain_restores() -> void:
+	var n := 0
+	while not _pending_restores.is_empty() and n < RESTORES_PER_FRAME:
+		var col: Vector2i = _pending_restores.pop_front()
+		_restore_queued.erase(col)
+		# It may have been evicted, or walked back out of range, since it was
+		# listed. Both are fine: the next refresh decides again.
+		_restore_column(col)
+		n += 1
+
+
+## Free a bounded number of parked nodes per frame.
+func _drain_frees() -> void:
+	var n := 0
+	while not _pending_frees.is_empty() and n < FREES_PER_FRAME:
+		var node: ChunkNode = _pending_frees.pop_back()
+		if is_instance_valid(node):
+			node.queue_free()
+		n += 1
 
 
 func _world_chunk_min() -> int:
@@ -1075,9 +1733,10 @@ func _host_apply_edit(sender_id: int, world_block_pos: Vector3i, block_id: int) 
 	# the edit cannot be applied - but it must still be ACCEPTED, or a player
 	# digging into ground that has just come into range would have the edit
 	# silently dropped, and only sometimes, depending on how busy the pool was.
-	# Recording it is enough: _collect_generated() replays it the moment the
+	# Recording it is enough: _collect_chunks() replays it the moment the
 	# voxels arrive, before the chunk is meshed.
-	var pending := _gen_in_flight.has(Chunk.world_to_chunk(world_block_pos))
+	var cpos_pending := Chunk.world_to_chunk(world_block_pos)
+	var pending := _in_flight.has(Vector2i(cpos_pending.x, cpos_pending.z))
 	if pending:
 		# No way to know whether this changes anything, since the ground it
 		# would change does not exist yet. Accepting a redundant edit costs one
@@ -1105,7 +1764,7 @@ func _validate_edit(_sender_id: int, world_block_pos: Vector3i, block_id: int) -
 	# lost. A chunk that is neither is genuinely out of range and the edit is
 	# refused, which is what stops a client editing the far side of the world.
 	var cpos := Chunk.world_to_chunk(world_block_pos)
-	return has_chunk(cpos) or _gen_in_flight.has(cpos)
+	return has_chunk(cpos) or _in_flight.has(Vector2i(cpos.x, cpos.z))
 
 
 # --- Local application (identical on host and clients) ----------------------
@@ -1259,19 +1918,39 @@ func spawn_position_m(clearance_m: float) -> Vector3:
 		float(b.y) * config.block_size)
 
 
+## The surface zone under a point given in METRES.
+##
+## For anything that needs to know what it is standing on rather than how high
+## it is - since world feel v1 Stage 12 that is the slide rule and the chunk
+## colliders' friction. It asks the generator rather than the loaded chunk,
+## which means it answers for ground that has not streamed in yet: that is
+## wanted, because the host simulates remote peers over terrain it may only
+## have as collision.
+func zone_at_m(x: float, z: float) -> int:
+	var bx := int(floor(x / config.block_size))
+	var bz := int(floor(z / config.block_size))
+	return generator.surface_zone_at(bx, bz, generator.surface_at(
+		float(bx), float(bz)))
+
+
 ## Same thing in metres, which is what anything outside worldgen wants.
 func surface_height_m(wx: int, wz: int) -> float:
 	return generator.surface_at(float(wx), float(wz)) * config.block_size
 
 
-func _replay_edits_for(chunk: Chunk) -> void:
+## Returns true if any edit actually landed in this chunk - which is what tells
+## the caller the mesh its job built is stale. See _collect_chunks().
+func _replay_edits_for(chunk: Chunk) -> bool:
 	if _edits.is_empty():
-		return
+		return false
 	var origin := chunk.origin()
+	var landed := false
 	for pos in _edits:
 		var local: Vector3i = pos - origin
 		if Chunk.in_bounds(local.x, local.y, local.z):
 			chunk.set_voxel(local.x, local.y, local.z, _edits[pos])
+			landed = true
+	return landed
 
 
 ## True once a seed is known, i.e. setup() has been called.

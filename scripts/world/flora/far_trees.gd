@@ -37,6 +37,10 @@ var _job: FarTreesJob = null
 var _task := -1
 var _pending := Vector2i.ZERO
 var _has_pending := false
+
+## Per-sector radius in chunks out to which the real trees have landed. Set by
+## Game from World.loaded_frontier() when the frontier moves.
+var frontier := PackedInt32Array()
 var _last_center_m := Vector3(INF, INF, INF)
 
 var _generator: TerrainGenerator = null
@@ -97,9 +101,15 @@ func _start_if_idle() -> void:
 	job.center = _pending
 	job.generator = _generator
 	job.config = _config
-	# INNER EDGE AT THE VOXEL RADIUS, because the real trees are inside it and
-	# drawing both would double every trunk near the boundary.
+	# INNER EDGE AT THE FRONTIER, because the real trees are inside it and
+	# drawing both would double every trunk near the boundary - but only where
+	# the real trees have actually ARRIVED (world feel v1 Stage 3). Keyed to
+	# the voxel radius, the impostors vanished ahead of a moving player seconds
+	# before the real trees existed, exactly as the far mesh's hole did. An
+	# impostor and a real tree overlapping for a second is invisible; a gap is
+	# not. Empty frontier falls back to the old single radius.
 	job.inner_blocks = float(_config.voxel_radius_chunks * Chunk.SIZE)
+	job.frontier = frontier
 	# OUTER EDGE AT THE SMALLER of far_tree_m and the fog. Past fog end nothing
 	# is visible at all, so an impostor out there is a triangle drawn for
 	# nobody - and the fog is what makes a 600 m view distance affordable in

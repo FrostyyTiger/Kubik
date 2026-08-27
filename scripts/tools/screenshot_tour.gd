@@ -83,7 +83,12 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	# is built to follow a character and fight for control of its own pitch;
 	# for a photograph we just want to say where to stand and what to look at.
 	_camera = Camera3D.new()
-	_camera.far = 600.0
+	# THE SAME FAR PLANE THE PLAYER GETS, and until world feel v1 Stage 0 it was
+	# a third, independent number: the player's camera clipped at 400 m, this
+	# one at a hardcoded 600, and the fog ended at 600 too - so the tour cut the
+	# last fog band off and could never have photographed the player's bug at
+	# all. The tour's whole job is to photograph what the player sees.
+	_camera.far = _world.config.fog_end_m * Player.FAR_PLANE_RATIO
 	_camera.fov = 68.0
 	get_tree().current_scene.add_child(_camera)
 	_camera.current = true
@@ -233,7 +238,56 @@ func _choose_vantages() -> Array:
 	# trunk spacing and a treeline actually read - and because the acceptance
 	# test for this plan is a sentence about standing inside a forest.
 	shots.append_array(_foliage_vantages(hm, gen, cfg))
+
+	# --- World feel v1 Stage 13: the thing you can push ---------------------
+	#
+	# EYE HEIGHT AND CLOSE, like the foliage vantages and unlike the terrain
+	# ones. A boulder photographed from eighty metres is a grey dot on a
+	# hillside; what this shot has to show is a rock big enough that you would
+	# not try it on your own, standing on ground you can see is loose.
+	var boulder := _find_boulder(gen, cfg)
+	if boulder != Vector3.ZERO:
+		shots.append({
+			"name": "15-boulder",
+			"note": "a pushable boulder_l, at eye height",
+			"target": boulder,
+			"distance": 6.0, "height": 1.8,
+		})
 	return shots
+
+
+## The nearest promoted boulder_l to spawn, in metres, or ZERO if the search
+## comes up empty.
+##
+## RUN THROUGH THE REAL PLACEMENT AND THE REAL PROMOTION, not a guess at where
+## rocks are: FloraPlacement decides what grows on each block and
+## BodyTable.promote decides which of those become bodies, and a photograph of
+## a boulder that is not actually pushable would be a picture of the wrong
+## thing. Boulders are rare - and promoted large ones rarer still, about one
+## percent of boulders - so this scans a spiral of columns out from spawn and
+## stops at the first hit.
+func _find_boulder(gen: TerrainGenerator, cfg: WorldgenConfig) -> Vector3:
+	var spawn: Vector2i = gen.spawn_block
+	var here := Vector2i(Chunk.floor_div(spawn.x, Chunk.SIZE),
+		Chunk.floor_div(spawn.y, Chunk.SIZE))
+	var x := 0
+	var z := 0
+	var dx := 0
+	var dz := -1
+	for _i in 8000:
+		var col := here + Vector2i(x, z)
+		for inst in FloraPlacement.column(gen, cfg, col.x, col.y):
+			var block: Vector2i = inst["block"]
+			if BodyTable.promote(inst["model"], block.x, block.y,
+					gen.world_seed, cfg) == BodyTable.BOULDER_L:
+				return inst["pos"]
+		if x == z or (x < 0 and x == -z) or (x > 0 and x == 1 - z):
+			var t := dx
+			dx = -dz
+			dz = t
+		x += dx
+		z += dz
+	return Vector3.ZERO
 
 
 ## Eye-height vantages for foliage: inside a forest, in a meadow, at the
@@ -337,6 +391,38 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 	# see that. Both reuse a vantage that already exists so they are directly
 	# comparable with their noon twin: 13 is shot 1's meadow, 14 is shot 6's
 	# postcard.
+	# UNDER THE CANOPY (world feel v1 Stage 5). Standing where the trees are
+	# thickest, looking UP thirty degrees - which is the only way to photograph
+	# the half of "envelop" that height alone does not answer. Shot 7 looks
+	# level and cuts the crowns off at the top of the frame by construction;
+	# this one asks whether there is any sky overhead at all.
+	# THE MOUNTAIN, FROM THE MEADOW YOU START IN (world feel v1 Stage 7).
+	#
+	# The second half of Marcel's morning test, and the one the fog change is
+	# for: at fog_end 600 the summit the spawn search guarantees is there was
+	# beyond the fog from spawn, so the postcard could only be taken by walking
+	# to a lake. This stands where the player starts and looks at the highest
+	# ground in the world - if it does not frame, the view distance is too
+	# short whatever the other shots say.
+	var summit_m := _cell_to_metres(hm, _find_summit(hm), cfg)
+	var spawn_eye := _to_metres(gen.spawn_block,
+		gen.surface_at(float(gen.spawn_block.x), float(gen.spawn_block.y)), cfg) \
+		+ Vector3(0.0, EYE_LEVEL_M, 0.0)
+	out.append({
+		"name": "16-spawn-postcard",
+		"note": "the summit, framed from where the player starts",
+		"eye_m": spawn_eye,
+		"target": summit_m,
+	})
+
+	out.append({
+		"name": "15-under-canopy",
+		"note": "the densest grove, looking up 30 degrees - is there sky?",
+		"eye_m": forest_eye,
+		"target": _along(forest_eye, _densest_heading(gen, cfg, forest_eye),
+			18.0, 18.0 * tan(deg_to_rad(30.0))),
+	})
+
 	out.append({
 		"name": "13-meadow-dawn",
 		"note": "shot 1's meadow at dawn, 0.24",

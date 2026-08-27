@@ -58,6 +58,13 @@ const SALT_HERO := 221
 const SALT_JITTER_X := 222
 const SALT_JITTER_Z := 223
 const SALT_MEADOW_KIND := 224
+## Which KIND a grove is - ordinary or old growth. Hashed on the grove's own
+## cell rather than the tree's, so a whole grove is one kind and the boundary
+## between two is a district edge rather than a speckle.
+const SALT_GROVE_KIND := 225
+## Thins the candidates inside an old-growth grove. Its own salt, so raising or
+## lowering old_growth_keep does not reshuffle which trees are old growth.
+const SALT_OLD_GROWTH_THIN := 226
 
 
 # --- The masks --------------------------------------------------------------
@@ -179,6 +186,61 @@ static func masks_for(gen: TerrainGenerator) -> Masks:
 ## Stamp every tree that reaches into this chunk.
 ##
 ## The one entry point TerrainGenerator._place_trees() calls.
+## Every tree that reaches into ONE COLUMN, stamped once across all its chunks.
+##
+## The candidate scan is the same one stamp_chunk() does - the column's
+## footprint grown by max_reach - but it happens once for the whole column
+## instead of once per chunk. Same cells, same decide() calls, same trees; a
+## sixth or a seventh of the work.
+## How much of a column's sky its own trees cover, 0 to 1.
+##
+## Crown area over column area, from the tree list the column already decided -
+## so it costs nothing beyond a sum. Clamped, because crowns overlap and the
+## question is "is there a roof", not "how many layers of roof".
+##
+## Returned by stamp_column() rather than computed separately: the candidate
+## scan is the expensive part and it has already run.
+static func stamp_column(writer, gen: TerrainGenerator,
+		chunk_x: int, chunk_z: int) -> float:
+	var config := gen.config
+	var cell: int = config.tree_cell_blocks
+	if cell <= 0:
+		return 0.0
+
+	var margin := TreeSpecies.max_reach(config) + config.tree_jitter_blocks
+	var masks := masks_for(gen)
+	var ox := chunk_x * Chunk.SIZE
+	var oz := chunk_z * Chunk.SIZE
+
+	var cx0 := Chunk.floor_div(ox - margin, cell)
+	var cx1 := Chunk.floor_div(ox + Chunk.SIZE - 1 + margin, cell)
+	var cz0 := Chunk.floor_div(oz - margin, cell)
+	var cz1 := Chunk.floor_div(oz + Chunk.SIZE - 1 + margin, cell)
+
+	var crown_area := 0.0
+	for cz in range(cz0, cz1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var found := decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			_stamp_found(writer, gen, found)
+			# Only the part of the crown that is over THIS column counts, and
+			# a crown centred a long way off contributes nothing - so the sum
+			# is weighted by how much of the trunk's own cell overlaps us.
+			var r := float(found["params"].get("crown", 0))
+			if r <= 0.0:
+				continue
+			var dx := absf(float(found["bx"]) - float(ox) - float(Chunk.SIZE) * 0.5)
+			var dz := absf(float(found["bz"]) - float(oz) - float(Chunk.SIZE) * 0.5)
+			var reach := r + float(Chunk.SIZE) * 0.5
+			if dx > reach or dz > reach:
+				continue
+			crown_area += PI * r * r \
+				* clampf(1.0 - maxf(dx, dz) / maxf(reach, 0.001), 0.0, 1.0)
+	var column_area := float(Chunk.SIZE * Chunk.SIZE)
+	return clampf(crown_area / column_area, 0.0, 1.0)
+
+
 static func stamp_chunk(chunk: Chunk, gen: TerrainGenerator) -> void:
 	var config := gen.config
 	var cell: int = config.tree_cell_blocks
@@ -207,6 +269,15 @@ static func stamp_chunk(chunk: Chunk, gen: TerrainGenerator) -> void:
 ## Called by every chunk the tree reaches, and MUST produce the same tree for
 ## all of them - which is why nothing in here reads the chunk, the writer, or
 ## anything else that differs between those calls.
+## Draw a tree that has already been decided. Split out of stamp_cell() so
+## stamp_column() can count crowns without deciding twice.
+static func _stamp_found(writer, gen: TerrainGenerator, found: Dictionary) -> void:
+	if found.is_empty():
+		return
+	TreeSpecies.draw(writer, found["species"], found["bx"], found["ground"],
+		found["bz"], found["params"], gen.config)
+
+
 static func stamp_cell(writer, gen: TerrainGenerator, cell_x: int, cell_z: int,
 		masks: Masks = null) -> void:
 	var found := decide(gen, cell_x, cell_z, masks)
@@ -315,10 +386,33 @@ static func decide(gen: TerrainGenerator, cell_x: int, cell_z: int,
 	if not _ground_ok(gen, surface, bx, bz, zone):
 		return {}
 
+	# OLD GROWTH: fewer trunks, further apart, each one far bigger. Thinning
+	# here rather than lowering the base keeps the ordinary groves untouched.
+	var old_growth := is_old_growth(gen, bx, bz, masks)
+	if old_growth and WorldHash.hash01(cell_x, cell_z, gen.world_seed,
+			SALT_OLD_GROWTH_THIN) >= config.old_growth_keep:
+		return {}
+
 	var species := species_at(gen, cell_x, cell_z, zone, surface, bx, bz)
 	if species < 0:
 		return {}
-	return _tree(gen, species, cell_x, cell_z, bx, bz, surface)
+	if old_growth:
+		species = _old_growth_species(gen, cell_x, cell_z, species)
+	return _tree(gen, species, cell_x, cell_z, bx, bz, surface, old_growth)
+
+
+## AN OLD WOOD IS SPRUCE, BEECH AND DEAD WOOD. Birch is a pioneer - it grows
+## where light reaches the floor, which is exactly what an old growth grove does
+## not have - so it is re-rolled into the two that belong, and snags are twice
+## as likely because an old wood has dead wood standing in it.
+static func _old_growth_species(gen: TerrainGenerator, cell_x: int, cell_z: int,
+		species: int) -> int:
+	var r := WorldHash.hash01(cell_x, cell_z, gen.world_seed, SALT_GROVE_KIND + 1)
+	if species == TreeSpecies.BIRCH:
+		return TreeSpecies.SPRUCE if r < 0.6 else TreeSpecies.BEECH
+	if species == TreeSpecies.LARCH and r < 0.15:
+		return TreeSpecies.SNAG
+	return species
 
 
 ## The highest probability any candidate anywhere can reach.
@@ -346,9 +440,10 @@ static func _ground_ok(gen: TerrainGenerator, surface: float, bx: int, bz: int,
 
 
 static func _tree(gen: TerrainGenerator, species: int, cell_x: int, cell_z: int,
-		bx: int, bz: int, surface: float) -> Dictionary:
+		bx: int, bz: int, surface: float, old_growth := false) -> Dictionary:
 	return {
 		"species": species,
+		"old_growth": old_growth,
 		"cell": Vector2i(cell_x, cell_z),
 		"bx": bx,
 		"bz": bz,
@@ -358,7 +453,8 @@ static func _tree(gen: TerrainGenerator, species: int, cell_x: int, cell_z: int,
 		"ground": int(floor(surface)),
 		"surface": surface,
 		"params": TreeSpecies.params_for(species, cell_x, cell_z,
-			gen.world_seed, gen.config),
+			gen.world_seed, gen.config,
+			gen.config.old_growth_scale if old_growth else 1.0),
 	}
 
 
@@ -448,6 +544,34 @@ static func _band_position(gen: TerrainGenerator, surface: float,
 	if surface <= lo or surface >= hi or hi <= lo:
 		return -1.0
 	return (surface - lo) / (hi - lo)
+
+
+## IS THIS AN OLD-GROWTH GROVE? (world feel v1 Stage 6.)
+##
+## Hashed on the GROVE's cell, not the tree's: `grove_freq` is a wavelength, so
+## 1/grove_freq blocks is the scale the grove mask itself varies on, and
+## quantising to it gives one answer per grove instead of a speckle of two
+## kinds inside one wood.
+##
+## WHY A TYPE AND NOT A GRADIENT. T5: contrast is what makes huge read. A
+## forest where every tree is a bit bigger is a forest with bigger trees; a
+## forest where one grove in three is enormous and the rest is ordinary is a
+## forest with old growth in it, and you know when you have walked into one.
+static func is_old_growth(gen: TerrainGenerator, bx: int, bz: int,
+		masks: Masks = null) -> bool:
+	var config := gen.config
+	if config.old_growth_share <= 0.0 or config.grove_freq <= 0.0:
+		return false
+	if masks == null:
+		masks = masks_for(gen)
+	# Outside a grove there is no grove kind.
+	if masks.grove_cut != INF \
+			and masks.grove.get_noise_2d(float(bx), float(bz)) < masks.grove_cut:
+		return false
+	var gcx := int(floor(float(bx) * config.grove_freq))
+	var gcz := int(floor(float(bz) * config.grove_freq))
+	return WorldHash.hash01(gcx, gcz, gen.world_seed, SALT_GROVE_KIND) \
+		< config.old_growth_share
 
 
 ## Forest clumps. 1 inside a grove, `grove_floor` outside it.

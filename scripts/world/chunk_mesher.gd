@@ -100,8 +100,24 @@ const AO_CORNER_U1V1 := 3
 ## setup and never writes to it again - so reading it from a worker thread is
 ## safe and needs no copying. It replaced a growing list of loose float
 ## parameters at Stage 10, when per-vertex tinting added five more.
+## `canopy_cover` is how much of this column's sky its own trees cover, 0 to 1,
+## and it darkens the ground under them - world feel v1 Stage 6.
+##
+## SHADE IS AN INK (look v2 rule 1), so this is not a multiply: the colour keeps
+## its luminance and takes the shade's HUE, in proportion to
+## `cover * canopy_shade`. A multiply would darken and desaturate together and
+## give the forest floor a grey cast; the ink gives it the same violet the
+## ramp's shade band uses, which is what makes a wood read as shaded rather
+## than as underexposed.
+##
+## AND IT IS AN AUTHORING STEP, NOT A TRANSFER CHANGE. It happens to the vertex
+## colour before Look.to_wire(), exactly where baked AO happens, so look v2's
+## rule 4 - what is authored is what is on screen - is untouched and the swatch
+## sheet does not move.
 static func build_arrays(chunk: Chunk, solid_outside: Callable,
-		config: WorldgenConfig, world_seed: int) -> Array:
+		config: WorldgenConfig, world_seed: int, canopy_cover := 0.0,
+		shade_ink := Color(0.25, 0.29, 0.55, 1.0)) -> Array:
+	var canopy_mix := clampf(canopy_cover, 0.0, 1.0) * config.canopy_shade
 	var block_size: float = config.block_size
 	var ao_strength: float = config.ao_strength
 	var verts := PackedVector3Array()
@@ -202,7 +218,7 @@ static func build_arrays(chunk: Chunk, solid_outside: Callable,
 			if has_face:
 				_emit_slice(mask, ao_mask, size, d, u, v, slice + 1,
 					config, world_seed, origin,
-					verts, normals, colors, indices)
+					verts, normals, colors, indices, canopy_mix, shade_ink)
 
 	if verts.is_empty():
 		return []
@@ -227,7 +243,9 @@ static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size:
 		d: int, u: int, v: int, plane: int,
 		config: WorldgenConfig, world_seed: int, origin: Vector3i,
 		verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray, indices: PackedInt32Array) -> void:
+		colors: PackedColorArray, indices: PackedInt32Array,
+		canopy_mix := 0.0,
+		shade_ink := Color(0.25, 0.29, 0.55, 1.0)) -> void:
 	for jv in size:
 		var iu := 0
 		while iu < size:
@@ -259,7 +277,8 @@ static func _emit_slice(mask: PackedInt32Array, ao_mask: PackedInt32Array, size:
 				h += 1
 
 			_emit_quad(d, u, v, plane, iu, jv, w, h, value, ao_value,
-				config, world_seed, origin, verts, normals, colors, indices)
+				config, world_seed, origin, verts, normals, colors, indices,
+				canopy_mix, shade_ink)
 
 			for dv in h:
 				for du in w:
@@ -271,7 +290,9 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 		u0: int, v0: int, w: int, h: int, value: int, ao_value: int,
 		config: WorldgenConfig, world_seed: int, origin: Vector3i,
 		verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray, indices: PackedInt32Array) -> void:
+		colors: PackedColorArray, indices: PackedInt32Array,
+		canopy_mix := 0.0,
+		shade_ink := Color(0.25, 0.29, 0.55, 1.0)) -> void:
 	var positive := value > 0
 	var block_size: float = config.block_size
 	var ao_strength: float = config.ao_strength
@@ -332,8 +353,11 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 			config.color_jitter_hue)
 		# sRGB on the wire: the AO multiply above is linear, this is the one
 		# conversion, and it is the last thing before the push. See Look.to_wire.
-		colors.push_back(Look.to_wire(Color(
-			tinted.r * shade, tinted.g * shade, tinted.b * shade, tinted.a)))
+		var lit := Color(tinted.r * shade, tinted.g * shade,
+			tinted.b * shade, tinted.a)
+		if canopy_mix > 0.0:
+			lit = _under_canopy(lit, canopy_mix, shade_ink)
+		colors.push_back(Look.to_wire(lit))
 
 	indices.push_back(first)
 	indices.push_back(first + 1)
@@ -346,6 +370,43 @@ static func _emit_quad(d: int, u: int, v: int, plane: int,
 ## Wrap finished arrays in an ArrayMesh. MUST run on the main thread - this is
 ## the only part of meshing that touches the rendering server, which is exactly
 ## why build_arrays() returns arrays instead of a mesh.
+## The triangle soup `ArrayMesh.create_trimesh_shape()` would derive: every
+## index expanded to its vertex, three at a time.
+##
+## WHY IT IS HERE AND NOT ON THE MAIN THREAD (world feel v1 Stage 1). Deriving
+## the collision shape from a finished ArrayMesh is pure arithmetic over the
+## index buffer - no server call, no Resource - and it was being done on the
+## main thread for every chunk. On a worker it leaves the main thread
+## `ConcavePolygonShape3D.new()` and `set_faces()`: one allocation and one
+## memcpy. See ChunkNode.apply_arrays().
+static func faces_from(mesh_arrays: Array) -> PackedVector3Array:
+	if mesh_arrays.is_empty():
+		return PackedVector3Array()
+	var verts: PackedVector3Array = mesh_arrays[Mesh.ARRAY_VERTEX]
+	var indices: PackedInt32Array = mesh_arrays[Mesh.ARRAY_INDEX]
+	var faces := PackedVector3Array()
+	faces.resize(indices.size())
+	for i in indices.size():
+		faces[i] = verts[indices[i]]
+	return faces
+
+
+## Take the shade ink's hue, keep the luminance. See build_arrays().
+##
+## THE INK IS PASSED IN, NOT FETCHED. It lives in a global shader parameter, and
+## reading one means calling RenderingServer - which a worker thread must never
+## do, and which this did once per VERTEX. The world still loaded, so nothing
+## looked broken; it took 466 seconds instead of 30. Captured on the main
+## thread at submit time, in World._submit_column().
+static func _under_canopy(c: Color, mix: float, ink: Color) -> Color:
+	var lum := Look.luma(c)
+	var ink_lum := maxf(Look.luma(ink), 0.0001)
+	# The ink at THIS colour's luminance, so only the hue crosses over.
+	var k := lum / ink_lum
+	var tinted := Color(ink.r * k, ink.g * k, ink.b * k, c.a)
+	return c.lerp(tinted, mix)
+
+
 static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
 	if arrays.is_empty():
 		return null

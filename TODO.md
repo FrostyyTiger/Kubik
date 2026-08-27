@@ -11,13 +11,13 @@ has one owner per wave; everyone else adds a file plus a one-line hook.
 
 - [x] `feat/flora-streaming` lands on main (merged 2026-08-25)
 - [x] **A. Look v2** - ran 2026-08-25, merged (`docs/plans/look-v2.md`)
-- [ ] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - night 1: chunk streaming keeps up with sprint, never a hole, trees at 1:2 with old-growth groves and a closed canopy, fog to 800 m; night 2: Jolt, host-authoritative input (D1 pulled forward), boulders and logs as co-op bodies, slope momentum
+- [x] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - **DONE** on `feat/world-feel-v1`, 2026-08-27. Night 1: one job per column, the frontier (holes 126 -> 0), a chunk cache, trees at 1:2, old-growth groves, the understorey, fog to 800 m. Night 2: Jolt, host-authoritative input (D1 pulled forward, PASS on Forward+ at 0.217 m median), boulders as co-op bodies, the push and the rock, momentum and the scree slide. `docs/status/world-feel-v1.md`
 
 ## Wave 1 - after flora lands  `C || D || B`
 
 - [ ] **C. Creatures v1 - the trio** (2 nights) - wolf, marmot, eagle; LimboAI, A* over the heightmap, senses, pack, burrows; quadruped rig; species table
 - [ ] **D. Combat v1** (2 nights)
-  - [ ] D1 host-authoritative player input (the carried ticket) - **pulled into A2 night 2**
+  - [x] D1 host-authoritative player input (the carried ticket) - **done in A2 night 2**, 2026-08-27
   - [ ] D1 stats table: health, stamina, mana; damage through the one mutation path
   - [ ] D2 light attack, dodge / block; sword, bow, staff; fire bolt, frost bolt
   - [ ] D2 attack / hit / downed poses; revive

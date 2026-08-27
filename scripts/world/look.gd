@@ -562,6 +562,37 @@ static func accent_color(elevation: float, morning := false) -> Color:
 	return (SkyCycle.keyframe_at(elevation, morning)["accent"] as Color).linear_to_srgb()
 
 
+## The value `shade_ink()` answers with before SkyCycle has published anything -
+## a scene opened on its own, or a column submitted on the first frame.
+const SHADE_INK_DEFAULT := Color(0.25, 0.29, 0.55, 1.0)
+
+## The last shade ink published, cached on the way OUT rather than read back in.
+##
+## READ BACK, THIS WAS A STALL ON THE COLUMN HOT PATH. Stage 6 wrote
+## `shade_ink()` as a `RenderingServer.global_shader_parameter_get()`, which
+## Godot answers with "ERROR: This function should never be used outside the
+## editor, it can severely damage performance" - and meant it. World submits one
+## column per job and read it once per submission: 346 of those readbacks during
+## world generation alone on Marcel's box, each one a synchronous round trip to
+## the rendering server, sitting inside the frame times night 2 is measured
+## against.
+##
+## Nothing needed reading back. `publish()` is the only writer and it runs every
+## frame; the value is simply kept here on the way past. Identical behaviour,
+## no round trip.
+static var _shade_ink := SHADE_INK_DEFAULT
+
+
+## The shade ink SkyCycle last published, linear. For anything that authors a
+## colour rather than lighting one - the understorey, world feel v1 Stage 6.
+##
+## Safe from a worker thread, which the readback never was: see
+## ColumnJob.shade_ink, which exists only because this had to be captured on the
+## main thread at submit time.
+static func shade_ink() -> Color:
+	return _shade_ink
+
+
 # --- The wire ------------------------------------------------------------------
 
 ## THE ONE CONVERSION, and the only one in the whole colour path.
@@ -587,6 +618,9 @@ static func to_wire(c: Color) -> Color:
 static func publish(kf: Dictionary,
 		fog_start_m: float, fog_end_m: float, fog_bands: int) -> void:
 	_set_color(&"kubik_shade", kf["shade"])
+	# Kept on the way past, so nothing ever has to ask the rendering server for
+	# it again. See _shade_ink.
+	_shade_ink = kf["shade"]
 	_set_color(&"kubik_fog_color", kf["fog"])
 	_set_color(&"kubik_fog_dark", kf["fog_dark"])
 	# THE RIM'S COLOUR, not the body's. The lake mesh carries a darkening factor

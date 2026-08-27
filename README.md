@@ -199,6 +199,62 @@ godot --path . -- --tour --seed 42 --label <name>
 godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
 ```
 
+### The streaming probe
+
+Whether the ground keeps up with the player, which is a different question from
+whether it arrives at all:
+
+```
+godot --headless --path . -- --host --seed 42 --stream-probe
+godot --headless --path . -- --host --seed 42 --stream-probe --strict
+```
+
+Twelve 48 m jumps, then a 13 m/s sprint 240 m out and back in real frames,
+sampled four times a second. It reports how far ahead the collidable ground
+reaches, how many wanted columns are neither voxels nor far mesh (**holes** —
+this must be zero), the worst frame, and chunks built per second. `--strict`
+makes a hole or a frame over 33 ms a non-zero exit.
+
+`--flora-probe` is the same shape for ground cover, and
+`--traverse --view low` walks the map diagonal.
+
+### The pair probe
+
+Two engines, one world — the gate for host-authoritative movement:
+
+```
+godot --path . -- --host --seed 42 --pair-probe
+```
+
+**No scene argument**, unlike every other probe here: that skips the main menu,
+and the main menu is what opens the ENet socket. A host started by opening
+`game.tscn` is an offline host, and the only symptom is the client logging
+"connection failed" where nobody is reading.
+
+It launches the other half itself — a second headless Godot as a client — has
+it sprint 100 m out and walk back under host authority, and reports the
+client's own prediction error against the host's opinion of where it is, the
+chunks the host built for its collision ring, and whether it ever went below
+the surface. It also turns the measured error back into an implied latency and
+compares that against the host's own frame time, so a slow machine reports
+INCONCLUSIVE rather than a failure it cannot substantiate.
+
+On Marcel's box (Forward+, 4 ms frames): median 0.217 m against a 0.50 m line,
+worst 1.300 m against a 2.00 m limit.
+
+### The body probe
+
+```
+godot --headless --path . scenes/game.tscn -- --host --seed 42 --body-probe
+```
+
+Counts the bodies in a loaded world, shoves one and follows it until it stops,
+walks 220 m away and back to check it is still where it was left, and leans on
+a boulder of each kind to check the co-op rule: a boulder_l must rock and stay
+for one player, a boulder_m must give. **Spawn is a meadow and boulders grow in
+rock and above**, so it goes and finds them — a count of zero at spawn is
+correct, not a broken stage.
+
 ### The swatch check
 
 The one gate that says whether an authored colour is the colour on screen:
@@ -355,24 +411,45 @@ docs/plans/          implementation plans
 Things that work but are explicitly not final. They are marked in the source at
 the point where they need replacing.
 
-- **Players report position, not input.** Still true, and now the largest
-  carried ticket. The player is a physics body, but it is simulated locally and
-  the client sends the result. `Game._srv_report_state` is the function to
-  replace: it should carry input, and the host should simulate. The shape is
-  already right — the host owns and distributes the table — only the payload is
-  wrong.
-- **Chunk generation is on the main thread.** Meshing moved to worker threads in
-  terrain v1 and is now 0.2 ms per chunk; generating the voxels is what the
-  frame budget goes on, at ~3.4 ms per chunk. Threading it too is the single
-  biggest remaining performance win and is not free — chunk data would no
-  longer exist at submit time, which changes how edits are replayed.
+- **~~Players report position, not input.~~ CLOSED in world feel v1 Stage 10.**
+  Clients send input (`Game._srv_report_input`), the host simulates every remote
+  body through the same `Locomotion.step` the client predicts with, and the host
+  broadcasts the result. A client can still only move itself, and now it can
+  only move itself the way the rules allow. The host also streams a
+  collision-only ring around every peer so there is ground under them —
+  `WorldgenConfig.sim_radius_chunks`.
+- **No rollback on the client.** What replaced the carried ticket is not the
+  whole of client-side prediction. The local body predicts with the same step,
+  and when the host's position for it arrives the client eases (under 2 m) or
+  snaps (over) — see `Game._reconcile`. It does not replay the inputs the host
+  had not yet processed when it sent that position, so a correction lands where
+  the player *was* rather than where they will be.
+
+  The shape a rollback would take, so the next person does not have to
+  rediscover it: a sequence number on each input; a ring buffer of the last N
+  inputs on the client; the host echoing the last sequence it consumed in the
+  table row; and on a correction, snap to the authoritative state and re-run
+  every buffered input newer than the echoed sequence. About forty lines. It is
+  not worth them until there is something in the world worth being precise
+  about — the error it removes is the error a player only notices when
+  something is shooting at them.
+- **Worldgen is GDScript, and GDScript is serialised across the worker pool.**
+  Measured in world feel v1: 3,742 chunks × 7.6 ms of worker time, in 29.5 s of
+  wall clock — about **one** effective worker thread whatever the job cap says.
+  So the levers are how much work a chunk costs and how few chunks there are,
+  not parallelism. Moving generation and meshing into a GDExtension is the next
+  one and it is named in `docs/status/world-feel-v1.md` with the per-phase
+  timings that would justify it.
 - **The block texture is unused.** Terrain is flat vertex colour, so
   `assets/textures/block_placeholder.png` and its committed `.import` settings
   are not read by anything. Both are kept because a texture atlas with per-face
   UVs is still on the roadmap and the import settings were the fiddly part.
 - **Water is scenery.** Flat, translucent, no physics, no swimming.
 - **The far field is a separate mesh from the voxels**, so there is a visible
-  seam where one gives way to the other. See `STATUS.md`.
+  seam where one gives way to the other. Since world feel v1 the seam is where
+  the voxels have actually ARRIVED rather than where they are expected — see
+  "the frontier rule" in `docs/DESIGN.md` — so it moves, but there is never a
+  hole in it.
 
 ## Roadmap
 

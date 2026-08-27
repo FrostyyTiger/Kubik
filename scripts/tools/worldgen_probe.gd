@@ -97,6 +97,8 @@ func _init() -> void:
 	spawn_ms = Time.get_ticks_msec() - spawn_ms
 	_print_spawn(gen, config, spawn_ms)
 	_print_spawn_clearance(gen, config)
+	if "--canopy" in OS.get_cmdline_user_args():
+		_print_canopy(gen, config)
 	quit()
 
 
@@ -565,3 +567,169 @@ func _print_spawn(gen: TerrainGenerator, config: WorldgenConfig, ms: int) -> voi
 	print("danger        %.2f at spawn, %.2f at the far corner" % [
 		gen.danger_at(float(b.x), float(b.y)),
 		gen.danger_at(float(config.world_blocks_xz / 2), float(config.world_blocks_xz / 2))])
+
+
+# --- Canopy closure ---------------------------------------------------------
+#
+# "NO SKY OVERHEAD", AS A NUMBER (world feel v1 Stage 6).
+#
+# T3 says envelop is height AND closure, and height is easy to check - it is in
+# the species table. Closure is the half that can only be answered by standing
+# somewhere and looking up, which on an overnight box with no GPU is exactly
+# the thing that cannot be done by eye. So it is done by ray casting through
+# the voxels a grove actually stamps.
+#
+# The method: find grove centres, stamp the columns around each into a scratch
+# writer, then cast rays from eye height in a cone about vertical and count how
+# many hit a leaf. That is the same question a player asks by tilting the
+# camera up, and it produces a number that can be compared between stages and
+# between grove kinds.
+
+## How many columns either side of a grove's centre to stamp before casting.
+##
+## BIG ENOUGH THAT A RAY CANNOT LEAVE IT, which is the whole correctness of the
+## measurement. A ray at 60 degrees from vertical that meets a canopy 40 blocks
+## up has travelled 40 * tan(60) = 69 blocks sideways; stamped one chunk either
+## side, it leaves the region long before then and is counted as sky. The first
+## version did exactly that and reported 0.64 closure inside an old-growth
+## grove whose crowns visibly touch.
+##
+## 5 chunks is 80 blocks each way, which covers the cone for anything the
+## species table can grow.
+const CANOPY_RADIUS_CHUNKS := 5
+## Rays per sample point, and how far from vertical the cone opens.
+const CANOPY_RAYS := 64
+const CANOPY_CONE_DEG := 60.0
+## Eye height, in blocks, above the surface.
+const CANOPY_EYE_BLOCKS := 3.0
+## How far a ray travels before it is counted as sky.
+## A ray that reaches this far without hitting anything is sky. Kept just
+## inside the stamped region so "no hit" always means "no hit in a region that
+## was actually built".
+const CANOPY_REACH_BLOCKS := 78.0
+## Groves of each kind to sample, and how far out to look for them.
+## Fewer samples than the plan's 20, because the region each one stamps grew
+## 25-fold when the cone was made to fit inside it. Ten of each kind is still
+## enough to separate three populations that differ by a factor of two.
+const CANOPY_GROVES := 10
+const CANOPY_SEARCH_M := 600.0
+
+
+func _print_canopy(gen: TerrainGenerator, config: WorldgenConfig) -> void:
+	var spawn := gen.spawn_block
+	var bs: float = config.block_size
+	var reach := int(CANOPY_SEARCH_M / bs)
+	var step: int = maxi(int(1.0 / maxf(config.grove_freq, 0.0001)) / 2, Chunk.SIZE)
+
+	var old_pts: Array = []
+	var ord_pts: Array = []
+	for bz in range(spawn.y - reach, spawn.y + reach, step):
+		for bx in range(spawn.x - reach, spawn.x + reach, step):
+			var surface := gen.surface_at(float(bx), float(bz))
+			if gen.surface_zone_at(bx, bz, surface) != TerrainGenerator.ZONE_FOREST:
+				continue
+			if TreePlacement.is_old_growth(gen, bx, bz):
+				if old_pts.size() < CANOPY_GROVES:
+					old_pts.append(Vector2i(bx, bz))
+			elif ord_pts.size() < CANOPY_GROVES:
+				ord_pts.append(Vector2i(bx, bz))
+			if old_pts.size() >= CANOPY_GROVES and ord_pts.size() >= CANOPY_GROVES:
+				break
+
+	# Between groves: forest zone, outside any grove at all.
+	var open_pts: Array = []
+	for bz in range(spawn.y - reach, spawn.y + reach, step):
+		for bx in range(spawn.x - reach, spawn.x + reach, step):
+			var surface := gen.surface_at(float(bx), float(bz))
+			if gen.surface_zone_at(bx, bz, surface) != TerrainGenerator.ZONE_FOREST:
+				continue
+			var masks := TreePlacement.masks_for(gen)
+			if masks.grove_cut != INF \
+					and masks.grove.get_noise_2d(float(bx), float(bz)) >= masks.grove_cut:
+				continue
+			open_pts.append(Vector2i(bx, bz))
+			if open_pts.size() >= CANOPY_GROVES:
+				break
+
+	print("canopy        %d rays in a %d degree cone from %.1f blocks up" % [
+		CANOPY_RAYS, int(CANOPY_CONE_DEG), CANOPY_EYE_BLOCKS])
+	var old_mean := _canopy_mean(gen, config, old_pts, "old growth")
+	var ord_mean := _canopy_mean(gen, config, ord_pts, "grove")
+	var open_mean := _canopy_mean(gen, config, open_pts, "between groves")
+	print("canopy        old growth %.2f (want >= 0.85), grove %.2f (want >= 0.60), between %.2f (want <= 0.20)" % [
+		old_mean, ord_mean, open_mean])
+	var bad := 0
+	if old_mean < 0.85:
+		bad += 1
+	if ord_mean < 0.60:
+		bad += 1
+	if open_mean > 0.20:
+		bad += 1
+	print("canopy        %d of 3 targets missed" % bad)
+
+
+func _canopy_mean(gen: TerrainGenerator, config: WorldgenConfig,
+		points: Array, label: String) -> float:
+	if points.is_empty():
+		print("canopy        %-14s no samples found" % label)
+		return 0.0
+	var total := 0.0
+	for p in points:
+		total += _closure_at(gen, config, p)
+	var mean := total / float(points.size())
+	print("canopy        %-14s %.3f over %d samples" % [label, mean, points.size()])
+	return mean
+
+
+## Stamp the columns around this point into a scratch chunk set, then look up.
+func _closure_at(gen: TerrainGenerator, config: WorldgenConfig, at: Vector2i) -> float:
+	var cx := Chunk.floor_div(at.x, Chunk.SIZE)
+	var cz := Chunk.floor_div(at.y, Chunk.SIZE)
+	var chunks := {}
+	for dz in range(-CANOPY_RADIUS_CHUNKS, CANOPY_RADIUS_CHUNKS + 1):
+		for dx in range(-CANOPY_RADIUS_CHUNKS, CANOPY_RADIUS_CHUNKS + 1):
+			var col_x := cx + dx
+			var col_z := cz + dz
+			var span := gen.column_surface_range(col_x, col_z)
+			var lo := Chunk.floor_div(int(floor(span.x)) - 8, Chunk.SIZE)
+			var hi := Chunk.floor_div(
+				int(floor(span.y)) + gen.max_tree_height(), Chunk.SIZE)
+			var col_chunks := {}
+			for cy in range(lo, hi + 1):
+				var chunk := Chunk.new(Vector3i(col_x, cy, col_z))
+				gen.generate_ground_into(chunk)
+				col_chunks[cy] = chunk
+				chunks[Vector3i(col_x, cy, col_z)] = chunk
+			var writer := TreeSpecies.ColumnWriter.new()
+			writer.bind(col_chunks)
+			TreePlacement.stamp_column(writer, gen, col_x, col_z)
+
+	var surface := gen.surface_at(float(at.x), float(at.y))
+	var eye := Vector3(float(at.x), floor(surface) + CANOPY_EYE_BLOCKS, float(at.y))
+	var hits := 0
+	for i in CANOPY_RAYS:
+		# A spiral over the cone rather than a random scatter, so two runs of
+		# the same world give the same number.
+		var t := (float(i) + 0.5) / float(CANOPY_RAYS)
+		var theta := deg_to_rad(CANOPY_CONE_DEG) * sqrt(t)
+		var phi := t * TAU * 7.0
+		var dir := Vector3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi))
+		if _ray_hits_leaves(chunks, eye, dir):
+			hits += 1
+	return float(hits) / float(CANOPY_RAYS)
+
+
+func _ray_hits_leaves(chunks: Dictionary, from: Vector3, dir: Vector3) -> bool:
+	var t := 0.0
+	while t < CANOPY_REACH_BLOCKS:
+		t += 0.5
+		var p := from + dir * t
+		var b := Vector3i(int(floor(p.x)), int(floor(p.y)), int(floor(p.z)))
+		var chunk: Chunk = chunks.get(Chunk.world_to_chunk(b))
+		if chunk == null:
+			continue
+		var l := Chunk.world_to_local(b)
+		var id: int = chunk.voxels[Chunk.index(l.x, l.y, l.z)]
+		if id != Block.AIR:
+			return true
+	return false

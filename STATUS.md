@@ -1,20 +1,130 @@
 # Status
 
-The latest run is **look v2 — the poster, refined**, 2026-08-25, on
-`feat/look-v2`: `docs/status/look-v2.md`.
+The latest run is **world feel v1**, finished 2026-08-27 on
+`feat/world-feel-v1`: `docs/status/world-feel-v1.md`. Both nights are done -
+streaming and the forest, then Jolt, host-authoritative input, bodies, the push
+and the slide.
 
-**It has a BLOCKING finding at the top and it is the first thing to read.** The
-run executed on ganymede, which has no Vulkan ICD, so every frame in it was
-rendered by Mesa llvmpipe on the Compatibility renderer and **Forward+ was
-never exercised**. The colour transfer was measured rather than assumed and the
-fix is green on Compatibility; whether it is green on Forward+ is one command
-on the Windows box, and the status doc names it.
+## Open items for Marcel
 
-Since then: `docs/status/flora-streaming.md` — the grass keeps up with the
-player (2026-08-25, `feat/flora-streaming`).
+**1. The traversal probe cannot cross this world, and it is not the trees —
+and since Stage 9 it is not the physics either.** `--traverse` goes STUCK about
+a quarter of the way to the far corner, at every stage tested — including a
+worktree at the commit *before* any tree changed, with the old 73,675 small
+trees, which stalls even earlier (606 m against 1,003). It reports `0 rescues
+from inside terrain` and 13-14 detours, so it is not falling through the
+ground: it is failing to **route**. Its detour logic walks a straight line and
+side-steps obstacles, which a lake, a cliff band or a box canyon defeats
+whatever the forest does.
+
+Stage 9 settled the remaining doubt. Under Jolt the character walks **2,833 m**
+and detours **58** times, against ~1,000 m and 14 under Godot Physics, and
+still converts about 1,000 m of it into progress. It is not wedged — it moves
+freely over the same terrain and goes in circles.
+
+Either the world has a place a player genuinely cannot get past, or the probe
+needs real pathing. **That has to be answered before "spawn to the four
+corners" can gate anything**, and it is outside world feel v1's scope — the
+plan named it as Stage 5's walkability gate and the gate turned out to be
+measuring the probe rather than the forest.
+
+**2. Canopy closure misses all three targets** — old growth 0.69 against 0.85,
+grove 0.52 against 0.60, between groves 0.37 against 0.20. The ordering is
+right, so the mechanism works and the magnitudes do not. The third is the one
+that matters: the wood between groves no longer opens, because the same 35% of
+candidates now grow trees three times the volume. `TODO(marcel)` at
+`WorldgenConfig.grove_floor` has the argument and the command to re-measure.
+
+**3. ~~The pair probe's prediction error needs a machine that holds 60 fps.~~
+SETTLED on Forward+, PASS.** Stage 10 closed the carried ticket — clients send
+input, the host simulates. On Marcel's Windows box (RTX 5080, Forward+), seed
+42, commit `322a10d`: **median error 0.217 m against the plan's 0.50 m line,
+p95 0.651 m, worst 1.300 m against a 2.00 m limit**, host frames 4 ms, 46
+chunks of collision ring, never below the surface. The 3.90 m INCONCLUSIVE on
+ganymede was measuring how fast two engines run on one box: at 4 ms frames the
+implied lag is 17 ms rather than 300, and the error collapses by a factor of
+eighteen. Limits untouched. Nothing outstanding.
+
+`sim_radius_chunks` was measured on the same box at 3 and 4 — both PASS, 38
+ring chunks against 46 — and **deliberately left at 4**: the probe turns round
+at 100 m, so neither value was under real pressure, and Stages 11-12 put bodies
+on exactly this ring. The `TODO(marcel)` carries both numbers and the
+experiment that would find the edge.
+
+**4. The two-player push needs two real machines.** Stage 12's co-op rule is
+proved as arithmetic (a self-test asserts one player moves a boulder_m, one
+does not move a boulder_l, two do) and as a real contact with one player: a
+boulder_l took **126 push contacts, rocked on all 126 ticks and moved
+0.000 m**, while a boulder_m gave way at 0.469 m. What has *not* been run is
+the pair-probe choreography with a second engine, because on this box two
+engines manage about one frame a second and it would measure the machine
+again. **This is the night-2 acceptance test**: find a big boulder, push it
+alone, then push it together.
+
+**5. Hard rule 7 is UNDECIDED, and the stream probe is why.** Not red, not
+satisfied. On Forward+ (RTX 5080, `--view High --strict`, seed 42) the same
+commit does not agree with itself:
+
+| `8500d3e`, identical code, three runs | >33 ms | built/s | |
+| --- | --- | --- | --- |
+| run 1 | 0 | 150.7 / 143.3 | PASS |
+| run 2 | 0 | 122.0 / 144.1 | PASS |
+| run 3 | 12 | 93.3 / 108.3 | **FAIL** |
+
+`add4b2e` twice, identical code: 29 long frames, then 14. Across ten runs the
+spread is **0-40 long frames and 61-151 chunks/s**, and the commits do not
+order monotonically inside it. The confound is run order — the box drifts
+downward across a session, and the first run of the day was the fastest thing
+measured while the last run of the same commit was among the slowest.
+
+So **"Stage 11-12 regresses hard rule 7" is retracted** — it rested on
+comparing single runs taken at different times — and so is any claim that
+`8500d3e` passes it. The zone-friction A/B (13 against 10 long frames) is
+inside the noise band and decides nothing either way.
+
+This is night 1's *"a number from a different day is not a baseline"* one level
+finer: **a number from a different run is not a baseline either.** Every
+night-2 performance number in this project so far has been a single-run
+comparison.
+
+**To actually answer it** the method has to change — interleave the commits
+ABABAB, five runs each, report the median of chunks/s with its spread rather
+than a long-frame count (a threshold turns a drifting continuous quantity into
+a coin flip), and record run order. There is a `TODO(marcel)` on
+`stream_probe.gd` saying plainly that **this probe cannot currently compare two
+commits**.
+
+**What is solid:** holes 0 on every commit, every run, both legs — hard rule 6
+is green and Stage 12 does not reintroduce a hole. And `bodies 0 built` on this
+route, confirmed on both boxes: the probe sprints at spawn, spawn is a meadow,
+and boulders grow in rock and above, so whatever stages 11-12 cost here it is
+not body churn.
+
+**Two fixes were made and stand on their own evidence, not on the deltas:**
+bodies were being freed and rebuilt on the flora *cache* boundary — the
+churniest boundary there is, and the plan says frozen, not freed — and
+promotion was an extra pass per column, measured on the worker at 8.40 → 7.77
+ms per column over 797 columns, which is not subject to this confound.
+
+**6. This box is about five times slower than it was on 2026-08-26.** The
+stream probe reads 123 s of initial load and 103 frames over 33 ms where night
+1 recorded 24.8 s and 1. Stage 9's own commit, re-run in a worktree within the
+hour, gives 123.4 s and 104 — so nothing regressed, and per-chunk worker cost
+is unchanged at 8.3 ms. It is starvation, not work. Worth knowing before
+anybody reads a night-2 number against a night-1 one: **a number from a
+different day is not a baseline.**
+
+**7. The velocity-biased queue is switched off.** At `STREAM_HEADING_BIAS = 6`
+the ground ahead of a sprinting player is loaded to the full 96 m radius,
+against 40 m without it — and it reintroduces holes, which is a hard rule. The
+mechanism is in and one constant turns it on; the status doc says what would
+have to change first.
 
 Earlier runs, newest first:
 
+- `docs/status/look-v2.md` — look v2, the poster refined, 2026-08-25, merged to
+  `main`; its blocking finding was resolved on Forward+ the same evening
+- `docs/status/flora-streaming.md` — the grass keeps up, 2026-08-25
 - `docs/status/look-v1.md` — look v1, the poster, 2026-08-25, with the
   character half in `docs/status/look-v1-characters.md` and the UI half in
   `docs/status/look-v1-ui.md`

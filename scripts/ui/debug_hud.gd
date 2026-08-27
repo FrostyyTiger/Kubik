@@ -101,6 +101,10 @@ var config: WorldgenConfig = null
 ## Filled in by Game. The HUD asks these for numbers; it never tells them
 ## anything, which is what keeps a debug tool from quietly becoming a system.
 var world: Node = null
+
+## Set by Game. Bodies are not World's - see body_field.gd - so the readout has
+## to be handed them separately.
+var body_field: Node = null
 var player: Node3D = null
 var sky: SkyCycle = null
 
@@ -186,6 +190,29 @@ func _compose_readout() -> String:
 			lines.append("gen/mesh  %.2f / %.2f ms per chunk" % [
 				t.get("gen_ms", 0.0), t.get("mesh_ms", 0.0)])
 			lines.append("worldgen  %d ms heightmap" % t.get("heightmap_ms", 0))
+			# WORLD FEEL V1 STAGE 0. The live half: what is out at the pool
+			# right now, what the last crossing cost, and the worst frame in
+			# the last two seconds. The averages above say whether the world
+			# arrived; these say whether it is keeping up.
+			lines.append("stream    %d columns in flight, %d chunks built" % [
+				t.get("columns_in_flight", 0), t.get("built", 0)])
+			lines.append("columns   %d built, %.2f ms each on workers, %.1f chunks each" % [
+				t.get("columns_built", 0), t.get("ms_per_column", 0.0),
+				t.get("chunks_per_column", 0.0)])
+			lines.append("crossing  %d freed, %.1f ms refresh, worst frame %.1f ms" % [
+				t.get("freed_last_crossing", 0), t.get("refresh_ms", 0.0),
+				t.get("max_frame_ms", 0.0)])
+			if world.has_method("loaded_frontier"):
+				var f: PackedInt32Array = world.loaded_frontier()
+				if not f.is_empty():
+					var lo := f[0]
+					var hi := f[0]
+					for v in f:
+						lo = mini(lo, v)
+						hi = maxi(hi, v)
+					lines.append("frontier  %d-%d chunks over 16 sectors" % [lo, hi])
+			if t.get("cached_chunks", 0) > 0:
+				lines.append("cache     %d chunks" % t.get("cached_chunks", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
 		if world.has_method("flora_stats"):
@@ -200,6 +227,46 @@ func _compose_readout() -> String:
 			t.get("impostors", 0), t.get("rebuild_ms", 0)])
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
+
+	# PHYSICS, world feel v1 Stage 9 - AND THESE READ ZERO UNDER JOLT.
+	#
+	# Stage 9 added them to answer whether a disabled collider leaves the
+	# broadphase, and deferred the answer to Stage 11 on the grounds that
+	# get_process_info() counts only DYNAMIC objects and there were none.
+	# There are now, and it still reads 0, 0, 0 - with five bodies loaded, with
+	# one of them rolling 95 m down a mountain, and with the world's static
+	# colliders in every state. Jolt does not implement these counters; they
+	# are a Godot Physics readout that the engine switch silently emptied.
+	#
+	# Left in place and labelled rather than removed, because they are correct
+	# on the other engine and because a blank line here would invite somebody
+	# to add them back. The number to watch under Jolt is the `bodies` line
+	# below. The broadphase question is answered there instead: a parked
+	# column's bodies are FREED, not disabled, so there is nothing left in the
+	# broadphase to ask about.
+	lines.append("physics   %d active, %d pairs, %d islands  (Jolt: always 0)" % [
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ACTIVE_OBJECTS),
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_COLLISION_PAIRS),
+		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ISLAND_COUNT)])
+	# BODIES, world feel v1 Stage 11. `awake` is the one to watch: a loaded
+	# world is nearly all sleeping rocks, which cost a broadphase entry and no
+	# solver time at all, and `moved` is the only part of them that is world
+	# state rather than a function of the seed.
+	if body_field != null:
+		lines.append("bodies    %d loaded, %d awake, %d rocking, %d ever moved" % [
+			body_field.count(), body_field.awake_count(),
+			body_field.rocking_count(), body_field.moved_count()])
+		# THE STAGE 12 CONSTANTS, all of them, all starting values (hard rule
+		# 11). push/hold is the co-op rule stated as a ratio: 600 moves a 400
+		# and not a 1000, and two of them move anything here.
+		lines.append("push      %.0f N each, holds %.0f / %.0f, accel %.0f, decel %.0f, air %.2f" % [
+			Locomotion.PUSH_FORCE_N,
+			BodyTable.hold_of(BodyTable.BOULDER_M),
+			BodyTable.hold_of(BodyTable.BOULDER_L),
+			Locomotion.ACCEL, Locomotion.DECEL, Locomotion.AIR_CONTROL])
+		lines.append("slide     over %.0f deg on loose ground, factor %.2f, max %.0f m/s" % [
+			Locomotion.SLIDE_ANGLE_DEG, Locomotion.SLIDE_FACTOR,
+			Locomotion.SLIDE_MAX])
 
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")

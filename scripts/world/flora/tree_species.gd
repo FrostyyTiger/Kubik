@@ -71,6 +71,44 @@ class ChunkWriter extends RefCounted:
 		chunk.set_voxel(lx, ly, lz, id)
 
 
+## A writer that spans every chunk of ONE COLUMN, so a column's trees can be
+## stamped once instead of once per chunk.
+##
+## WHY THIS EXISTS (world feel v1 Stage 2). stamp_chunk() scans
+## (16 + 2 * max_reach)^2 / cell^2 candidate cells and calls decide() for each,
+## and the six or seven chunks of a column each did it again - the same cells,
+## the same answers, six or seven times. Tree stamping is half the generation
+## cost, so that was a third of the whole streaming budget spent re-deciding
+## trees that had already been decided.
+##
+## It clips exactly as ChunkWriter does: a block outside every chunk of this
+## column is dropped, because the column that owns it will stamp the same tree
+## itself. stamp_cell() must produce the same tree for every column that sees
+## it, which is why nothing in this class is readable from there.
+class ColumnWriter extends RefCounted:
+	## chunk y index -> Chunk. Only the chunks the column actually built; a
+	## block above the ceiling has nowhere to go and is dropped, which is what
+	## makes the sky reserve a ceiling rather than a build list.
+	var chunks := {}
+
+	func bind(p_chunks: Dictionary) -> void:
+		chunks = p_chunks
+
+	func set_block(bx: int, by: int, bz: int, id: int, only_air: bool) -> void:
+		var chunk: Chunk = chunks.get(Chunk.floor_div(by, Chunk.SIZE))
+		if chunk == null:
+			return
+		var origin := chunk.origin()
+		var lx := bx - origin.x
+		var ly := by - origin.y
+		var lz := bz - origin.z
+		if not Chunk.in_bounds(lx, ly, lz):
+			return
+		if only_air and chunk.voxels[Chunk.index(lx, ly, lz)] != Block.AIR:
+			return
+		chunk.set_voxel(lx, ly, lz, id)
+
+
 # --- Species ids ------------------------------------------------------------
 #
 # Indices into SPECIES. They are NOT block ids and never cross the network, so
@@ -142,37 +180,37 @@ const SALT_MOUND := 216
 ## you have to reconstruct the tree from before you know whether it is wrong.
 const SPECIES := [
 	{
-		"name": "spruce", "height": Vector2i(13, 21), "crown": Vector2i(2, 4),
+		"read": 1.0, "name": "spruce", "height": Vector2i(13, 21), "crown": Vector2i(2, 4),
 		"shape": SHAPE_WHORL_CONE, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "beech", "height": Vector2i(10, 16), "crown": Vector2i(4, 6),
+		"read": 1.0, "name": "beech", "height": Vector2i(10, 16), "crown": Vector2i(4, 6),
 		"shape": SHAPE_DOME, "fill": 1.0,
 		"leaves": Block.LEAVES_BEECH, "leaves_b": Block.LEAVES_BEECH_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "larch", "height": Vector2i(12, 20), "crown": Vector2i(2, 3),
+		"read": 1.0, "name": "larch", "height": Vector2i(12, 20), "crown": Vector2i(2, 3),
 		"shape": SHAPE_WHORL_CONE, "fill": 0.6,
 		"leaves": Block.LEAVES_LARCH, "leaves_b": Block.LEAVES_LARCH_B,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
-		"name": "krummholz", "height": Vector2i(3, 6), "crown": Vector2i(3, 5),
+		"read": 0.0, "name": "krummholz", "height": Vector2i(3, 6), "crown": Vector2i(3, 5),
 		"shape": SHAPE_MOUND, "fill": 0.82,
 		"leaves": Block.LEAVES_PINE, "leaves_b": Block.LEAVES_PINE_B,
 		"trunk_id": Block.TRUNK, "slope": 55.0,
 	},
 	{
-		"name": "birch", "height": Vector2i(10, 16), "crown": Vector2i(2, 3),
+		"read": 0.5, "name": "birch", "height": Vector2i(10, 16), "crown": Vector2i(2, 3),
 		"shape": SHAPE_SLENDER, "fill": 0.7,
 		"leaves": Block.LEAVES_BIRCH, "leaves_b": Block.LEAVES_BIRCH_B,
 		"trunk_id": Block.TRUNK_BIRCH, "slope": 40.0,
 	},
 	{
-		"name": "snag", "height": Vector2i(6, 14), "crown": Vector2i(0, 0),
+		"read": 0.0, "name": "snag", "height": Vector2i(6, 14), "crown": Vector2i(0, 0),
 		"shape": SHAPE_BARE, "fill": 0.0,
 		"leaves": Block.AIR, "leaves_b": Block.AIR,
 		"trunk_id": Block.TRUNK_DEAD, "slope": 45.0,
@@ -183,19 +221,42 @@ const SPECIES := [
 		# table to decide how much empty sky the world reserves above the
 		# terrain - and a hero whose real size exceeded what the table admits
 		# would have its crown cut off by a chunk that was never queued.
-		"name": "hero", "height": Vector2i(16, 42), "crown": Vector2i(3, 8),
+		"read": 1.0, "name": "hero", "height": Vector2i(16, 42), "crown": Vector2i(3, 8),
 		"shape": SHAPE_HERO, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
 		"trunk_id": Block.TRUNK, "slope": 30.0,
 	},
 ]
 
-## Total height at or above which a trunk is 2 x 2 rather than 1 x 1.
+## Trunk width by total height, in blocks: a tree at or above the first number
+## gets a trunk that many voxels square.
 ##
-## A 20-block tree on a 1-block stalk reads as a lollipop. Real trunk diameter
-## scales with height, and at 1:4 the first place that becomes visible is
-## around 8 m of tree - which is 16 blocks.
+## A 20-block tree on a 1-block stalk reads as a lollipop, and once the forest
+## doubles (world feel v1 Stage 5) a 2 x 2 trunk under a 60-block spruce reads
+## as one too. Real trunk diameter scales with height; this is that, as data
+## rather than as one threshold.
+##
+## Read top down - the first row a height clears wins.
+const TRUNK_TIERS := [
+	{"height": 48, "width": 4},
+	{"height": 32, "width": 3},
+	{"height": 16, "width": 2},
+]
+
+## Kept for anything still asking the old yes/no question.
 const THICK_TRUNK_HEIGHT := 16
+
+
+## How many voxels square a trunk of this height is. Heroes are never under 3.
+static func trunk_width(height: int, species: int) -> int:
+	var w := 1
+	for tier in TRUNK_TIERS:
+		if height >= int(tier["height"]):
+			w = int(tier["width"])
+			break
+	if species == HERO:
+		w = maxi(w, 3)
+	return w
 
 
 ## The table with `tree_size_scale` applied.
@@ -206,17 +267,30 @@ const THICK_TRUNK_HEIGHT := 16
 ## about it would grow different trees while the handshake reported a match.
 static func table(config: WorldgenConfig) -> Array:
 	var scale: float = config.tree_size_scale
-	if is_equal_approx(scale, 1.0):
+	var read: float = config.tree_read_scale
+	if is_equal_approx(scale, 1.0) and is_equal_approx(read, 1.0):
 		return SPECIES
 	var out := []
 	for row in SPECIES:
 		var copy: Dictionary = (row as Dictionary).duplicate()
+		# TWO SCALES, COMPOSED PER SPECIES (world feel v1 Stage 5).
+		#
+		# tree_size_scale is what the LAND says: derived from world_scale, it
+		# keeps a tree the right size against a mountain. tree_read_scale is
+		# what the PLAYER says: a tree is the one object read against both, and
+		# at 1:4 land scale a spruce was 7 player-heights where a real one is
+		# 25. The land is not rescaled; the trees are.
+		#
+		# `read` is how much of that a species takes: 1.0 for the forest
+		# proper, 0.5 for birch, 0.0 for krummholz and snags - a knee-high
+		# alpine shrub at twice the size is not a bigger shrub, it is a tree.
+		var f: float = scale * (1.0 + (read - 1.0) * float(row.get("read", 0.0)))
 		copy["height"] = Vector2i(
-			maxi(1, int(round(float(row["height"].x) * scale))),
-			maxi(1, int(round(float(row["height"].y) * scale))))
+			maxi(1, int(round(float(row["height"].x) * f))),
+			maxi(1, int(round(float(row["height"].y) * f))))
 		copy["crown"] = Vector2i(
-			int(round(float(row["crown"].x) * scale)),
-			int(round(float(row["crown"].y) * scale)))
+			int(round(float(row["crown"].x) * f)),
+			int(round(float(row["crown"].y) * f)))
 		out.append(copy)
 	return out
 
@@ -234,7 +308,12 @@ static func table(config: WorldgenConfig) -> Array:
 static func max_height(config: WorldgenConfig) -> int:
 	var tallest := 0
 	for row in table(config):
-		tallest = maxi(tallest, row["height"].y + 3)
+		# AND OLD GROWTH, for the same reason max_reach() takes it: the scale
+		# is applied per tree, not in the table.
+		var h := float(row["height"].y)
+		h *= 1.0 + (maxf(config.old_growth_scale, 1.0) - 1.0) \
+			* float(row.get("read", 0.0))
+		tallest = maxi(tallest, int(ceil(h)) + 3)
 	return tallest
 
 
@@ -243,11 +322,24 @@ static func max_height(config: WorldgenConfig) -> int:
 static func max_reach(config: WorldgenConfig) -> int:
 	var widest := 0
 	for row in table(config):
-		widest = maxi(widest, row["crown"].y)
-	# A 2 x 2 trunk occupies one block further out than the cell it is rooted
-	# in, and a mound's raggedness never exceeds its radius - so the crown
-	# maximum plus one is a true bound on how far a tree can write.
-	return widest + 1
+		# AND OLD GROWTH, whose crowns are old_growth_scale times the table's -
+		# applied per tree in params_for(), so a bound taken from the table
+		# alone is not a bound at all, and the symptom is a crown clipped at a
+		# column boundary in some groves on the side away from the trunk.
+		#
+		# This margin is paid by EVERY column in the world, so it is the one
+		# place an old-growth knob costs something everywhere.
+		var c := float(row["crown"].y)
+		c *= 1.0 + (maxf(config.old_growth_scale, 1.0) - 1.0) \
+			* float(row.get("read", 0.0))
+		widest = maxi(widest, int(ceil(c)))
+	# A wide trunk occupies blocks further out than the cell it is rooted in,
+	# and a mound's raggedness never exceeds its radius - so the crown maximum
+	# plus the widest trunk is a true bound on how far a tree can write.
+	var widest_trunk := 1
+	for tier in TRUNK_TIERS:
+		widest_trunk = maxi(widest_trunk, int(tier["width"]))
+	return widest + widest_trunk
 
 
 # --- One tree's parameters --------------------------------------------------
@@ -257,15 +349,34 @@ static func max_reach(config: WorldgenConfig) -> int:
 ## Pure, and the whole determinism contract rests on that: two machines, two
 ## chunk build orders and two hemispheres of the map all call this with the
 ## same three integers and get the same tree back.
+## `extra` is a further size multiplier on top of the table - old growth, at
+## world feel v1 Stage 6. It takes the species' own `read` share exactly as
+## tree_read_scale does, so krummholz and snags are the same size in an old
+## wood as anywhere else: an ancient forest is ancient trees, and a shrub that
+## has been there a long time is still a shrub.
 static func params_for(species: int, cell_x: int, cell_z: int,
-		world_seed: int, config: WorldgenConfig) -> Dictionary:
+		world_seed: int, config: WorldgenConfig, extra := 1.0) -> Dictionary:
 	var rows := table(config)
 	var row: Dictionary = rows[species]
 
-	var height := WorldHash.hash_range(cell_x, cell_z, world_seed, SALT_HEIGHT,
-		row["height"].x, row["height"].y)
-	var crown := WorldHash.hash_range(cell_x, cell_z, world_seed, SALT_CROWN,
-		row["crown"].x, row["crown"].y)
+	# OLD GROWTH GROWS IN BOTH DIRECTIONS, and getting here took one wrong turn
+	# worth recording. Crowns were briefly left unscaled, because scaling them
+	# grows TreeSpecies.max_reach() - the margin every column in the world
+	# widens its candidate scan by - and Stage 6 was at that moment showing 73
+	# frames over 33 ms and ten of twelve jumps failing to settle. The crowns
+	# were not the cause; a RenderingServer call on a worker thread was (see
+	# ChunkMesher._under_canopy). With that fixed the margin is affordable, and
+	# height alone left an old-growth grove no more CLOSED than an ordinary one
+	# - 0.553 against 0.517 - which is most of what old growth is for.
+	var f := 1.0
+	if not is_equal_approx(extra, 1.0):
+		f = 1.0 + (extra - 1.0) * float(row.get("read", 0.0))
+	var height := int(round(float(WorldHash.hash_range(
+		cell_x, cell_z, world_seed, SALT_HEIGHT,
+		row["height"].x, row["height"].y)) * f))
+	var crown := int(round(float(WorldHash.hash_range(
+		cell_x, cell_z, world_seed, SALT_CROWN,
+		row["crown"].x, row["crown"].y)) * f))
 	var draw_species := species
 	var leaves_row := row
 
@@ -311,6 +422,7 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 		# twice the size of everything around it standing on the same stalk as
 		# everything around it is the one way to make it look wrong.
 		"thick": species == HERO or height >= THICK_TRUNK_HEIGHT,
+		"trunk_width": trunk_width(height, species),
 		"cell": Vector2i(cell_x, cell_z),
 		"seed": world_seed,
 	}
@@ -592,16 +704,21 @@ static func _disc(writer, cx: int, y: int, cz: int, r: int,
 static func _draw_trunk(writer, bx: int, ground: int, bz: int, top_y: int,
 		params: Dictionary) -> int:
 	var id: int = params["trunk_id"]
-	var thick: bool = params["thick"]
+	# WIDTH, NOT A FLAG (world feel v1 Stage 5). One threshold was enough while
+	# the tallest tree was 42 blocks; with the forest at x2 and old growth at
+	# x3 a 2 x 2 trunk under a 60-block spruce reads as a lollipop again. See
+	# TRUNK_TIERS.
+	var w: int = int(params.get("trunk_width", 2 if params.get("thick", false) else 1))
 	var drawn := 0
 	for y in range(ground + 1, top_y + 1):
-		writer.set_block(bx, y, bz, id, false)
-		drawn += 1
-		if thick:
-			writer.set_block(bx + 1, y, bz, id, false)
-			writer.set_block(bx, y, bz + 1, id, false)
-			writer.set_block(bx + 1, y, bz + 1, id, false)
-			drawn += 3
+		# Always to +X and +Z, so a wide trunk grows out of the same cell
+		# corner every time - which matters for the jitter bound in the
+		# placement rules: two neighbouring wide trunks must not be able to
+		# close the gap between them.
+		for dz in w:
+			for dx in w:
+				writer.set_block(bx + dx, y, bz + dz, id, false)
+				drawn += 1
 	return drawn
 
 
@@ -641,6 +758,7 @@ static func stamp_specimen(writer, species: int, bx: int, ground: int, bz: int,
 	params["crown"] = int(round(lerpf(
 		float(row["crown"].x), float(row["crown"].y), t)))
 	params["thick"] = species == HERO or params["height"] >= THICK_TRUNK_HEIGHT
+	params["trunk_width"] = trunk_width(int(params["height"]), species)
 
 	var blocks := draw(writer, species, bx, ground, bz, params, cfg)
 	return {

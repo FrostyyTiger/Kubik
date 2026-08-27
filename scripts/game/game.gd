@@ -27,6 +27,15 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
 @onready var _players_root: Node3D = $Players
+
+## Built in code rather than put in the scene, because it only ever has
+## children on a host and an empty node in every client's scene tree is a
+## thing somebody eventually wonders about.
+var _sims_root: Node3D = null
+
+## Every body in the loaded world - a RigidBody3D each on the host, a mesh each
+## on a client. See body_field.gd; World feeds it columns.
+var _body_field: BodyField = null
 @onready var _debug: DebugHUD = $DebugHUD
 @onready var _sky: SkyCycle = $SkyCycle
 
@@ -61,6 +70,33 @@ var _players := {}
 ## the symptom would be a friend flickering back to the default human.
 var _states := {}
 
+## HOST ONLY. peer_id -> PlayerSim. The authoritative body for each remote
+## peer; the table rows above are read off these.
+var _sims := {}
+
+## HOST ONLY. See journal.gd - habit 2 of the three.
+var _journal := Journal.new()
+
+## CLIENT ONLY. The part of a correction not yet applied, and how long is
+## left to apply it in. An OFFSET rather than a destination, because the body
+## goes on walking while the correction eases and a destination would drag it
+## back to where it was when the packet arrived.
+var _fix_remaining := Vector3.ZERO
+var _fix_left := 0.0
+
+## CLIENT ONLY. The last authoritative row the host sent for us.
+var _last_authority := {}
+
+## CLIENT ONLY. How many input packets we have put on the wire. Probe
+## diagnostics; see PlayerSim.packets for the other end of the same count.
+var _inputs_sent := 0
+
+## HOST ONLY. Every input RPC that arrived, whichever peer it was for, and the
+## id of the last sender. Probe diagnostics: an input that arrives but reaches
+## no sim looks exactly like an input that never arrived.
+var _inputs_received := 0
+var _last_sender := 0
+
 var _slab_present := false
 var _sync_accum := 0.0
 var _join_retry := 0.0
@@ -75,12 +111,31 @@ func _ready() -> void:
 	# everything that reads one.
 	config.apply_cli_overrides(OS.get_cmdline_user_args())
 	_apply_msaa()
-	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m" % [
+	# The camera's far plane is on this line because it used to disagree with
+	# the fog and nobody could see that it did: player.tscn carried a literal
+	# 400 m while High fog ran to 600, so the far ridge was clipped out of
+	# every frame on High and Ultra and the only symptom was a view that
+	# stopped short. It is derived now (world feel v1 Stage 0); printing it is
+	# what makes a future disagreement visible in one line of any log.
+	print("[Game] view distance %s: voxel radius %d chunks (%d m), fog %d m, camera far %d m" % [
 		config.view_distance_name(), config.voxel_radius_chunks,
 		int(config.voxel_radius_chunks * Chunk.SIZE * config.block_size),
-		int(config.fog_end_m)])
+		int(config.fog_end_m),
+		int(config.fog_end_m * Player.FAR_PLANE_RATIO)])
+	# WHICH PHYSICS ENGINE IS ACTUALLY RUNNING (world feel v1 Stage 9). Printed
+	# for the same reason the camera's far plane is: it is a project setting
+	# that decides how the world behaves, and a setting nobody can see is a
+	# setting that drifts. Jolt and Godot Physics differ on floor snap, step-up
+	# and sleeping, so a bug report that does not say which one was running is
+	# a bug report that has to be reproduced twice.
+	print("[Game] physics %s at %d Hz" % [
+		ProjectSettings.get_setting("physics/3d/physics_engine", "Default"),
+		Engine.physics_ticks_per_second])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	# The session's config, which may carry CLI overrides the saved file does
+	# not - so the far plane matches the fog this run actually uses.
+	_player.apply_view_config(config)
 	_debug.set_far_trees(_far_trees)
 	# Wind and night are LOCAL knobs and live on the shared flora materials, so
 	# they are pushed once here and again whenever the F4 panel moves.
@@ -95,6 +150,11 @@ func _ready() -> void:
 	_debug.config_reload_requested.connect(_on_config_reload_requested)
 
 	_world.generation_finished.connect(_on_world_ready)
+	_sims_root = Node3D.new()
+	_sims_root.name = "Sims"
+	add_child(_sims_root)
+
+	Net.peer_joined.connect(_on_peer_joined)
 	Net.peer_left.connect(_on_peer_left)
 	Net.host_disconnected.connect(_on_host_disconnected)
 
@@ -103,12 +163,41 @@ func _ready() -> void:
 		# zero clients rather than a separate offline mode.
 		Net.host_offline()
 
+	# AFTER host_offline(), AND THAT ORDERING IS THE WHOLE OF IT. BodyField
+	# builds RigidBody3Ds on a host and inert meshes on a client, and it decides
+	# which once, here. Set up two lines earlier - before the offline fallback
+	# has run - Net.is_host() is still false, and a single-player session builds
+	# a world full of scenery that cannot be pushed and reports no error at all.
+	# The body probe found it as "Nonexistent function 'apply_central_impulse'
+	# in base Node3D (WorldBodyView)" on a session started with --host.
+	#
+	# Still before the world generates: the first columns land a frame or two
+	# after this and their bodies would otherwise have nowhere to go.
+	_body_field = BodyField.new()
+	_body_field.name = "Bodies"
+	add_child(_body_field)
+	_body_field.setup(Net.is_host(), config.block_size, _world, _journal)
+	# See _physics_process: the push must be collected after the bodies that
+	# make the contacts have moved.
+	process_physics_priority = 100
+	_world.body_field = _body_field
+	_debug.body_field = _body_field
+
 	if "--tour" in OS.get_cmdline_user_args():
 		_start_tour.call_deferred()
 	elif "--traverse" in OS.get_cmdline_user_args():
 		_start_traverse.call_deferred()
 	elif "--flora-probe" in OS.get_cmdline_user_args():
 		_start_flora_probe.call_deferred()
+	elif "--stream-probe" in OS.get_cmdline_user_args():
+		_start_stream_probe.call_deferred()
+	elif "--physics-probe" in OS.get_cmdline_user_args():
+		_start_physics_probe.call_deferred()
+	elif ("--pair-probe" in OS.get_cmdline_user_args()
+			or "--pair-client" in OS.get_cmdline_user_args()):
+		_start_pair_probe.call_deferred()
+	elif "--body-probe" in OS.get_cmdline_user_args():
+		_start_body_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -121,6 +210,9 @@ func _ready() -> void:
 			_world.world_seed, _world.config.hash_key()])
 		_far_trees.setup(_world.generator, _world.config)
 		_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
+		# The impostor ring cuts its inner edge to the frontier, so it wants to
+		# know when the frontier moves (world feel v1 Stage 3).
+		_world.frontier_moved.connect(_on_frontier_moved)
 		_spawn_player()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
@@ -128,6 +220,28 @@ func _ready() -> void:
 		# a dictionary of edits, no matter how large the world is.
 		_status.text = "client - asking host for the world..."
 		_request_join_state()
+
+
+## THE PUSH RUNS AFTER EVERYTHING THAT CAN PUSH (world feel v1 Stage 12).
+##
+## `process_physics_priority` is set in _ready so that this node's physics tick
+## runs AFTER the player's and every PlayerSim's. It matters: the push is read
+## from `get_slide_collision()`, which reports what blocked a body's own move
+## THIS tick, and a parent node's _physics_process runs before its children's
+## by default - so without the priority every push would be acting on last
+## tick's contacts, one tick behind the body that made them.
+func _physics_process(delta: float) -> void:
+	if not Net.is_host() or _body_field == null:
+		return
+	var pushers := []
+	# The host's own player pushes exactly like anybody else. Solo is a host
+	# with zero clients, and there is no second code path for it.
+	if _player.is_physics_processing():
+		pushers.append([_player, _player.current_input().wish])
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		pushers.append([sim, sim.wish()])
+	_body_field.push_tick(pushers, delta)
 
 
 func _process(delta: float) -> void:
@@ -146,6 +260,20 @@ func _process(delta: float) -> void:
 		# the player has gone far enough to be worth a rebuild.
 		_far_trees.update(_player.global_position)
 	_release_player_when_ground_exists()
+	# WHAT EVERYBODY IS STANDING ON, once a frame rather than once a tick.
+	# A zone lookup is a heightmap read and a noise sample, and a body crosses
+	# a zone boundary in seconds - so per-frame is already far finer than the
+	# thing it describes, and per physics tick would be three times the cost
+	# for no difference anybody could see.
+	if _world.has_seed():
+		_player.ground_zone = _world.zone_at_m(
+			_player.global_position.x, _player.global_position.z)
+		for peer_id in _sims:
+			var sim: PlayerSim = _sims[peer_id]
+			sim.ground_zone = _world.zone_at_m(
+				sim.global_position.x, sim.global_position.z)
+	if Net.is_client():
+		_advance_correction(delta)
 
 	# A session we are no longer part of has nothing to sync, and calling rpc()
 	# without a live peer is an engine error, not a no-op.
@@ -158,11 +286,21 @@ func _process(delta: float) -> void:
 	_sync_accum = 0.0
 	_publish_local_state()
 	if Net.is_host():
+		# Every remote body, as the host's physics left it.
+		_publish_sim_states()
+		# ...and every body that has been pushed. Bookkeeping only: Jolt has
+		# already simulated them correctly, and this notices what moved,
+		# re-homes what left its column and keeps the journal.
+		_body_field.host_tick()
+		# ...and the ground under them. THE COST OF AUTHORITY: the world
+		# streams around the local player, so a peer 500 m away has nothing to
+		# stand on until the host builds it. See WorldgenConfig.sim_radius_chunks.
+		_world.set_sim_centres(_sim_columns())
 		# The host is the only one that assembles and distributes the table.
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
 		if not Net.other_peer_ids().is_empty():
-			_cl_sync_players.rpc(_states)
+			_cl_sync_players.rpc(_states, _body_field.rows_for(_sim_centres_m()))
 		_apply_states(_states)
 
 
@@ -281,6 +419,55 @@ func _start_flora_probe() -> void:
 	probe.run(_world, _player)
 
 
+## Hand the session to the physics probe - see scripts/tools/physics_probe.gd.
+func _start_physics_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := PhysicsProbe.new()
+	probe.name = "PhysicsProbe"
+	add_child(probe)
+	probe.run(_world, _player)
+
+
+## Hand the session to the body probe - see scripts/tools/body_probe.gd.
+func _start_body_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := BodyProbe.new()
+	probe.name = "BodyProbe"
+	add_child(probe)
+	probe.run(_world, _player, self)
+
+
+## Hand the session to the pair probe - see scripts/tools/pair_probe.gd. Both
+## halves of it run through here; the probe decides which one it is.
+func _start_pair_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := PairProbe.new()
+	probe.name = "PairProbe"
+	add_child(probe)
+	probe.run(_world, _player, self)
+
+
+## Hand the session to the streaming probe - see scripts/tools/stream_probe.gd.
+func _start_stream_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := StreamProbe.new()
+	probe.name = "StreamProbe"
+	add_child(probe)
+	probe.run(_world, _player)
+
+
+## The loaded frontier moved: hand the impostor ring the new one. The ring
+## rebuilds on its own schedule (REBUILD_STEP_M); this only keeps the array it
+## will use current.
+func _on_frontier_moved() -> void:
+	if _far_trees != null:
+		_far_trees.frontier = _world.loaded_frontier()
+
+
 # --- Join handshake ---------------------------------------------------------
 
 func _request_join_state() -> void:
@@ -334,30 +521,40 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 
 # --- Player position sync ---------------------------------------------------
 #
-# PROVISIONAL. Clients currently report their CAMERA POSITION, because a
-# noclip debug camera has no movement rules a host could validate. When the
-# real player becomes a physics body this channel becomes:
+# THE CARRIED TICKET, CLOSED (world feel v1 Stage 10). This channel used to
+# carry a client's own POSITION, which meant "where is peer 3" was whatever
+# peer 3 said it was, and README.md called it the largest provisional bit in
+# the codebase. It now carries INPUT:
 #
-#     client sends INPUT -> host simulates -> host broadcasts the position
+#     client sends input -> host simulates -> host broadcasts the position
 #
-# The shape is already right - the host owns and distributes the table - only
-# the payload changes. _srv_report_state is the function to replace.
+# The shape did not change - the host still owns and distributes the table -
+# only the payload and where the simulation runs. The sender id comes from the
+# network layer and cannot be spoofed, so a client can still only ever move
+# itself, and now it can only move itself the way the rules allow.
+#
+# WHAT IS STILL PROVISIONAL is the correction: a client that is told it is
+# somewhere else eases or snaps, and does not replay the inputs the host had
+# not yet processed. See _reconcile().
 
 func _publish_local_state() -> void:
-	var pos := _player.global_position
-	var yaw := _player.rotation.y
-	var st := _player.locomotion_state()
 	if Net.is_host():
-		# The host writes its own row directly, appearance and all - there is
-		# nobody to announce to.
+		# THE HOST'S OWN ROW IS STILL READ OFF ITS OWN BODY, and that is not an
+		# exception to the rule this stage exists for. Solo play is a host with
+		# zero clients, the local player IS the host's body, and there is
+		# nothing between the two to lie. Appearance goes in directly for the
+		# same reason: there is nobody to announce it to.
+		var st := _player.locomotion_state()
 		_merge_state(Net.local_peer_id(), {
-			"p": pos, "y": yaw, "v": _player.velocity,
+			"p": _player.global_position, "y": _player.rotation.y,
+			"v": _player.velocity,
 			"s": st.to_state_byte(), "l": st.look_yaw,
 			"a": _player.appearance_bytes(), "n": _player.display_name(),
 		})
 	else:
-		_srv_report_state.rpc_id(1, pos, yaw, _player.velocity,
-			st.to_state_byte(), st.look_yaw)
+		var wire := _player.wire_input()
+		_srv_report_input.rpc_id(1, wire.wish, wire.bits, wire.look)
+		_inputs_sent += 1
 		# Cycling the character on the F8 panel mid-session should be visible
 		# to everyone else. Comparing eight bytes per tick is free; the RPC
 		# only goes out when they actually differ.
@@ -366,15 +563,81 @@ func _publish_local_state() -> void:
 			_announce_appearance()
 
 
+## A CLIENT SAYS WHAT IT WANTS. Thirty times a second, unreliable_ordered -
+## a dropped input is superseded by the next one 33 ms later, and PlayerSim
+## holds the last one for 200 ms so the gap is invisible.
+##
+## Nothing is validated. There is nothing in an input to validate: the worst a
+## client can claim is that it is holding every key at once, which is a thing
+## it could do with its hands. Everything that USED to need validating -
+## position, velocity, whether that jump was possible - is now something the
+## host computes rather than something it is told.
 @rpc("any_peer", "call_remote", "unreliable_ordered")
-func _srv_report_state(pos: Vector3, yaw: float, vel: Vector3,
-		state_byte: int, look_yaw: float) -> void:
+func _srv_report_input(wish: Vector2, bits: int, look: float) -> void:
+	_inputs_received += 1
 	if not Net.is_host():
 		return
+	var input := Locomotion.Intent.new()
+	# Normalised here rather than trusted: a wish of length 40 would otherwise
+	# be a speed hack costing one line of client code. It is the only thing in
+	# the payload that has a legal range at all.
+	input.wish = wish.limit_length(1.0)
+	input.bits = bits
+	input.look = look
 	# The sender id comes from the network layer and cannot be spoofed, so a
 	# client can only ever move itself.
-	_merge_state(multiplayer.get_remote_sender_id(), {
-		"p": pos, "y": yaw, "v": vel, "s": state_byte, "l": look_yaw})
+	_last_sender = multiplayer.get_remote_sender_id()
+	_sim_for(_last_sender).receive(input)
+
+
+## How far from the spawn point a joining peer's body is placed.
+##
+## NOT ZERO, AND THIS IS A REAL BUG AND NOT A PROBE ONE. Everything spawns at
+## `spawn_position_m()`, so the second body to arrive arrives inside the first.
+## The pair probe found it the hard way: the peer's body landed on top of the
+## host's own capsule - `hit Player ... normal (0, 1, 0)`, standing on its head
+## - and was wedged there for the whole run. It was `is_on_floor()`, it took
+## its input, it set a velocity of 13 m/s, and it moved nowhere, because
+## move_and_slide could not get it off the thing it was standing on.
+##
+## 2 m is clear of two 0.8 m-wide capsules with room to spare.
+const SPAWN_RING_M := 2.0
+
+
+## The host's body for a peer, made on first contact.
+##
+## Spawned near the world's spawn point, which is the one place the host is
+## guaranteed to have ground - a body created under a peer who is already
+## somewhere else would fall through a world nobody has streamed. Stage 10's
+## collision ring is what makes anywhere else safe.
+func _sim_for(peer_id: int) -> PlayerSim:
+	if _sims.has(peer_id):
+		return _sims[peer_id]
+	var sim := PlayerSim.new()
+	sim.setup(peer_id)
+	_sims_root.add_child(sim)
+	# Placed around the spawn point rather than on it. The angle comes from the
+	# peer id so it is stable for a given peer and spreads four of them out
+	# without anyone having to keep a list of who is standing where.
+	var angle := float(peer_id % 360) * TAU / 360.0
+	sim.global_position = _world.spawn_position_m(SPAWN_CLEARANCE) + Vector3(
+		cos(angle) * SPAWN_RING_M, 0.0, sin(angle) * SPAWN_RING_M)
+	_sims[peer_id] = sim
+	print("[Game] simulating peer %d from %.0f, %.0f" % [
+		peer_id, sim.global_position.x, sim.global_position.z])
+	return sim
+
+
+## Read every simulated body into the table. Called once per sync tick, not
+## once per physics tick: the table is what goes on the wire, and the wire runs
+## at SYNC_HZ.
+func _publish_sim_states() -> void:
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		var st := sim.locomotion_state()
+		_merge_state(peer_id, {
+			"p": sim.global_position, "y": sim.rotation.y, "v": sim.velocity,
+			"s": st.to_state_byte(), "l": st.look_yaw})
 
 
 ## A CLIENT SAYS WHAT IT LOOKS LIKE. Once on joining, and again if it changes.
@@ -422,16 +685,28 @@ func _announce_appearance() -> void:
 ## exists, so dropping a late packet beats resending it. Ordered means a stale
 ## packet arriving out of sequence is discarded instead of making the capsule
 ## jump backwards.
+## THE BODIES RIDE WITH THE PLAYERS, in the same packet and the same channel.
+##
+## They are the same kind of fact - "where is this thing right now" - with the
+## same staleness rule: a newer one supersedes an older one and a dropped one
+## costs nothing. Splitting them across two channels would buy nothing and
+## would let a body's position arrive from a different instant than the player
+## standing next to it.
 @rpc("authority", "call_remote", "unreliable_ordered")
-func _cl_sync_players(states: Dictionary) -> void:
+func _cl_sync_players(states: Dictionary, bodies: Dictionary = {}) -> void:
 	_apply_states(states)
+	_body_field.apply_rows(bodies)
 
 
 func _apply_states(states: Dictionary) -> void:
 	var me := Net.local_peer_id()
 	for pid in states:
 		if pid == me:
-			continue  # We do not render ourselves.
+			# We do not RENDER ourselves - but since Stage 10 the host is the
+			# authority on where we are, so this row is a correction.
+			if Net.is_client():
+				_reconcile(states[pid])
+			continue
 		var st: Dictionary = states[pid]
 		# The WHOLE row. RemotePlayer decides what it can use, which is what
 		# lets the payload grow without this function growing with it.
@@ -462,10 +737,87 @@ func _remove_player(peer_id: int) -> void:
 	_players.erase(peer_id)
 
 
+## THE HOST DISAGREES WITH US ABOUT WHERE WE ARE.
+##
+## The local body keeps predicting - you do not want a third of a second of
+## input latency on your own legs - so it and the host are always slightly
+## apart, and the question is only what to do about how far apart.
+##
+## THREE BANDS, and the reason there are three rather than a lerp is that the
+## right response genuinely differs in kind:
+##
+##   under 0.25 m   nothing. This is the normal state. Physics runs at 60 Hz
+##                  and input goes out at 30, so the host is always about one
+##                  packet behind, and at sprint that is a few centimetres.
+##                  Correcting it would be a permanent tremble.
+##   under 2 m      ease over 100 ms. Something real happened - a jump the host
+##                  resolved differently, a step the two capsules took at
+##                  different moments - and it has to be fixed, but a teleport
+##                  of a metre is far more jarring than a fast slide.
+##   over 2 m       snap. At this distance the two simulations are telling
+##                  different stories and there is nothing to preserve. Easing
+##                  would drag the player through whatever is in between,
+##                  which on voxel terrain is usually rock.
+##
+## NO ROLLBACK, and this is written down as provisional. A real client-side
+## prediction replays the inputs the host had not yet processed when it sent
+## this position, so the correction lands where the player will be rather than
+## where they were. That needs an input sequence number, a ring buffer of the
+## last N inputs on the client, and the host echoing the last sequence it
+## consumed - about forty lines, and none of them useful until there is
+## something in the world worth being precise about. The shape is recorded in
+## README.md so the next person does not have to rediscover it.
+const FIX_IGNORE_M := 0.25
+const FIX_SNAP_M := 2.0
+const FIX_EASE_SECONDS := 0.1
+
+func _reconcile(row: Dictionary) -> void:
+	_last_authority = row
+	var authoritative: Vector3 = row.get("p", _player.global_position)
+	var error := _player.global_position.distance_to(authoritative)
+	if error < FIX_IGNORE_M:
+		return
+	if error > FIX_SNAP_M:
+		_player.global_position = authoritative
+		_player.velocity = row.get("v", Vector3.ZERO)
+		_fix_remaining = Vector3.ZERO
+		_fix_left = 0.0
+		return
+	# Replaces any correction still in flight rather than adding to it: this
+	# packet is newer and already accounts for wherever the previous one left
+	# us. Accumulating them would over-correct by a whole packet each time.
+	_fix_remaining = authoritative - _player.global_position
+	_fix_left = FIX_EASE_SECONDS
+
+
+## Slide the last correction in. Runs on the frame, not the physics tick,
+## because it is about what the player SEES; the body's own step has already
+## happened by the time this moves it.
+func _advance_correction(delta: float) -> void:
+	if _fix_left <= 0.0:
+		return
+	if delta >= _fix_left:
+		# The last frame of the ease pays whatever is left, so the correction
+		# is exact no matter how the frames divided it.
+		_player.global_position += _fix_remaining
+		_fix_remaining = Vector3.ZERO
+		_fix_left = 0.0
+		return
+	var step := _fix_remaining * (delta / _fix_left)
+	_player.global_position += step
+	_fix_remaining -= step
+	_fix_left -= delta
+
+
 ## The host quit or crashed. The world was theirs, so there is nothing sensible
 ## to keep playing - back to the menu, which explains why.
 func _on_host_disconnected() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+
+
+func _on_peer_joined(peer_id: int) -> void:
+	if Net.is_host():
+		_journal.log_event("peer_joined", {"peer": peer_id})
 
 
 func _on_peer_left(peer_id: int) -> void:
@@ -473,7 +825,78 @@ func _on_peer_left(peer_id: int) -> void:
 	# capsule right away rather than waiting for the next sync.
 	_states.erase(peer_id)
 	_remove_player(peer_id)
+	if Net.is_host():
+		_journal.log_event("peer_left", {"peer": peer_id})
+		if _sims.has(peer_id):
+			_sims[peer_id].queue_free()
+			_sims.erase(peer_id)
 	_update_status()
+
+
+## Every player position the host knows, in metres, its own included. The
+## replication filter asks "is any body near anybody" and the host's own player
+## counts: a rock only the host can see still has to reach the clients, or they
+## would walk over later and find it somewhere else.
+func _sim_centres_m() -> Array:
+	var out := [_player.global_position]
+	for peer_id in _sims:
+		out.append((_sims[peer_id] as PlayerSim).global_position)
+	return out
+
+
+## The chunk column each simulated peer is standing in. Typed, because World
+## compares this against the set it already has and an untyped array never
+## compares equal to a typed one.
+func _sim_columns() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		var p := sim.global_position
+		var bx := int(floor(p.x / config.block_size))
+		var bz := int(floor(p.z / config.block_size))
+		out.append(Vector2i(
+			Chunk.floor_div(bx, Chunk.SIZE), Chunk.floor_div(bz, Chunk.SIZE)))
+	return out
+
+
+## The host's authoritative row for one peer, or an empty dictionary. Read by
+## the pair probe; the table itself stays private.
+func peer_row(peer_id: int) -> Dictionary:
+	return _states.get(peer_id, {})
+
+
+## What the host's body for that peer was last told. Probe diagnostics only.
+func peer_input_line(peer_id: int) -> String:
+	if not _sims.has(peer_id):
+		return "no sim, %d inputs from %d" % [_inputs_received, _last_sender]
+	return "%s; %d in from %d, %d sims" % [
+		(_sims[peer_id] as PlayerSim).debug_line(),
+		_inputs_received, _last_sender, _sims.size()]
+
+
+## CLIENT ONLY. The last row the host sent for US - what it believes we are
+## doing, as opposed to what we predicted. Empty until the first one arrives.
+##
+## Kept as a field rather than only consumed by _reconcile() because the size
+## of the gap between this and the local body is the number Stage 10 is judged
+## on, and it belongs on the F3 readout as much as in a probe.
+func last_authority() -> Dictionary:
+	return _last_authority
+
+
+## CLIENT ONLY. Input packets sent so far.
+func inputs_sent() -> int:
+	return _inputs_sent
+
+
+## HOST ONLY, and read by the pair probe. See journal.gd.
+func journal() -> Journal:
+	return _journal
+
+
+## For the F4 readout and the probes.
+func body_field() -> BodyField:
+	return _body_field
 
 
 # --- Tuning loop ------------------------------------------------------------

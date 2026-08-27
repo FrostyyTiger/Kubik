@@ -54,6 +54,10 @@ func _ready() -> void:
 		"flora removal": _test_flora_removal,
 		"flora winding": _test_flora_winding,
 		"boulder two tone": _test_boulder_two_tone,
+		"edit while cached": _test_edit_while_cached,
+		"locomotion parity": _test_locomotion_parity,
+		"body promotion": _test_body_promotion,
+		"push holds": _test_push_holds,
 	}
 	var failures := 0
 	for name in tests:
@@ -633,20 +637,56 @@ class LooseWriter extends RefCounted:
 ## two mutually dependent for the sake of an integer. This is the cheaper half
 ## of that trade - the coupling is a test rather than an import, and the test
 ## says exactly what breaks.
+## THE COMPOSED MAXIMUM SINCE WORLD FEEL V1 STAGE 5. There are two scales now -
+## what the land asks for and what the player asks for - and the reserve has to
+## clear their product, because the tallest species takes the full read scale.
 func _test_sky_reserve():
 	var bad := 0
+	var checked := 0
 	for scale in [0.5, 1.0, 1.7, 2.5]:
-		var cfg := WorldgenConfig.new()
-		cfg.tree_size_scale = scale
-		var needed := TreeSpecies.max_height(cfg)
-		var reserved := int(ceil(
-			WorldgenConfig.REF_MAX_TREE_BLOCKS * scale
-			+ WorldgenConfig.TREE_RESERVE_MARGIN))
-		if needed > reserved:
-			print("  scale %.2f: table needs %d blocks, config reserves %d" % [
-				scale, needed, reserved])
-			bad += 1
-	print("sky reserve: 4 scales checked, %d short" % bad)
+		for read in [1.0, 2.0, 3.0]:
+			var cfg := WorldgenConfig.new()
+			cfg.tree_size_scale = scale
+			cfg.tree_read_scale = read
+			var needed := TreeSpecies.max_height(cfg)
+			# The same expression apply_world_scale() reserves with, including
+			# old growth - max_height() takes it, so this must too.
+			var reserved := int(ceil(
+				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * read
+					* maxf(cfg.old_growth_scale, 1.0)
+				+ WorldgenConfig.TREE_RESERVE_MARGIN))
+			checked += 1
+			if needed > reserved:
+				print("  scale %.2f read %.1f: table needs %d blocks, config reserves %d" % [
+					scale, read, needed, reserved])
+				bad += 1
+	# OLD GROWTH IS A THIRD SCALE (world feel v1 Stage 6) and the reserve has to
+	# cover it too. It happens to be safe today because the hero takes the full
+	# read scale and nothing else is old growth AND a hero - a spruce at
+	# 21 x 2 x 1.5 = 63 blocks against the hero's 42 x 2 = 84 - but "happens to
+	# be" is exactly the kind of thing that stops being true when someone
+	# raises old_growth_scale, and the symptom is a flat-topped tree in some
+	# columns rather than an error.
+	for scale in [1.0, 2.0]:
+		for og in [1.5, 2.0, 3.0]:
+			var cfg2 := WorldgenConfig.new()
+			cfg2.tree_read_scale = scale
+			cfg2.old_growth_scale = og
+			var tallest := 0
+			for row in TreeSpecies.table(cfg2):
+				var h: int = int(row["height"].y)
+				if int(row["name"] == "hero") == 0:
+					h = int(round(float(h) * (1.0 + (og - 1.0) * float(row.get("read", 0.0)))))
+				tallest = maxi(tallest, h)
+			var reserved2 := int(ceil(
+				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * maxf(og, 1.0)
+				+ WorldgenConfig.TREE_RESERVE_MARGIN))
+			checked += 1
+			if tallest > reserved2:
+				print("  read %.1f old growth %.1f: tallest %d blocks, config reserves %d" % [
+					scale, og, tallest, reserved2])
+				bad += 1
+	print("sky reserve: %d scale/read pairs checked, %d short" % [checked, bad])
 	return bad
 
 
@@ -872,6 +912,76 @@ func _measure_ao_cost():
 ##   3. an edit into a chunk that is neither loaded nor pending is still
 ##      REFUSED. Otherwise "accept pending chunks" would have quietly become
 ##      "accept everything", and a client could edit the far side of the world.
+## AN EDIT MADE WHILE A COLUMN IS PARKED SURVIVES ITS RETURN.
+##
+## World feel v1 Stage 4 stopped freeing columns that leave the unload ring and
+## parks them instead. That creates a third place a chunk can be, and the
+## invariant it has to keep is the same one the in-flight window keeps: a parked
+## chunk is NOT in _chunks, receives no edit directly, and is brought back
+## through the one replay point. If that were wrong, a player would dig a hole,
+## walk away far enough to unload it, come back, and find it filled in - which
+## is the bug this test exists to catch, and it would be invisible in any
+## screenshot.
+func _test_edit_while_cached():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.voxel_radius_chunks = 2
+
+	var world := World.new()
+	world.setup(1234, cfg)
+
+	var surface := int(floor(world.generator.surface_at(0.0, 0.0)))
+	var block_pos := Vector3i(0, surface, 0)
+	var cpos := Chunk.world_to_chunk(block_pos)
+	var col := Vector2i(cpos.x, cpos.z)
+
+	# Build the column and let it land.
+	world._submit_column(col)
+	var spins := 0
+	while not world.has_chunk(cpos) and spins < 5000:
+		world._collect_finished(Time.get_ticks_msec())
+		OS.delay_msec(1)
+		spins += 1
+	if not world.has_chunk(cpos):
+		print("  the column never arrived")
+		bad += 1
+		print("edit while cached: %d checks failed" % bad)
+		return 1
+
+	# Park it, by pretending the player walked a long way off. The centre moves
+	# rather than the radius shrinking to nothing, because a radius of zero
+	# still keeps the centre column - which is the one under test.
+	world._center = Vector2i(1000, 1000)
+	world._free_distant_chunks(2, 2)
+	if world.has_chunk(cpos):
+		print("  the chunk was still in _chunks after being parked")
+		bad += 1
+	if not world._column_cache.has(col):
+		print("  the column was freed rather than parked")
+		bad += 1
+
+	# Edit it while it is parked. The client path records into _edits; there is
+	# no chunk to write into, which is exactly the case under test.
+	world._cl_apply_block(block_pos, Block.SNOW)
+
+	# Bring it back.
+	if not world._restore_column(col):
+		print("  the parked column did not come back")
+		bad += 1
+	var got := world.get_block(block_pos)
+	if got != Block.SNOW:
+		print("  the edit did not survive parking: got %s, wanted snow" % Block.name_of(got))
+		bad += 1
+	if world._cache_chunks != 0:
+		print("  the cache still counts %d chunks after a full restore" % world._cache_chunks)
+		bad += 1
+
+	world.free()
+	print("edit while cached: %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
 func _test_edit_during_generation():
 	var bad := 0
 
@@ -900,7 +1010,14 @@ func _test_edit_during_generation():
 		bad += 1
 
 	# Now put exactly that chunk out at the worker pool and leave it there.
-	world._submit_generation(cpos)
+	#
+	# ONE JOB PER COLUMN SINCE WORLD FEEL V1 STAGES 1 AND 2, so the window this
+	# test is about is much LONGER than it was: it covers the whole column's
+	# voxels, its trees and every one of its meshes, and an edit landing in it
+	# invalidates the mesh the job built, not just the voxels. _collect_chunks()
+	# remeshes for exactly that case, and this test is what proves the edit
+	# still wins.
+	world._submit_column(Vector2i(cpos.x, cpos.z))
 
 	# 1. Still no voxels, but the chunk is coming, so the host must accept.
 	if not world._validate_edit(1, block_pos, Block.SNOW):
@@ -966,8 +1083,12 @@ func _test_facing():
 	for degrees in [0, 45, 90, 135, 180, 225, 270, 315, 23, 197]:
 		var a := deg_to_rad(float(degrees))
 		var wish := Vector3(sin(a), 0.0, cos(a))
-		# The expression from Player._face_movement().
-		var yaw := atan2(-wish.x, -wish.z)
+		# THE SHIPPED FUNCTION, not a copy of its expression. Since world feel
+		# v1 Stage 10 the facing rule lives in Locomotion because the host has
+		# to turn a remote peer's body the same way, and a test that re-typed
+		# the arithmetic here would have gone on passing if that move had
+		# changed it. A huge delta so one step converges.
+		var yaw := Locomotion.face_yaw(0.0, Vector2(wish.x, wish.z), 100.0)
 		var facing := (Basis(Vector3.UP, yaw) * Vector3.FORWARD).normalized()
 		checked += 1
 		if facing.distance_to(wish.normalized()) > 0.0001:
@@ -987,3 +1108,412 @@ func _test_facing():
 	if not old_was_wrong:
 		bad += 1
 	return 1 if bad > 0 else 0
+
+
+## THE HOST AND THE CLIENT MUST COMPUTE THE SAME THING (world feel v1 Stage 10).
+##
+## Stage 10's whole claim is that there is one movement implementation, so what
+## a client predicts is what the host computes. That claim is worth exactly as
+## much as the evidence for it, and "I refactored it into one file" is not
+## evidence - `player.gd` and `player_sim.gd` still each build an intent, and
+## either could build it differently.
+##
+## WHAT THIS TEST DOES NOT COVER, AND WHY - because two attempts at covering
+## it failed in ways worth writing down rather than deleting.
+##
+## selftest.tscn's root is a plain `Node`, so this scene has no World3D and
+## therefore no physics space. `move_and_slide()` is a no-op here and
+## `is_on_floor()` is always false. The harness is also synchronous on purpose
+## (see the note in _ready() about untyped tests and crash detection), so it
+## could not step a space even if it had one. Ground contact, `step_up` and
+## jumping are NOT tested here; the pair probe, which runs two real engines,
+## is what gates them.
+##
+## ATTEMPT ONE put two capsules on a box floor and reported a perfect
+## 0.000000 m drift - because the two bodies had spawned inside each other and
+## shoved each other to a standstill. 0.65 m travelled in a second that should
+## have covered eight, and the drift check passed and proved nothing.
+## ATTEMPT TWO separated them and dropped the floor, and they travelled 0.000 m:
+## that was the missing space. Both attempts would have looked like passes
+## without the "did it move at all" check, which is the only reason this test
+## is worth having at all.
+##
+## So it judges the step by the two things that ARE real without a space: the
+## VELOCITY `_walk` computes before handing over to move_and_slide, and the
+## POSITION the fly path writes directly. Between them they cover wish
+## direction, both speed multipliers, gravity, the fly branch and the wire
+## round trip - everything except ground contact.
+func _test_locomotion_parity():
+	var bad := 0
+
+	var bodies := []
+	for i in 2:
+		var b := CharacterBody3D.new()
+		Locomotion.configure_body(b)
+		b.add_child(Locomotion.make_collider())
+		add_child(b)
+		b.global_position = Vector3.ZERO
+		bodies.append(b)
+
+	# A sequence with something interesting in it: walk, then sprint, then let
+	# go. Sixty ticks at the physics rate.
+	var delta := 1.0 / 60.0
+	var at_release := 0.0
+	for tick in 60:
+		if tick == 50:
+			at_release = (bodies[0] as CharacterBody3D).velocity.x
+		var intent := Locomotion.Intent.new()
+		intent.wish = Vector2(1.0, 0.0)
+		if tick >= 20:
+			intent.bits |= Locomotion.BIT_SPRINT
+		if tick >= 50:
+			intent.wish = Vector2.ZERO
+		# The SECOND body is stepped from a wire round trip of the same intent,
+		# which is the path a real remote peer's input takes.
+		var wired := Locomotion.Intent.from_dict(intent.to_dict())
+		if wired.bits != intent.bits or wired.wish != intent.wish:
+			bad += 1
+		Locomotion.step(bodies[0], intent, delta)
+		Locomotion.step(bodies[1], wired, delta)
+
+	var vel_a: Vector3 = (bodies[0] as CharacterBody3D).velocity
+	var vel_b: Vector3 = (bodies[1] as CharacterBody3D).velocity
+	var vel_drift := vel_a.distance_to(vel_b)
+
+	# THE FLY PATH, which writes global_position itself and so is the one part
+	# of the step that moves a body with no space to move in. Same sequence,
+	# same comparison.
+	#
+	# Measured as a DISPLACEMENT from wherever the walk phase left the bodies,
+	# not from the origin: whether move_and_slide did anything above depends on
+	# whether this scene has a physics space, and that is not what this half is
+	# testing.
+	var fly_from: Array[Vector3] = [
+		(bodies[0] as CharacterBody3D).global_position,
+		(bodies[1] as CharacterBody3D).global_position,
+	]
+	for tick in 30:
+		var intent := Locomotion.Intent.new()
+		intent.wish = Vector2(0.0, -1.0)
+		intent.bits = Locomotion.BIT_FLY
+		if tick >= 15:
+			intent.bits |= Locomotion.BIT_SPRINT
+		var wired := Locomotion.Intent.from_dict(intent.to_dict())
+		Locomotion.step(bodies[0], intent, delta)
+		Locomotion.step(bodies[1], wired, delta)
+	var pos_a: Vector3 = (bodies[0] as CharacterBody3D).global_position - fly_from[0]
+	var pos_b: Vector3 = (bodies[1] as CharacterBody3D).global_position - fly_from[1]
+	var pos_drift := pos_a.distance_to(pos_b)
+
+	print("locomotion parity: sprint reached %.2f m/s, coasted to %.2f, drift %.6f; fly moved %.2f m (drift %.6f)" % [
+		at_release, vel_a.x, vel_drift, -pos_a.z, pos_drift])
+	if vel_drift > 0.000001 or pos_drift > 0.000001:
+		print("  the two sides disagree - the step is not deterministic")
+		bad += 1
+	# MOMENTUM (Stage 12), and this used to assert that letting go zeroed the
+	# velocity outright. It does not any more, and the test failing was the
+	# change being noticed rather than a regression.
+	#
+	# Two properties, both of which a snap-to-wish implementation fails:
+	# the body never reached full sprint in the time it had, and letting go
+	# slowed it without stopping it.
+	var sprint_speed := Locomotion.WALK_SPEED * Locomotion.SPRINT_MULTIPLIER
+	if at_release >= sprint_speed:
+		print("  reached %.3f m/s of a %.3f m/s sprint in half a second - it snapped"
+			% [at_release, sprint_speed])
+		bad += 1
+	if vel_a.x >= at_release or vel_a.x <= 0.0:
+		print("  letting go took it from %.3f to %.3f - it did not coast"
+			% [at_release, vel_a.x])
+		bad += 1
+	# ...and the amount it slowed by is the constants, exactly. Everything here
+	# is airborne - no space, so is_on_floor() is always false - which makes
+	# this an AIR_CONTROL check as much as a DECEL one, and both matter: an
+	# AIR_CONTROL of 1.0 would be a player who steers as well in the air as on
+	# the ground, and nothing else in this harness would notice.
+	var expect_drop: float = Locomotion.DECEL * Locomotion.AIR_CONTROL * 10.0 * delta
+	if absf((at_release - vel_a.x) - expect_drop) > 0.001:
+		print("  slowed by %.4f m/s over ten airborne ticks, expected %.4f"
+			% [at_release - vel_a.x, expect_drop])
+		bad += 1
+	if vel_a.y > -1.0:
+		print("  the body did not fall (%.3f) - gravity is not running" % vel_a.y)
+		bad += 1
+	# 15 ticks at FLY_SPEED plus 15 at sprint, over 30/60 of a second.
+	var expect_fly: float = (Locomotion.FLY_SPEED * 15.0
+		+ Locomotion.FLY_SPEED * Locomotion.SPRINT_MULTIPLIER * 15.0) * delta
+	if absf(-pos_a.z - expect_fly) > 0.001:
+		print("  the fly step moved %.3f m, expected %.3f m" % [-pos_a.z, expect_fly])
+		bad += 1
+
+	# Every bit survives the round trip on its own, including the pose field
+	# that shares the byte.
+	var probe := Locomotion.Intent.new()
+	probe.bits = (Locomotion.BIT_SPRINT | Locomotion.BIT_JUMP
+		| Locomotion.BIT_PRECISION | Locomotion.BIT_FLY | Locomotion.BIT_DOWN)
+	probe.set_pose(LocomotionState.POSE_WAVE)
+	var back := Locomotion.Intent.from_dict(probe.to_dict())
+	if not (back.sprinting() and back.jumping() and back.precision()
+			and back.flying() and back.descending()
+			and back.pose() == LocomotionState.POSE_WAVE):
+		print("  a bit did not survive the wire: %d -> %d" % [probe.bits, back.bits])
+		bad += 1
+	# Sprint must beat precision, because _locomotion_mode() picks the
+	# animation that way and the two must not disagree.
+	var both := Locomotion.Intent.new()
+	both.bits = Locomotion.BIT_SPRINT | Locomotion.BIT_PRECISION
+	if not is_equal_approx(Locomotion.speed_multiplier(both), Locomotion.SPRINT_MULTIPLIER):
+		print("  sprint does not beat precision - the legs will outrun the body")
+		bad += 1
+
+	for body in bodies:
+		(body as Node).queue_free()
+	return 1 if bad > 0 else 0
+
+
+## EVERY PEER MUST NAME THE SAME ROCK THE SAME THING (world feel v1 Stage 11).
+##
+## Nobody sends a list of bodies. The host builds a RigidBody3D and each client
+## builds a mesh, independently, from the same seeded promotion - and the whole
+## scheme rests on those two independent answers being identical. If they are
+## not, the symptom is not an error: it is a friend heaving at a boulder that
+## is scenery on your screen, and a table row addressed to a body you do not
+## have.
+##
+## THREE PROPERTIES, and the third is the one that is easy to lose.
+##
+##   IDENTICAL   two configs at the same values promote the same id set
+##   SUBSET      every promoted id was a BOULDER_M or BOULDER_L
+##   MONOTONIC   raising body_fraction only ADDS ids, never swaps them
+##
+## Monotonic is what "hashed, not counted" buys, and it is worth a test because
+## the cheap implementation - promote every Nth boulder - passes the first two
+## and fails this one. Under counting, turning the knob up reshuffles which
+## rocks are pushable; under hashing it reveals more of them. A player who
+## learns that the big rock by the lake moves should not find it welded down
+## because somebody retuned a fraction.
+## The first `want` chunk columns that actually contain a boulder.
+##
+## Candidates come from the heightmap - rock and alpine, strided - because that
+## narrows a 1500-cell map to the mountains, and then each candidate is
+## actually placed and inspected. See the note at the call site for why the
+## heightmap answer alone is not enough.
+func _boulder_columns(gen: TerrainGenerator, cfg: WorldgenConfig,
+		want: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for col in _rock_columns(gen, 200):
+		for inst in FloraPlacement.column(gen, cfg, col.x, col.y):
+			var m: int = inst["model"]
+			if m == FloraModels.BOULDER_M or m == FloraModels.BOULDER_L:
+				out.append(col)
+				break
+		if out.size() >= want:
+			return out
+	return out
+
+
+## The first `want` chunk columns whose centre is rock or alpine.
+##
+## Strided over the heightmap rather than walked, because it only has to find
+## somewhere boulders grow, and a stride of four cells is still hundreds of
+## candidates on a 1500-cell map.
+## SPREAD ACROSS THE WHOLE MAP, not the first `want` found.
+##
+## Taking the first ones in scan order means taking them from one edge of the
+## world - and the edges are the impassable peaks by design, where every slope
+## is past FloraPlacement.MAX_SLOPE_DEG and nothing is placed at all. This
+## found two hundred perfectly good rock columns without a single boulder in
+## any of them, which reads exactly like promotion being broken.
+##
+## So the whole map is scanned and the result is sampled evenly. It costs one
+## more pass over a strided heightmap and it is the difference between
+## sampling "rock" and sampling "the rim of the world".
+func _rock_columns(gen: TerrainGenerator, want: int) -> Array[Vector2i]:
+	var all: Array[Vector2i] = []
+	var hm := gen.heightmap
+	var seen := {}
+	for j in range(0, hm.cols, 4):
+		for i in range(0, hm.cols, 4):
+			var h: float = hm.cells[i + j * hm.cols]
+			var bx: int = hm.cell_to_block(i)
+			var bz: int = hm.cell_to_block(j)
+			var zone := gen.surface_zone_at(bx, bz, h)
+			if zone != TerrainGenerator.ZONE_ROCK \
+					and zone != TerrainGenerator.ZONE_ALPINE:
+				continue
+			var col := Vector2i(Chunk.floor_div(bx, Chunk.SIZE),
+				Chunk.floor_div(bz, Chunk.SIZE))
+			if seen.has(col):
+				continue
+			seen[col] = true
+			all.append(col)
+	if all.size() <= want:
+		return all
+	var out: Array[Vector2i] = []
+	var step := float(all.size()) / float(want)
+	for k in want:
+		out.append(all[mini(int(float(k) * step), all.size() - 1)])
+	return out
+
+
+func _test_body_promotion():
+	var bad := 0
+	var cfg_a := WorldgenConfig.new()
+	var cfg_b := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg_a)
+	gen.build_heightmap()
+
+	# COLUMNS THAT DEMONSTRABLY CONTAIN BOULDERS, and it took two attempts to
+	# get here. The first sampled four columns near the origin: "0 boulders, 0
+	# promoted", passing every comparison it made, because comparing two empty
+	# sets always succeeds. The second asked the HEIGHTMAP for rock zones and
+	# still found none - the heightmap cell is the coarse height, and the
+	# placement classifies each block from `surface_at`, which is the coarse
+	# height PLUS detail. Two different zone answers for the same place.
+	#
+	# So this stops predicting where boulders are and looks. It is slower and
+	# it is the only version that cannot lie.
+	var columns := _boulder_columns(gen, cfg_a, 4)
+	# PART ONE: GROUNDED. Real columns, real placement, and the only question
+	# it can answer at this sample size is "does promotion fire on the right
+	# thing at all". Boulders are RARE - two of two hundred rock columns carry
+	# one, because rock is steep and FloraPlacement rejects anything past
+	# MAX_SLOPE_DEG - so there are never enough of them here to exercise a
+	# fraction. Part two does that.
+	var boulders := 0
+	var wrong_model := 0
+	for col in columns:
+		for inst in FloraPlacement.column(gen, cfg_a, col.x, col.y):
+			var block: Vector2i = inst["block"]
+			var model: int = inst["model"]
+			var is_boulder := model == FloraModels.BOULDER_M \
+				or model == FloraModels.BOULDER_L
+			if is_boulder:
+				boulders += 1
+			if BodyTable.promote(model, block.x, block.y,
+					gen.world_seed, cfg_a) >= 0 and not is_boulder:
+				wrong_model += 1
+	print("body promotion: %d boulders across %d real columns, %d non-boulders promoted" % [
+		boulders, columns.size(), wrong_model])
+	if boulders == 0:
+		print("  found no boulders at all - part one proved nothing")
+		bad += 1
+	bad += wrong_model
+
+	# PART TWO: EXHAUSTIVE, on a synthetic grid. promote() is a pure function
+	# of (model, block, seed, fraction), so the properties it has to hold do
+	# not need a world - they need a lot of blocks, and a world is a slow way
+	# to get them.
+	var ids_a := {}
+	var ids_b := {}
+	var total := 0
+	for bz in range(-64, 64):
+		for bx in range(-64, 64):
+			# Alternating the two boulder models so both are covered and the
+			# id's top byte varies.
+			var model := FloraModels.BOULDER_M if ((bx + bz) & 1) == 0 \
+				else FloraModels.BOULDER_L
+			total += 1
+			var id := FloraPlacement.identity(model, bx, bz)
+			if BodyTable.promote(model, bx, bz, 4242, cfg_a) >= 0:
+				ids_a[id] = true
+			if BodyTable.promote(model, bx, bz, 4242, cfg_b) >= 0:
+				ids_b[id] = true
+	var share := float(ids_a.size()) / float(total)
+	print("  %d of %d synthetic boulders promoted (%.3f against a fraction of %.2f)" % [
+		ids_a.size(), total, share, cfg_a.body_fraction])
+	if ids_a != ids_b:
+		print("  two configs at the same values disagreed: %d vs %d ids" % [
+			ids_a.size(), ids_b.size()])
+		bad += 1
+	# The hash has to be UNIFORM, not merely deterministic. A promote() that
+	# always said yes would pass every other check here.
+	if absf(share - cfg_a.body_fraction) > 0.02:
+		print("  the promoted share is not the fraction - the hash is skewed")
+		bad += 1
+
+	# MONOTONIC. Raise the fraction; every id from before must still be there.
+	#
+	# This is what "hashed, not counted" buys, and it is worth a test because
+	# the cheap implementation - promote every Nth boulder - passes everything
+	# above and fails this. Under counting, turning the knob up RESHUFFLES
+	# which rocks are pushable; under hashing it reveals more of them. A player
+	# who learns that the big rock by the lake moves should not find it welded
+	# down because somebody retuned a fraction.
+	cfg_b.body_fraction = minf(cfg_a.body_fraction * 2.0, 1.0)
+	var ids_more := {}
+	for bz in range(-64, 64):
+		for bx in range(-64, 64):
+			var model := FloraModels.BOULDER_M if ((bx + bz) & 1) == 0 \
+				else FloraModels.BOULDER_L
+			if BodyTable.promote(model, bx, bz, 4242, cfg_b) >= 0:
+				ids_more[FloraPlacement.identity(model, bx, bz)] = true
+	var lost := 0
+	for id in ids_a:
+		if not ids_more.has(id):
+			lost += 1
+	print("  at %.2f: %d promoted, %d of the original %d lost" % [
+		cfg_b.body_fraction, ids_more.size(), lost, ids_a.size()])
+	if lost > 0:
+		print("  raising body_fraction RESHUFFLED which rocks are pushable")
+		bad += 1
+	if ids_more.size() <= ids_a.size():
+		print("  raising body_fraction did not promote more bodies")
+		bad += 1
+	return 1 if bad > 0 else 0
+
+
+## PILLAR 1, STATED AS ARITHMETIC (world feel v1 Stage 12).
+##
+## "Encounters assume two bodies" is the first design pillar, and the push is
+## the cheapest place in the game where it is literally true: a boulder_l does
+## not move for one player and does for two. That property is four numbers -
+## PUSH_FORCE_N and three holds - and nothing anywhere enforces the
+## relationship between them.
+##
+## So this is a test of a DESIGN INVARIANT rather than of code. It will fail the
+## day somebody retunes the push to make boulder_m feel better and silently
+## turns boulder_l into a one-player rock, which is the pillar quietly going
+## away with every test still green.
+##
+## It also checks the ordering the whole scheme rests on: a heavier thing must
+## not be EASIER to move.
+func _test_push_holds():
+	var bad := 0
+	var one := Locomotion.PUSH_FORCE_N
+	var two := one * 2.0
+	print("push holds: one player is %.0f N; holds are %s" % [one,
+		", ".join(_hold_names())])
+
+	# One player moves a boulder_m.
+	if one < BodyTable.hold_of(BodyTable.BOULDER_M):
+		print("  one player cannot move a boulder_m (%.0f < %.0f)" % [
+			one, BodyTable.hold_of(BodyTable.BOULDER_M)])
+		bad += 1
+	# One player does NOT move a boulder_l - this is the co-op rule.
+	if one >= BodyTable.hold_of(BodyTable.BOULDER_L):
+		print("  one player moves a boulder_l (%.0f >= %.0f) - pillar 1 is gone" % [
+			one, BodyTable.hold_of(BodyTable.BOULDER_L)])
+		bad += 1
+	# Two players do.
+	if two < BodyTable.hold_of(BodyTable.BOULDER_L):
+		print("  two players cannot move a boulder_l (%.0f < %.0f) - it is scenery" % [
+			two, BodyTable.hold_of(BodyTable.BOULDER_L)])
+		bad += 1
+	# Heavier must not be easier.
+	for kind in range(1, BodyTable.COUNT):
+		var here := BodyTable.row(kind)
+		var before := BodyTable.row(kind - 1)
+		if float(here["mass"]) > float(before["mass"]) \
+				and BodyTable.hold_of(kind) < BodyTable.hold_of(kind - 1):
+			print("  %s is heavier than %s but easier to move" % [
+				here["name"], before["name"]])
+			bad += 1
+	return 1 if bad > 0 else 0
+
+
+func _hold_names() -> Array:
+	var out := []
+	for kind in BodyTable.COUNT:
+		out.append("%s %.0f" % [BodyTable.name_of(kind), BodyTable.hold_of(kind)])
+	return out
