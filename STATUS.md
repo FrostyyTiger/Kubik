@@ -1,6 +1,28 @@
 # Status
 
-The latest run is **world feel v1**, finished 2026-08-27 on
+The latest run is **distance v1, night 1**, on `feat/distance-v1`:
+`docs/status/distance-v1.md`. The far country's geometry and colour - a
+filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
+dilation, and the end of the far field's zone dither. **Night 2 is not started**
+(the impostor material, the ring reaching the fog, the meadow).
+
+It is the first status doc in this project with **no "Tuned blind" section**:
+ganymede's GPU works now, so every tone was judged against a picture taken on
+the same box. A **provenance column** replaces it - which box each number came
+from and whether it is a single run or an interleaved median.
+
+Three things in it are worth reading even if you do not read the rest:
+
+- The far field already lost **60 blocks of summit at 600 m before this epic
+  touched it**, so two of the plan's gates were written against a baseline
+  nobody had measured. Both are recorded as not met, with what was run instead.
+- The new far probe **was aliased against the mesh it measures** on its first
+  version, and reported a ring boundary as perfect that is plainly visible in
+  play. Caught before any baseline was recorded.
+- The plan's "fade the grain with distance" was **already done** in look v2 and
+  the plan's premise for it was wrong.
+
+The previous run is **world feel v1**, finished 2026-08-27 on
 `feat/world-feel-v1`: `docs/status/world-feel-v1.md`. Both nights are done -
 streaming and the forest, then Jolt, host-authoritative input, bodies, the push
 and the slide.

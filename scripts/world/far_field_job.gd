@@ -126,11 +126,27 @@ var center := Vector2i.ZERO
 var arrays: Array = []
 var vertex_count := 0
 
+## How long run() took, in milliseconds. DISTANCE V1 STAGE 0: the cost of a
+## rebuild is about to be changed by four stages in a row, and a number that is
+## only visible in a profiler is a number nobody watches. Measured inside the
+## job rather than around the task, so it is the work and not the queue.
+var elapsed_ms := 0
+
 ## Distance from the player, in blocks, at which the voxels stop and this mesh
 ## takes over. Set by run() and read by _corner_y(); a member rather than
 ## another parameter threaded through three functions that all already have
 ## six.
 var _seam_radius := 0.0
+
+## The ring currently being built, snapped to its own grid, in blocks. The mip
+## level is a function of the distance from HERE - the same snapped centre the
+## ring's vertices are laid out from, so the level of a given world position is
+## stable under exactly the snapping that already stops the mesh shimmering.
+var _ring_cx := 0
+var _ring_cz := 0
+
+## 1 / ln(2). GDScript has log() and no log2().
+const INV_LN2 := 1.4426950408889634
 
 ## HOW FAR THE PER-SECTOR HOLE SITS INSIDE THE FRONTIER, in far-field cells.
 ##
@@ -165,6 +181,12 @@ var _band_treeline := 0
 
 
 func run() -> void:
+	var _t0 := Time.get_ticks_msec()
+	# THE PYRAMID IS BUILT ON FIRST USE, and this is the first use. Idempotent
+	# and behind a mutex, so the cost lands once, on this worker, inside this
+	# job's elapsed_ms - which is where it is visible rather than hidden in a
+	# startup total.
+	heightmap.build_pyramid()
 	var bs: float = config.block_size
 	var base_step: int = config.far_step
 	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
@@ -224,6 +246,7 @@ func run() -> void:
 	vertex_count = verts.size()
 	if verts.is_empty():
 		arrays = []
+		elapsed_ms = Time.get_ticks_msec() - _t0
 		return
 
 	arrays = []
@@ -232,6 +255,7 @@ func run() -> void:
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
+	elapsed_ms = Time.get_ticks_msec() - _t0
 
 
 ## One annulus of the disc, at one resolution.
@@ -254,6 +278,8 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# skirts only have to cover the gaps between.
 	var cx := int(floor(float(center.x) / float(step))) * step
 	var cz := int(floor(float(center.y) / float(step))) * step
+	_ring_cx = cx
+	_ring_cz = cz
 
 	var span := int(ceil(outer / float(step))) + 1
 	var skirt_drop := float(step) * SKIRT_DEPTH_CELLS * bs
@@ -275,10 +301,10 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
 
-			var h00 := heightmap.height_at(float(bx0), float(bz0))
-			var h10 := heightmap.height_at(float(bx1), float(bz0))
-			var h11 := heightmap.height_at(float(bx1), float(bz1))
-			var h01 := heightmap.height_at(float(bx0), float(bz1))
+			var h00 := _filtered(bx0, bz0, band)
+			var h10 := _filtered(bx1, bz0, band)
+			var h11 := _filtered(bx1, bz1, band)
+			var h01 := _filtered(bx0, bz1, band)
 
 			# Corner order is the +Y face order from ChunkMesher, which is
 			# clockwise seen from above - the same winding the voxels use, so
@@ -304,12 +330,26 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# second because at 200 m a 24 m cell is still a visible square,
 			# and the postcard showed a checkerboard of meadow on the shore.
 			# Rendering only: the zones themselves do not move.
+			# THE CELL GROWS WITH DISTANCE, distance v1 Stage 4. One constant
+			# paints a mountainside at 600 m in the same 24 m fields as one at
+			# 200 m, and at 600 m a 24 m field is a couple of pixels.
+			var zone_d_m := 0.0
+			if ring > 0:
+				var zdx := float(bx0 + step / 2 - _ring_cx)
+				var zdz := float(bz0 + step / 2 - _ring_cz)
+				zone_d_m = sqrt(zdx * zdx + zdz * zdz) * bs
 			if ring > 1 and config.far_zone_cell_m > 0.0:
-				var cell := maxi(int(round(config.far_zone_cell_m / bs)), step)
+				var cell_m := maxf(config.far_zone_cell_m,
+					config.far_zone_cell_ratio * zone_d_m)
+				var cell := maxi(int(round(cell_m / bs)), step)
 				zone_bx = Chunk.floor_div(bx0, cell) * cell + cell / 2
 				zone_bz = Chunk.floor_div(bz0, cell) * cell + cell / 2
-				zone_h = heightmap.height_at(float(zone_bx), float(zone_bz))
-			var zone := generator.surface_zone_at(zone_bx, zone_bz, zone_h)
+				# THE ZONE READS THE FILTERED HEIGHT TOO. It decided the quad's
+				# colour off the raw 2 m grid while the quad's own corners came
+				# off the pyramid, so the paint was sampled from a surface the
+				# geometry no longer had.
+				zone_h = _filtered(zone_bx, zone_bz, 0.0)
+			var zone := _far_zone(zone_bx, zone_bz, zone_h, ring)
 			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 			# THE BACKDROP, look v1. One altitude band per quad - so the band
@@ -336,6 +376,91 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				_push_skirt(e[0], e[1], skirt_drop, shaded,
 					verts, normals, colors, indices)
+
+
+## The zone of one far-field quad.
+##
+## NO DITHER AND NO JITTER PAST THE FIRST RING, distance v1 Stage 4.
+##
+## `surface_zone_at()` hashes a per-column jitter and a per-patch dither so the
+## two zones INTERLEAVE across a boundary. At 0.5 m per block that reads as a
+## gradient, which is what it is for. At 16 m per quad the same mechanism reads
+## as tetris - a camouflage of small hard-edged patches instead of the three or
+## four large fields the poster is supposed to paint - and it is the single
+## most likely cause of the mosaic in `6-postcard.png`.
+##
+## So past ring 0 the zone is decided by ALTITUDE ALONE: zone_at() with no
+## jitter and a dither of exactly 0.5, which promotes a cell the moment its
+## altitude passes the threshold and never before. Ring 0 keeps the exact
+## sample, because it touches the voxels at the seam and the treeline has to
+## agree with the trees.
+##
+## The SLOPE override is kept - snow does not sit on a cliff, and dropping it
+## past ring 0 would put white on every far spire. It is deterministic at
+## slope_zone_strength 1.0 (the roll can never exceed 1), so it is a function
+## of the ground and not another hash.
+##
+## Rendering only: the zones themselves do not move, and nothing here is read
+## by anything that decides what the world is.
+func _far_zone(bx: int, bz: int, altitude: float, ring: int) -> int:
+	if ring == 0:
+		return generator.surface_zone_at(bx, bz, altitude)
+	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
+
+
+## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
+##
+## Continuous in distance and NOT a function of which ring the vertex belongs
+## to. The naive fix - ring 0 reads level 1, ring 1 level 2, ring 2 level 3 -
+## removes the aliasing and keeps the pop, because the ring boundary is still a
+## discrete step at a fixed distance from the player and a mountain still
+## changes shape when it crosses one. A continuous level gives adjacent
+## vertices adjacent levels, so the surface stays continuous and the boundary
+## stops being an event.
+##
+## AND IT FADES TO ZERO ACROSS THE SEAM BAND. Hard rule 5: `_corner_y` blends
+## the far mesh onto the voxel surface over the last few cells, and that only
+## works if the coarse term there is the same coarse term the voxels were built
+## from - level 0. The seam sits at 88 m, which log2(88/100) + 1 puts at level
+## 0.8, so without this the filter would reintroduce the half-block step that
+## world feel v1 spent a stage removing. Multiplying by (1 - blend) makes the
+## seam exactly level 0 and lets the filter come on over the same band the
+## detail fades out over.
+func _level_at(bx: int, bz: int, band: float) -> float:
+	var bs: float = config.block_size
+	var dx := float(bx - _ring_cx)
+	var dz := float(bz - _ring_cz)
+	var d_m := sqrt(dx * dx + dz * dz) * bs
+	if d_m <= 0.001:
+		return 0.0
+	var level := log(d_m / maxf(config.far_level_ref_m, 1.0)) * INV_LN2 \
+		+ config.far_filter_bias
+	level = clampf(level, 0.0, float(Heightmap.MAX_LEVEL))
+	if band > 0.0 and level > 0.0:
+		var sx := float(bx - center.x)
+		var sz := float(bz - center.y)
+		var blend := clampf(
+			1.0 - (sqrt(sx * sx + sz * sz) - _seam_radius) / band, 0.0, 1.0)
+		level *= 1.0 - blend
+	return level
+
+
+## The coarse height at one vertex, read off the pyramid at that vertex's level.
+##
+## THE PEAK GAIN, distance v1 Stage 3. `far_peak_gain` blends the mean pyramid
+## towards a parallel pyramid of maxima, which gives a summit back the height a
+## box filter took off it without giving back the frequency that was fizzing.
+## At 0 this is the plain filter and the second pyramid is never read.
+func _filtered(bx: int, bz: int, band: float) -> float:
+	var level := _level_at(bx, bz, band)
+	if level <= 0.0:
+		return heightmap.height_at(float(bx), float(bz))
+	var mean := heightmap.height_filtered(float(bx), float(bz), level)
+	var gain: float = config.far_peak_gain
+	if gain <= 0.0:
+		return mean
+	return lerpf(mean,
+		heightmap.height_max_filtered(float(bx), float(bz), level), gain)
 
 
 ## Altitude bands - look v1's far field as a stacked backdrop.
@@ -380,8 +505,12 @@ func _flank_normal(bx: int, bz: int) -> Vector3:
 	var x1 := float(bx + span)
 	var z0 := float(bz - span)
 	var z1 := float(bz + span)
-	var dx := (heightmap.height_at(x1, float(bz)) - heightmap.height_at(x0, float(bz))) * bs
-	var dz := (heightmap.height_at(float(bx), z1) - heightmap.height_at(float(bx), z0)) * bs
+	# THE SAME SURFACE THE VERTICES CAME FROM, distance v1 Stage 4. far_normal_m
+	# averaged the slope over 96 m precisely because the raw samples under it
+	# were noise; now they are not, so the average is over a surface that is
+	# already smooth and the span can come down.
+	var dx := (_filtered(int(x1), bz, 0.0) - _filtered(int(x0), bz, 0.0)) * bs
+	var dz := (_filtered(bx, int(z1), 0.0) - _filtered(bx, int(z0), 0.0)) * bs
 	var run := float(span) * 2.0 * bs
 	return Vector3(-dx, run, -dz).normalized()
 

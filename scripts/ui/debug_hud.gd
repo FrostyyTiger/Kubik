@@ -94,6 +94,12 @@ const LOCAL_TUNING_ROWS := [
 	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
 	["wind_strength", "wind", 0.0, 3.0, 0.1],
 	["night_life", "night life", 0.0, 2.0, 0.1],
+	# DISTANCE V1, appended at the end of the table. Hard rule 12: every
+	# starting value in the plan is reachable from F4.
+	["far_level_ref_m", "distance: level ref (m)", 25.0, 400.0, 5.0],
+	["far_filter_bias", "distance: filter bias", 0.0, 3.0, 0.1],
+	["far_peak_gain", "distance: peak gain", 0.0, 1.0, 0.05],
+	["far_zone_cell_ratio", "distance: zone cell x d", 0.0, 0.2, 0.01],
 ]
 
 var config: WorldgenConfig = null
@@ -267,6 +273,22 @@ func _compose_readout() -> String:
 		lines.append("slide     over %.0f deg on loose ground, factor %.2f, max %.0f m/s" % [
 			Locomotion.SLIDE_ANGLE_DEG, Locomotion.SLIDE_FACTOR,
 			Locomotion.SLIDE_MAX])
+
+	# THE FAR MESH'S OWN COST, distance v1 Stage 0, APPENDED rather than folded
+	# into the "far field %d verts" line above - this epic shares three files
+	# with a character redesign running in parallel and its rule for all three
+	# is append-only. Reached through the node rather than through a World
+	# accessor for the same reason: World is not on this lane's file list.
+	#
+	# build is the job's own time; wall includes waiting for a pool that runs
+	# one GDScript task at a time. Stages 1-4 move the first; only the second
+	# is what the player feels.
+	var far_field: Node = world.get_node_or_null("FarField") if world != null else null
+	if far_field != null and far_field.has_method("stats"):
+		var ff: Dictionary = far_field.stats()
+		lines.append("far mesh  %d verts, %d ms build, %d ms wall, %d rebuilds" % [
+			ff.get("vertices", 0), ff.get("build_ms", 0),
+			ff.get("wall_ms", 0), ff.get("rebuilds", 0)])
 
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")

@@ -58,6 +58,7 @@ func _ready() -> void:
 		"locomotion parity": _test_locomotion_parity,
 		"body promotion": _test_body_promotion,
 		"push holds": _test_push_holds,
+		"heightmap pyramid": _test_heightmap_pyramid,
 	}
 	var failures := 0
 	for name in tests:
@@ -1517,3 +1518,92 @@ func _hold_names() -> Array:
 	for kind in BodyTable.COUNT:
 		out.append("%s %.0f" % [BodyTable.name_of(kind), BodyTable.hold_of(kind)])
 	return out
+
+
+## THE PYRAMID CONSERVES THE MEAN, distance v1 Stage 1.
+##
+## Heightmap gains a mip pyramid so the far mesh can read a FILTERED height
+## instead of one raw sample in eight. A box filter's defining property is that
+## it conserves the mean: level 3 is a coarser picture of the same terrain, not
+## a different one, and if the mean drifts the reduction is wrong - most likely
+## by double-counting an edge cell, which is exactly what happens if you clamp
+## into a duplicate instead of carrying the weight.
+##
+## 1500 halves to 750, 375, 188, 94, 47 and 375 IS ODD, so the odd case is not
+## hypothetical. This test uses a 400-block world - 100 cells, halving to 50,
+## 25, 13, 7, 4 - so two of its five levels have a short last column and the
+## conservation law is under real pressure at a fraction of the cost.
+##
+## Three things are checked, and the second is the one that would catch a
+## sign or an offset error the first would sail past:
+##
+##   1. the WEIGHTED mean of every level equals level 0's mean;
+##   2. level 0 of height_at_level() is height_at(), exactly - the far field
+##      falls back to it near the seam and the two must be the same surface;
+##   3. every level stays inside level 0's min and max. A mean of means cannot
+##      leave the range of its inputs, and a filter that does has an index bug.
+func _test_heightmap_pyramid():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var hm: Heightmap = world.generator.heightmap
+	hm.build_pyramid()
+	var base := hm.stats()
+	print("heightmap pyramid: %d cells at level 0, built %d levels in %d ms" % [
+		hm.cols, Heightmap.MAX_LEVEL, hm.pyramid_ms])
+
+	var mean0: float = base["mean"]
+	# Float32 storage over 10,000 cells: the accumulated rounding is what sets
+	# this, not the filter. A double-counted edge column moves the mean by
+	# roughly one part in `cols`, which is four orders of magnitude larger.
+	var tolerance := maxf(absf(mean0), 1.0) * 1e-4
+	for level in range(0, Heightmap.MAX_LEVEL + 1):
+		var m := hm.level_weighted_mean(level)
+		var cols_here := hm.level_cols(level)
+		print("  level %d: %4d cells, weighted mean %.6f (level 0 %.6f)" % [
+			level, cols_here, m, mean0])
+		if absf(m - mean0) > tolerance:
+			print("    the mean moved by %.6f, past %.6f - the filter is wrong" % [
+				absf(m - mean0), tolerance])
+			bad += 1
+		# A mean of means is bounded by its inputs.
+		for j in cols_here:
+			for i in cols_here:
+				var bx := float(hm.min_block + i * (hm.step << level))
+				var bz := float(hm.min_block + j * (hm.step << level))
+				var h := hm.height_at_level(bx, bz, level)
+				if h < float(base["min"]) - 0.001 or h > float(base["max"]) + 0.001:
+					print("    level %d left level 0's range at (%d, %d): %.3f" % [
+						level, int(bx), int(bz), h])
+					bad += 1
+					break
+
+	# Level 0 is `cells` itself, and the far field leans on that at the seam.
+	var worst := 0.0
+	for j in range(0, hm.cols, 7):
+		for i in range(0, hm.cols, 7):
+			var bx := float(hm.cell_to_block(i)) + 1.3
+			var bz := float(hm.cell_to_block(j)) - 0.7
+			worst = maxf(worst, absf(hm.height_at_level(bx, bz, 0) - hm.height_at(bx, bz)))
+	if worst > 0.0:
+		print("  height_at_level(level 0) differs from height_at() by %.6f" % worst)
+		bad += 1
+
+	# And height_filtered() must agree with the level it lands exactly on.
+	var f_worst := 0.0
+	for j in range(0, hm.cols, 11):
+		for i in range(0, hm.cols, 11):
+			var bx := float(hm.cell_to_block(i)) + 0.5
+			var bz := float(hm.cell_to_block(j)) + 0.5
+			f_worst = maxf(f_worst,
+				absf(hm.height_filtered(bx, bz, 2.0) - hm.height_at_level(bx, bz, 2)))
+	if f_worst > 0.0001:
+		print("  height_filtered(2.0) differs from level 2 by %.6f" % f_worst)
+		bad += 1
+
+	world.reset()
+	world.free()
+	return 1 if bad > 0 else 0
