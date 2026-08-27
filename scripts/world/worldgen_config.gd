@@ -635,6 +635,21 @@ const FOG_START_RATIO := 0.4
 ## crowns that touch rather than merge.
 ##
 ## PROPERTIES, all three: they decide where blocks go.
+## What fraction of medium and large boulders are PUSHABLE rather than
+## scenery (world feel v1 Stage 11).
+##
+## HASHED, NOT LOCAL (hard rule 5). It changes what the world CONTAINS, not
+## what a machine keeps or shows: two peers at different values would disagree
+## about which rocks move, and the symptom is a friend heaving at a boulder
+## that is scenery on your screen. So it lives in PROPERTIES and moves the
+## config hash.
+##
+## NOT ALL OF THEM, deliberately. A world where every boulder rolls is a world
+## with no landmarks in it - you cannot say "meet me at the big rock" if the
+## big rock is wherever somebody last shoved it. 0.15 leaves the scenery
+## standing and makes the pushable ones a small find.
+@export var body_fraction := 0.15
+
 @export var old_growth_share := 0.33
 @export var old_growth_scale := 1.5
 @export var old_growth_keep := 0.55
@@ -1014,6 +1029,7 @@ const PROPERTIES: PackedStringArray = [
 	"tree_base_shore", "tree_shore_blocks", "tree_base_alpine",
 	"grove_freq", "grove_share", "grove_floor",
 	"old_growth_share", "old_growth_scale", "old_growth_keep",
+	"body_fraction",
 	"glade_freq", "glade_share",
 	"tree_max_slope_deg", "tree_bench_avoid",
 	"tree_spawn_clear_m", "tree_spawn_ramp_m",

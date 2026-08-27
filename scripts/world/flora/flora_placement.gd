@@ -251,6 +251,13 @@ static func column(gen: TerrainGenerator, config: WorldgenConfig,
 
 			out.append({
 				"model": model,
+				# THE BLOCK, carried alongside the metres. Everything
+				# downstream that needs to name this instance - removal,
+				# and since Stage 11 body promotion - needs identity(), and
+				# identity() is in blocks. Recovering it from `pos` is a
+				# division that is exact today and would stop being exact the
+				# first time anything jitters a position.
+				"block": Vector2i(bx, bz),
 				# Y IS THE TOP FACE OF THE SURFACE BLOCK, not the surface
 				# altitude. The block at altitude N occupies N to N+1, so a
 				# plant standing on it stands at N+1 - and a plant placed at
@@ -304,6 +311,7 @@ static func _add_fireflies(gen: TerrainGenerator, config: WorldgenConfig,
 			var surface := gen.surface_at(float(bx), float(bz))
 			out.append({
 				"model": FloraModels.FIREFLY,
+				"block": Vector2i(bx, bz),
 				"pos": Vector3(float(bx) * bs,
 					float(int(floor(surface)) + 1) * bs, float(bz) * bs),
 				"yaw": WorldHash.hash01(bx, bz, seed, SALT_YAW) * TAU,

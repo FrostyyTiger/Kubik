@@ -56,6 +56,7 @@ func _ready() -> void:
 		"boulder two tone": _test_boulder_two_tone,
 		"edit while cached": _test_edit_while_cached,
 		"locomotion parity": _test_locomotion_parity,
+		"body promotion": _test_body_promotion,
 	}
 	var failures := 0
 	for name in tests:
@@ -1240,4 +1241,196 @@ func _test_locomotion_parity():
 
 	for body in bodies:
 		(body as Node).queue_free()
+	return 1 if bad > 0 else 0
+
+
+## EVERY PEER MUST NAME THE SAME ROCK THE SAME THING (world feel v1 Stage 11).
+##
+## Nobody sends a list of bodies. The host builds a RigidBody3D and each client
+## builds a mesh, independently, from the same seeded promotion - and the whole
+## scheme rests on those two independent answers being identical. If they are
+## not, the symptom is not an error: it is a friend heaving at a boulder that
+## is scenery on your screen, and a table row addressed to a body you do not
+## have.
+##
+## THREE PROPERTIES, and the third is the one that is easy to lose.
+##
+##   IDENTICAL   two configs at the same values promote the same id set
+##   SUBSET      every promoted id was a BOULDER_M or BOULDER_L
+##   MONOTONIC   raising body_fraction only ADDS ids, never swaps them
+##
+## Monotonic is what "hashed, not counted" buys, and it is worth a test because
+## the cheap implementation - promote every Nth boulder - passes the first two
+## and fails this one. Under counting, turning the knob up reshuffles which
+## rocks are pushable; under hashing it reveals more of them. A player who
+## learns that the big rock by the lake moves should not find it welded down
+## because somebody retuned a fraction.
+## The first `want` chunk columns that actually contain a boulder.
+##
+## Candidates come from the heightmap - rock and alpine, strided - because that
+## narrows a 1500-cell map to the mountains, and then each candidate is
+## actually placed and inspected. See the note at the call site for why the
+## heightmap answer alone is not enough.
+func _boulder_columns(gen: TerrainGenerator, cfg: WorldgenConfig,
+		want: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for col in _rock_columns(gen, 200):
+		for inst in FloraPlacement.column(gen, cfg, col.x, col.y):
+			var m: int = inst["model"]
+			if m == FloraModels.BOULDER_M or m == FloraModels.BOULDER_L:
+				out.append(col)
+				break
+		if out.size() >= want:
+			return out
+	return out
+
+
+## The first `want` chunk columns whose centre is rock or alpine.
+##
+## Strided over the heightmap rather than walked, because it only has to find
+## somewhere boulders grow, and a stride of four cells is still hundreds of
+## candidates on a 1500-cell map.
+## SPREAD ACROSS THE WHOLE MAP, not the first `want` found.
+##
+## Taking the first ones in scan order means taking them from one edge of the
+## world - and the edges are the impassable peaks by design, where every slope
+## is past FloraPlacement.MAX_SLOPE_DEG and nothing is placed at all. This
+## found two hundred perfectly good rock columns without a single boulder in
+## any of them, which reads exactly like promotion being broken.
+##
+## So the whole map is scanned and the result is sampled evenly. It costs one
+## more pass over a strided heightmap and it is the difference between
+## sampling "rock" and sampling "the rim of the world".
+func _rock_columns(gen: TerrainGenerator, want: int) -> Array[Vector2i]:
+	var all: Array[Vector2i] = []
+	var hm := gen.heightmap
+	var seen := {}
+	for j in range(0, hm.cols, 4):
+		for i in range(0, hm.cols, 4):
+			var h: float = hm.cells[i + j * hm.cols]
+			var bx: int = hm.cell_to_block(i)
+			var bz: int = hm.cell_to_block(j)
+			var zone := gen.surface_zone_at(bx, bz, h)
+			if zone != TerrainGenerator.ZONE_ROCK \
+					and zone != TerrainGenerator.ZONE_ALPINE:
+				continue
+			var col := Vector2i(Chunk.floor_div(bx, Chunk.SIZE),
+				Chunk.floor_div(bz, Chunk.SIZE))
+			if seen.has(col):
+				continue
+			seen[col] = true
+			all.append(col)
+	if all.size() <= want:
+		return all
+	var out: Array[Vector2i] = []
+	var step := float(all.size()) / float(want)
+	for k in want:
+		out.append(all[mini(int(float(k) * step), all.size() - 1)])
+	return out
+
+
+func _test_body_promotion():
+	var bad := 0
+	var cfg_a := WorldgenConfig.new()
+	var cfg_b := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg_a)
+	gen.build_heightmap()
+
+	# COLUMNS THAT DEMONSTRABLY CONTAIN BOULDERS, and it took two attempts to
+	# get here. The first sampled four columns near the origin: "0 boulders, 0
+	# promoted", passing every comparison it made, because comparing two empty
+	# sets always succeeds. The second asked the HEIGHTMAP for rock zones and
+	# still found none - the heightmap cell is the coarse height, and the
+	# placement classifies each block from `surface_at`, which is the coarse
+	# height PLUS detail. Two different zone answers for the same place.
+	#
+	# So this stops predicting where boulders are and looks. It is slower and
+	# it is the only version that cannot lie.
+	var columns := _boulder_columns(gen, cfg_a, 4)
+	# PART ONE: GROUNDED. Real columns, real placement, and the only question
+	# it can answer at this sample size is "does promotion fire on the right
+	# thing at all". Boulders are RARE - two of two hundred rock columns carry
+	# one, because rock is steep and FloraPlacement rejects anything past
+	# MAX_SLOPE_DEG - so there are never enough of them here to exercise a
+	# fraction. Part two does that.
+	var boulders := 0
+	var wrong_model := 0
+	for col in columns:
+		for inst in FloraPlacement.column(gen, cfg_a, col.x, col.y):
+			var block: Vector2i = inst["block"]
+			var model: int = inst["model"]
+			var is_boulder := model == FloraModels.BOULDER_M \
+				or model == FloraModels.BOULDER_L
+			if is_boulder:
+				boulders += 1
+			if BodyTable.promote(model, block.x, block.y,
+					gen.world_seed, cfg_a) >= 0 and not is_boulder:
+				wrong_model += 1
+	print("body promotion: %d boulders across %d real columns, %d non-boulders promoted" % [
+		boulders, columns.size(), wrong_model])
+	if boulders == 0:
+		print("  found no boulders at all - part one proved nothing")
+		bad += 1
+	bad += wrong_model
+
+	# PART TWO: EXHAUSTIVE, on a synthetic grid. promote() is a pure function
+	# of (model, block, seed, fraction), so the properties it has to hold do
+	# not need a world - they need a lot of blocks, and a world is a slow way
+	# to get them.
+	var ids_a := {}
+	var ids_b := {}
+	var total := 0
+	for bz in range(-64, 64):
+		for bx in range(-64, 64):
+			# Alternating the two boulder models so both are covered and the
+			# id's top byte varies.
+			var model := FloraModels.BOULDER_M if ((bx + bz) & 1) == 0 \
+				else FloraModels.BOULDER_L
+			total += 1
+			var id := FloraPlacement.identity(model, bx, bz)
+			if BodyTable.promote(model, bx, bz, 4242, cfg_a) >= 0:
+				ids_a[id] = true
+			if BodyTable.promote(model, bx, bz, 4242, cfg_b) >= 0:
+				ids_b[id] = true
+	var share := float(ids_a.size()) / float(total)
+	print("  %d of %d synthetic boulders promoted (%.3f against a fraction of %.2f)" % [
+		ids_a.size(), total, share, cfg_a.body_fraction])
+	if ids_a != ids_b:
+		print("  two configs at the same values disagreed: %d vs %d ids" % [
+			ids_a.size(), ids_b.size()])
+		bad += 1
+	# The hash has to be UNIFORM, not merely deterministic. A promote() that
+	# always said yes would pass every other check here.
+	if absf(share - cfg_a.body_fraction) > 0.02:
+		print("  the promoted share is not the fraction - the hash is skewed")
+		bad += 1
+
+	# MONOTONIC. Raise the fraction; every id from before must still be there.
+	#
+	# This is what "hashed, not counted" buys, and it is worth a test because
+	# the cheap implementation - promote every Nth boulder - passes everything
+	# above and fails this. Under counting, turning the knob up RESHUFFLES
+	# which rocks are pushable; under hashing it reveals more of them. A player
+	# who learns that the big rock by the lake moves should not find it welded
+	# down because somebody retuned a fraction.
+	cfg_b.body_fraction = minf(cfg_a.body_fraction * 2.0, 1.0)
+	var ids_more := {}
+	for bz in range(-64, 64):
+		for bx in range(-64, 64):
+			var model := FloraModels.BOULDER_M if ((bx + bz) & 1) == 0 \
+				else FloraModels.BOULDER_L
+			if BodyTable.promote(model, bx, bz, 4242, cfg_b) >= 0:
+				ids_more[FloraPlacement.identity(model, bx, bz)] = true
+	var lost := 0
+	for id in ids_a:
+		if not ids_more.has(id):
+			lost += 1
+	print("  at %.2f: %d promoted, %d of the original %d lost" % [
+		cfg_b.body_fraction, ids_more.size(), lost, ids_a.size()])
+	if lost > 0:
+		print("  raising body_fraction RESHUFFLED which rocks are pushable")
+		bad += 1
+	if ids_more.size() <= ids_a.size():
+		print("  raising body_fraction did not promote more bodies")
+		bad += 1
 	return 1 if bad > 0 else 0

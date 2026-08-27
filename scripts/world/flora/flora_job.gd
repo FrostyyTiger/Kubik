@@ -42,6 +42,15 @@ var draw_fraction := 1.0
 var buffers := {}
 
 ## How many instances were placed, and how many survived draw_fraction.
+## Instances that became bodies rather than decoration, for World to hand to
+## BodyField. See the note in run() about why this happens before the draw
+## fraction.
+var bodies: Array = []
+
+## Build the body list and nothing else - no buffers, no MultiMesh. Set for
+## the columns the host streams around a remote peer.
+var bodies_only := false
+
 var placed := 0
 var drawn := 0
 
@@ -60,6 +69,49 @@ func run() -> void:
 	var instances := FloraPlacement.column(
 		generator, config, column.x, column.y, removed, edited)
 	placed = instances.size()
+
+	# PROMOTION HAPPENS HERE, BEFORE THE DRAW FRACTION (world feel v1 Stage 11).
+	#
+	# A promoted boulder is not decoration any more - it is a body, and it is
+	# drawn by BodyField as its own node with its own transform, because it is
+	# going to move. Leaving it in the MultiMesh as well would draw the rock
+	# twice, and the copy that is not a body would stay behind when the real one
+	# rolled away.
+	#
+	# BEFORE the draw fraction, and that ordering is the whole correctness
+	# argument. draw_fraction is a LOCAL knob - a machine showing half the grass
+	# shows the same half as any other machine at half, but a machine at 0.5 and
+	# a machine at 1.0 disagree about what is drawn. If promotion were decided
+	# after it, the far ring would promote fewer rocks than the near ring, the
+	# set would change as a player walked towards it, and two peers at different
+	# flora settings would disagree about which boulders exist. Deciding first
+	# makes the body set a function of the world alone.
+	var kept: Array = []
+	for inst in instances:
+		var block: Vector2i = inst["block"]
+		var kind := BodyTable.promote(
+			inst["model"], block.x, block.y, generator.world_seed, config)
+		if kind < 0:
+			kept.append(inst)
+			continue
+		bodies.append({
+			"id": FloraPlacement.identity(inst["model"], block.x, block.y),
+			"kind": kind,
+			"pos": inst["pos"],
+			"yaw": inst["yaw"],
+			"scale": inst["scale"],
+		})
+	instances = kept
+
+	# BODIES ONLY: the host builds these columns so a REMOTE peer has rocks to
+	# push, and nobody is looking at the grass in them. The scan above is the
+	# expensive half and it has to run either way - promotion is a function of
+	# the placement - but the packing, the buffers and the MultiMesh upload
+	# below are all for something to look at. Same shape as Stage 10c's
+	# collision-only chunks.
+	if bodies_only:
+		elapsed_usec = Time.get_ticks_usec() - started
+		return
 
 	var by_model := {}
 	for inst in instances:
