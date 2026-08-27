@@ -916,6 +916,31 @@ const FOG_START_RATIO := 0.4
 @export var far_level_ref_m := 100.0
 @export var far_filter_bias := 1.0
 
+## HOW MUCH OF THE SUMMIT THE FILTER GIVES BACK, distance v1 Stage 3.
+##
+## The far mesh draws lerp(mean_level, max_level, far_peak_gain) - the mean
+## pyramid blended towards a parallel pyramid of per-cell MAXIMA. 0 is the
+## plain box filter. A mean filter lowers summits and raises valleys, and at
+## 600 m the unfiltered lattice already loses 60 blocks of summit before any
+## filter is applied (Stage 0's baseline), so some of it has to come back or
+## this epic trades a fizzing mountain for a short one - and a mountain that
+## visibly GROWS as you walk up to it is the worse artefact of the two.
+##
+## It is a dilation, not a sharpen: the max pyramid is itself smooth at its own
+## level, so this restores amplitude without restoring high frequency. The
+## price is that it fills valleys by the same mechanism, which is why the far
+## probe reports VALLEY GAIN next to PEAK LOSS.
+##
+## 0.60, not the plan's 0.35. The plan's starting value was calibrated against
+## an assumed baseline near zero; Stage 0 measured the UNFILTERED far field
+## already losing 60 blocks of summit at 600 m, and 0.35 only takes the filtered
+## loss back to 80. 0.60 takes it to 55 - better than the unfiltered far field
+## ever was - while ROUGHNESS stays within 3.5% of Stage 2's and the valleys
+## rise by half a block. See docs/status/distance-v1.md, Stage 3.
+##
+## LOCAL and unhashed, like every other knob in this epic.
+@export var far_peak_gain := 0.60
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -1142,7 +1167,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
-	"far_level_ref_m", "far_filter_bias",
+	"far_level_ref_m", "far_filter_bias", "far_peak_gain",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

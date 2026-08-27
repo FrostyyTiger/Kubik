@@ -470,3 +470,108 @@ Stage 7 owes.
 | far probe determinism | **PASS**, identical over two runs at every bias tried |
 | heightmap hash | **`76cccdb6`** |
 | spawn / trees | **(-44, -124)** / **28,383** |
+
+---
+
+## Stage 3 - The peaks keep their height
+
+**Not skipped.** The plan says to read Stage 2's PEAK LOSS first and skip this
+stage if every summit is inside the gate. Stage 2 measured **+114.76 blocks**
+mean loss, nearly double the +60.27 the *unfiltered* far field already lost, so
+the stage is exactly as necessary as it was written to be.
+
+**Shipped.** `Heightmap` carries a second, parallel pyramid built in the same
+pass: 2x2 **max** instead of 2x2 mean. `FarFieldJob._filtered()` draws
+`lerp(mean_level, max_level, far_peak_gain)`. It restores amplitude without
+restoring high frequency, because the max pyramid is itself smooth at its own
+level - it is a dilation, not a sharpen. At gain 0 the second pyramid is never
+read, so the knob turns the whole mechanism off.
+
+Cost: one more array of the same size (+2.9 MB, ~6 MB of pyramid in total, on
+top of level 0's 8.6) and no extra pass - the dilation is computed alongside the
+mean and needs no weights, because the max of a short run is the max of the
+cells that are actually there.
+
+### The gate had to be reinterpreted, and the reinterpretation is stated rather than assumed
+
+The plan's gate is "no summit visible from a tour vantage loses more than **4
+blocks** of drawn height at 600 m". Stage 0 measured the *unfiltered* far field
+losing **+60.27 blocks mean, 20 of 20 summits outside that line**. An absolute
+4-block gate was therefore unreachable before this epic began; what it would
+take to reach it is a different LOD scheme, not a filter on top of one.
+
+**The gate this stage was actually run against:** `far_peak_gain` is turned up
+until PEAK LOSS is **no worse than Stage 0's unfiltered baseline**, subject to
+ROUGHNESS not regressing from Stage 2 by more than 10%.
+
+### The sweep
+
+At `far_filter_bias` 1.0, all ganymede, all deterministic:
+
+| far_peak_gain | 0 (Stage 2) | 0.35 (plan's start) | **0.60 (shipped)** | 0.80 |
+| --- | --- | --- | --- | --- |
+| PEAK LOSS mean | +114.76 | +80.06 | **+55.28** | +35.46 |
+| PEAK LOSS worst | +173.89 | +116.64 | **+81.14** | +57.51 |
+| PEAK LOSS best | +29.57 | +20.08 | **+13.30** | +7.88 |
+| VALLEY GAIN mean | -0.34 | +0.17 | **+0.53** | +0.82 |
+| ROUGHNESS | 2.4784 | 2.4910 | **2.5648** | 2.6553 |
+| FIZZ max | 22.523 | 21.967 | **21.570** | 22.268 |
+| FIZZ rms | 0.395 | 0.474 | **0.607** | 0.736 |
+
+Against the Stage 0 baseline (+60.27 mean, +128.01 worst, ROUGHNESS 4.5894,
+FIZZ max 33.322):
+
+- **0.35 is not enough.** +80.06 is still a third worse than the unfiltered far
+  field. The plan's starting value was calibrated against an assumed baseline
+  near zero.
+- **0.60 crosses the line**: +55.28 mean is *better* than the unfiltered
+  baseline, and the worst summit improves from +128.01 to **+81.14** - a summit
+  that was 64 m short in game is now 41 m short. ROUGHNESS is +3.5% on Stage 2,
+  inside the 10% gate, and still **-44%** on the baseline. FIZZ max is the best
+  of the whole sweep.
+- **0.80 buys more peak for more of everything else** and is left on the table
+  for Marcel; the knob is on F4.
+
+**VALLEY GAIN is what stops this being free profit, and it stays negligible.**
+The dilation raises valleys by the same mechanism it raises summits, and the
+mirror column tracks it: -1.09 blocks at Stage 0, +0.53 at gain 0.60. Half a
+block. The reason the trade is so lopsided in the peaks' favour is the world's
+own shape - low ground here is flat meadow and lake bed, where a dilation over a
+16 m cell has almost nothing to lift.
+
+**FIZZ rms is the one number that gets steadily worse**, 0.395 to 0.607. Same
+mechanism as Stage 2's: the max pyramid changes more sharply with level than the
+mean does, so the same small level change from walking produces a bigger height
+change. FIZZ *max* - the artefact you can see - does not follow it.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| PEAK LOSS no worse than Stage 0 | **MET** - +55.28 against +60.27, worst +81.14 against +128.01 |
+| PEAK LOSS within the plan's absolute 4 blocks | **NOT MET, and was not met before this epic either** - stated above rather than quietly dropped |
+| ROUGHNESS within 10% of Stage 2 | **MET** - +3.5% |
+| FIZZ max within 10% of Stage 2 | **MET** - -4.2% |
+| FIZZ rms within 10% of Stage 2 | **NOT MET** - +54%. Same mechanism as Stage 2's rms rise |
+| far probe determinism | **PASS** at every gain tried |
+| heightmap hash | **`76cccdb6`** |
+| spawn / trees | **(-44, -124)** / **28,383** |
+| self-tests | green |
+
+### The eye, on ganymede
+
+`build/tour/dist-3-gain035`, `dist-3-gain060`, `dist-3-gain080` -
+`6-postcard`, `14-postcard-dusk`, `16-spawn-postcard` at each.
+
+At **0.35** the far white spires still carry some of the fine jaggedness the
+filter was meant to take off, because the dilation is weak enough to be pulling
+single-cell maxima through. At **0.60** the peaks are taller *and* the
+silhouettes stay simple - the central dark peak in `6-postcard` gets its point
+back without getting its fizz back, which is exactly what "a dilation, not a
+sharpen" is supposed to look like. Against `dist-base` the same shot has gone
+from crumpled foil to a range with a lit flank and a shaded one.
+
+`16-spawn-postcard` at 0.60 against `dist-base`: the mid-distance ridge that was
+a patchwork of olive, brown and grey is one clean band. The meadow in the
+foreground is untouched and is now unmistakably the loudest thing in the frame -
+which is night 2's Stage 8, and this shot is the argument for it.

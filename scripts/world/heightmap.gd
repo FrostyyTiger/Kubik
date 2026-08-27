@@ -143,6 +143,19 @@ const MAX_LEVEL := 5
 var _levels: Array[PackedFloat32Array] = []
 var _level_cols := PackedInt32Array()
 
+## THE SECOND PYRAMID, distance v1 Stage 3: 2x2 MAX instead of 2x2 mean.
+##
+## A box filter lowers summits and raises valleys. Stage 0 measured what the
+## unfiltered LOD lattice already does to a summit at 600 m - a mean loss of 60
+## blocks over the twenty highest - and a mean filter on top of that can only
+## make it worse. Drawing `lerp(mean, max, far_peak_gain)` restores amplitude
+## WITHOUT restoring high frequency, because the max pyramid is itself smooth
+## at that level: it is a dilation, not a sharpen.
+##
+## It costs one more array of the same size - about 3 MB - and the same single
+## pass. Level 0 is `cells` for this one too: the maximum of one cell is itself.
+var _max_levels: Array[PackedFloat32Array] = []
+
 ## How long build_pyramid() took, in milliseconds. 0 until it has run.
 var pyramid_ms := 0
 
@@ -168,8 +181,10 @@ func build_pyramid() -> void:
 		return
 	var t0 := Time.get_ticks_msec()
 	_levels = []
+	_max_levels = []
 	_level_cols = PackedInt32Array()
 	var prev := cells
+	var prev_max := cells
 	var prev_cols := cols
 	# The widths of level 0 are all 1 by definition.
 	var prev_w := PackedInt32Array()
@@ -179,6 +194,8 @@ func build_pyramid() -> void:
 		var n := (prev_cols + 1) / 2
 		var out := PackedFloat32Array()
 		out.resize(n * n)
+		var out_max := PackedFloat32Array()
+		out_max.resize(n * n)
 		# The widths, once per level rather than four times per cell. Only the
 		# LAST entry can be short, but branching on that inside a loop over
 		# 560k cells costs more than the array does.
@@ -203,6 +220,12 @@ func build_pyramid() -> void:
 				var wi1 := prev_w[i1] if i1 < prev_cols else 0
 				if wi1 == 0:
 					i1 = i0
+				# The dilation needs no weights: the max of a short run is the
+				# max of the cells that are actually there.
+				var m := maxf(prev_max[i0 + row0], prev_max[i1 + row0])
+				if wj1 > 0:
+					m = maxf(m, maxf(prev_max[i0 + row1], prev_max[i1 + row1]))
+				out_max[i + at] = m
 				out[i + at] = (
 					(prev[i0 + row0] * float(wi0) + prev[i1 + row0] * float(wi1))
 						* float(wj0)
@@ -210,8 +233,10 @@ func build_pyramid() -> void:
 						* float(wj1)
 				) / float(wi0 + wi1) * inv_j
 		_levels.append(out)
+		_max_levels.append(out_max)
 		_level_cols.append(n)
 		prev = out
+		prev_max = out_max
 		prev_cols = n
 		prev_w = w
 	pyramid_ms = Time.get_ticks_msec() - t0
@@ -243,13 +268,22 @@ func level_cols(level: int) -> int:
 ## 15.5 blocks at level 5, which would read as the ground sliding sideways as
 ## the filter came on - a far worse artefact than the one being fixed.
 func height_at_level(bx: float, bz: float, level: int) -> float:
+	return _bilinear(bx, bz, level, false)
+
+
+## The same, off the MAX pyramid. Distance v1 Stage 3.
+func height_max_at_level(bx: float, bz: float, level: int) -> float:
+	return _bilinear(bx, bz, level, true)
+
+
+func _bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
 	if level <= 0:
 		return height_at(bx, bz)
 	if not _pyramid_ready:
 		build_pyramid()
 	var l := mini(level, MAX_LEVEL)
 	var n := _level_cols[l - 1]
-	var data := _levels[l - 1]
+	var data: PackedFloat32Array = _max_levels[l - 1] if use_max else _levels[l - 1]
 	var lstep := float(step << l)
 	# Cell 0 of this level is centred half a level-0 step past min_block, plus
 	# half its own extra width.
@@ -281,13 +315,22 @@ func height_at_level(bx: float, bz: float, level: int) -> float:
 ## mountain does not re-cut itself when it crosses a ring boundary. See
 ## FarFieldJob._level_at().
 func height_filtered(bx: float, bz: float, level: float) -> float:
+	return _trilinear(bx, bz, level, false)
+
+
+## The same, off the MAX pyramid. Distance v1 Stage 3.
+func height_max_filtered(bx: float, bz: float, level: float) -> float:
+	return _trilinear(bx, bz, level, true)
+
+
+func _trilinear(bx: float, bz: float, level: float, use_max: bool) -> float:
 	var l := clampf(level, 0.0, float(MAX_LEVEL))
 	var lo := int(floor(l))
 	var f := l - float(lo)
 	if f <= 0.0001 or lo >= MAX_LEVEL:
-		return height_at_level(bx, bz, lo)
-	return lerpf(height_at_level(bx, bz, lo),
-		height_at_level(bx, bz, lo + 1), f)
+		return _bilinear(bx, bz, lo, use_max)
+	return lerpf(_bilinear(bx, bz, lo, use_max),
+		_bilinear(bx, bz, lo + 1, use_max), f)
 
 
 ## Mean of one level, weighted by how many level-0 cells sit under each cell.

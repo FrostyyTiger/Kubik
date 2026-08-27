@@ -402,11 +402,21 @@ func _level_at(bx: int, bz: int, band: float) -> float:
 
 
 ## The coarse height at one vertex, read off the pyramid at that vertex's level.
+##
+## THE PEAK GAIN, distance v1 Stage 3. `far_peak_gain` blends the mean pyramid
+## towards a parallel pyramid of maxima, which gives a summit back the height a
+## box filter took off it without giving back the frequency that was fizzing.
+## At 0 this is the plain filter and the second pyramid is never read.
 func _filtered(bx: int, bz: int, band: float) -> float:
 	var level := _level_at(bx, bz, band)
 	if level <= 0.0:
 		return heightmap.height_at(float(bx), float(bz))
-	return heightmap.height_filtered(float(bx), float(bz), level)
+	var mean := heightmap.height_filtered(float(bx), float(bz), level)
+	var gain: float = config.far_peak_gain
+	if gain <= 0.0:
+		return mean
+	return lerpf(mean,
+		heightmap.height_max_filtered(float(bx), float(bz), level), gain)
 
 
 ## Altitude bands - look v1's far field as a stacked backdrop.
