@@ -575,3 +575,158 @@ from crumpled foil to a range with a lit flank and a shaded one.
 a patchwork of olive, brown and grey is one clean band. The meadow in the
 foreground is untouched and is now unmistakably the loudest thing in the frame -
 which is night 2's Stage 8, and this shot is the argument for it.
+
+---
+
+## Stage 4 - The colour stops aliasing too
+
+**Shipped**, three of the plan's four changes. The fourth was already done.
+
+### 1. No dither and no jitter past the first ring
+
+`surface_zone_at()` hashes a per-column **jitter** and a per-patch **dither** so
+that two zones interleave across a boundary. At 0.5 m per block that reads as a
+gradient, which is what it is for. At 16 m per quad the same mechanism reads as
+**tetris**, and it is the single biggest cause of the camouflage in
+`6-postcard`.
+
+Past ring 0 the zone is now decided by **altitude alone**: `zone_at()` with no
+jitter and a dither of exactly 0.5, so a cell is promoted the moment its
+altitude passes the threshold and never before. Ring 0 keeps the exact sample,
+because it touches the voxels at the seam and the treeline has to agree with the
+trees that are standing there.
+
+**The slope override is kept.** Snow does not sit on a cliff, and dropping
+`_slope_zone` past ring 0 would put white on every far spire. It is
+deterministic at `slope_zone_strength` 1.0 - the roll can never exceed 1 - so it
+is a function of the ground rather than another hash.
+
+### 2. The zone cell grows with distance
+
+`far_zone_cell_m` was one constant, 24 m, for every ring past the first, so a
+mountainside at 600 m was painted in the same fields as one at 200 m - and at
+600 m a 24 m field is a couple of pixels. The cell is now
+`max(far_zone_cell_m, far_zone_cell_ratio * d)`.
+
+`far_zone_cell_ratio` **0.06**, the plan's value: 36 m fields at 600 m, 200 m
+unchanged. On F4; 0 restores the flat constant exactly.
+
+### 3. The colour reads the same surface the vertices came from
+
+The zone sample and `_flank_normal` both took the raw 2 m grid while the quad's
+own corners came off the pyramid, so the paint was being sampled from a surface
+the geometry no longer had. Both now go through `_filtered()`.
+
+**`far_normal_m` stays at 96 m**, and this is a judgement rather than a
+measurement. The plan predicted the 96 m averaging could come down now that the
+samples under it are not noise, and photographed both: `dist-4-n96` and
+`dist-4-n48`. At **48** the flanks carry visibly more tonal relief - the central
+massif reads more three-dimensional - and also a little more per-facet
+variation, which is the fault this stage exists to remove. At **96** it is
+flatter and more poster-like with the lit and shaded flanks still clearly
+separated. Shipped at 96 on the "calm" side of the trade; both shots are on disk
+and the knob is on F4, so this is a one-line change if Marcel prefers 48.
+
+### 4. Grain fading with distance: ALREADY DONE, and the plan's premise was wrong
+
+The plan says `grain_amount` "is world-space and constant, so past a few hundred
+metres it is sub-pixel noise, which is shimmer", and asks for it to be faded to
+zero over the fog's range.
+
+**It already fades, and much more aggressively than the plan proposes.**
+`Look.OPAQUE_SHADER`, which the far mesh shares with the chunks
+(`ChunkMesher.get_material()` returns `Look.opaque_material()`), carries:
+
+```
+// GONE BY 45 m, whatever the fog is doing. Cube World's grain is invisible
+// by 30 m; past that it stops being a surface and becomes a shimmer, and
+// the far field - which shares this material - must never show it.
+float near = 1.0 - smoothstep(20.0, 45.0, length(VERTEX));
+v_albedo = mix(v_albedo, grained, near);
+```
+
+Look v2 Stage 3 fixed this, named the far field as the reason, and wrote the
+reason into the shader. **No change made, and no knob added** - the correct
+value of a knob that would fade grain over the fog range is "already zero long
+before then". Recorded here because the alternative is a future reader adding
+the same fade twice.
+
+### The gate: the probe must not move, and it did not move by a digit
+
+This stage touches colour only. Vertex positions are untouched, and the far
+probe reads positions:
+
+| | Stage 3 | **Stage 4** |
+| --- | --- | --- |
+| FIZZ rms | 0.607 | **0.607** |
+| FIZZ max | 21.570 | **21.570** |
+| ROUGHNESS | 2.5648 | **2.5648** |
+| PEAK LOSS mean / worst | +55.28 / +81.14 | **+55.28 / +81.14** |
+| VALLEY GAIN mean | +0.53 | **+0.53** |
+
+**Bit-identical.** The plan's wording is "if FIZZ or PEAK LOSS changes,
+something has been wired to the wrong level", and nothing did - including the
+`_flank_normal` change, which alters the normal a vertex CARRIES without moving
+the vertex.
+
+### The eye, on ganymede - and this is the stage the working GPU bought
+
+`build/tour/dist-4-n96` against `build/tour/dist-base`, `6-postcard`:
+
+- **`dist-base`**: the ranges are a camouflage of small hard-edged patches -
+  grey, olive, mauve and tan interleaved across every flank - and the ridges are
+  crumpled foil. This is the picture the plan was written from.
+- **`dist-4-n96`**: the left range is a clean sequence of green, brown, grey and
+  white bands; the central massif is one dark mass with a lit shoulder; the
+  treeline is a continuous brown band rather than a dither of forest and rock.
+  Three or four large fields, which is what the poster asks for.
+
+`16-spawn-postcard` tells the same story on the mid-distance ridge, which goes
+from an olive-and-tan mottle to a single brown treeline band under a green
+shoulder.
+
+**And it makes the meadow's problem unmissable.** With the distance calm, the
+foreground tufts are now by a wide margin the busiest thing in the frame - which
+is exactly the inversion the plan complains about, and exactly what night 2's
+Stage 8 is for.
+
+### Cost
+
+Far mesh build **1,169 -> 1,449 ms** on the probe's main-thread measurement
+(the probe's two full passes went 57.8 s to 79.5 s). The zone sample and both
+flank-normal differences now go through the pyramid instead of one raw lookup.
+Vertex count unchanged.
+
+### Streaming, and one number to watch
+
+One run, seed 42, `--view high --strict`:
+
+| | Stage 0 baseline (median of 3) | Stage 2 | **Stage 4** |
+| --- | --- | --- | --- |
+| hole samples | **0** | **0** | **0** |
+| frames over 33 ms | 17 (12-35) | 7 | **21** |
+| 48 m settle, out | 9,933 (9,671-10,623) | 9,524 | **10,933** |
+| built/s, out | 78.4 (76.5-81.3) | 84.7 | **75.4** |
+
+**Holes 0 - hard rule 4 still holds.** The long-frame count of 21 is inside the
+baseline's own 12-35 spread on identical code and says nothing on its own.
+
+**The settle is the number to watch: 10,933 ms is above the whole baseline
+range** (9,671-10,623), and unlike the frame count there is a mechanism that
+would explain it - the far mesh build has gone 650 -> 1,449 ms across night 1
+and it competes with the chunk workers on a pool that runs one GDScript task at
+a time. **One run is not evidence of a regression**, which is the whole lesson
+of `e63554f`, and this epic does not get to conclude from it either way. It is
+named here so that night 2's ABAB interleave - which hard rule 6 owes anyway -
+knows to report the settle beside the frame count.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| far probe unchanged from Stage 3 | **MET, bit-identical** |
+| heightmap hash | **`76cccdb6`** |
+| spawn / trees | **(-44, -124)** / **28,383** |
+| self-tests | green |
+| stream probe holes | **0** |
+| 48 m settle | **flagged** - one run above the baseline range, see above |

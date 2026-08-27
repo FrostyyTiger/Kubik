@@ -941,6 +941,19 @@ const FOG_START_RATIO := 0.4
 ## LOCAL and unhashed, like every other knob in this epic.
 @export var far_peak_gain := 0.60
 
+## HOW BIG A ZONE FIELD IS AT DISTANCE, as a fraction of that distance.
+##
+## Distance v1 Stage 4. `far_zone_cell_m` is one constant applied to every ring
+## past the first, so a mountainside at 600 m is painted in the same 24 m
+## fields as one at 200 m - and at 600 m a 24 m field is a couple of pixels,
+## which is camouflage rather than a poster. The cell is now
+## `max(far_zone_cell_m, far_zone_cell_ratio * d)`, so the fields grow with
+## range: bigger fields, fewer of them, which is what a poster does.
+##
+## 0.06 puts a 600 m mountainside in 36 m fields and leaves 200 m unchanged.
+## 0 restores the flat constant exactly.
+@export var far_zone_cell_ratio := 0.06
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -1167,7 +1180,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
-	"far_level_ref_m", "far_filter_bias", "far_peak_gain",
+	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

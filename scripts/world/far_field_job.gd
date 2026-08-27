@@ -330,12 +330,26 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# second because at 200 m a 24 m cell is still a visible square,
 			# and the postcard showed a checkerboard of meadow on the shore.
 			# Rendering only: the zones themselves do not move.
+			# THE CELL GROWS WITH DISTANCE, distance v1 Stage 4. One constant
+			# paints a mountainside at 600 m in the same 24 m fields as one at
+			# 200 m, and at 600 m a 24 m field is a couple of pixels.
+			var zone_d_m := 0.0
+			if ring > 0:
+				var zdx := float(bx0 + step / 2 - _ring_cx)
+				var zdz := float(bz0 + step / 2 - _ring_cz)
+				zone_d_m = sqrt(zdx * zdx + zdz * zdz) * bs
 			if ring > 1 and config.far_zone_cell_m > 0.0:
-				var cell := maxi(int(round(config.far_zone_cell_m / bs)), step)
+				var cell_m := maxf(config.far_zone_cell_m,
+					config.far_zone_cell_ratio * zone_d_m)
+				var cell := maxi(int(round(cell_m / bs)), step)
 				zone_bx = Chunk.floor_div(bx0, cell) * cell + cell / 2
 				zone_bz = Chunk.floor_div(bz0, cell) * cell + cell / 2
-				zone_h = heightmap.height_at(float(zone_bx), float(zone_bz))
-			var zone := generator.surface_zone_at(zone_bx, zone_bz, zone_h)
+				# THE ZONE READS THE FILTERED HEIGHT TOO. It decided the quad's
+				# colour off the raw 2 m grid while the quad's own corners came
+				# off the pyramid, so the paint was sampled from a surface the
+				# geometry no longer had.
+				zone_h = _filtered(zone_bx, zone_bz, 0.0)
+			var zone := _far_zone(zone_bx, zone_bz, zone_h, ring)
 			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 			# THE BACKDROP, look v1. One altitude band per quad - so the band
@@ -362,6 +376,36 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				_push_skirt(e[0], e[1], skirt_drop, shaded,
 					verts, normals, colors, indices)
+
+
+## The zone of one far-field quad.
+##
+## NO DITHER AND NO JITTER PAST THE FIRST RING, distance v1 Stage 4.
+##
+## `surface_zone_at()` hashes a per-column jitter and a per-patch dither so the
+## two zones INTERLEAVE across a boundary. At 0.5 m per block that reads as a
+## gradient, which is what it is for. At 16 m per quad the same mechanism reads
+## as tetris - a camouflage of small hard-edged patches instead of the three or
+## four large fields the poster is supposed to paint - and it is the single
+## most likely cause of the mosaic in `6-postcard.png`.
+##
+## So past ring 0 the zone is decided by ALTITUDE ALONE: zone_at() with no
+## jitter and a dither of exactly 0.5, which promotes a cell the moment its
+## altitude passes the threshold and never before. Ring 0 keeps the exact
+## sample, because it touches the voxels at the seam and the treeline has to
+## agree with the trees.
+##
+## The SLOPE override is kept - snow does not sit on a cliff, and dropping it
+## past ring 0 would put white on every far spire. It is deterministic at
+## slope_zone_strength 1.0 (the roll can never exceed 1), so it is a function
+## of the ground and not another hash.
+##
+## Rendering only: the zones themselves do not move, and nothing here is read
+## by anything that decides what the world is.
+func _far_zone(bx: int, bz: int, altitude: float, ring: int) -> int:
+	if ring == 0:
+		return generator.surface_zone_at(bx, bz, altitude)
+	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
 
 
 ## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
@@ -461,8 +505,12 @@ func _flank_normal(bx: int, bz: int) -> Vector3:
 	var x1 := float(bx + span)
 	var z0 := float(bz - span)
 	var z1 := float(bz + span)
-	var dx := (heightmap.height_at(x1, float(bz)) - heightmap.height_at(x0, float(bz))) * bs
-	var dz := (heightmap.height_at(float(bx), z1) - heightmap.height_at(float(bx), z0)) * bs
+	# THE SAME SURFACE THE VERTICES CAME FROM, distance v1 Stage 4. far_normal_m
+	# averaged the slope over 96 m precisely because the raw samples under it
+	# were noise; now they are not, so the average is over a surface that is
+	# already smooth and the span can come down.
+	var dx := (_filtered(int(x1), bz, 0.0) - _filtered(int(x0), bz, 0.0)) * bs
+	var dz := (_filtered(bx, int(z1), 0.0) - _filtered(bx, int(z0), 0.0)) * bs
 	var run := float(span) * 2.0 * bs
 	return Vector3(-dx, run, -dz).normalized()
 

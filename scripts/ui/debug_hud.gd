@@ -99,6 +99,7 @@ const LOCAL_TUNING_ROWS := [
 	["far_level_ref_m", "distance: level ref (m)", 25.0, 400.0, 5.0],
 	["far_filter_bias", "distance: filter bias", 0.0, 3.0, 0.1],
 	["far_peak_gain", "distance: peak gain", 0.0, 1.0, 0.05],
+	["far_zone_cell_ratio", "distance: zone cell x d", 0.0, 0.2, 0.01],
 ]
 
 var config: WorldgenConfig = null
