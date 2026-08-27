@@ -1167,6 +1167,26 @@ const PROPERTIES: PackedStringArray = [
 ## 600 and now 800. See VIEW_PRESETS.
 @export var far_tree_m := 400.0
 
+## HOW FAR AN IMPOSTOR'S COLOUR TRAVELS TOWARDS ITS HILLSIDE, distance v1
+## Stage 6.
+##
+## An impostor is shade A of its species, flat, at every range - so a forest at
+## 600 m is the same green as one at 100 m while the mountain behind it has
+## drained to a fog-lit grey-green. That reads as a decal rather than as part
+## of the hill, and it is the near half of the same complaint the far mesh's
+## own colour pass answered: a thing far enough away is a shade of the country
+## it is in.
+##
+## The tree's colour is mixed towards the colour the far mesh paints at that
+## exact place (FarFieldJob.backdrop_color) by a factor that is 0 at the voxel
+## edge and this value at the fog. 0.5, the plan's number: at the fog the tree
+## is halfway to its hillside and still recognisably a tree. 0 restores the
+## flat species colour exactly.
+##
+## LOCAL and unhashed - it changes how a tree is drawn, never where it stands
+## or what it is.
+@export var far_tree_tint := 0.5
+
 ## Sway. 0 disables the wind shader entirely.
 @export var wind_strength := 1.0
 
@@ -1176,7 +1196,7 @@ const PROPERTIES: PackedStringArray = [
 
 const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
-	"wind_strength", "night_life",
+	"wind_strength", "night_life", "far_tree_tint",
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",

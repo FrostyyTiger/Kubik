@@ -40,13 +40,25 @@ static func for_species(species: int, config: WorldgenConfig) -> ArrayMesh:
 	return got
 
 
-static func _build(species: int, config: WorldgenConfig) -> ArrayMesh:
+## SHADE A OF ONE SPECIES, LINEAR - the colour the impostor mesh is built with.
+##
+## Public because distance v1 Stage 6 needs it on the worker: an impostor's
+## instance colour is a MULTIPLIER on the mesh's own vertex colour, so working
+## out "what multiplier lands this cone on the hillside's colour" needs the
+## colour the cone already is. Reading it from here rather than re-deriving it
+## in FarTreesJob is what stops the two drifting apart.
+static func color_of_species(species: int, config: WorldgenConfig) -> Color:
 	var row: Dictionary = TreeSpecies.table(config)[species]
 	# Shade A. The far field is not the place for per-tree colour variation -
 	# it would cost a second mesh per species to save an effect nobody can
 	# resolve at 150 m.
-	var color: Color = Block.color_of(row["leaves"]) \
+	return Block.color_of(row["leaves"]) \
 		if row["leaves"] != Block.AIR else Block.color_of(row["trunk_id"])
+
+
+static func _build(species: int, config: WorldgenConfig) -> ArrayMesh:
+	var row: Dictionary = TreeSpecies.table(config)[species]
+	var color := color_of_species(species, config)
 
 	match species:
 		TreeSpecies.SPRUCE, TreeSpecies.LARCH:
@@ -182,10 +194,14 @@ static func _finish(verts: PackedVector3Array, normals: PackedVector3Array,
 	return mesh
 
 
-## The terrain's material - since look v1 literally the same object, because
-## the poster ramp in Look is the one thing every opaque surface has to agree
-## on, and a far tree that shaded differently from the hill it stands on would
-## be the seam the whole look pass exists to remove.
+## The terrain's ramp, on a material of the ring's own - see
+## Look.far_tree_material(), which carries the reasoning.
+##
+## Until distance v1 Stage 6 this returned Look.figure_material(), which is the
+## CHARACTER treatment: fog_dark_mix 1.0, so the thing drawn with it refuses to
+## fog into what is behind it. That is exactly right for a person and exactly
+## wrong for two thousand cones on a hillside, and it was the reason the far
+## forest read as green triangles pasted onto the picture rather than as part
+## of the mountain. A tree is scenery; a person is not.
 static func material() -> Material:
-	# A figure, not the ground - see Look.figure_material().
-	return Look.figure_material()
+	return Look.far_tree_material()

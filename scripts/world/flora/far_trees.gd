@@ -101,6 +101,10 @@ func _start_if_idle() -> void:
 	job.center = _pending
 	job.generator = _generator
 	job.config = _config
+	# The heightmap the far mesh draws from, for the colour convergence in
+	# FarTreesJob._tint_at(). The generator owns it and neither of them is
+	# written after setup.
+	job.heightmap = _generator.heightmap
 	# INNER EDGE AT THE FRONTIER, because the real trees are inside it and
 	# drawing both would double every trunk near the boundary - but only where
 	# the real trees have actually ARRIVED (world feel v1 Stage 3). Keyed to
