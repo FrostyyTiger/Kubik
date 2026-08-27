@@ -177,6 +177,9 @@ func _ready() -> void:
 	_body_field.name = "Bodies"
 	add_child(_body_field)
 	_body_field.setup(Net.is_host(), config.block_size, _world, _journal)
+	# See _physics_process: the push must be collected after the bodies that
+	# make the contacts have moved.
+	process_physics_priority = 100
 	_world.body_field = _body_field
 	_debug.body_field = _body_field
 
@@ -219,6 +222,28 @@ func _ready() -> void:
 		_request_join_state()
 
 
+## THE PUSH RUNS AFTER EVERYTHING THAT CAN PUSH (world feel v1 Stage 12).
+##
+## `process_physics_priority` is set in _ready so that this node's physics tick
+## runs AFTER the player's and every PlayerSim's. It matters: the push is read
+## from `get_slide_collision()`, which reports what blocked a body's own move
+## THIS tick, and a parent node's _physics_process runs before its children's
+## by default - so without the priority every push would be acting on last
+## tick's contacts, one tick behind the body that made them.
+func _physics_process(delta: float) -> void:
+	if not Net.is_host() or _body_field == null:
+		return
+	var pushers := []
+	# The host's own player pushes exactly like anybody else. Solo is a host
+	# with zero clients, and there is no second code path for it.
+	if _player.is_physics_processing():
+		pushers.append([_player, _player.current_input().wish])
+	for peer_id in _sims:
+		var sim: PlayerSim = _sims[peer_id]
+		pushers.append([sim, sim.wish()])
+	_body_field.push_tick(pushers, delta)
+
+
 func _process(delta: float) -> void:
 	# Retry the handshake if we somehow asked before the host game scene
 	# existed. Cheap insurance against an otherwise silent hang.
@@ -235,6 +260,18 @@ func _process(delta: float) -> void:
 		# the player has gone far enough to be worth a rebuild.
 		_far_trees.update(_player.global_position)
 	_release_player_when_ground_exists()
+	# WHAT EVERYBODY IS STANDING ON, once a frame rather than once a tick.
+	# A zone lookup is a heightmap read and a noise sample, and a body crosses
+	# a zone boundary in seconds - so per-frame is already far finer than the
+	# thing it describes, and per physics tick would be three times the cost
+	# for no difference anybody could see.
+	if _world.has_seed():
+		_player.ground_zone = _world.zone_at_m(
+			_player.global_position.x, _player.global_position.z)
+		for peer_id in _sims:
+			var sim: PlayerSim = _sims[peer_id]
+			sim.ground_zone = _world.zone_at_m(
+				sim.global_position.x, sim.global_position.z)
 	if Net.is_client():
 		_advance_correction(delta)
 

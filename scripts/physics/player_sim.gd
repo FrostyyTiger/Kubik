@@ -77,6 +77,12 @@ var _input_at := 0
 ## told anything and holds still where the host spawned it.
 var _heard := false
 
+## The surface zone under this peer, set by Game once a sync tick. The host has
+## to know what a remote body is standing on for the same reason the client
+## does - it is running the same step - and the client's own prediction uses
+## its own lookup of the same world.
+var ground_zone := -1
+
 ## How many input packets have landed, how many times this body has been
 ## stepped, and the speed the last input asked for. Read by the pair probe -
 ## see debug_line().
@@ -117,7 +123,7 @@ func _physics_process(delta: float) -> void:
 	ticks += 1
 	var input := _effective_input()
 	want_speed = Locomotion.WALK_SPEED * Locomotion.speed_multiplier(input)
-	Locomotion.step(self, input, delta)
+	Locomotion.step(self, input, delta, ground_zone)
 	# The table carries body yaw as well as look yaw, so the host has to turn
 	# this body the same way the client turns its own.
 	rotation.y = Locomotion.face_yaw(rotation.y, input.wish, delta)
@@ -178,6 +184,12 @@ func debug_line() -> String:
 		_input.wish, _input.bits, packets,
 		ticks, stale_ticks, age_last, int(hold_ms()), want_speed,
 		velocity.x, velocity.y, is_on_floor(), hit]
+
+
+## What this peer is asking to move toward, in world space. Read by the push:
+## leaning on a rock counts only if you are walking into it.
+func wish() -> Vector2:
+	return _effective_input().wish
 
 
 ## What goes in the table. The same seam `player.gd` fills from its own body -

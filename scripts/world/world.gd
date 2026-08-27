@@ -940,7 +940,7 @@ func _collect_chunks(started: int, budget: int) -> void:
 			var edited := _replay_edits_for(chunk)
 
 			var node := ChunkNode.new()
-			node.setup(chunk, config, world_seed)
+			node.setup(chunk, config, world_seed, job.zone)
 			add_child(node)
 			_chunk_nodes[chunk_pos] = node
 			if edited:
@@ -1902,6 +1902,21 @@ func spawn_position_m(clearance_m: float) -> Vector3:
 		float(b.x) * config.block_size,
 		surface_height_m(b.x, b.y) + clearance_m,
 		float(b.y) * config.block_size)
+
+
+## The surface zone under a point given in METRES.
+##
+## For anything that needs to know what it is standing on rather than how high
+## it is - since world feel v1 Stage 12 that is the slide rule and the chunk
+## colliders' friction. It asks the generator rather than the loaded chunk,
+## which means it answers for ground that has not streamed in yet: that is
+## wanted, because the host simulates remote peers over terrain it may only
+## have as collision.
+func zone_at_m(x: float, z: float) -> int:
+	var bx := int(floor(x / config.block_size))
+	var bz := int(floor(z / config.block_size))
+	return generator.surface_zone_at(bx, bz, generator.surface_at(
+		float(bx), float(bz)))
 
 
 ## Same thing in metres, which is what anything outside worldgen wants.

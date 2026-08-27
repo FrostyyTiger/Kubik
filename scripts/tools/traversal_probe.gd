@@ -100,6 +100,14 @@ var _running := false
 var _waited := 0.0
 var _rescues := 0
 
+## Ticks spent sliding, and ticks in total. World feel v1 Stage 12 adds loose
+## ground that carries a player downhill, and the gate on it is that a corner
+## must not be reached BY sliding: a probe that gets there because the mountain
+## carried it has not shown that the world is walkable, which is the only thing
+## this tool exists to ask.
+var _slid_ticks := 0
+var _ticks := 0
+
 var _detour_until := -1.0
 var _detour_sign := 1.0
 var _detour_tries := 0
@@ -210,6 +218,10 @@ func _physics_process(delta: float) -> void:
 
 	_player.wish_override = to_target
 
+	_ticks += 1
+	if _player.sliding:
+		_slid_ticks += 1
+
 	_path_m += Vector2(pos.x - _last_pos.x, pos.z - _last_pos.z).length()
 	_last_pos = pos
 	_elapsed += delta
@@ -246,6 +258,8 @@ func _finish(why: String, remaining: float) -> void:
 		_elapsed, _elapsed / 60.0, covered, straight])
 	print("[Traverse] plus %.0f s waiting for chunks, %d detours round obstacles, %d rescues from inside terrain" % [
 		_waited, _detours, _rescues])
+	var slid := 100.0 * float(_slid_ticks) / maxf(float(_ticks), 1.0)
+	print("[Traverse] %.1f%% of the crossing was spent sliding (want under 5%%)" % slid)
 	# Two speeds, because they answer different questions. Ground speed says
 	# how much the terrain slowed the character down; speed made good says how
 	# much of that motion was actually towards the far corner, which is the one

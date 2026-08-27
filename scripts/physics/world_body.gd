@@ -37,6 +37,22 @@ var rest_yaw := 0.0
 ## Set the first time this body moves under its own steam. See BodyField.
 var moved := false
 
+## Whether the ground under this body has its collider yet. Until it does, a
+## push is ignored: unfreezing a rock over a chunk that has voxels but no
+## trimesh drops it through the world. See BodyField._thaw_pass().
+var ready_to_move := false
+
+## The direction it is currently being leaned on from, or zero. Visual only:
+## the MESH tilts, the collision shape does not, because a rock that is not
+## moving must not push the player who is pushing it.
+var rock_dir := Vector3.ZERO
+
+var _mesh: MeshInstance3D = null
+
+## The rocking ease, 0 to 1. See Push.tilt().
+var _rock_t := 0.0
+var _scale := 1.0
+
 static var _shapes := {}
 
 
@@ -67,11 +83,12 @@ func setup(p_id: int, p_kind: int, pos: Vector3, yaw: float, scale_f: float,
 	# only, never to the body. Scaling a physics body in Godot is a documented
 	# way to get wrong contacts, and the ±15% a boulder varies by is not worth
 	# the inertia tensor being a lie.
-	var mesh := MeshInstance3D.new()
-	mesh.mesh = FloraModels.mesh_for(row["model"], block_size)
-	mesh.material_override = FloraModels.material_for(row["model"])
-	mesh.scale = Vector3.ONE * scale_f
-	add_child(mesh)
+	_mesh = MeshInstance3D.new()
+	_mesh.mesh = FloraModels.mesh_for(row["model"], block_size)
+	_mesh.material_override = FloraModels.material_for(row["model"])
+	_mesh.scale = Vector3.ONE * scale_f
+	_scale = scale_f
+	add_child(_mesh)
 
 
 ## One shape per kind, built once and shared by every body of that kind.
@@ -105,22 +122,40 @@ static func shape_for(kind: int, block_size: float) -> ConvexPolygonShape3D:
 	return got
 
 
-## Wake this body and hit it.
+func _process(delta: float) -> void:
+	_rock_t = Push.tilt(_mesh, rock_dir, _scale, _rock_t, delta)
+
+
+## THE ONLY WAY A BODY EVER MOVES. Unfreeze it, wake it, and hit it.
 ##
-## THE WAKE IS NOT OPTIONAL, and it is the whole reason this is a method rather
-## than a call to apply_central_impulse() at each site. A sleeping body under
-## Jolt is out of the solver, and an impulse applied to one is simply
-## discarded - no error, no warning, and the rock does not move. The body probe
-## spent a run on it: the shove reported success, the body reported
-## `sleeping`, and every assertion downstream passed because a rock that never
-## moved trivially ends where it started.
+## A RESTING BODY IS FROZEN, NOT MERELY ASLEEP, and that is the rule rather
+## than an optimisation. Jolt wakes a sleeping body on contact with a moving
+## one, and a boulder on a mountainside that wakes for any reason rolls -
+## gravity does the rest. Putting it straight back to sleep every physics tick
+## was the first attempt and it loses the race: the body integrates one tick
+## between each re-sleep, and the body probe watched a boulder_l walk two
+## metres down a slope over three seconds with ZERO push contacts against it.
 ##
-## Stage 12's push comes through here too, for the same reason.
+## Frozen in Godot's default STATIC mode, a body is still solid - you can stand
+## on it, walk into it, and `get_slide_collision` reports it - it simply does
+## not move. Which is exactly what a rock that nobody has shifted should be.
+##
+## THE WAKE IS ALSO NOT OPTIONAL. An impulse applied to a sleeping body under
+## Jolt is discarded with no error and no warning, which cost another probe run
+## on its own: the shove reported success, the body reported `sleeping`, and
+## every assertion downstream passed because a rock that never moved trivially
+## ends where it started.
 func shove(impulse: Vector3) -> void:
+	if not ready_to_move:
+		return  # no collider under it yet - see ready_to_move
+	freeze = false
 	sleeping = false
+	# THE ONLY PLACE `moved` IS SET. It means "something cleared this body's
+	# hold", not "this body's position changed".
+	moved = true
 	apply_central_impulse(impulse)
 
 
 ## The row this body contributes to the authoritative table.
 func to_row() -> Array:
-	return [global_position, quaternion]
+	return [global_position, quaternion, rock_dir]

@@ -253,9 +253,20 @@ func _compose_readout() -> String:
 	# solver time at all, and `moved` is the only part of them that is world
 	# state rather than a function of the seed.
 	if body_field != null:
-		lines.append("bodies    %d loaded, %d awake, %d ever moved" % [
+		lines.append("bodies    %d loaded, %d awake, %d rocking, %d ever moved" % [
 			body_field.count(), body_field.awake_count(),
-			body_field.moved_count()])
+			body_field.rocking_count(), body_field.moved_count()])
+		# THE STAGE 12 CONSTANTS, all of them, all starting values (hard rule
+		# 11). push/hold is the co-op rule stated as a ratio: 600 moves a 400
+		# and not a 1000, and two of them move anything here.
+		lines.append("push      %.0f N each, holds %.0f / %.0f, accel %.0f, decel %.0f, air %.2f" % [
+			Locomotion.PUSH_FORCE_N,
+			BodyTable.hold_of(BodyTable.BOULDER_M),
+			BodyTable.hold_of(BodyTable.BOULDER_L),
+			Locomotion.ACCEL, Locomotion.DECEL, Locomotion.AIR_CONTROL])
+		lines.append("slide     over %.0f deg on loose ground, factor %.2f, max %.0f m/s" % [
+			Locomotion.SLIDE_ANGLE_DEG, Locomotion.SLIDE_FACTOR,
+			Locomotion.SLIDE_MAX])
 
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")

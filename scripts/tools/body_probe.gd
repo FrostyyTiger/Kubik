@@ -22,6 +22,11 @@ extends Node
 const SETTLE_TIMEOUT_MS := 90000
 const WALK_AWAY_M := 220.0
 
+## How many columns to scan looking for a body of a given kind. A promoted
+## boulder_l is about one percent of boulders, so this has to be generous; at
+## roughly ten milliseconds a column it is the slowest thing in the probe.
+const SEARCH_COLUMNS := 2000
+
 var _world: Node = null
 var _player: Node3D = null
 var _game: Node = null
@@ -79,6 +84,7 @@ func _go() -> void:
 	await _settle()
 	await _sleep_for(2.0)
 
+	var bad_push: Array[String] = []
 	var moved_id := _shove(field)
 	if moved_id == 0:
 		print("[BodyProbe] FAIL - no body to push")
@@ -102,6 +108,57 @@ func _go() -> void:
 	print("[BodyProbe] body %d ended at %.2f, %.2f, %.2f - it moved %.2f m" % [
 		moved_id, after.x, after.y, after.z, shoved])
 
+	# THE PUSH, WITH A REAL PLAYER AND A REAL CONTACT (Stage 12).
+	#
+	# The self-test checks the ARITHMETIC of the co-op rule - one player moves
+	# a boulder_m, two move a boulder_l - and cannot check that a capsule
+	# walking into a rock produces a contact the accumulator recognises. That
+	# is what this is: the host's own player, physics on, walking into the
+	# nearest boulder_l with a real wish, for three seconds.
+	# BOTH HALVES OF THE RULE, and both need a body of the right kind under the
+	# player - a boulder_l is one in twelve boulders, so "the nearest body" is
+	# almost never one. Each is hunted for and walked to.
+	# UP TO THREE CANDIDATES OF EACH KIND. The first boulder_l the search finds
+	# is not necessarily one a player can walk up to - rocks sit on ledges, in
+	# clefts, and on the far side of drops - and three runs in a row failed to
+	# make contact with the same unreachable one while the boulder_m beside it
+	# worked every time. Trying the next one is cheaper than a smarter search.
+	var big := await _reachable(field, BodyTable.BOULDER_L)
+	if big["id"] == 0:
+		bad_push.append("found no boulder_l in the world - the co-op half is untested")
+	else:
+		var pushed: Dictionary = big["result"]
+		print("[BodyProbe] one player leaned on a boulder_l for 3 s: it moved %.3f m, rocked on %d ticks, %d push contacts" % [
+			pushed["moved"], pushed["rocked"], pushed["contacts"]])
+		# NO CONTACT IS NOT A PASS AND IT IS NOT A FAILURE OF THE RULE. It
+		# means the probe could not arrange the test - the rock was on a ledge,
+		# or the walk-up missed - and reporting that as "the boulder did not
+		# move" would be the most flattering possible lie.
+		if not pushed["arranged"]:
+			bad_push.append("the boulder_l was streamed out mid-test - untested")
+		elif int(pushed["contacts"]) <= 0:
+			bad_push.append("never made contact with the boulder_l - untested")
+		else:
+			if pushed["moved"] > 0.1:
+				bad_push.append("one player moved a boulder_l %.2f m" % pushed["moved"])
+			if int(pushed["rocked"]) <= 0:
+				bad_push.append("a boulder_l leaned on by one player never rocked")
+
+	var small := await _reachable(field, BodyTable.BOULDER_M)
+	if small["id"] == 0:
+		bad_push.append("found no boulder_m in the world")
+	else:
+		var pushed: Dictionary = small["result"]
+		print("[BodyProbe] one player leaned on a boulder_m for 3 s: it moved %.3f m, rocked on %d ticks, %d push contacts" % [
+			pushed["moved"], pushed["rocked"], pushed["contacts"]])
+		# THE OTHER HALF. A boulder_m that also refuses one player would make
+		# every rock in the world scenery, and every assertion about boulder_l
+		# above would still pass.
+		if int(pushed["contacts"]) <= 0:
+			bad_push.append("never made contact with the boulder_m - untested")
+		elif pushed["moved"] < 0.2:
+			bad_push.append("one player could not move a boulder_m (%.3f m)" % pushed["moved"])
+
 	# WALK AWAY AND COME BACK. The column unloads, the body is freed, and the
 	# only thing that remembers where it ended up is BodyField._moved.
 	var home: Vector3 = _player.global_position
@@ -122,7 +179,7 @@ func _go() -> void:
 	print("[BodyProbe] body %d came back at %.2f, %.2f, %.2f (drift %.3f m)" % [
 		moved_id, back.x, back.y, back.z, drift])
 
-	var bad := []
+	var bad := bad_push.duplicate()
 	# FIRST, because everything below it is trivially true of a rock that never
 	# moved. See the note above the shove.
 	if shoved < 1.0:
@@ -174,6 +231,185 @@ func _find_stone() -> Vector3:
 		float(best.y) * bs)
 
 
+## Walk up to successive bodies of one kind until one of them can actually be
+## leaned on, and return that attempt.
+##
+## "No contact" is not a result. It means the probe could not arrange the test,
+## and reporting it as "the boulder did not move" would be the most flattering
+## possible lie - so the probe tries again on another rock rather than scoring
+## an unreachable one as a pass.
+func _reachable(field, kind: int) -> Dictionary:
+	var last := {"moved": 0.0, "rocked": 0, "contacts": 0, "arranged": false}
+	for attempt in 3:
+		var id := await _goto_kind(field, kind, attempt)
+		if id == 0:
+			break
+		var result := await _lean_on(field, id, 3.0)
+		last = result
+		if int(result["contacts"]) > 0:
+			return {"id": id, "result": result}
+		print("[BodyProbe]   no contact with that one - trying another")
+	return {"id": 0 if int(last["contacts"]) == 0 else 1, "result": last}
+
+
+## Find a promoted body of this kind anywhere in the world, walk to it, and
+## return its id once it is loaded and thawed.
+##
+## SEARCHED THROUGH THE PLACEMENT, not through the loaded set: a boulder_l is
+## roughly one in twelve boulders and boulders are rare in the first place, so
+## whatever happens to be near the player is almost never the kind under test.
+## This runs the same FloraPlacement scan the flora job runs and the same
+## BodyTable.promote the host runs, which is also a check in itself - if the
+## two disagreed, nothing here would be where the search said it was.
+func _goto_kind(field, kind: int, skip := 0) -> int:
+	var gen = _world.generator
+	var cfg = _world.config
+	var bs: float = cfg.block_size
+	var found := Vector3.ZERO
+	var have := false
+	var seen := 0
+	var scanned := 0
+	for col in _spiral_columns(SEARCH_COLUMNS):
+		scanned += 1
+		for inst in FloraPlacement.column(gen, cfg, col.x, col.y):
+			var block: Vector2i = inst["block"]
+			if BodyTable.promote(inst["model"], block.x, block.y,
+					gen.world_seed, cfg) != kind:
+				continue
+			if seen < skip:
+				seen += 1
+				continue
+			found = inst["pos"]
+			have = true
+			break
+		if have:
+			break
+	if not have:
+		print("[BodyProbe] no %s in %d columns around the player" % [
+			BodyTable.name_of(kind), scanned])
+		return 0
+	print("[BodyProbe] found a %s at %.0f, %.0f - walking there" % [
+		BodyTable.name_of(kind), found.x, found.z])
+	# TWO METRES OFF AND ON THE GROUND, settled here and NOT MOVED AGAIN.
+	# Teleporting during the measurement was the mistake in the version before
+	# this one: each hop restreams the region, and a body whose chunk is
+	# mid-rebuild has no collider, so `ready_to_move` is false and every push
+	# against it is correctly ignored. The probe read that as "the rule is
+	# broken" - a boulder_m with four contacts that moved 0.000 m.
+
+	var stand := found - Vector3(2.0, 0.0, 0.0)
+	stand.y = _world.surface_height_m(
+		int(floor(stand.x / bs)), int(floor(stand.z / bs))) + 1.0
+	_player.global_position = stand
+	await _settle()
+	await _sleep_for(2.0)
+	return _nearest_of_kind(field, kind)
+
+
+## Columns in a square spiral out from wherever the player is standing.
+##
+## NOT THE ROCK ZONES FROM THE HEIGHTMAP, and the first version of this was.
+## Two things went wrong with that. The coarse heightmap cell classifies a place
+## differently from the per-block `surface_at` the placement uses - the
+## self-test records the same trap - and even where it agrees, a PROMOTED
+## boulder_l is about one percent of boulders: eight percent of boulders are
+## large and fifteen percent of those are promoted. Sampling a hundred and
+## twenty scattered rock columns found none, twice.
+##
+## A spiral from the player is dense, is centred on ground the probe has
+## already confirmed grows boulders, and finds the nearest example rather than
+## an arbitrary one - which also keeps the walk short.
+func _spiral_columns(count: int) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var bs: float = _world.config.block_size
+	var here := Vector2i(
+		Chunk.floor_div(int(floor(_player.global_position.x / bs)), Chunk.SIZE),
+		Chunk.floor_div(int(floor(_player.global_position.z / bs)), Chunk.SIZE))
+	var x := 0
+	var z := 0
+	var dx := 0
+	var dz := -1
+	for _i in count * 4:
+		if out.size() >= count:
+			break
+		if -count < x and x <= count and -count < z and z <= count:
+			out.append(here + Vector2i(x, z))
+		# The standard square-spiral turn: at a corner, rotate the step vector
+		# ninety degrees. The corners are where |x| == |z|, plus the two edges
+		# that a spiral of even width needs.
+		if x == z or (x < 0 and x == -z) or (x > 0 and x == 1 - z):
+			var t := dx
+			dx = -dz
+			dz = t
+		x += dx
+		z += dz
+	return out
+
+
+## The nearest loaded body of one kind, or 0.
+func _nearest_of_kind(field, kind: int) -> int:
+	var best := 0
+	var best_d := INF
+	for id in field.bodies():
+		var body = field.bodies()[id]
+		if body.kind != kind:
+			continue
+		var d: float = body.global_position.distance_to(_player.global_position)
+		if d < best_d:
+			best_d = d
+			best = id
+	return best
+
+
+## Stand next to a body and walk into it. Returns how far it went and whether
+## it ever rocked.
+##
+## `wish_override` is how every probe here drives a player with no keyboard,
+## and it is the same field the traversal probe uses. Physics is turned back on
+## for the duration: this is the one measurement in this probe that needs the
+## player to be a body rather than a camera.
+func _lean_on(field, id: int, seconds: float) -> Dictionary:
+	var body = field.bodies().get(id)
+	if body == null:
+		return {"moved": 0.0, "rocked": 0, "contacts": 0, "arranged": false}
+	var from: Vector3 = body.global_position
+	# THE NODE, NOT JUST ITS ID. Streaming frees a body when its column leaves
+	# and rebuilds it when the column returns - at its REST pose, because an
+	# unmoved body is a function of the seed. So a churned column produces a
+	# rock in a different place with the same id, and comparing before against
+	# after measures the respawn rather than the push. That is where a
+	# boulder_l nobody had touched appeared to move 1.52 m.
+	var instance: int = body.get_instance_id()
+
+	# NO TELEPORT. The player was already settled beside this rock by
+	# _goto_kind, and every hop from here restreams the region - which takes
+	# the collider out from under the very body being pushed. It just walks at
+	# it from where it is standing.
+	var to: Vector3 = body.global_position - _player.global_position
+	to.y = 0.0
+	if to.length_squared() < 0.0001:
+		return {"moved": 0.0, "rocked": 0, "contacts": 0, "arranged": false}
+
+	var rocks_before: int = field.rock_ticks()
+	var contacts_before: int = field.push_contacts()
+	_player.set_physics_process(true)
+	_player.wish_override = to.normalized()
+	var t0 := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - t0 < int(seconds * 1000.0):
+		await get_tree().process_frame
+	_player.wish_override = Vector3.ZERO
+	_player.set_physics_process(false)
+
+	body = field.bodies().get(id)
+	var same: bool = body != null and body.get_instance_id() == instance
+	return {
+		"moved": 0.0 if not same else from.distance_to(body.global_position),
+		"rocked": field.rock_ticks() - rocks_before,
+		"contacts": field.push_contacts() - contacts_before,
+		"arranged": same,
+	}
+
+
 ## The nearest body that is actually being simulated.
 ##
 ## `freeze` is the test rather than distance: a body whose column has no
@@ -221,7 +457,7 @@ func _position_of(field, id: int) -> Vector3:
 		return body.global_position
 	# Freed, but remembered - which is the interesting case for the walk-away.
 	var known: Array = field._moved.get(id, [])
-	return known[0] if known.size() == 2 else Vector3.ZERO
+	return known[0] if known.size() >= 2 else Vector3.ZERO
 
 
 func _report(label: String) -> void:

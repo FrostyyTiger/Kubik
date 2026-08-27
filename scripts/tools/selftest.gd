@@ -57,6 +57,7 @@ func _ready() -> void:
 		"edit while cached": _test_edit_while_cached,
 		"locomotion parity": _test_locomotion_parity,
 		"body promotion": _test_body_promotion,
+		"push holds": _test_push_holds,
 	}
 	var failures := 0
 	for name in tests:
@@ -1157,7 +1158,10 @@ func _test_locomotion_parity():
 	# A sequence with something interesting in it: walk, then sprint, then let
 	# go. Sixty ticks at the physics rate.
 	var delta := 1.0 / 60.0
+	var at_release := 0.0
 	for tick in 60:
+		if tick == 50:
+			at_release = (bodies[0] as CharacterBody3D).velocity.x
 		var intent := Locomotion.Intent.new()
 		intent.wish = Vector2(1.0, 0.0)
 		if tick >= 20:
@@ -1201,16 +1205,39 @@ func _test_locomotion_parity():
 	var pos_b: Vector3 = (bodies[1] as CharacterBody3D).global_position - fly_from[1]
 	var pos_drift := pos_a.distance_to(pos_b)
 
-	print("locomotion parity: walk vel %s (drift %.6f), fly moved %.2f m (drift %.6f)" % [
-		vel_a, vel_drift, -pos_a.z, pos_drift])
+	print("locomotion parity: sprint reached %.2f m/s, coasted to %.2f, drift %.6f; fly moved %.2f m (drift %.6f)" % [
+		at_release, vel_a.x, vel_drift, -pos_a.z, pos_drift])
 	if vel_drift > 0.000001 or pos_drift > 0.000001:
 		print("  the two sides disagree - the step is not deterministic")
 		bad += 1
-	# The last ten walk ticks had a zero wish, so horizontal velocity must have
-	# been zeroed and vertical must be falling - and the two together prove the
-	# walk branch ran rather than returning early.
-	if not is_equal_approx(vel_a.x, 0.0) or vel_a.y > -1.0:
-		print("  the walk step did not run: velocity %s" % vel_a)
+	# MOMENTUM (Stage 12), and this used to assert that letting go zeroed the
+	# velocity outright. It does not any more, and the test failing was the
+	# change being noticed rather than a regression.
+	#
+	# Two properties, both of which a snap-to-wish implementation fails:
+	# the body never reached full sprint in the time it had, and letting go
+	# slowed it without stopping it.
+	var sprint_speed := Locomotion.WALK_SPEED * Locomotion.SPRINT_MULTIPLIER
+	if at_release >= sprint_speed:
+		print("  reached %.3f m/s of a %.3f m/s sprint in half a second - it snapped"
+			% [at_release, sprint_speed])
+		bad += 1
+	if vel_a.x >= at_release or vel_a.x <= 0.0:
+		print("  letting go took it from %.3f to %.3f - it did not coast"
+			% [at_release, vel_a.x])
+		bad += 1
+	# ...and the amount it slowed by is the constants, exactly. Everything here
+	# is airborne - no space, so is_on_floor() is always false - which makes
+	# this an AIR_CONTROL check as much as a DECEL one, and both matter: an
+	# AIR_CONTROL of 1.0 would be a player who steers as well in the air as on
+	# the ground, and nothing else in this harness would notice.
+	var expect_drop: float = Locomotion.DECEL * Locomotion.AIR_CONTROL * 10.0 * delta
+	if absf((at_release - vel_a.x) - expect_drop) > 0.001:
+		print("  slowed by %.4f m/s over ten airborne ticks, expected %.4f"
+			% [at_release - vel_a.x, expect_drop])
+		bad += 1
+	if vel_a.y > -1.0:
+		print("  the body did not fall (%.3f) - gravity is not running" % vel_a.y)
 		bad += 1
 	# 15 ticks at FLY_SPEED plus 15 at sprint, over 30/60 of a second.
 	var expect_fly: float = (Locomotion.FLY_SPEED * 15.0
@@ -1434,3 +1461,59 @@ func _test_body_promotion():
 		print("  raising body_fraction did not promote more bodies")
 		bad += 1
 	return 1 if bad > 0 else 0
+
+
+## PILLAR 1, STATED AS ARITHMETIC (world feel v1 Stage 12).
+##
+## "Encounters assume two bodies" is the first design pillar, and the push is
+## the cheapest place in the game where it is literally true: a boulder_l does
+## not move for one player and does for two. That property is four numbers -
+## PUSH_FORCE_N and three holds - and nothing anywhere enforces the
+## relationship between them.
+##
+## So this is a test of a DESIGN INVARIANT rather than of code. It will fail the
+## day somebody retunes the push to make boulder_m feel better and silently
+## turns boulder_l into a one-player rock, which is the pillar quietly going
+## away with every test still green.
+##
+## It also checks the ordering the whole scheme rests on: a heavier thing must
+## not be EASIER to move.
+func _test_push_holds():
+	var bad := 0
+	var one := Locomotion.PUSH_FORCE_N
+	var two := one * 2.0
+	print("push holds: one player is %.0f N; holds are %s" % [one,
+		", ".join(_hold_names())])
+
+	# One player moves a boulder_m.
+	if one < BodyTable.hold_of(BodyTable.BOULDER_M):
+		print("  one player cannot move a boulder_m (%.0f < %.0f)" % [
+			one, BodyTable.hold_of(BodyTable.BOULDER_M)])
+		bad += 1
+	# One player does NOT move a boulder_l - this is the co-op rule.
+	if one >= BodyTable.hold_of(BodyTable.BOULDER_L):
+		print("  one player moves a boulder_l (%.0f >= %.0f) - pillar 1 is gone" % [
+			one, BodyTable.hold_of(BodyTable.BOULDER_L)])
+		bad += 1
+	# Two players do.
+	if two < BodyTable.hold_of(BodyTable.BOULDER_L):
+		print("  two players cannot move a boulder_l (%.0f < %.0f) - it is scenery" % [
+			two, BodyTable.hold_of(BodyTable.BOULDER_L)])
+		bad += 1
+	# Heavier must not be easier.
+	for kind in range(1, BodyTable.COUNT):
+		var here := BodyTable.row(kind)
+		var before := BodyTable.row(kind - 1)
+		if float(here["mass"]) > float(before["mass"]) \
+				and BodyTable.hold_of(kind) < BodyTable.hold_of(kind - 1):
+			print("  %s is heavier than %s but easier to move" % [
+				here["name"], before["name"]])
+			bad += 1
+	return 1 if bad > 0 else 0
+
+
+func _hold_names() -> Array:
+	var out := []
+	for kind in BodyTable.COUNT:
+		out.append("%s %.0f" % [BodyTable.name_of(kind), BodyTable.hold_of(kind)])
+	return out

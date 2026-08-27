@@ -19,13 +19,66 @@ var collision_applied := false
 ## upgrades these when the host's own player comes near enough to see them.
 var mesh_built := true
 
+## HOW SLIPPERY THE GROUND IS, PER ZONE (world feel v1 Stage 12).
+##
+## One material per zone, built once and shared by every chunk in it, because a
+## PhysicsMaterial is a resource and a thousand identical copies of one is a
+## thousand things for the physics server to keep distinct.
+##
+## The numbers are friction coefficients and they are what makes a boulder's
+## run-out depend on WHERE rather than on how hard it was hit: the same shove
+## that stops in ten metres of meadow keeps going on scree. That is the same
+## argument as the slide in Locomotion, applied to the things rather than to
+## the player, and it is why both are keyed off the same zone.
+##
+## STARTING VALUES, all of them, and tuned blind - nobody has pushed a rock
+## down a mountain and formed an opinion yet.
+const ZONE_FRICTION := {
+	TerrainGenerator.ZONE_SHORE: 0.9,
+	TerrainGenerator.ZONE_MEADOW: 0.9,
+	TerrainGenerator.ZONE_FOREST: 0.8,
+	TerrainGenerator.ZONE_HEATH: 0.8,
+	TerrainGenerator.ZONE_ROCK: 0.7,
+	TerrainGenerator.ZONE_ALPINE: 0.45,
+	TerrainGenerator.ZONE_SNOW: 0.3,
+}
+
+static var _materials := {}
+
 var _block_size := 1.0
 var _config: WorldgenConfig = null
 var _world_seed := 0
 var _collider: CollisionShape3D = null
 
 
-func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int) -> void:
+## The shared material for one zone.
+##
+## A CHUNK IS ONE ZONE, ALMOST ALWAYS, and that is what makes this affordable.
+## Zones are hundreds of metres across and a chunk is eight; the handful that
+## straddle a boundary get the zone of their own column's centre, and being one
+## chunk wrong about the friction of a boundary strip is not something anybody
+## can feel. Per-triangle materials would be the alternative and they would cost
+## a material lookup per contact for the rest of the project's life.
+static func material_for_zone(zone: int) -> PhysicsMaterial:
+	var got: PhysicsMaterial = _materials.get(zone)
+	if got != null:
+		return got
+	got = PhysicsMaterial.new()
+	got.friction = float(ZONE_FRICTION.get(zone, 0.8))
+	# Nothing in this world bounces. A boulder that hops down a mountain reads
+	# as a beach ball, and there is no surface here that should give anything
+	# back.
+	got.bounce = 0.0
+	_materials[zone] = got
+	return got
+
+
+## `zone` is the surface zone of this chunk's COLUMN, worked out once on the
+## worker that built it - see ColumnJob.zone - rather than looked up here. A
+## generator query is a heightmap read and a noise sample, and doing it per
+## chunk would be six or seven times per column for one answer.
+func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int,
+		zone := TerrainGenerator.ZONE_MEADOW) -> void:
 	chunk = p_chunk
 	_block_size = config.block_size
 	# Kept so an edited chunk remeshes with the same shading as the bulk load
@@ -40,6 +93,9 @@ func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int) -> void:
 	# the other.
 	var body := StaticBody3D.new()
 	body.name = "Body"
+	# The zone of this chunk's own column, decided once at build. See
+	# material_for_zone().
+	body.physics_material_override = material_for_zone(zone)
 	add_child(body)
 	_collider = CollisionShape3D.new()
 	body.add_child(_collider)

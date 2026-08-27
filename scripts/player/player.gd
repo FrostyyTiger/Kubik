@@ -95,6 +95,15 @@ var _input := Locomotion.Intent.new()
 ## A jump that has been predicted locally but not yet put on the wire.
 var _jump_pending := false
 
+## The surface zone under our feet, set by Game once a frame. -1 until the
+## world has told us; Locomotion reads that as "not slippery", which is the
+## safe answer for a body whose ground nobody has classified yet.
+var ground_zone := -1
+
+## Whether the last step lost its footing. Read by the F3 readout and by the
+## traversal probe, which reports the fraction of a crossing spent sliding.
+var sliding := false
+
 ## A static pose, when something has asked for one. Scaffolding until the
 ## campfire owns sit and the death design owns downed - see the debug keys.
 var pose := LocomotionState.POSE_NONE
@@ -341,7 +350,7 @@ func wire_input() -> Locomotion.Intent:
 ## keyboard, owning a camera, and turning the body to face where it is going.
 func _walk(delta: float) -> void:
 	var input := current_input()
-	Locomotion.step(self, input, delta)
+	sliding = Locomotion.step(self, input, delta, ground_zone)
 	_face_movement(Vector3(input.wish.x, 0.0, input.wish.y), delta)
 
 

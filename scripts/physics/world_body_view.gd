@@ -29,6 +29,16 @@ var _have_target := false
 ## dropped packet is a smooth glide rather than a jump.
 const FOLLOW := 12.0
 
+## Which way it is being leaned on, from the table. Visual only - see
+## WorldBody.rock_dir.
+var rock_dir := Vector3.ZERO
+
+var _mesh: MeshInstance3D = null
+
+## The rocking ease, 0 to 1. See Push.tilt().
+var _rock_t := 0.0
+var _scale := 1.0
+
 
 func setup(p_id: int, p_kind: int, pos: Vector3, yaw: float, scale_f: float,
 		block_size: float) -> void:
@@ -36,11 +46,12 @@ func setup(p_id: int, p_kind: int, pos: Vector3, yaw: float, scale_f: float,
 	kind = p_kind
 	name = "BodyView_%d" % p_id
 	var row := BodyTable.row(kind)
-	var mesh := MeshInstance3D.new()
-	mesh.mesh = FloraModels.mesh_for(row["model"], block_size)
-	mesh.material_override = FloraModels.material_for(row["model"])
-	mesh.scale = Vector3.ONE * scale_f
-	add_child(mesh)
+	_mesh = MeshInstance3D.new()
+	_mesh.mesh = FloraModels.mesh_for(row["model"], block_size)
+	_mesh.material_override = FloraModels.material_for(row["model"])
+	_mesh.scale = Vector3.ONE * scale_f
+	_scale = scale_f
+	add_child(_mesh)
 	global_position = pos
 	rotation.y = yaw
 
@@ -60,6 +71,7 @@ func set_target(pos: Vector3, rot: Quaternion) -> void:
 
 
 func _process(delta: float) -> void:
+	_rock_t = Push.tilt(_mesh, rock_dir, _scale, _rock_t, delta)
 	if not _have_target:
 		return
 	# Frame-rate independent smoothing, the same shape RemotePlayer uses.

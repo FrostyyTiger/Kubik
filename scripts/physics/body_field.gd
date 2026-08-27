@@ -74,6 +74,19 @@ var _frozen := {}
 
 var _awake := 0
 
+## The push accumulator, refilled and applied every physics tick. See push.gd.
+var _push := Push.new()
+
+## id -> push direction, for bodies being leaned on but not moved. These are
+## replicated even though they are asleep and have not moved, because the whole
+## point of a rock is that the OTHER player sees it give.
+var _rocking := {}
+
+## Ticks on which at least one body was held against but not moved. Cumulative,
+## because "did it ever rock" sampled once a frame misses a rule that fires on
+## physics ticks - the probe read `false` while it was happening.
+var _rock_ticks := 0
+
 
 func setup(is_host: bool, block_size: float, world: Node,
 		journal: Journal = null) -> void:
@@ -130,7 +143,7 @@ func _spawn(col: Vector2i, id: int, kind: int, pos: Vector3, yaw: float,
 	var start_pos := pos
 	var start_rot := Quaternion(Vector3.UP, yaw)
 	var known: Array = _moved.get(id, [])
-	if known.size() == 2:
+	if known.size() >= 2:
 		start_pos = known[0]
 		start_rot = known[1]
 
@@ -146,7 +159,7 @@ func _spawn(col: Vector2i, id: int, kind: int, pos: Vector3, yaw: float,
 	add_child(node)
 	node.global_position = start_pos
 	node.quaternion = start_rot
-	if _is_host and known.size() == 2:
+	if _is_host and known.size() >= 2:
 		(node as WorldBody).moved = true
 	_bodies[id] = node
 	if not _by_column.has(col):
@@ -154,19 +167,13 @@ func _spawn(col: Vector2i, id: int, kind: int, pos: Vector3, yaw: float,
 	_by_column[col][id] = true
 	_home[id] = col
 
-	# FROZEN UNTIL THERE IS GROUND UNDER IT, and this is not an optimisation.
+	# FROZEN, WHICH IS THE RESTING STATE OF EVERY BODY - see WorldBody.shove().
+	# A rock nobody has shifted is scenery that happens to know how to roll.
 	#
-	# A column's voxels are published several frames before its collider is
-	# installed - the mesh upload is main-thread work and is budgeted - and a
+	# It also covers the window this started out solving: a column's voxels are
+	# published several frames before its collider is installed, and a live
 	# RigidBody3D created in that window is a rock in mid-air over a hole. It
-	# does exactly what you would expect: it falls. The body probe caught it
-	# going from y 77 to y -152 and coming back 181 m from where it had
-	# "settled", and the same gap is why Game holds the PLAYER frozen at spawn
-	# until is_chunk_collidable() answers.
-	#
-	# freeze rather than sleep, because a sleeping body still wakes on contact
-	# with the terrain arriving underneath it and would jitter its way out of
-	# the ground it was spawned inside.
+	# fell from y 77 to y -152 and came back 181 m from where it had "settled".
 	if _is_host:
 		(node as WorldBody).freeze = true
 		_frozen[id] = true
@@ -178,7 +185,36 @@ func _remember(id: int, node: Node3D) -> void:
 	var body := node as WorldBody
 	if body == null or not body.moved:
 		return
-	_moved[id] = [body.global_position, body.quaternion]
+	_moved[id] = body.to_row()
+
+
+## ONE PHYSICS TICK OF PUSHING (world feel v1 Stage 12).
+##
+## Called by Game with every body that can push - its own player and every
+## remote peer's sim. It runs AFTER those bodies have moved, which is what
+## `process_physics_priority` on Game is for: `get_slide_collision()` reports
+## what blocked a body's own move this tick, and asking before the move gets
+## last tick's answer.
+func push_tick(pushers: Array, delta: float) -> void:
+	if not _is_host:
+		return
+	_push.clear()
+	for entry in pushers:
+		_push.add_player(entry[0], entry[1])
+	var rocking := _push.apply(_bodies, delta)
+	# Bodies that stopped being pushed have to be told, or they stay tilted.
+	for id in _rocking:
+		if not rocking.has(id):
+			var was: WorldBody = _bodies.get(id)
+			if was != null:
+				was.rock_dir = Vector3.ZERO
+	for id in rocking:
+		var rock: WorldBody = _bodies.get(id)
+		if rock != null:
+			rock.rock_dir = rocking[id]
+	_rocking = rocking
+	if not rocking.is_empty():
+		_rock_ticks += 1
 
 
 # --- The host's tick ---------------------------------------------------------
@@ -196,21 +232,27 @@ func host_tick() -> void:
 	var rehome := []
 	for id in _bodies:
 		var body: WorldBody = _bodies[id]
-		if body.freeze or body.sleeping:
+		if body.freeze:
+			continue
+		if body.sleeping:
+			# IT HAS COME TO REST. Freeze it again, which is the resting state
+			# of every body: from here it is solid, still, and costs the solver
+			# nothing until somebody pushes it again. `moved` stays set - it is
+			# world state now, and _remember() reads it when the column goes.
+			body.freeze = true
 			continue
 		_awake += 1
-		_last_move[id] = now
-		if not body.moved:
-			# THE FIRST TIME. Worth a journal line and worth remembering,
-			# because from here on this rock is world state rather than a
-			# function of the seed.
-			body.moved = true
+		if not _last_move.has(id):
+			# The first tick of a body that has just been pushed. Worth a
+			# journal line: from here on this rock is world state rather than
+			# a function of the seed.
 			if _journal != null:
 				_journal.log_event("body_moved", {
 					"id": id, "kind": BodyTable.name_of(body.kind),
 					"from": FloraPlacement.column_of(id),
 				})
-		_moved[id] = [body.global_position, body.quaternion]
+		_last_move[id] = now
+		_moved[id] = body.to_row()
 		var col := _column_of_node(body)
 		if col != _home.get(id, col):
 			rehome.append([id, col])
@@ -244,18 +286,10 @@ func _thaw_pass() -> void:
 			int(floor(p.z / _block_size))))
 		if not _world.is_chunk_collidable(chunk):
 			continue
-		body.freeze = false
-		# ...AND STRAIGHT TO SLEEP. A boulder has stood on that slope since
-		# before anybody arrived, and the moment it is handed to the solver it
-		# is resting on voxel steps at whatever angle the mountain is - so an
-		# awake one starts rolling immediately, with nobody touching it. The
-		# body probe watched a single shove turn into eleven bodies "ever
-		# moved" as a hillside quietly avalanched itself.
-		#
-		# Asleep, Jolt integrates nothing until a contact wakes it, which is
-		# exactly the rule the world wants: a rock moves when something moves
-		# it. It is also what makes a few hundred of them free.
-		body.sleeping = true
+		# ELIGIBLE, NOT RELEASED. The body stays frozen; all this decides is
+		# that there is ground under it, so a push that clears its hold may
+		# now unfreeze it. See WorldBody.shove().
+		body.ready_to_move = true
 		ready.append(id)
 	for id in ready:
 		_frozen.erase(id)
@@ -316,11 +350,22 @@ func _rehome(id: int, col: Vector2i) -> void:
 ## will walk over there later - and a body no one is near is not sent at all.
 func rows_for(centres: Array) -> Dictionary:
 	var out := {}
-	if not _is_host or _last_move.is_empty():
+	if not _is_host:
+		return out
+	# A rocking body is ASLEEP and has never moved, so it is in neither
+	# _last_move nor anything else this filter looks at - and it is exactly the
+	# body a second player most needs to see, because "it gave and did not go"
+	# is the message that says come and help.
+	var interesting := {}
+	for id in _last_move:
+		interesting[id] = true
+	for id in _rocking:
+		interesting[id] = true
+	if interesting.is_empty():
 		return out
 	var range_sq := REPLICATE_RANGE_M * REPLICATE_RANGE_M
 	var near := []
-	for id in _last_move:
+	for id in interesting:
 		var body: WorldBody = _bodies.get(id)
 		if body == null:
 			continue
@@ -347,12 +392,21 @@ func apply_rows(rows: Dictionary) -> void:
 		return
 	for id in rows:
 		var row: Array = rows[id]
-		if row.size() != 2:
+		if row.size() != 3:
 			continue
 		_moved[id] = row
 		var view: WorldBodyView = _bodies.get(id)
 		if view != null:
 			view.set_target(row[0], row[1])
+			view.rock_dir = row[2]
+	# A body that has stopped rocking simply stops appearing in the packet, so
+	# anything we are still tilting and did not hear about is finished.
+	for id in _bodies:
+		if rows.has(id):
+			continue
+		var view: WorldBodyView = _bodies[id]
+		if view != null and view.rock_dir != Vector3.ZERO:
+			view.rock_dir = Vector3.ZERO
 
 
 # --- Readouts ----------------------------------------------------------------
@@ -367,3 +421,22 @@ func awake_count() -> int:
 
 func moved_count() -> int:
 	return _moved.size()
+
+
+func rocking_count() -> int:
+	return _rocking.size()
+
+
+## Player-into-body contacts seen since the field was built. Probe diagnostic;
+## see Push.contacts.
+func push_contacts() -> int:
+	return _push.contacts
+
+
+func rock_ticks() -> int:
+	return _rock_ticks
+
+
+## The loaded bodies, by id. For the probes.
+func bodies() -> Dictionary:
+	return _bodies

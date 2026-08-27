@@ -71,6 +71,11 @@ var shade_ink := Color(0.25, 0.29, 0.55, 1.0)
 ## thread knows what it asked for by the time the column lands.
 var mesh := true
 
+## The surface zone at this column's centre, worked out once here and used for
+## the chunk colliders' friction (world feel v1 Stage 12). One generator query
+## per column rather than one per chunk; see ChunkNode.setup().
+var zone := TerrainGenerator.ZONE_MEADOW
+
 var gen_usec := 0
 var tree_usec := 0
 var mesh_usec := 0
@@ -96,6 +101,11 @@ func run() -> void:
 	# by half, which lengthened cy_range, which added a full generation pass
 	# per column per extra chunk - ten of twelve 48 m jumps stopped settling
 	# inside a minute.
+	var bx_mid := chunk_x * Chunk.SIZE + Chunk.SIZE / 2
+	var bz_mid := chunk_z * Chunk.SIZE + Chunk.SIZE / 2
+	zone = generator.surface_zone_at(bx_mid, bz_mid,
+		generator.surface_at(float(bx_mid), float(bz_mid)))
+
 	var span := generator.column_surface_range(chunk_x, chunk_z)
 	var sky_from := int(floor(span.y)) + 1
 	for cy in cy_range:
