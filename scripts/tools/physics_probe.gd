@@ -39,6 +39,20 @@ extends Node
 ## in the meantime is the other half: Jolt loads, the tick is 60, and a loaded
 ## world standing still does not drift.
 ##
+## STAGE 11 ANSWERED IT, AND THE ANSWER WAS ABOUT THE COUNTERS RATHER THAN THE
+## BROADPHASE: they read 0, 0, 0 under Jolt in every state - five bodies
+## loaded, one of them rolling 95 m down a mountain, columns parked and
+## restored. Jolt does not implement `get_process_info()`; it is a Godot
+## Physics readout that the engine switch silently emptied, and every number
+## this probe prints from it is a zero that means "not measured" rather than
+## "nothing there".
+##
+## What Stage 11 does instead is sidestep the question. A parked column's
+## bodies are FREED rather than disabled - see BodyField.column_left() and the
+## note there about why a body is the opposite trade from a chunk - so there is
+## no disabled dynamic shape anywhere to wonder about. The chunk colliders are
+## still disabled-and-parked, and that remains unmeasured on this engine.
+##
 ## Physics is off on the player, as in every other probe, so it stands where it
 ## is put rather than falling while the ground arrives.
 

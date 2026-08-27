@@ -101,6 +101,10 @@ var config: WorldgenConfig = null
 ## Filled in by Game. The HUD asks these for numbers; it never tells them
 ## anything, which is what keeps a debug tool from quietly becoming a system.
 var world: Node = null
+
+## Set by Game. Bodies are not World's - see body_field.gd - so the readout has
+## to be handed them separately.
+var body_field: Node = null
 var player: Node3D = null
 var sky: SkyCycle = null
 
@@ -224,15 +228,34 @@ func _compose_readout() -> String:
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 
-	# PHYSICS, world feel v1 Stage 9. Active objects is the number that matters
-	# for the chunk cache: a cached column's collider is DISABLED, and the
-	# question that answers is whether a disabled shape actually leaves the
-	# broadphase or merely stops reporting hits. Collision pairs is what a
-	# thousand static trimeshes cost when they are all awake.
-	lines.append("physics   %d active, %d pairs, %d islands" % [
+	# PHYSICS, world feel v1 Stage 9 - AND THESE READ ZERO UNDER JOLT.
+	#
+	# Stage 9 added them to answer whether a disabled collider leaves the
+	# broadphase, and deferred the answer to Stage 11 on the grounds that
+	# get_process_info() counts only DYNAMIC objects and there were none.
+	# There are now, and it still reads 0, 0, 0 - with five bodies loaded, with
+	# one of them rolling 95 m down a mountain, and with the world's static
+	# colliders in every state. Jolt does not implement these counters; they
+	# are a Godot Physics readout that the engine switch silently emptied.
+	#
+	# Left in place and labelled rather than removed, because they are correct
+	# on the other engine and because a blank line here would invite somebody
+	# to add them back. The number to watch under Jolt is the `bodies` line
+	# below. The broadphase question is answered there instead: a parked
+	# column's bodies are FREED, not disabled, so there is nothing left in the
+	# broadphase to ask about.
+	lines.append("physics   %d active, %d pairs, %d islands  (Jolt: always 0)" % [
 		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ACTIVE_OBJECTS),
 		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_COLLISION_PAIRS),
 		PhysicsServer3D.get_process_info(PhysicsServer3D.INFO_ISLAND_COUNT)])
+	# BODIES, world feel v1 Stage 11. `awake` is the one to watch: a loaded
+	# world is nearly all sleeping rocks, which cost a broadphase entry and no
+	# solver time at all, and `moved` is the only part of them that is world
+	# state rather than a function of the seed.
+	if body_field != null:
+		lines.append("bodies    %d loaded, %d awake, %d ever moved" % [
+			body_field.count(), body_field.awake_count(),
+			body_field.moved_count()])
 
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")

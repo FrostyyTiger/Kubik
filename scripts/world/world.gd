@@ -161,6 +161,11 @@ var _collision_only := {}
 ## per frame like the cache restores, because a mesh is a main-thread upload.
 var _upgrade_queue: Array[Vector2i] = []
 
+## Set by Game. World does not own bodies - it owns columns, and a body outlives
+## the column it was born in - so all it does is tell BodyField which columns
+## have arrived and which have gone. See body_field.gd.
+var body_field: BodyField = null
+
 ## Emitted once, for the first full load. With streaming the queue empties
 ## every time the player stops walking, and a signal that fired then would have
 ## Game re-running its spawn logic for the rest of the session.
@@ -655,12 +660,13 @@ func _submit_flora() -> void:
 		_flora_queued.erase(col)
 		if _flora_in_flight.has(col):
 			continue
-		if _flora_fraction_for(col) <= 0.0:
+		if not _wants_flora(col):
 			continue
 		var job := FloraJob.new()
 		job.column = col
 		job.generator = generator
 		job.config = config
+		job.bodies_only = _flora_fraction_for(col) <= 0.0
 		# ALWAYS THE FULL COLUMN. The ring a column is in decides how much of
 		# it is shown, not how much of it is built - see FloraColumn.
 		job.draw_fraction = config.flora_draw_fraction
@@ -974,12 +980,22 @@ func _collect_flora(started: int, budget: int) -> void:
 		# be resubmitted if the player comes back.
 		if not _wants_flora(col):
 			continue
+		# THE BODIES FIRST, and for a bodies-only column they are all there is.
+		if body_field != null:
+			body_field.column_landed(col, job.bodies)
+		if job.bodies_only:
+			# Nothing is drawn, so there is no FloraColumn to remember them on.
+			# A bodies-only column is re-scanned if it comes back, which is the
+			# right trade: it is not in the cache either.
+			continue
 		var node: FloraColumn = _flora_nodes.get(col)
 		if node == null:
 			node = _flora_cache.get(col)
 			if node != null:
 				_flora_cache.erase(col)
 				node.visible = true
+				if body_field != null:
+					body_field.column_landed(col, node.bodies)
 			else:
 				node = FloraColumn.new()
 				node.setup(col)
@@ -988,6 +1004,7 @@ func _collect_flora(started: int, budget: int) -> void:
 		_flora_instances -= node.instance_count
 		_flora_triangles -= node.triangle_count
 		node.draw_fraction = _flora_fraction_for(col)
+		node.bodies = job.bodies
 		node.apply_buffers(job.buffers, config)
 		_flora_instances += node.instance_count
 		_flora_triangles += node.triangle_count
@@ -1317,6 +1334,9 @@ func _refresh_flora() -> void:
 					_flora_cache.erase(col)
 					_flora_nodes[col] = node
 					node.visible = true
+					# Its bodies were freed when it was cached; put them back.
+					if body_field != null:
+						body_field.column_landed(col, node.bodies)
 					_flora_instances += node.instance_count
 					_flora_triangles += node.triangle_count
 			if node == null:
@@ -1330,6 +1350,17 @@ func _refresh_flora() -> void:
 				node.set_fraction(fraction)
 				_flora_instances += node.instance_count
 				_flora_triangles += node.triangle_count
+
+	# THE PEERS' BODY RINGS. Queued like any other flora column and then not
+	# drawn - see _flora_bodies_only(). They are deliberately not in `wanted`
+	# above, because `wanted` drives the draw fraction and these are not drawn.
+	for col in _sim_ring_columns(_world_chunk_min(), _world_chunk_max()):
+		if wanted.has(col) or _flora_nodes.has(col) or _flora_cache.has(col):
+			continue
+		if _flora_in_flight.has(col) or _flora_queued.has(col):
+			continue
+		_flora_queue.append(col)
+		_flora_queued[col] = true
 
 	# Out of both rings, with hysteresis: keep a column a margin past the far
 	# ring so a player on the boundary does not evict and restore it every
@@ -1349,6 +1380,12 @@ func _refresh_flora() -> void:
 		_flora_nodes.erase(col)
 		node.visible = false
 		_flora_cache[col] = node
+		# THE PLANTS ARE CACHED, THE BODIES ARE NOT. A cached column is hidden
+		# and costs kilobytes; a body left behind costs a broadphase entry and,
+		# if it is awake, solver time for a rock nobody is near. What cannot be
+		# regenerated is already in BodyField._moved.
+		if body_field != null:
+			body_field.column_left(col)
 	while _flora_cache.size() > FLORA_CACHE_COLUMNS:
 		var oldest: Vector2i = _flora_cache.keys()[0]
 		_flora_cache[oldest].queue_free()
@@ -1402,6 +1439,31 @@ func _flora_fraction_for(col: Vector2i) -> float:
 	return 0.0
 
 
+## Is this column wanted ONLY so a remote peer has bodies to push?
+##
+## THE GAP THIS CLOSES (world feel v1 Stage 11). Bodies are promoted out of the
+## flora scan, so they exist where flora is built - and flora is built around
+## the LOCAL player. Stage 10c gave a remote peer a collision-only ring so it
+## has ground; without this it would have ground and no rocks, and every
+## boulder it could see on its own screen would be one the host was not
+## simulating. Walking up to a rock and finding it welded to the floor is a
+## worse bug than the cost of fixing it.
+##
+## The cost is the placement scan and nothing else - no buffers, no MultiMesh,
+## no upload - which is the same trade Stage 10c made for meshes. See
+## FloraJob.bodies_only.
+func _flora_bodies_only(col: Vector2i) -> bool:
+	if _sim_centres.is_empty() or _flora_fraction_for(col) > 0.0:
+		return false
+	var r: int = config.sim_radius_chunks
+	for centre in _sim_centres:
+		var dx := col.x - centre.x
+		var dz := col.y - centre.y
+		if dx * dx + dz * dz <= r * r:
+			return true
+	return false
+
+
 static func _fraction_matches(have: float, want: float) -> bool:
 	return absf(have - want) < 0.001
 
@@ -1413,7 +1475,7 @@ func _flora_nearer_to_centre(a: Vector2i, b: Vector2i) -> bool:
 
 
 func _wants_flora(col: Vector2i) -> bool:
-	return _flora_fraction_for(col) > 0.0
+	return _flora_fraction_for(col) > 0.0 or _flora_bodies_only(col)
 
 
 ## Instances currently drawn, and columns holding them. For the F3 readout.

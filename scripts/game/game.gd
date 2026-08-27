@@ -32,6 +32,10 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 ## children on a host and an empty node in every client's scene tree is a
 ## thing somebody eventually wonders about.
 var _sims_root: Node3D = null
+
+## Every body in the loaded world - a RigidBody3D each on the host, a mesh each
+## on a client. See body_field.gd; World feeds it columns.
+var _body_field: BodyField = null
 @onready var _debug: DebugHUD = $DebugHUD
 @onready var _sky: SkyCycle = $SkyCycle
 
@@ -159,6 +163,23 @@ func _ready() -> void:
 		# zero clients rather than a separate offline mode.
 		Net.host_offline()
 
+	# AFTER host_offline(), AND THAT ORDERING IS THE WHOLE OF IT. BodyField
+	# builds RigidBody3Ds on a host and inert meshes on a client, and it decides
+	# which once, here. Set up two lines earlier - before the offline fallback
+	# has run - Net.is_host() is still false, and a single-player session builds
+	# a world full of scenery that cannot be pushed and reports no error at all.
+	# The body probe found it as "Nonexistent function 'apply_central_impulse'
+	# in base Node3D (WorldBodyView)" on a session started with --host.
+	#
+	# Still before the world generates: the first columns land a frame or two
+	# after this and their bodies would otherwise have nowhere to go.
+	_body_field = BodyField.new()
+	_body_field.name = "Bodies"
+	add_child(_body_field)
+	_body_field.setup(Net.is_host(), config.block_size, _world, _journal)
+	_world.body_field = _body_field
+	_debug.body_field = _body_field
+
 	if "--tour" in OS.get_cmdline_user_args():
 		_start_tour.call_deferred()
 	elif "--traverse" in OS.get_cmdline_user_args():
@@ -172,6 +193,8 @@ func _ready() -> void:
 	elif ("--pair-probe" in OS.get_cmdline_user_args()
 			or "--pair-client" in OS.get_cmdline_user_args()):
 		_start_pair_probe.call_deferred()
+	elif "--body-probe" in OS.get_cmdline_user_args():
+		_start_body_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -228,6 +251,10 @@ func _process(delta: float) -> void:
 	if Net.is_host():
 		# Every remote body, as the host's physics left it.
 		_publish_sim_states()
+		# ...and every body that has been pushed. Bookkeeping only: Jolt has
+		# already simulated them correctly, and this notices what moved,
+		# re-homes what left its column and keeps the journal.
+		_body_field.host_tick()
 		# ...and the ground under them. THE COST OF AUTHORITY: the world
 		# streams around the local player, so a peer 500 m away has nothing to
 		# stand on until the host builds it. See WorldgenConfig.sim_radius_chunks.
@@ -236,7 +263,7 @@ func _process(delta: float) -> void:
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
 		if not Net.other_peer_ids().is_empty():
-			_cl_sync_players.rpc(_states)
+			_cl_sync_players.rpc(_states, _body_field.rows_for(_sim_centres_m()))
 		_apply_states(_states)
 
 
@@ -363,6 +390,16 @@ func _start_physics_probe() -> void:
 	probe.name = "PhysicsProbe"
 	add_child(probe)
 	probe.run(_world, _player)
+
+
+## Hand the session to the body probe - see scripts/tools/body_probe.gd.
+func _start_body_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := BodyProbe.new()
+	probe.name = "BodyProbe"
+	add_child(probe)
+	probe.run(_world, _player, self)
 
 
 ## Hand the session to the pair probe - see scripts/tools/pair_probe.gd. Both
@@ -611,9 +648,17 @@ func _announce_appearance() -> void:
 ## exists, so dropping a late packet beats resending it. Ordered means a stale
 ## packet arriving out of sequence is discarded instead of making the capsule
 ## jump backwards.
+## THE BODIES RIDE WITH THE PLAYERS, in the same packet and the same channel.
+##
+## They are the same kind of fact - "where is this thing right now" - with the
+## same staleness rule: a newer one supersedes an older one and a dropped one
+## costs nothing. Splitting them across two channels would buy nothing and
+## would let a body's position arrive from a different instant than the player
+## standing next to it.
 @rpc("authority", "call_remote", "unreliable_ordered")
-func _cl_sync_players(states: Dictionary) -> void:
+func _cl_sync_players(states: Dictionary, bodies: Dictionary = {}) -> void:
 	_apply_states(states)
+	_body_field.apply_rows(bodies)
 
 
 func _apply_states(states: Dictionary) -> void:
@@ -751,6 +796,17 @@ func _on_peer_left(peer_id: int) -> void:
 	_update_status()
 
 
+## Every player position the host knows, in metres, its own included. The
+## replication filter asks "is any body near anybody" and the host's own player
+## counts: a rock only the host can see still has to reach the clients, or they
+## would walk over later and find it somewhere else.
+func _sim_centres_m() -> Array:
+	var out := [_player.global_position]
+	for peer_id in _sims:
+		out.append((_sims[peer_id] as PlayerSim).global_position)
+	return out
+
+
 ## The chunk column each simulated peer is standing in. Typed, because World
 ## compares this against the set it already has and an untyped array never
 ## compares equal to a typed one.
@@ -799,6 +855,11 @@ func inputs_sent() -> int:
 ## HOST ONLY, and read by the pair probe. See journal.gd.
 func journal() -> Journal:
 	return _journal
+
+
+## For the F4 readout and the probes.
+func body_field() -> BodyField:
+	return _body_field
 
 
 # --- Tuning loop ------------------------------------------------------------
