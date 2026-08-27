@@ -486,9 +486,10 @@ smudge. Beard and tunic must be at least two tiers apart, always.
 This is the race that needs the most work and I am going to be blunt about why:
 **it is currently a human with a tail and a snout, and the silhouette metric has
 been telling us so for three passes.** 0.868 front-on, 0.928 worst variant. The
-status doc offered three ways forward and explicitly left the call open. I am
-taking option 2 - give the lizardfolk its own body - because options 1 and 3 are
-both "change what we measure" and the thing that is wrong is the model.
+status doc offered three ways forward and left the call open. It is option 2 -
+give the lizardfolk its own body - because options 1 and 3 are both "change what
+we measure" and the thing that is wrong is the model. **Settled by Marcel on
+2026-08-27**; see the settled decisions section.
 
 **The cliché to avoid:** green, hunched, savage, bestial, low-intelligence-coded
 posture. And separately: the "human in a lizard suit", which is the actual
@@ -954,12 +955,8 @@ Decisions I made rather than stopping for, each with the door left open.
    poster shots at 96 read thin, moving is one constant in `voxlib.py` and a
    regeneration - provided item 2 in the tech list is done first. That is the
    whole reason it is item 2.
-2. **The lizardfolk gets a new body.** `docs/status/character-v1.md` offered
-   three ways forward and left the call to you. I took option 2 rather than 1
-   (accept 0.868) or 3 (measure three-quarter instead), because both of those
-   change the test and the thing that is wrong is the model. This is the largest
-   single piece of re-authoring in the epic and it is the one I would most want
-   you to veto early if you disagree.
+2. **The lizardfolk gets a new body - SETTLED, see below.** Raised here as the
+   one item worth an early veto; it did not get one.
 3. **The liner slot, and retiring the look v2 tunic rule.** Look v2's Stage 5
    darkening was correct arithmetic and it produced four black shirts. I am
    replacing the constraint rather than the values. The old hexes stay recorded
@@ -972,6 +969,30 @@ Decisions I made rather than stopping for, each with the door left open.
    both are clichés, and the meadow is already green - a green character at 40 m
    against grass at Y = 0.221 is the one value coincidence the palette cannot
    afford.
+
+## Settled decisions
+
+### The lizardfolk gets a new body, and every race may be rebuilt from scratch
+
+**Decided by Marcel, 2026-08-27.** Asked whether to veto the largest piece of
+re-authoring in the epic, he did not: *"no complete rebuild and design of the
+characters is fine."*
+
+So this stops being a proposal. The reasoning above stands unchanged - the
+status doc's options 1 (accept 0.868) and 3 (measure three-quarter instead) both
+change the test, and the thing that is wrong is the model - and it is now the
+plan rather than the argument for the plan.
+
+The decision is also broader than the lizardfolk. **The re-authoring cost is
+accepted for all four races.** The tech plan must not scope itself down to
+preserve existing part models: where a race reads better rebuilt from scratch at
+the 96-voxel grid than ported to it, it gets rebuilt. `scripts/character/parts/`
+is output, `tools/parts_author/` is source, and none of the output is an asset
+worth protecting.
+
+That removes the one constraint that would have quietly shaped every stage of
+the tech plan - "port what exists" - and replaces it with "author what the
+design says". It is the more expensive answer and it is the right one.
 
 ### Two exercises to leave open in the implementation
 
