@@ -927,6 +927,15 @@ The lesson is the one Stage 5 already taught and this stage had to learn again:
 **a number from a different day is not a baseline.** Twenty-five minutes of
 worktree turned a reported regression into a measured non-event.
 
+> **Read back after night 2 finished:** those three rows are single runs, and
+> the stream probe's frame numbers are now known not to reproduce run to run -
+> see "The stream gate on real hardware" at the end of this document. The
+> conclusion here survives only because it is a NULL result: "Stage 10 is
+> indistinguishable from its baseline" is exactly what a comparison this noisy
+> is entitled to say. Had it come back the other way, the delta would not have
+> been quotable. The load-time collapse - 24.8 s to 123 s, on both commits - is
+> far outside any plausible noise band and stands on its own.
+
 ### Also
 
 - **The journal** (habit 2): `scripts/game/journal.gd`, host-side, in memory,
@@ -1174,8 +1183,10 @@ holds are the ones most likely to move, because they are the difference between
    and the measurement would be of the machine again. **Marcel: this is the
    night-2 acceptance test.** `--pair-probe` already reports body counts and
    agreement; the joint push is the part to add on a machine that can hold 60.
-2. **Hard rule 6 is GREEN and hard rule 7 is RED - see the section below.**
-   Measured on Forward+, not here.
+2. **Hard rule 6 is GREEN. Hard rule 7 is UNDECIDED** - not red, not
+   satisfied. The stream probe's long-frame count does not reproduce run to
+   run on one machine, so no single-run comparison can settle it. See the
+   section below.
 3. **The traversal probe still cannot route** (open item 1, unchanged since
    night 1). Stage 12 adds the number the plan asked for - the fraction of a
    crossing spent sliding - but the gate itself remains blocked on the probe
@@ -1187,125 +1198,128 @@ holds are the ones most likely to move, because they are the difference between
    are in night 1's sections above.
 
 
-## The stream gate on real hardware, and the one-line fix that moved it most
+## The stream gate on real hardware: UNDECIDED, and why that is the finding
 
-Ganymede cannot decide this gate. Its own numbers sit at holes 3-4 and ~105
-long frames whatever the commit - Stage 9's own commit re-measured on the same
-day gives holes 4 and 104 - because at 700 ms frames nothing can keep a
-frontier ahead of a 13 m/s sprint. Marcel ran the probe three times on the
-Windows box (RTX 5080, Forward+, `--view High --strict`, seed 42) inside one
-hour:
+**Hard rule 6 is green. Hard rule 7 is undecided, and the probe is the reason.**
 
-| commit | what it is | holes | frames > 33 ms | worst | frontier p10 | built/s | |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `322a10d` | before the shade_ink cache, before bodies | 0 | 32 | 63.0 ms | 56.0 m | 91.5 | FAIL |
-| `8500d3e` | **+ shade_ink cache**, still no bodies | 0 | **0** | **28.2 ms** | **88.0 m** | **150.7** | **PASS** |
-| `2c04969` | + Stage 11 bodies + Stage 12 push | 0 | 27 | 44.8 ms | 64.0 m | 95.2 | FAIL |
+Ganymede cannot decide this gate - at 700 ms frames nothing keeps a frontier
+ahead of a 13 m/s sprint, and its numbers sit at holes 3-4 and ~105 long frames
+whatever the commit. So Marcel ran it on the Windows box (RTX 5080, Forward+,
+`--view High --strict`, seed 42), ten runs in a session. The intended answer was
+a before/after on Stage 11-12. The actual answer is about the instrument.
 
-### Hard rule 6: GREEN
+### The same commit does not agree with itself
 
-**Holes 0, on both legs, at every commit including Stage 12.** The frontier
-never went negative - the player was never running on ground that had not
-arrived. The "holes 3" recorded on ganymede was the box, exactly as the pair
-probe's 3.90 m was. Stage 12 does not reintroduce a hole. That gate is closed.
+`8500d3e`, identical code, identical seed, same box, three runs:
 
-### The shade_ink cache was worth more than anything else in night 2
-
-One `RenderingServer.global_shader_parameter_get()` taken off the column submit
-path, committed as a one-line tidy-up before Stage 11 because Marcel noticed
-the error spam:
-
-| | before | after |
-| --- | --- | --- |
-| frames over 33 ms | 32 | **0** |
-| worst frame | 63.0 ms | **28.2 ms** |
-| chunks built/s | 91.5 | **150.7** (+65%) |
-| frontier p10 | 56.0 m | **88.0 m** |
-
-**That is the best evidence in the whole run for measuring before tuning.** It
-was not a performance task, nobody had it on a list, and it moved the gate from
-FAIL to PASS on its own - while every constant night 1 and night 2 argued about
-moved nothing by comparison. The readback had been on the hot path since Stage
-6 and was invisible on ganymede, buried in llvmpipe noise that had already been
-dismissed as pre-existing.
-
-### Hard rule 7: RED, and it is Stage 11-12
-
-Against the correct immediate baseline - `8500d3e`, the commit right before
-Stage 11a - bodies take the probe from PASS to FAIL:
-
-| | `8500d3e` | `2c04969` | |
+| run | frames > 33 ms | built/s | verdict |
 | --- | --- | --- | --- |
-| frames over 33 ms | 0 | 27 | |
-| worst frame | 28.2 ms | 44.8 ms | |
-| chunks built/s | 150.7 | 95.2 | **-37%** |
-| frontier p10 | 88.0 m | 64.0 m | -24 m |
+| 1 | 0 | 150.7 / 143.3 | PASS |
+| 2 | 0 | 122.0 / 144.1 | PASS |
+| 3 | **12** | 93.3 / 108.3 | **FAIL** |
 
-The signature is throughput, not rendering: `built/s` fell 37% and the long
-frames track it, which points at the column path rather than at drawing rocks.
-**By hard rule 12 this stops the run at Stage 12**, and the plan is right to say
-so.
+`add4b2e`, identical code, twice: **29** long frames, then **14**.
 
-### What was found, and what is still open
+Across all ten runs the spread is **0 to 40 long frames and 61 to 151
+chunks/s**, and the commits do not order monotonically inside it - `106b0c0`
+measured *worse* (40) than both commits that come after it (27, 13).
 
-Two per-column costs were found by reading and are fixed:
+### The confound is run order, and it is the ganymede lesson one level down
 
-1. **Bodies were freed and rebuilt on the flora CACHE boundary.** The flora
-   cache exists precisely because columns churn in and out of the drawn set
-   constantly during a sprint - night 1 measured that and cached them for
-   exactly that reason - and Stage 11 destroyed and rebuilt every one of their
-   bodies on that boundary: three nodes, a collision shape and a physics
-   registration each, on the main thread, all the way across a crossing. The
-   plan says *"bodies in cached columns are frozen, not freed"* and this was
-   implemented as the opposite, with a comment justifying it. They are now
-   freed on cache **eviction**, which is where "cheap to rebuild" was always
-   the right trade.
-2. **Promotion was a whole extra pass per column.** Stage 11 called
-   `BodyTable.promote()` for every instance and rebuilt the entire instance
-   array minus the promoted ones - thousands of calls and thousands of appends
-   per column, on the worker, for a rule that fires on about one instance in a
-   thousand. It is now folded into the loop that was already there and gated on
-   a model compare, so a meadow column of grass rejects all of it for the price
-   of an integer. Measured here: **8.40 -> 8.20 ms per column**, back to the
-   Stage 9 figure.
+The runs were sequential and the box drifts downward across a session. In run
+order: `8500d3e` 150.7, `8500d3e` 122.0, `106b0c0` 61.8, `8500d3e` 93.3. **The
+first run of the day was the fastest thing measured and the last run of the
+same commit was among the slowest.** That is thermal or background load.
 
-Only the second is measured: flora went **8.40 -> 7.77 ms per column**, below
-even the Stage 9 figure of 8.20. That is real and it is 7.5% of a column, not
-37% of a crossing.
+Night 1 already recorded that *a number from a different day is not a
+baseline*, after twenty-five minutes of worktree turned a reported regression
+into a measured non-event. This is the same trap one level finer: **a number
+from a different RUN is not a baseline either**, and both of us walked into it
+while quoting the first version of it at each other.
 
-### And a measurement that redirects the search
+### What is therefore retracted
 
-A body-churn counter was added to the stream probe, and at **High**, seed 42,
-the whole crossing reports:
+- **"Stages 11-12 regress hard rule 7 from PASS to FAIL" is NOT established.**
+  It rested on comparing single runs taken at different times. It may still be
+  true; nothing here shows it either way.
+- **"`8500d3e` passes hard rule 7" is not a fact either.** It passes twice and
+  fails once.
+- **The zone-friction A/B (13 against 10 long frames) is inside the noise band
+  and means nothing.** The hypothesis about `physics_material_override` on
+  every chunk is neither confirmed nor refuted - the test could not decide it.
+- **The shade_ink magnitudes are not established.** The direction is plausible
+  and the change is right on its own merits - a rendering-server readback on
+  the column submit path is indefensible whatever it costs, and Godot says so
+  in the error text - but `322a10d` is one run and `8500d3e` spans 0-12 long
+  frames, so "32 to 0" and "+65% throughput" are not numbers to quote.
 
-```
-[StreamProbe] bodies 0 loaded, 0 built and 0 freed over the run
-```
+### What stands, because it was stable across all ten runs
 
-**Zero. Not few - none.** The probe sprints at spawn; spawn is chosen flat and
-dry with a mountain in view, and boulders grow in rock and above. Nothing in
-the High disc around that route is a boulder, so no body is ever created, and
-the churn path the first fix targets **is never entered on this route at all**.
+- **Holes 0. Every commit, every run, both legs.** Hard rule 6 is green and
+  Stage 12 does not reintroduce a hole. The frontier never went negative: the
+  player was never running on ground that had not arrived. This is the one
+  performance-adjacent claim in night 2 that is solid, and it is solid because
+  it is a count of a discrete event rather than a timing.
+- **`bodies 0 loaded, 0 built and 0 freed` on this route**, confirmed on both
+  boxes. The probe sprints at spawn; spawn is chosen flat and dry, and boulders
+  grow in rock and above, so nothing in the High disc on that route is a
+  boulder. Whatever stages 11-12 cost, on this route it is not body churn.
 
-That matters for the diagnosis rather than just for this box, because Marcel's
-three runs are the same seed and the same spawn. If his crossing also built
-zero bodies - and it should have - then **body churn cannot be the 37%**, and
-the cost has to be something Stage 11-12 does per column or per chunk with no
-bodies present. The candidate that fits the signature best is Stage 12's
-**zone friction**: every chunk's `StaticBody3D` now gets a
-`physics_material_override`, which is an extra physics-server call on every
-chunk built. It is invisible at ganymede's 48 chunks/s and would be squarely on
-the critical path at 150.
+### The two fixes stand on their own evidence, not on the deltas
 
-**Marcel: hard rule 7 is not met until the probe is re-run on your box, against
-`8500d3e`** - 0 long frames, 28.2 ms worst, 150.7 built/s - **not `322a10d`**.
-Two things to check, in this order:
+1. **Bodies were freed and rebuilt on the flora CACHE boundary.** Kept because
+   it contradicted the plan in writing - *"bodies in cached columns are frozen,
+   not freed"* - and shipped as the opposite with a comment defending it. The
+   flora cache exists precisely because columns churn in and out of the drawn
+   set during a sprint, so this was destroying and rebuilding three nodes, a
+   collision shape and a physics registration per body on the churniest
+   boundary there is. It would have cost real time the moment a crossing
+   touched rock. No frame timing is needed to justify it.
+2. **Promotion was a whole extra pass per column**, calling
+   `BodyTable.promote()` for every instance and rebuilding the entire instance
+   array minus the promoted ones - for a rule that fires on about one instance
+   in a thousand. Folded into the loop that was already there and gated on a
+   model compare. **Measured on the worker at 8.40 -> 7.77 ms per column**,
+   below even the Stage 9 figure of 8.20. That is a per-column measurement
+   averaged over 797 columns and is not subject to the run-to-run confound.
 
-1. Does the run report `bodies 0 built`? If it does, stop looking at bodies.
-2. Comment out the `physics_material_override` line in `ChunkNode.setup()` and
-   re-run. That is the one Stage 12 change that costs something on every chunk
-   rather than on every body, and it is a one-line A/B.
+### What it would take to actually answer this
 
-Both fixes above are kept either way: freeing bodies on the cache boundary
-contradicts the plan and would have cost real time the moment a crossing
-touched rock, and the promotion pass is measured.
+Recorded as a `TODO(marcel)` on `stream_probe.gd` itself, because the honest
+headline is **this probe cannot currently compare two commits**:
+
+- **interleave** the commits ABABAB rather than running all of A then all of B;
+- at least **five runs each**;
+- report the **median of chunks/s with its spread**, not a long-frame count -
+  a threshold count turns a continuous, drifting quantity into a coin flip at
+  the boundary, which is exactly how the same commit produced PASS PASS FAIL;
+- **record the run order** in the output, so drift is visible rather than
+  inferred.
+
+Every night-2 performance number in this project so far has been a single-run
+comparison. That is the finding, and it is worth more than the answer it was
+meant to produce.
+
+### The pair probe already does it right, which is the proof the method works
+
+This is not a counsel of despair about measuring on real hardware. The **pair
+probe** was run twice on the same box at two different `sim_radius_chunks`
+values and reported:
+
+| | median | p95 | worst |
+| --- | --- | --- | --- |
+| `sim_radius_chunks = 3` | **0.217 m** | 0.650 m | 1.464 m |
+| `sim_radius_chunks = 4` | **0.217 m** | 0.651 m | 1.300 m |
+
+**The median reproduced to three decimal places across two runs**, and the p95
+to one millimetre, on the same machine in the same session that swung the
+stream probe's long-frame count from 0 to 12 on identical code.
+
+The difference is not the machine and not the load. It is what the two probes
+REPORT. The pair probe takes a median over thousands of per-frame samples, and
+a median is dragged by nothing - a handful of slow frames move it by
+millimetres. The stream probe takes a count of samples over a threshold, which
+is a coin flip for every frame near the line and has no averaging in it at all.
+
+So the recommendation above is not a hope, it is the shape of the instrument
+that already works in this repo.

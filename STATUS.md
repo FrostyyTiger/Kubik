@@ -61,45 +61,50 @@ engines manage about one frame a second and it would measure the machine
 again. **This is the night-2 acceptance test**: find a big boulder, push it
 alone, then push it together.
 
-**5. Hard rule 7 is RED: Stage 11-12 cost 37% of chunk throughput.** Measured
-by Marcel on Forward+ (RTX 5080, `--view High --strict`, seed 42), three runs
-in one hour:
+**5. Hard rule 7 is UNDECIDED, and the stream probe is why.** Not red, not
+satisfied. On Forward+ (RTX 5080, `--view High --strict`, seed 42) the same
+commit does not agree with itself:
 
-| commit | | holes | >33 ms | worst | built/s | |
-| --- | --- | --- | --- | --- | --- | --- |
-| `322a10d` | before shade_ink, before bodies | 0 | 32 | 63.0 ms | 91.5 | FAIL |
-| `8500d3e` | + shade_ink cache, no bodies | 0 | **0** | **28.2 ms** | **150.7** | **PASS** |
-| `2c04969` | + Stage 11 bodies + Stage 12 push | 0 | 27 | 44.8 ms | 95.2 | FAIL |
+| `8500d3e`, identical code, three runs | >33 ms | built/s | |
+| --- | --- | --- | --- |
+| run 1 | 0 | 150.7 / 143.3 | PASS |
+| run 2 | 0 | 122.0 / 144.1 | PASS |
+| run 3 | 12 | 93.3 / 108.3 | **FAIL** |
 
-**Hard rule 6 is green** — holes 0 on every commit and both legs, so Stage 12
-does not reintroduce a hole and ganymede's "holes 3" was the box.
+`add4b2e` twice, identical code: 29 long frames, then 14. Across ten runs the
+spread is **0-40 long frames and 61-151 chunks/s**, and the commits do not
+order monotonically inside it. The confound is run order — the box drifts
+downward across a session, and the first run of the day was the fastest thing
+measured while the last run of the same commit was among the slowest.
 
-**Hard rule 7 is red against the correct baseline** (`8500d3e`, the commit
-right before Stage 11a): 0 long frames to 27, worst 28.2 to 44.8 ms, throughput
-down 37%. The signature is throughput, not rendering. By hard rule 12 this
-stops the run at Stage 12.
+So **"Stage 11-12 regresses hard rule 7" is retracted** — it rested on
+comparing single runs taken at different times — and so is any claim that
+`8500d3e` passes it. The zone-friction A/B (13 against 10 long frames) is
+inside the noise band and decides nothing either way.
 
-Two per-column costs were found by reading and fixed — bodies were freed and
-rebuilt on the flora **cache** boundary, which is the boundary that churns most
-during a sprint (the plan says frozen, not freed, and it was implemented as the
-opposite); and promotion was a whole extra pass rebuilding the instance array
-per column. **Neither is confirmed as the fix**, and a churn counter added
-to the probe redirects the search: at **High**, seed 42, the whole crossing
-reports `bodies 0 loaded, 0 built and 0 freed`. The probe sprints at spawn,
-spawn is a meadow, and boulders grow in rock and above — so no body is created
-on that route at all. Marcel's runs are the same seed and spawn, so if his also
-built zero bodies then **body churn cannot be the 37%**, and the likeliest
-remaining cost is Stage 12's **zone friction**: every chunk's `StaticBody3D`
-now takes a `physics_material_override`, an extra physics-server call per chunk
-built — invisible at ganymede's 48 chunks/s, squarely on the critical path at
-150. **Re-run on the Windows box against `8500d3e`**: check whether it reports
-`bodies 0 built`, then A/B that one line in `ChunkNode.setup()`.
+This is night 1's *"a number from a different day is not a baseline"* one level
+finer: **a number from a different run is not a baseline either.** Every
+night-2 performance number in this project so far has been a single-run
+comparison.
 
-**And the finding worth keeping regardless:** the shade_ink cache — one
-rendering-server readback taken off the column submit path as a one-line
-tidy-up nobody had on a list — moved the gate from FAIL to PASS by itself: 32
-long frames to 0, worst 63.0 to 28.2 ms, throughput +65%. Best evidence in the
-run for measuring before tuning.
+**To actually answer it** the method has to change — interleave the commits
+ABABAB, five runs each, report the median of chunks/s with its spread rather
+than a long-frame count (a threshold turns a drifting continuous quantity into
+a coin flip), and record run order. There is a `TODO(marcel)` on
+`stream_probe.gd` saying plainly that **this probe cannot currently compare two
+commits**.
+
+**What is solid:** holes 0 on every commit, every run, both legs — hard rule 6
+is green and Stage 12 does not reintroduce a hole. And `bodies 0 built` on this
+route, confirmed on both boxes: the probe sprints at spawn, spawn is a meadow,
+and boulders grow in rock and above, so whatever stages 11-12 cost here it is
+not body churn.
+
+**Two fixes were made and stand on their own evidence, not on the deltas:**
+bodies were being freed and rebuilt on the flora *cache* boundary — the
+churniest boundary there is, and the plan says frozen, not freed — and
+promotion was an extra pass per column, measured on the worker at 8.40 → 7.77
+ms per column over 797 columns, which is not subject to this confound.
 
 **6. This box is about five times slower than it was on 2026-08-26.** The
 stream probe reads 123 s of initial load and 103 frames over 33 ms where night

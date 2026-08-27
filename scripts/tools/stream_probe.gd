@@ -1,4 +1,56 @@
 class_name StreamProbe
+
+## TODO(marcel): THIS PROBE CANNOT CURRENTLY COMPARE TWO COMMITS.
+##
+## It is a good gate - "did this build ever drop a frame or leave a hole" - and
+## it is not a measuring instrument, which is what world feel v1 kept trying to
+## use it as. Ten runs on one Forward+ box, seed 42, --view High:
+##
+##     8500d3e, identical code, three runs:   0,  0, 12  long frames
+##     add4b2e, identical code, twice:       29, 14      long frames
+##     across all ten runs:      0-40 long frames, 61-151 chunks/s
+##
+## The same commit produced PASS PASS FAIL. The commits do not order
+## monotonically inside that spread - one measured worse than both commits that
+## come after it - and the confound is RUN ORDER: the runs were sequential, the
+## box drifts downward across a session, and the first run of the day was the
+## fastest thing measured while the last run of the same commit was among the
+## slowest. Thermal or background load, not code.
+##
+## TWO THINGS MAKE IT WORSE THAN ORDINARY NOISE.
+##
+## The headline is a THRESHOLD COUNT. "Frames over 33 ms" turns a continuous,
+## drifting quantity into a coin flip for every frame sitting near the line, so
+## a few percent of drift near the boundary swings the count by tens. built/s
+## is the continuous quantity underneath it and moves far more sanely.
+##
+## And a run takes twenty-five minutes, which is exactly long enough that
+## nobody runs it twice, which is how every night-2 performance number in this
+## project came to be a single-run comparison.
+##
+## WHAT WOULD ACTUALLY ANSWER IT, if a number is ever needed:
+##
+##   - INTERLEAVE the commits ABABAB. Running all of A then all of B measures
+##     the session as much as the code, which is precisely what happened.
+##   - At least FIVE runs each.
+##   - Report the MEDIAN of chunks/s with its spread. Not a long-frame count,
+##     and not a mean - one thermally throttled run drags a mean and leaves a
+##     median alone.
+##   - Print the RUN ORDER and a wall clock, so drift is visible in the output
+##     rather than reconstructed afterwards.
+##
+## THE PAIR PROBE ALREADY DOES THIS AND IT WORKS, which is why the list above
+## is a shape rather than a hope. Run twice on the same box in the same session
+## that swung this probe from 0 to 12 long frames on identical code, it
+## reported a median prediction error of 0.217 m BOTH TIMES - reproducible to
+## three decimal places - and a p95 agreeing to one millimetre. It takes a
+## median over thousands of per-frame samples; this takes a count over a
+## threshold. That is the whole difference.
+##
+## Until then: trust `holes`, which is a count of a discrete event and was
+## stable at 0 across all ten runs, and treat the frame numbers as a smoke
+## alarm rather than as a measurement.
+
 extends Node
 
 ## Measures whether the ground keeps up with the player, and quits.
