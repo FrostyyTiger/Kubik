@@ -730,3 +730,150 @@ knows to report the settle beside the frame count.
 | self-tests | green |
 | stream probe holes | **0** |
 | 48 m settle | **flagged** - one run above the baseline range, see above |
+
+---
+
+## Stage 5 - Docs, night 1
+
+`STATUS.md` points here. What follows is the summary night 2 and Marcel work
+from.
+
+### The probe table, one column per stage
+
+All ganymede, all deterministic, all asserted identical over two runs in the
+same session. Heights in **blocks** (1 block = 0.5 m game, 2 m real at 1:4).
+
+| | Stage 0 | Stage 2 | Stage 3 | **Stage 4 (shipped)** |
+| --- | --- | --- | --- | --- |
+| FIZZ rms, all | 0.373 | 0.395 | 0.607 | **0.607** |
+| FIZZ max, all | 33.322 | 22.523 | 21.570 | **21.570** |
+| ROUGHNESS, all | 4.5894 | 2.4784 | 2.5648 | **2.5648** |
+| PEAK LOSS mean | +60.27 | +114.76 | +55.28 | **+55.28** |
+| PEAK LOSS worst | +128.01 | +173.89 | +81.14 | **+81.14** |
+| VALLEY GAIN mean | -1.09 | -0.34 | +0.53 | **+0.53** |
+| far mesh build | 650 ms | 912 ms | 1,169 ms | **1,449 ms** |
+| far mesh vertices | 95,088 | 95,088 | 95,088 | **95,088** |
+
+Per vantage at Stage 4:
+
+| vantage | FIZZ rms | FIZZ max | ROUGHNESS |
+| --- | --- | --- | --- |
+| spawn | 0.591 | 21.570 | 2.2706 |
+| summit | 0.355 | 5.637 | 2.7434 |
+| lake | 0.729 | 18.492 | 2.5343 |
+
+### Night 1 against its own headline
+
+**ROUGHNESS is down 44%. The worst re-cut at a ring boundary is down 35%. The
+summits are drawn higher than they were before the epic started, by 5 blocks on
+the mean and 47 on the worst. The camouflage is gone.** Against `dist-base`
+every one of the plan's three faults on the ground is visibly better in the
+postcard.
+
+**And FIZZ rms is 63% worse, which is the honest headline beside it.** It is
+not a tuning failure; it is what the design costs. Making the mip level
+continuous in distance-from-player, which is what stops a mountain re-cutting
+itself at a ring boundary, necessarily makes the whole far field breathe a
+little as the player walks. Before this epic, the far half of the world was
+*bit-identical* between two builds 16 m apart, because 16 m is a multiple of
+every ring's step; now it moves by one to three blocks. What that trades away
+is a change nobody can see; what it buys is the change everybody could.
+
+### Every starting value, what it is now, and why
+
+| knob | plan's start | shipped | why |
+| --- | --- | --- | --- |
+| `Heightmap.MAX_LEVEL` | 5 | **5** | unchanged. 64 m per cell at the top |
+| `far_level_ref_m` | 100 m | **100 m** | unchanged. Puts each ring at exactly its own step's level at its inner edge |
+| `far_filter_bias` | 1.0 | **1.0** | unchanged. Chosen on the pictures: 0 is not calm enough, 2 rounds the summits off, 3 breaks the seam |
+| `far_peak_gain` | 0.35 | **0.60** | RAISED. 0.35 leaves PEAK LOSS a third worse than the unfiltered far field; 0.60 puts it better |
+| `far_zone_cell_ratio` | 0.06 | **0.06** | unchanged |
+| `far_normal_m` | try 48 | **96 (unchanged)** | 48 photographed and rejected on the "calm" side of the trade; Marcel's call, on F4 |
+| grain fade to fog | new | **not built** | already faded to nothing by 45 m since look v2 Stage 3 |
+
+All five distance knobs are on F4, all LOCAL and unhashed (hard rule 2).
+
+### For Marcel to rule on
+
+1. **`far_filter_bias`, three ways.** `build/tour/dist-2-bias0`, `dist-2-bias1`,
+   `dist-2-bias2` - `6-postcard`, `14-postcard-dusk`, `16-spawn-postcard` at
+   each. Shipped at 1.0. All three beat `dist-base`; the question is how far
+   past "calm" is too far.
+2. **`far_peak_gain`.** `build/tour/dist-3-gain035`, `dist-3-gain060`,
+   `dist-3-gain080`. Shipped at 0.60, which is where the drawn summit stops
+   being worse than it was before the epic. 0.80 is available and makes the
+   peaks sharper still.
+3. **`far_normal_m` 96 against 48.** `build/tour/dist-4-n96` and `dist-4-n48`.
+   Shipped at 96.
+
+### What night 2 inherits
+
+- **Stage 6's premise is intact.** `FarTreeMeshes.material()` still returns
+  `Look.figure_material()`, and the far mesh it sits in front of is now calm -
+  which is precisely the "the calm thing sits in front of the fizzy thing"
+  inversion the plan warned about, now the other way round. The impostors are
+  the loudest wrong thing in `16-spawn-postcard` after the meadow.
+- **The 48 m settle wants watching.** 10,933 ms at Stage 4 against a Stage 0
+  baseline range of 9,671-10,623, one run each. The far mesh build has more than
+  doubled (650 -> 1,449 ms) and shares a pool that runs one GDScript task at a
+  time. Stage 7's ABAB interleave should report the settle beside the frame
+  count, and hard rule 6 is measured from Stage 0's three-run table above.
+- **`far_probe.gd` grew a VALLEY GAIN column** that the plan did not ask for,
+  because a dilation that only reports peaks shows a trade as pure profit.
+
+### What night 1 did not do
+
+- **The plan's FIZZ rms gate (a 4x fall) is not met and cannot be met by this
+  design.** Recorded in Stage 2 with the per-band table that shows why.
+- **The plan's absolute PEAK LOSS gate (4 blocks at 600 m) is not met, and was
+  not met before this epic either** - Stage 0 measured 20 of 20 summits outside
+  it with no filter at all. Stage 3 was run against a relative gate instead, and
+  says so.
+- **The 400 m ring boundary is still the loudest thing the probe sees**
+  (FIZZ max 21.6 there, against 1-4 blocks everywhere else). It is a third
+  smaller than it was, and it is still a boundary. If night 2 or a later pass
+  wants it gone rather than reduced, the mechanism is a geomorph - blend the two
+  rings' surfaces across the boundary instead of switching - and that is a
+  bigger change than a knob.
+
+### Files this lane touched, and one lane decision worth recording
+
+Owned outright, per the plan's file list:
+
+```
+scripts/world/heightmap.gd            scripts/world/far_field.gd
+scripts/world/far_field_job.gd        scripts/world/worldgen_config.gd
+scripts/tools/far_probe.gd  (new)
+```
+
+Shared, append-only, and each addition is at the end of an existing list:
+
+- **`scripts/ui/debug_hud.gd`** - five F4 rows appended to
+  `LOCAL_TUNING_ROWS`, and one `far mesh ...` line appended at the end of the F3
+  readout.
+- **`scripts/game/game.gd`** - one `elif "--far-probe"` at the end of the probe
+  dispatch chain and one `_start_far_probe()` beside the other probe launchers.
+
+`scripts/character/` was **not touched**, and neither was `look.gd` - night 2's
+Stage 6 is the first thing in this epic that needs it.
+
+**One file outside the plan's list:** `scripts/tools/selftest.gd`, for Stage 1's
+`heightmap pyramid` test, which the plan's own gate asks for. One entry appended
+to the `tests` dictionary and one function appended at the end of the file.
+The character lane has its own `selftest_character.gd`, so the collision risk is
+nil, but it is recorded here rather than left for a merge to discover.
+
+**And one deliberate reach-around, in `debug_hud.gd`:** the far-mesh readout
+gets its numbers from `world.get_node_or_null("FarField")` rather than through a
+`World` accessor, because `world.gd` is not on this lane's list. `FarField.stats()`
+is in an owned file. If `world.gd` ever gains a `far_field_stats()`, that is the
+better call site.
+
+### Gates, Stage 5
+
+| gate | result |
+| --- | --- |
+| heightmap hash | **`76cccdb6`** |
+| spawn | **(-44, -124)** |
+| trees | **28,383** |
+| self-tests | green |
