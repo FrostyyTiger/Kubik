@@ -976,3 +976,216 @@ ring and Stage 12 pushes them around on it. This is not the week to trim the
 ground out from under a remote peer to save eight chunks. The `TODO(marcel)` in
 `worldgen_config.gd` now carries both numbers and names the experiment that
 would actually settle it.
+
+## Stage 11 - Bodies
+
+**Shipped.** A fraction of medium and large boulders (`body_fraction`, 0.15,
+hashed into the config) are rigid bodies instead of decoration. A `WorldBody`
+on the host, a `WorldBodyView` on every client, and **nobody sends a list of
+rocks**: both sides run the same seeded promotion, so a boulder nobody has
+touched costs zero packets forever.
+
+Promotion happens in the flora job **before the draw fraction**, and that
+ordering is the correctness argument rather than a detail. `draw_fraction` is a
+local knob; decide promotion after it and the far ring promotes fewer rocks
+than the near ring, the set changes as a player walks towards it, and two peers
+at different flora settings disagree about which boulders exist.
+
+**Logs are not promoted, and that is hard rule 1 rather than effort.** The plan
+asks for `SNAG` instances to become a log lying beside the stump - but a snag is
+not a decoration, it is a tree SPECIES stamped into the chunk as voxels.
+Turning one into a body means not stamping its trunk, which changes what the
+world contains, and hard rule 1 freezes the heightmap, the config hash and the
+tree count outside Stages 5 and 6. The row stays in `BodyTable` because the
+table's shape is the point, and `docs/ROADMAP.md` now carries it as a
+**gathering edit** instead - which sidesteps the rule entirely, because the
+world still generates the tree and the player removes it.
+
+### A remote peer gets rocks too
+
+Stage 10c gave a peer a collision-only ring so it has ground. Without more, it
+would have ground and no bodies, and every boulder on its own screen would be
+one the host was not simulating - walking up to a rock and finding it welded to
+the floor. So the host builds **bodies-only flora columns** around each peer:
+the placement scan runs, the buffers and the MultiMesh upload do not. Same
+trade as Stage 10c's meshless chunks, and the scan is the half that has to run
+either way because promotion is a function of the placement.
+
+### Four bugs, none of which raised an error
+
+| what it looked like | what it was |
+| --- | --- |
+| `apply_central_impulse` missing on a `--host` session | `BodyField` decided host-or-client two lines **before** the `host_offline()` fallback that makes solo a host. Every single-player world was full of scenery that could not be pushed. |
+| rocks fell through the world | a column's voxels are published several frames before its collider. One went from y 77 to y **-152** and "came back" 181 m from where it had settled. |
+| a hillside avalanched itself | thawed awake, a boulder resting on voxel steps starts rolling untouched: one shove became **eleven** bodies "ever moved". |
+| a shove that did nothing | an impulse applied to a sleeping body under Jolt is **discarded** - no error, no warning. |
+
+And the probe nearly shipped as a liar twice: its first version pushed the
+nearest body, 125 m away in a column with no collider and correctly still
+frozen, so the drift was exactly 0.000 m because the rock had never left and
+everything passed. Its second waited four fixed seconds and compared while the
+boulder was still rolling.
+
+**Result on seed 42:** 0 bodies at spawn - a meadow, and boulders grow in rock
+and above, which is worth a printed line because it reads like a broken stage -
+5 in the nearest rock zone, 0 awake. Shoved one **94.87 m** down a mountain over
+21.1 s, exactly **1** ever moved, walked 220 m away and back, **drift 0.000 m**.
+
+### Stage 9's deferred question, answered, and not the way it was asked
+
+`PhysicsServer3D.get_process_info()` reads **0, 0, 0 under Jolt** in every
+state: five bodies loaded, one of them rolling, columns parked and restored.
+Jolt does not implement those counters - they are a Godot Physics readout that
+the engine switch silently emptied. F4 now says `(Jolt: always 0)` rather than
+showing three zeros that look like measurements.
+
+The broadphase question is **sidestepped** rather than answered: a parked
+column's bodies are FREED, not disabled, so there is no dormant dynamic shape
+to ask about. A body is the opposite trade from a chunk - rebuilding one is a
+node and a shared shape, while keeping it costs a broadphase entry. The chunk
+colliders are still parked-and-disabled and that remains unmeasured on this
+engine.
+
+## Stage 12 - The push, and the slope
+
+**Shipped**, and the headline is one measurement:
+
+```
+boulder_l   126 push contacts, rocked on 126 ticks, moved 0.000 m
+boulder_m    69 push contacts, rocked on   0 ticks, moved 0.469 m
+```
+
+That is the acceptance test - *push it alone: it rocks and stays* - measured.
+One player leans on a large boulder for three seconds, it gives on every one of
+those ticks, and it does not budge; the medium one gives way.
+
+### A resting body is frozen, not asleep, and that took four attempts
+
+| what was tried | what happened |
+| --- | --- |
+| awake by default | one shove avalanched **eleven** bodies down a hillside |
+| asleep on thaw | brushing past a boulder_l sent it **2.71 m** downhill |
+| re-slept every sync tick | it integrated 50 ms between re-sleeps and walked **10 m** in three seconds with **zero** push contacts |
+| re-slept every physics tick | still lost the race - **2 m** over three seconds |
+| **frozen until shoved** | **0.000 m** |
+
+Jolt wakes a sleeping body on contact with a moving one, and a boulder on a
+mountainside that wakes for any reason rolls - gravity does the rest. Frozen in
+Godot's STATIC mode a body is still solid; it simply does not move. `moved` is
+set in `WorldBody.shove()` and nowhere else, so it means exactly "something
+cleared this body's hold".
+
+### The numbers, all of them starting values
+
+| knob | value | what it means |
+| --- | --- | --- |
+| `PUSH_FORCE_N` | 600 | one player leaning |
+| `hold` boulder_m / boulder_l | 400 / 1000 | one player / two players |
+| `ACCEL` / `DECEL` | 40 / 30 m/s² | 0-13 m/s in 0.325 s; 2.8 m of run-out |
+| `AIR_CONTROL` | 0.35 | steering with your feet off the ground |
+| `SLIDE_ANGLE_DEG` | 45 | past this, loose ground carries you |
+| `SLIDE_FACTOR` / `SLIDE_MAX` | 0.5 / 8 m/s | half of gravity downhill, terminal |
+| zone friction | 0.9 meadow → 0.3 snow | where a boulder stops, not how hard it was hit |
+| `ROCK_DEGREES` | 3 | the tilt that says *not on your own* |
+
+Zone friction is visible in one number: the same shove that travelled **94.87 m**
+before this stage now goes **63.34 m** over ground that resists it.
+
+`Locomotion.step()` now returns whether the body slid - returned, not stored, so
+it stays static and stateless.
+
+### The push-holds self-test is a test of a design invariant
+
+Four numbers make pillar 1 true and nothing in the code enforces the
+relationship between them. The test asserts one player moves a boulder_m, one
+player does **not** move a boulder_l, two do, and a heavier body is never
+easier. It will fail the day somebody retunes the push to make boulder_m feel
+better and silently turns boulder_l into a one-player rock - the pillar quietly
+going away with every other test still green.
+
+### The probe took eight runs, and three of the bugs were the probe's
+
+"The rock did not move" is what a working co-op rule and a broken test look like
+alike. It held a body reference across a settle that frees and respawns it (a
+boulder nobody touched appeared to move 1.52 m); it teleported four times
+mid-test, which restreams the region and takes the collider out from under the
+body being pushed, so every push was correctly ignored; and the first boulder_l
+it found sits somewhere a player cannot walk to. It now tries three candidates
+and reports **no contact as UNTESTED rather than as a pass**.
+
+## Stage 13 - The demo, and docs
+
+- **Tour vantage `15-boulder`**: the nearest *promoted* boulder_l to spawn, at
+  eye height and 6 m out. Found by running the real placement and the real
+  promotion rather than guessing where rocks are - a photograph of a boulder
+  that is not actually pushable would be a picture of the wrong thing.
+- **`DESIGN.md` gains "Physics"**: what a body is (the table), the push as a
+  co-op rule and why it is pillar 1, momentum, the slide, the zone friction
+  table, host authority for all of it, and the settled sentence - **"Terrain
+  does not move. Breaking terrain is decided: no, in v1."** The Multiplayer
+  section gains the reconciliation rule and the collision ring.
+- **`README.md`**: the carried ticket struck through and closed under
+  provisional bits, replaced by an honest entry for what did *not* ship with it
+  (no rollback) and the forty-line shape one would take. `--pair-probe` and
+  `--body-probe` under "Running it".
+- **`docs/ROADMAP.md`**: D1 marked done and struck from the critical path.
+  **Felled trees** written into G as a spec - a gathered tree becomes a `log`
+  body and the trunk goes through the EDIT path, which sidesteps the hard rule
+  that stopped it here. **Ragdoll** written into D as a spec: the downed pose
+  becomes a body for 2 s, and everything it needs except a capsule-shaped body
+  now exists. `TODO.md`: A2 and D1 ticked.
+
+## Night 2 - what shipped, and what it cost
+
+| | before night 2 | after |
+| --- | --- | --- |
+| physics engine | Godot Physics | Jolt, tick 60 |
+| who says where a player is | the client | **the host** |
+| prediction error (Forward+) | n/a | **0.217 m** median, 1.300 m worst |
+| host chunks per remote peer | 0 | 46 collision-only |
+| pushable bodies | none | ~0.15 of medium and large boulders |
+| a boulder for one player | scenery | boulder_m gives, boulder_l **rocks and stays** |
+| sprint start / stop | instant | 0.325 s / 2.8 m |
+| loose ground | inert | slides past 45° on alpine, rock, snow |
+| journal | none | host-side, `peer_joined`/`left`, `body_moved`/`settled` |
+
+**The world did not move.** Heightmap `76cccdb6`, spawn `(-44, -124)`, 2,370
+chunks at High. The config hash moved once, in Stage 11, for `body_fraction` -
+which is a PROPERTY because it changes what the world contains, and is recorded
+here as hard rule 5 requires.
+
+### Tuned blind - every physics constant
+
+Nobody has pushed a rock, slid down a scree slope, or played this with a
+friend. Every number in Stage 11's and Stage 12's tables is a starting value
+chosen to make the *relationships* right - one player against two, walk
+unchanged against sprint carrying, meadow against scree - and not one of them
+is a number anybody formed an opinion about by feel. The push force and the two
+holds are the ones most likely to move, because they are the difference between
+"we shifted it together" and "I could have done that alone".
+
+### What is left
+
+1. **The two-player push has not been run as two machines.** The rule is
+   proved as arithmetic (the push-holds self-test) and as a real contact with
+   one player (the body probe). What is untested is the pair-probe choreography
+   the plan describes - client alone at a boulder_l, then host and client
+   together - because on this box two engines run at about one frame a second
+   and the measurement would be of the machine again. **Marcel: this is the
+   night-2 acceptance test.** `--pair-probe` already reports body counts and
+   agreement; the joint push is the part to add on a machine that can hold 60.
+2. **The hole gate is unmet on this box and probably not for a reason in the
+   code.** Stream probe at High: **holes 3, frames over 33 ms 105**. The Stage 9
+   commit re-measured the same day gives **holes 4 and 104**, and Stage 10 gave
+   1 and 103 - so nothing in stages 10-12 introduced it, and at 700 ms frames
+   the streamer cannot keep a frontier ahead of a 13 m/s sprint. Hard rule 6
+   needs a re-run on the Windows box before it can be called met.
+3. **The traversal probe still cannot route** (open item 1, unchanged since
+   night 1). Stage 12 adds the number the plan asked for - the fraction of a
+   crossing spent sliding - but the gate itself remains blocked on the probe
+   needing real pathing rather than straight-line-and-sidestep.
+4. **Logs are specified, not built** - see Stage 11 and the roadmap.
+5. **The GDExtension lever is unchanged and still the biggest one.** GDScript
+   is serialised across the worker pool at about one effective thread; the
+   per-phase timings that would justify moving generation and meshing out of it
+   are in night 1's sections above.

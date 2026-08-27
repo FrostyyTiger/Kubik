@@ -238,7 +238,56 @@ func _choose_vantages() -> Array:
 	# trunk spacing and a treeline actually read - and because the acceptance
 	# test for this plan is a sentence about standing inside a forest.
 	shots.append_array(_foliage_vantages(hm, gen, cfg))
+
+	# --- World feel v1 Stage 13: the thing you can push ---------------------
+	#
+	# EYE HEIGHT AND CLOSE, like the foliage vantages and unlike the terrain
+	# ones. A boulder photographed from eighty metres is a grey dot on a
+	# hillside; what this shot has to show is a rock big enough that you would
+	# not try it on your own, standing on ground you can see is loose.
+	var boulder := _find_boulder(gen, cfg)
+	if boulder != Vector3.ZERO:
+		shots.append({
+			"name": "15-boulder",
+			"note": "a pushable boulder_l, at eye height",
+			"target": boulder,
+			"distance": 6.0, "height": 1.8,
+		})
 	return shots
+
+
+## The nearest promoted boulder_l to spawn, in metres, or ZERO if the search
+## comes up empty.
+##
+## RUN THROUGH THE REAL PLACEMENT AND THE REAL PROMOTION, not a guess at where
+## rocks are: FloraPlacement decides what grows on each block and
+## BodyTable.promote decides which of those become bodies, and a photograph of
+## a boulder that is not actually pushable would be a picture of the wrong
+## thing. Boulders are rare - and promoted large ones rarer still, about one
+## percent of boulders - so this scans a spiral of columns out from spawn and
+## stops at the first hit.
+func _find_boulder(gen: TerrainGenerator, cfg: WorldgenConfig) -> Vector3:
+	var spawn: Vector2i = gen.spawn_block
+	var here := Vector2i(Chunk.floor_div(spawn.x, Chunk.SIZE),
+		Chunk.floor_div(spawn.y, Chunk.SIZE))
+	var x := 0
+	var z := 0
+	var dx := 0
+	var dz := -1
+	for _i in 8000:
+		var col := here + Vector2i(x, z)
+		for inst in FloraPlacement.column(gen, cfg, col.x, col.y):
+			var block: Vector2i = inst["block"]
+			if BodyTable.promote(inst["model"], block.x, block.y,
+					gen.world_seed, cfg) == BodyTable.BOULDER_L:
+				return inst["pos"]
+		if x == z or (x < 0 and x == -z) or (x > 0 and x == 1 - z):
+			var t := dx
+			dx = -dz
+			dz = t
+		x += dx
+		z += dz
+	return Vector3.ZERO
 
 
 ## Eye-height vantages for foliage: inside a forest, in a meadow, at the

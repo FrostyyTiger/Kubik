@@ -1,8 +1,9 @@
 # Status
 
-The latest run is **world feel v1**, 2026-08-26, on `feat/world-feel-v1`:
-`docs/status/world-feel-v1.md`. Night 1 (streaming and the forest) and night 2
-stages 9-10 (Jolt, and the carried ticket) are done; stages 11-13 are not.
+The latest run is **world feel v1**, finished 2026-08-27 on
+`feat/world-feel-v1`: `docs/status/world-feel-v1.md`. Both nights are done -
+streaming and the forest, then Jolt, host-authoritative input, bodies, the push
+and the slide.
 
 ## Open items for Marcel
 
@@ -50,7 +51,24 @@ at 100 m, so neither value was under real pressure, and Stages 11-12 put bodies
 on exactly this ring. The `TODO(marcel)` carries both numbers and the
 experiment that would find the edge.
 
-**4. This box is about five times slower than it was on 2026-08-26.** The
+**4. The two-player push needs two real machines.** Stage 12's co-op rule is
+proved as arithmetic (a self-test asserts one player moves a boulder_m, one
+does not move a boulder_l, two do) and as a real contact with one player: a
+boulder_l took **126 push contacts, rocked on all 126 ticks and moved
+0.000 m**, while a boulder_m gave way at 0.469 m. What has *not* been run is
+the pair-probe choreography with a second engine, because on this box two
+engines manage about one frame a second and it would measure the machine
+again. **This is the night-2 acceptance test**: find a big boulder, push it
+alone, then push it together.
+
+**5. The hole gate is unmet here, and not for a reason in the code.** Stream
+probe at High after Stage 12: holes 3, frames over 33 ms 105. The Stage 9
+commit re-measured the same day gives holes 4 and 104; Stage 10 gave 1 and
+103. Nothing in stages 10-12 introduced it - at 700 ms frames the streamer
+cannot keep a frontier ahead of a 13 m/s sprint. Hard rule 6 needs a re-run on
+the Windows box.
+
+**6. This box is about five times slower than it was on 2026-08-26.** The
 stream probe reads 123 s of initial load and 103 frames over 33 ms where night
 1 recorded 24.8 s and 1. Stage 9's own commit, re-run in a worktree within the
 hour, gives 123.4 s and 104 — so nothing regressed, and per-chunk worker cost
@@ -58,7 +76,7 @@ is unchanged at 8.3 ms. It is starvation, not work. Worth knowing before
 anybody reads a night-2 number against a night-1 one: **a number from a
 different day is not a baseline.**
 
-**5. The velocity-biased queue is switched off.** At `STREAM_HEADING_BIAS = 6`
+**7. The velocity-biased queue is switched off.** At `STREAM_HEADING_BIAS = 6`
 the ground ahead of a sprinting player is loaded to the full 96 m radius,
 against 40 m without it — and it reintroduces holes, which is a hard rule. The
 mechanism is in and one constant turns it on; the status doc says what would

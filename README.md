@@ -218,6 +218,43 @@ makes a hole or a frame over 33 ms a non-zero exit.
 `--flora-probe` is the same shape for ground cover, and
 `--traverse --view low` walks the map diagonal.
 
+### The pair probe
+
+Two engines, one world — the gate for host-authoritative movement:
+
+```
+godot --path . -- --host --seed 42 --pair-probe
+```
+
+**No scene argument**, unlike every other probe here: that skips the main menu,
+and the main menu is what opens the ENet socket. A host started by opening
+`game.tscn` is an offline host, and the only symptom is the client logging
+"connection failed" where nobody is reading.
+
+It launches the other half itself — a second headless Godot as a client — has
+it sprint 100 m out and walk back under host authority, and reports the
+client's own prediction error against the host's opinion of where it is, the
+chunks the host built for its collision ring, and whether it ever went below
+the surface. It also turns the measured error back into an implied latency and
+compares that against the host's own frame time, so a slow machine reports
+INCONCLUSIVE rather than a failure it cannot substantiate.
+
+On Marcel's box (Forward+, 4 ms frames): median 0.217 m against a 0.50 m line,
+worst 1.300 m against a 2.00 m limit.
+
+### The body probe
+
+```
+godot --headless --path . scenes/game.tscn -- --host --seed 42 --body-probe
+```
+
+Counts the bodies in a loaded world, shoves one and follows it until it stops,
+walks 220 m away and back to check it is still where it was left, and leans on
+a boulder of each kind to check the co-op rule: a boulder_l must rock and stay
+for one player, a boulder_m must give. **Spawn is a meadow and boulders grow in
+rock and above**, so it goes and finds them — a count of zero at spawn is
+correct, not a broken stage.
+
 ### The swatch check
 
 The one gate that says whether an authored colour is the colour on screen:
