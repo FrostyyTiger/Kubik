@@ -12,6 +12,7 @@ has one owner per wave; everyone else adds a file plus a one-line hook.
 - [x] `feat/flora-streaming` lands on main (merged 2026-08-25)
 - [x] **A. Look v2** - ran 2026-08-25, merged (`docs/plans/look-v2.md`)
 - [x] **A2. World feel v1** (2 nights, `docs/plans/world-feel-v1.md`) - **DONE** on `feat/world-feel-v1`, 2026-08-27. Night 1: one job per column, the frontier (holes 126 -> 0), a chunk cache, trees at 1:2, old-growth groves, the understorey, fog to 800 m. Night 2: Jolt, host-authoritative input (D1 pulled forward, PASS on Forward+ at 0.217 m median), boulders as co-op bodies, the push and the rock, momentum and the scree slide. `docs/status/world-feel-v1.md`
+- [ ] **A3. Distance v1 - the far country holds still** (2 nights, `docs/plans/distance-v1.md`) - the far mesh aliases (no mip pyramid, so ridges fizz and re-cut themselves at every ring boundary), the colour aliases on top of it, and the impostor forest is drawn with the CHARACTER material so it is forbidden from receding. Night 1 the ground, night 2 the forest and the meadow. Jumps Wave 1 on pillar 3; nothing in Wave 1 depends on the far field. First plan written for a ganymede that can actually see (`e7c5d9d`), so colour is judged overnight and comparative numbers are interleaved medians from ganymede rather than single runs from the desktop.
 
 ## Wave 1 - after flora lands  `C || D || B`
 
