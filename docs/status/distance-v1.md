@@ -182,6 +182,41 @@ empty frontier - no per-sector voxel hole - and at three different centres.)
 | `dist-base` tour | ganymede, Vulkan Forward+, RTX 3070 Ti |
 | stream probe baseline | ganymede, ABAB median - see below |
 
+### The stream-probe baseline, which is what hard rule 6 is measured against
+
+Three runs, seed 42, `--view high --strict`, back to back with nothing else on
+the box, **run order and wall clock recorded** because that is the half every
+previous performance number in this project left out. Taken at the Stage 0
+commit, whose streaming behaviour is byte-identical to `e7c5d9d`'s - this epic
+has not touched a chunk, a column or the frontier.
+
+| run | started (UTC) | holes | frames > 33 ms | worst frame | built/s out | built/s back | 48 m settle out |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 16:13:31 | 0 | 35 | 43.5 ms | 76.5 | 82.5 | 10,623 ms |
+| 2 | 16:16:48 | 0 | 17 | 43.8 ms | 78.4 | 84.5 | 9,933 ms |
+| 3 | 16:19:56 | 0 | 12 | 45.5 ms | 81.3 | 88.9 | 9,671 ms |
+| **median** | | **0** | **17** (12-35) | **43.8** | **78.4** (76.5-81.3) | **84.5** (82.5-88.9) | **9,933** |
+
+**Holes 0 in all three - hard rule 4 holds.** The frame budget does not: all
+three FAIL, which is STATUS.md item 5 exactly as it was left. That is not this
+epic's to fix; what this epic owes is that the number does not get **worse**,
+and this table is what "worse" will be measured against.
+
+Two things worth naming about the runs themselves. The spread on the long-frame
+count is **12 to 35 on identical code**, which is the threshold-count problem
+`stream_probe.gd`'s own note describes - `built/s` underneath it moves by 6%
+over the same three runs. And the drift here goes the *opposite* way to the
+Windows box's: run 1 was the slowest and run 3 the fastest, so this box warms
+into a session rather than throttling out of one. Either way the defence is the
+same and it is the one hard rule 8 names: interleave, never compare a run to a
+remembered one.
+
+Also worth recording because it contradicts an assumption in the plan: a stream
+probe run here takes **about three minutes**, not the twenty-five that
+`stream_probe.gd`'s note quotes. That note was written on llvmpipe. Three
+minutes is cheap enough that the ABAB interleave Stage 7 owes is an easy twenty
+minutes rather than an evening.
+
 ### Gates
 
 | gate | result |
@@ -192,4 +227,85 @@ empty frontier - no per-sector voxel hole - and at three different centres.)
 | config hash | `3d45b8fc` |
 | self-tests | green |
 | far probe determinism | PASS |
+
+---
+
+## Stage 1 - The pyramid
+
+**Shipped.** `Heightmap` carries a filtered mip pyramid: level 0 is `cells`
+itself at 2 m, and each level above is a 2x2 box mean of the one below.
+`height_at_level()` is bilinear on one level; `height_filtered()` is trilinear
+between two.
+
+**It is derived and it is never written back** - hard rule 3. `cells` is
+untouched, `hash_key()` is untouched, and nothing that decides what the world
+*is* reads a level above 0.
+
+### Weighted, and that is what makes the mean conserve exactly
+
+1500 halves to 750, 375, 188, 94, 47, and **375 is odd** - so the last cell of
+level 3 has one parent, not two. Averaging it against a duplicated edge cell
+would double-count that column and shift the mean by about one part in `cols`;
+averaging it alone and carrying how many level-0 cells sit under each cell does
+not. The weight is analytic - it depends only on the index and the level - so
+it costs no memory at all, and it is what the self-test asserts.
+
+| level | cells | metres per cell |
+| --- | --- | --- |
+| 0 | 1500 x 1500 = 2,250,000 | 2 |
+| 1 | 750 x 750 = 562,500 | 4 |
+| 2 | 375 x 375 = 140,625 | 8 |
+| 3 | 188 x 188 = 35,344 | 16 |
+| 4 | 94 x 94 = 8,836 | 32 |
+| 5 | 47 x 47 = 2,209 | 64 |
+
+### The cost, and it is nothing
+
+| | measured | the plan's line |
+| --- | --- | --- |
+| pyramid build | **214 ms** | "a second is affordable, five is not" |
+| the coarse heightmap it sits beside | 15,807 ms | (10.2 s on Marcel's box) |
+| memory | **+2.9 MB** over level 0's 8.6 MB | "roughly a third more, about 3 MB" |
+
+214 ms against the heightmap's own 15.8 s is **1.4%**, so the question of doing
+it on a worker does not arise. Built lazily under a mutex on first use, which is
+`FarFieldJob` on a `WorkerThreadPool` task from Stage 2 onward - that keeps the
+whole pyramid inside `heightmap.gd`, and this lane owns neither the code that
+fills `cells` nor `world.gd`.
+
+### The conservation law, on the real map and in the suite
+
+The weighted mean of every level, over the whole 1500 x 1500 map:
+
+```
+level 0  185.825311      level 3  185.825311
+level 1  185.825311      level 4  185.825311
+level 2  185.825311      level 5  185.825311
+```
+
+Identical to every digit printed. The new self-test **`heightmap pyramid`** runs
+the same check on a 400-block world - 100 cells halving to 50, 25, 13, 7, 4, so
+**two of its five levels have a short last column** and the odd case is under
+real pressure at a fraction of the cost. It also asserts that
+`height_at_level(level 0)` is `height_at()` *exactly* (the far field falls back
+to it at the seam and the two must be the same surface), that
+`height_filtered(2.0)` agrees with level 2, and that no level leaves level 0's
+min/max - a mean of means cannot, and one that does has an index bug.
+
+### Provenance
+
+| number | provenance |
+| --- | --- |
+| pyramid build 214 ms, +2.9 MB | ganymede, single run, main thread, nothing else on the box |
+| the conservation table | ganymede, deterministic |
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| heightmap hash | **`76cccdb6`** (unchanged, before and after building the pyramid) |
+| spawn | **(-44, -124)** |
+| trees | **28,383** |
+| config hash | `3d45b8fc` |
+| self-tests | green, including the new `heightmap pyramid` |
 
