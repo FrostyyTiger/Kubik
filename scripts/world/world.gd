@@ -1380,14 +1380,28 @@ func _refresh_flora() -> void:
 		_flora_nodes.erase(col)
 		node.visible = false
 		_flora_cache[col] = node
-		# THE PLANTS ARE CACHED, THE BODIES ARE NOT. A cached column is hidden
-		# and costs kilobytes; a body left behind costs a broadphase entry and,
-		# if it is awake, solver time for a rock nobody is near. What cannot be
-		# regenerated is already in BodyField._moved.
-		if body_field != null:
-			body_field.column_left(col)
+		# THE BODIES STAY WITH THE CACHED PLANTS, and getting this wrong cost
+		# 37% of chunk throughput.
+		#
+		# This used to free them here, on the argument that a body is cheap to
+		# rebuild and a broadphase entry is not free. That argument is fine and
+		# the PLACE was wrong: the flora cache exists precisely BECAUSE columns
+		# churn in and out of the drawn set constantly during a sprint - night 1
+		# measured it and cached them for exactly that reason - so freeing
+		# bodies on this boundary meant destroying and rebuilding nodes,
+		# collision shapes and physics registrations, on the main thread, over
+		# and over, all the way across a crossing.
+		#
+		# A cached body is FROZEN, which is its resting state anyway (see
+		# WorldBody.shove), so it costs a broadphase entry and no solver time.
+		# They are freed when the column is actually EVICTED from the cache,
+		# below, which is where "cheap to rebuild" was always the right trade.
 	while _flora_cache.size() > FLORA_CACHE_COLUMNS:
 		var oldest: Vector2i = _flora_cache.keys()[0]
+		# EVICTED, not merely hidden - this is where the column really goes,
+		# and where its bodies go with it. See the note above.
+		if body_field != null:
+			body_field.column_left(oldest)
 		_flora_cache[oldest].queue_free()
 		_flora_cache.erase(oldest)
 

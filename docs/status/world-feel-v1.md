@@ -1174,12 +1174,8 @@ holds are the ones most likely to move, because they are the difference between
    and the measurement would be of the machine again. **Marcel: this is the
    night-2 acceptance test.** `--pair-probe` already reports body counts and
    agreement; the joint push is the part to add on a machine that can hold 60.
-2. **The hole gate is unmet on this box and probably not for a reason in the
-   code.** Stream probe at High: **holes 3, frames over 33 ms 105**. The Stage 9
-   commit re-measured the same day gives **holes 4 and 104**, and Stage 10 gave
-   1 and 103 - so nothing in stages 10-12 introduced it, and at 700 ms frames
-   the streamer cannot keep a frontier ahead of a 13 m/s sprint. Hard rule 6
-   needs a re-run on the Windows box before it can be called met.
+2. **Hard rule 6 is GREEN and hard rule 7 is RED - see the section below.**
+   Measured on Forward+, not here.
 3. **The traversal probe still cannot route** (open item 1, unchanged since
    night 1). Stage 12 adds the number the plan asked for - the fraction of a
    crossing spent sliding - but the gate itself remains blocked on the probe
@@ -1189,3 +1185,127 @@ holds are the ones most likely to move, because they are the difference between
    is serialised across the worker pool at about one effective thread; the
    per-phase timings that would justify moving generation and meshing out of it
    are in night 1's sections above.
+
+
+## The stream gate on real hardware, and the one-line fix that moved it most
+
+Ganymede cannot decide this gate. Its own numbers sit at holes 3-4 and ~105
+long frames whatever the commit - Stage 9's own commit re-measured on the same
+day gives holes 4 and 104 - because at 700 ms frames nothing can keep a
+frontier ahead of a 13 m/s sprint. Marcel ran the probe three times on the
+Windows box (RTX 5080, Forward+, `--view High --strict`, seed 42) inside one
+hour:
+
+| commit | what it is | holes | frames > 33 ms | worst | frontier p10 | built/s | |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `322a10d` | before the shade_ink cache, before bodies | 0 | 32 | 63.0 ms | 56.0 m | 91.5 | FAIL |
+| `8500d3e` | **+ shade_ink cache**, still no bodies | 0 | **0** | **28.2 ms** | **88.0 m** | **150.7** | **PASS** |
+| `2c04969` | + Stage 11 bodies + Stage 12 push | 0 | 27 | 44.8 ms | 64.0 m | 95.2 | FAIL |
+
+### Hard rule 6: GREEN
+
+**Holes 0, on both legs, at every commit including Stage 12.** The frontier
+never went negative - the player was never running on ground that had not
+arrived. The "holes 3" recorded on ganymede was the box, exactly as the pair
+probe's 3.90 m was. Stage 12 does not reintroduce a hole. That gate is closed.
+
+### The shade_ink cache was worth more than anything else in night 2
+
+One `RenderingServer.global_shader_parameter_get()` taken off the column submit
+path, committed as a one-line tidy-up before Stage 11 because Marcel noticed
+the error spam:
+
+| | before | after |
+| --- | --- | --- |
+| frames over 33 ms | 32 | **0** |
+| worst frame | 63.0 ms | **28.2 ms** |
+| chunks built/s | 91.5 | **150.7** (+65%) |
+| frontier p10 | 56.0 m | **88.0 m** |
+
+**That is the best evidence in the whole run for measuring before tuning.** It
+was not a performance task, nobody had it on a list, and it moved the gate from
+FAIL to PASS on its own - while every constant night 1 and night 2 argued about
+moved nothing by comparison. The readback had been on the hot path since Stage
+6 and was invisible on ganymede, buried in llvmpipe noise that had already been
+dismissed as pre-existing.
+
+### Hard rule 7: RED, and it is Stage 11-12
+
+Against the correct immediate baseline - `8500d3e`, the commit right before
+Stage 11a - bodies take the probe from PASS to FAIL:
+
+| | `8500d3e` | `2c04969` | |
+| --- | --- | --- | --- |
+| frames over 33 ms | 0 | 27 | |
+| worst frame | 28.2 ms | 44.8 ms | |
+| chunks built/s | 150.7 | 95.2 | **-37%** |
+| frontier p10 | 88.0 m | 64.0 m | -24 m |
+
+The signature is throughput, not rendering: `built/s` fell 37% and the long
+frames track it, which points at the column path rather than at drawing rocks.
+**By hard rule 12 this stops the run at Stage 12**, and the plan is right to say
+so.
+
+### What was found, and what is still open
+
+Two per-column costs were found by reading and are fixed:
+
+1. **Bodies were freed and rebuilt on the flora CACHE boundary.** The flora
+   cache exists precisely because columns churn in and out of the drawn set
+   constantly during a sprint - night 1 measured that and cached them for
+   exactly that reason - and Stage 11 destroyed and rebuilt every one of their
+   bodies on that boundary: three nodes, a collision shape and a physics
+   registration each, on the main thread, all the way across a crossing. The
+   plan says *"bodies in cached columns are frozen, not freed"* and this was
+   implemented as the opposite, with a comment justifying it. They are now
+   freed on cache **eviction**, which is where "cheap to rebuild" was always
+   the right trade.
+2. **Promotion was a whole extra pass per column.** Stage 11 called
+   `BodyTable.promote()` for every instance and rebuilt the entire instance
+   array minus the promoted ones - thousands of calls and thousands of appends
+   per column, on the worker, for a rule that fires on about one instance in a
+   thousand. It is now folded into the loop that was already there and gated on
+   a model compare, so a meadow column of grass rejects all of it for the price
+   of an integer. Measured here: **8.40 -> 8.20 ms per column**, back to the
+   Stage 9 figure.
+
+Only the second is measured: flora went **8.40 -> 7.77 ms per column**, below
+even the Stage 9 figure of 8.20. That is real and it is 7.5% of a column, not
+37% of a crossing.
+
+### And a measurement that redirects the search
+
+A body-churn counter was added to the stream probe, and at **High**, seed 42,
+the whole crossing reports:
+
+```
+[StreamProbe] bodies 0 loaded, 0 built and 0 freed over the run
+```
+
+**Zero. Not few - none.** The probe sprints at spawn; spawn is chosen flat and
+dry with a mountain in view, and boulders grow in rock and above. Nothing in
+the High disc around that route is a boulder, so no body is ever created, and
+the churn path the first fix targets **is never entered on this route at all**.
+
+That matters for the diagnosis rather than just for this box, because Marcel's
+three runs are the same seed and the same spawn. If his crossing also built
+zero bodies - and it should have - then **body churn cannot be the 37%**, and
+the cost has to be something Stage 11-12 does per column or per chunk with no
+bodies present. The candidate that fits the signature best is Stage 12's
+**zone friction**: every chunk's `StaticBody3D` now gets a
+`physics_material_override`, which is an extra physics-server call on every
+chunk built. It is invisible at ganymede's 48 chunks/s and would be squarely on
+the critical path at 150.
+
+**Marcel: hard rule 7 is not met until the probe is re-run on your box, against
+`8500d3e`** - 0 long frames, 28.2 ms worst, 150.7 built/s - **not `322a10d`**.
+Two things to check, in this order:
+
+1. Does the run report `bodies 0 built`? If it does, stop looking at bodies.
+2. Comment out the `physics_material_override` line in `ChunkNode.setup()` and
+   re-run. That is the one Stage 12 change that costs something on every chunk
+   rather than on every body, and it is a one-line A/B.
+
+Both fixes above are kept either way: freeing bodies on the cache boundary
+contradicts the plan and would have cost real time the moment a crossing
+touched rock, and the promotion pass is measured.

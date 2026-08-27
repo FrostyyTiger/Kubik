@@ -61,12 +61,45 @@ engines manage about one frame a second and it would measure the machine
 again. **This is the night-2 acceptance test**: find a big boulder, push it
 alone, then push it together.
 
-**5. The hole gate is unmet here, and not for a reason in the code.** Stream
-probe at High after Stage 12: holes 3, frames over 33 ms 105. The Stage 9
-commit re-measured the same day gives holes 4 and 104; Stage 10 gave 1 and
-103. Nothing in stages 10-12 introduced it - at 700 ms frames the streamer
-cannot keep a frontier ahead of a 13 m/s sprint. Hard rule 6 needs a re-run on
-the Windows box.
+**5. Hard rule 7 is RED: Stage 11-12 cost 37% of chunk throughput.** Measured
+by Marcel on Forward+ (RTX 5080, `--view High --strict`, seed 42), three runs
+in one hour:
+
+| commit | | holes | >33 ms | worst | built/s | |
+| --- | --- | --- | --- | --- | --- | --- |
+| `322a10d` | before shade_ink, before bodies | 0 | 32 | 63.0 ms | 91.5 | FAIL |
+| `8500d3e` | + shade_ink cache, no bodies | 0 | **0** | **28.2 ms** | **150.7** | **PASS** |
+| `2c04969` | + Stage 11 bodies + Stage 12 push | 0 | 27 | 44.8 ms | 95.2 | FAIL |
+
+**Hard rule 6 is green** — holes 0 on every commit and both legs, so Stage 12
+does not reintroduce a hole and ganymede's "holes 3" was the box.
+
+**Hard rule 7 is red against the correct baseline** (`8500d3e`, the commit
+right before Stage 11a): 0 long frames to 27, worst 28.2 to 44.8 ms, throughput
+down 37%. The signature is throughput, not rendering. By hard rule 12 this
+stops the run at Stage 12.
+
+Two per-column costs were found by reading and fixed — bodies were freed and
+rebuilt on the flora **cache** boundary, which is the boundary that churns most
+during a sprint (the plan says frozen, not freed, and it was implemented as the
+opposite); and promotion was a whole extra pass rebuilding the instance array
+per column. **Neither is confirmed as the fix**, and a churn counter added
+to the probe redirects the search: at **High**, seed 42, the whole crossing
+reports `bodies 0 loaded, 0 built and 0 freed`. The probe sprints at spawn,
+spawn is a meadow, and boulders grow in rock and above — so no body is created
+on that route at all. Marcel's runs are the same seed and spawn, so if his also
+built zero bodies then **body churn cannot be the 37%**, and the likeliest
+remaining cost is Stage 12's **zone friction**: every chunk's `StaticBody3D`
+now takes a `physics_material_override`, an extra physics-server call per chunk
+built — invisible at ganymede's 48 chunks/s, squarely on the critical path at
+150. **Re-run on the Windows box against `8500d3e`**: check whether it reports
+`bodies 0 built`, then A/B that one line in `ChunkNode.setup()`.
+
+**And the finding worth keeping regardless:** the shade_ink cache — one
+rendering-server readback taken off the column submit path as a one-line
+tidy-up nobody had on a list — moved the gate from FAIL to PASS by itself: 32
+long frames to 0, worst 63.0 to 28.2 ms, throughput +65%. Best evidence in the
+run for measuring before tuning.
 
 **6. This box is about five times slower than it was on 2026-08-26.** The
 stream probe reads 123 s of initial load and 103 frames over 33 ms where night

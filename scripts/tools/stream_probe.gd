@@ -262,6 +262,14 @@ func _report() -> void:
 	# THE CACHE'S FOOTPRINT. The plan puts a 250 MB ceiling on it; static memory
 	# at the end of a run that has parked and restored the whole trail is the
 	# cheapest honest measure of it on this box.
+	# BODY CHURN, world feel v1 Stage 12. Not how many bodies exist - how many
+	# times one was built. Each is three nodes, a shape and a physics
+	# registration on the main thread, and building them on the wrong streaming
+	# boundary is invisible in every count and expensive in every frame.
+	if _world.body_field != null:
+		print("[StreamProbe] bodies %d loaded, %d built and %d freed over the run" % [
+			_world.body_field.count(), _world.body_field.spawns,
+			_world.body_field.frees])
 	print("[StreamProbe] cache %d chunks, static memory %.1f MB" % [
 		_world.last_timings().get("cached_chunks", 0),
 		float(Performance.get_monitor(Performance.MEMORY_STATIC)) / 1048576.0])

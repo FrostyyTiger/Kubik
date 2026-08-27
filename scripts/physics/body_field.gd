@@ -87,6 +87,16 @@ var _rocking := {}
 ## physics ticks - the probe read `false` while it was happening.
 var _rock_ticks := 0
 
+## How many bodies have been built and destroyed over the session.
+##
+## CHURN, WHICH IS THE NUMBER THAT MATTERS, not the count. A body is three
+## nodes, a collision shape and a physics registration, all built on the main
+## thread - so what a crossing costs is not how many bodies exist but how many
+## times they are created. Freeing them on the wrong boundary cost 37% of chunk
+## throughput on Marcel's box and was invisible in every count.
+var spawns := 0
+var frees := 0
+
 
 func setup(is_host: bool, block_size: float, world: Node,
 		journal: Journal = null) -> void:
@@ -129,6 +139,7 @@ func column_left(col: Vector2i) -> void:
 		if node == null:
 			continue
 		_remember(id, node)
+		frees += 1
 		_bodies.erase(id)
 		_home.erase(id)
 		_frozen.erase(id)
@@ -161,6 +172,7 @@ func _spawn(col: Vector2i, id: int, kind: int, pos: Vector3, yaw: float,
 	node.quaternion = start_rot
 	if _is_host and known.size() >= 2:
 		(node as WorldBody).moved = true
+	spawns += 1
 	_bodies[id] = node
 	if not _by_column.has(col):
 		_by_column[col] = {}
