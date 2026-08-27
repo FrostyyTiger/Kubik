@@ -198,6 +198,9 @@ func _ready() -> void:
 		_start_pair_probe.call_deferred()
 	elif "--body-probe" in OS.get_cmdline_user_args():
 		_start_body_probe.call_deferred()
+	# DISTANCE V1 STAGE 0, appended at the end of the chain.
+	elif "--far-probe" in OS.get_cmdline_user_args():
+		_start_far_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -458,6 +461,19 @@ func _start_stream_probe() -> void:
 	probe.name = "StreamProbe"
 	add_child(probe)
 	probe.run(_world, _player)
+
+
+## Hand the session to the far-field probe - see scripts/tools/far_probe.gd.
+##
+## Needs a hosted world and nothing else: it builds FarFieldJob directly, reads
+## heights back out of the triangles, and never renders. Distance v1 Stage 0.
+func _start_far_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := FarProbe.new()
+	probe.name = "FarProbe"
+	add_child(probe)
+	probe.run(_world)
 
 
 ## The loaded frontier moved: hand the impostor ring the new one. The ring

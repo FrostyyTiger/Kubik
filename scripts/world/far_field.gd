@@ -22,6 +22,21 @@ var _heightmap: Heightmap = null
 var _generator: TerrainGenerator = null
 var _config: WorldgenConfig = null
 
+## DISTANCE V1 STAGE 0. What the last rebuild cost, for the F3 readout.
+##
+## Two numbers, because they answer different questions. `_last_ms` is the
+## JOB's own time - the work Stages 1-4 are about to add to. `_last_wall_ms`
+## is from asking for the mesh to having it, which includes waiting for a
+## WorkerThreadPool that runs one GDScript task at a time; that is the number
+## the player feels, and the gap between the two is contention rather than
+## cost. Reporting only the first would hide the gap; only the second would
+## blame this stage for the chunk workers.
+var _last_ms := 0
+var _last_wall_ms := 0
+var _last_verts := 0
+var _rebuilds := 0
+var _started_us := 0
+
 
 func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
@@ -51,6 +66,10 @@ func _process(_delta: float) -> void:
 	WorkerThreadPool.wait_for_task_completion(_task)
 	_task = -1
 
+	_last_ms = _job.elapsed_ms
+	_last_wall_ms = int((Time.get_ticks_usec() - _started_us) / 1000)
+	_last_verts = _job.vertex_count
+	_rebuilds += 1
 	mesh = ChunkMesher.arrays_to_mesh(_job.arrays)
 	# The frontier THIS MESH was cut to. Not the same as the world's current
 	# one: a rebuild takes a frame or two on a worker, and during that window
@@ -73,6 +92,7 @@ func _start_if_idle() -> void:
 	_job.config = _config
 	_job.center = _pending_center
 	_job.frontier = _pending_frontier
+	_started_us = Time.get_ticks_usec()
 	_task = WorkerThreadPool.add_task(_job.run, false, "kubik far field")
 
 
@@ -93,6 +113,16 @@ func exclusion_blocks() -> float:
 		return 0.0
 	var voxel_radius_blocks := float(_config.voxel_radius_chunks * Chunk.SIZE)
 	return maxf(voxel_radius_blocks - float(2 * _config.far_step), 0.0)
+
+
+## What the last rebuild cost, for the F3 readout. Distance v1 Stage 0.
+func stats() -> Dictionary:
+	return {
+		"vertices": _last_verts,
+		"build_ms": _last_ms,
+		"wall_ms": _last_wall_ms,
+		"rebuilds": _rebuilds,
+	}
 
 
 ## Block until any build finishes, before the world it reads is thrown away.

@@ -268,6 +268,22 @@ func _compose_readout() -> String:
 			Locomotion.SLIDE_ANGLE_DEG, Locomotion.SLIDE_FACTOR,
 			Locomotion.SLIDE_MAX])
 
+	# THE FAR MESH'S OWN COST, distance v1 Stage 0, APPENDED rather than folded
+	# into the "far field %d verts" line above - this epic shares three files
+	# with a character redesign running in parallel and its rule for all three
+	# is append-only. Reached through the node rather than through a World
+	# accessor for the same reason: World is not on this lane's file list.
+	#
+	# build is the job's own time; wall includes waiting for a pool that runs
+	# one GDScript task at a time. Stages 1-4 move the first; only the second
+	# is what the player feels.
+	var far_field: Node = world.get_node_or_null("FarField") if world != null else null
+	if far_field != null and far_field.has_method("stats"):
+		var ff: Dictionary = far_field.stats()
+		lines.append("far mesh  %d verts, %d ms build, %d ms wall, %d rebuilds" % [
+			ff.get("vertices", 0), ff.get("build_ms", 0),
+			ff.get("wall_ms", 0), ff.get("rebuilds", 0)])
+
 	lines.append("")
 	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")
 	return String("\n").join(lines)

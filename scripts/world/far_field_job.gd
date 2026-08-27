@@ -126,6 +126,12 @@ var center := Vector2i.ZERO
 var arrays: Array = []
 var vertex_count := 0
 
+## How long run() took, in milliseconds. DISTANCE V1 STAGE 0: the cost of a
+## rebuild is about to be changed by four stages in a row, and a number that is
+## only visible in a profiler is a number nobody watches. Measured inside the
+## job rather than around the task, so it is the work and not the queue.
+var elapsed_ms := 0
+
 ## Distance from the player, in blocks, at which the voxels stop and this mesh
 ## takes over. Set by run() and read by _corner_y(); a member rather than
 ## another parameter threaded through three functions that all already have
@@ -165,6 +171,7 @@ var _band_treeline := 0
 
 
 func run() -> void:
+	var _t0 := Time.get_ticks_msec()
 	var bs: float = config.block_size
 	var base_step: int = config.far_step
 	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
@@ -224,6 +231,7 @@ func run() -> void:
 	vertex_count = verts.size()
 	if verts.is_empty():
 		arrays = []
+		elapsed_ms = Time.get_ticks_msec() - _t0
 		return
 
 	arrays = []
@@ -232,6 +240,7 @@ func run() -> void:
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
+	elapsed_ms = Time.get_ticks_msec() - _t0
 
 
 ## One annulus of the disc, at one resolution.
