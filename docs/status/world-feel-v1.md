@@ -868,17 +868,39 @@ PASS on everything this box can decide; prediction error INCONCLUSIVE
 
 **PASS**: the client travelled the full 100 m and back under host authority, and
 never went below the surface - which is the collision ring working, 66 chunks of
-it. **INCONCLUSIVE**: 3.90 m of median error at sprint is **300 ms of lag**
-against a host whose frames averaged 595 ms. The error tracks the host's own
-frame time, so the thresholds measure how fast two engines run on one machine,
-not whether prediction works. Same call as Stage 9's physics probe, and the
-probe now prints the arithmetic rather than a verdict it cannot support. The
-hard failures - through the world, never travelled - are checked separately and
-are not excused by latency.
+it. **INCONCLUSIVE** on this box: 3.90 m of median error at sprint is **300 ms
+of lag** against a host whose frames averaged 595 ms. The error tracks the
+host's own frame time, so the thresholds measure how fast two engines run on one
+machine, not whether prediction works. Same call as Stage 9's physics probe, and
+the probe printed the arithmetic rather than a verdict it could not support.
 
-**Marcel: this is the one number in night 2 that needs a real machine.** Run
-`godot --path . -- --host --seed 42 --pair-probe` on the Windows box; the limits
-in the probe (0.5 m median, 2 m worst) are the plan's and are untouched.
+### Settled on Forward+: PASS
+
+Marcel ran the same command on the Windows box (RTX 5080, Vulkan 1.4.341,
+Forward+) at this commit, seed 42:
+
+| | ganymede (llvmpipe, two engines) | **Windows, Forward+** | plan's line |
+| --- | --- | --- | --- |
+| median error | 3.900 m | **0.217 m** | 0.50 m |
+| p95 | 7.486 m | **0.651 m** | - |
+| worst | 9.968 m | **1.300 m** | 2.00 m |
+| host frame time | 595 ms | **4 ms** | - |
+| implied lag from the error | 300 ms | **17 ms** | - |
+| samples | 8,935 | 2,088 | - |
+| chunks built for the ring | 66 | 46 | - |
+| lowest point vs surface | 28.5 / 28.5 | 28.5 / 28.5 | never below |
+
+`[PairProbe] PASS`. **Median error is less than half the plan's line and the
+worst excursion is under two thirds of the failure limit**, on limits that were
+never touched. The inconclusive reading was correct about its own cause: at
+4 ms frames the implied lag is 17 ms, and the error collapses by a factor of
+eighteen. Stage 10 is green.
+
+The one thing worth keeping from the ganymede run is the *method*: the probe
+turns a measured error back into an implied latency and compares it against the
+host's own frame time. That is what let a number that could not mean what it
+looked like say so, instead of being filed as a failure - and it is what makes
+the Forward+ number trustworthy rather than merely better.
 
 ### The solo numbers did not regress, and proving that took a worktree
 
@@ -930,9 +952,27 @@ worktree turned a reported regression into a measured non-event.
   only symptom is the client logging "connection failed" where nobody is
   reading.
 
-### One TODO(marcel)
+### `sim_radius_chunks`: measured, and deliberately left alone
 
-`sim_radius_chunks := 4` (32 m) is a guess that the probe could not test: on a
-box where the host runs at 595 ms frames, a peer outruns any ring, and the
-number that matters is how far a body travels between the moment it nears the
-edge and the moment the next ring lands. It is marked in `worldgen_config.gd`.
+Marcel ran the same probe on Forward+ at 3 and at 4, same seed, same commit:
+
+| `sim_radius_chunks` | median | p95 | worst | ring chunks | lowest vs surface |
+| --- | --- | --- | --- | --- | --- |
+| 3 | 0.217 m | 0.650 m | 1.464 m | **38** | 28.5 / 28.5 |
+| **4** (default) | 0.217 m | 0.651 m | 1.300 m | **46** | 28.5 / 28.5 |
+
+Both PASS. 3 keeps ground under the peer as well as 4 across this excursion for
+17% less collision built for terrain nobody looks at.
+
+**The default stays at 4, and the result must not be over-read.**
+`PairProbe.SPRINT_OUT_M` is 100.0, so the peer turns round at 100 m and neither
+value was ever put under pressure: both runs show exactly one `floor false`
+frame, the same step-up at about 40 m. "3 never fell" means "3 survives a 100 m
+out-and-back on a 4 ms host", not "3 is enough". Finding the edge needs a longer
+excursion, not another run at 100 m.
+
+And the timing is wrong for it either way: Stage 11 puts bodies on exactly this
+ring and Stage 12 pushes them around on it. This is not the week to trim the
+ground out from under a remote peer to save eight chunks. The `TODO(marcel)` in
+`worldgen_config.gd` now carries both numbers and names the experiment that
+would actually settle it.

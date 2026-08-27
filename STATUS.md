@@ -34,16 +34,21 @@ that matters: the wood between groves no longer opens, because the same 35% of
 candidates now grow trees three times the volume. `TODO(marcel)` at
 `WorldgenConfig.grove_floor` has the argument and the command to re-measure.
 
-**3. The pair probe's prediction error needs a machine that holds 60 fps.**
-Stage 10 closed the carried ticket — clients send input, the host simulates —
-and `--pair-probe` runs the whole thing end to end: 100 m out and back under
-host authority, 66 chunks of collision ring built for the peer, never below the
-surface. What it *cannot* decide here is prediction error: median 3.90 m
-against a 0.50 m line, which at sprint is exactly 300 ms of lag against a host
-whose own frames averaged **595 ms** with two engines on one box. The probe
-prints that arithmetic and returns INCONCLUSIVE rather than FAIL. One command
-on the Windows box settles it: `godot --path . -- --host --seed 42
---pair-probe`. The limits in the probe are the plan's and are untouched.
+**3. ~~The pair probe's prediction error needs a machine that holds 60 fps.~~
+SETTLED on Forward+, PASS.** Stage 10 closed the carried ticket — clients send
+input, the host simulates. On Marcel's Windows box (RTX 5080, Forward+), seed
+42, commit `322a10d`: **median error 0.217 m against the plan's 0.50 m line,
+p95 0.651 m, worst 1.300 m against a 2.00 m limit**, host frames 4 ms, 46
+chunks of collision ring, never below the surface. The 3.90 m INCONCLUSIVE on
+ganymede was measuring how fast two engines run on one box: at 4 ms frames the
+implied lag is 17 ms rather than 300, and the error collapses by a factor of
+eighteen. Limits untouched. Nothing outstanding.
+
+`sim_radius_chunks` was measured on the same box at 3 and 4 — both PASS, 38
+ring chunks against 46 — and **deliberately left at 4**: the probe turns round
+at 100 m, so neither value was under real pressure, and Stages 11-12 put bodies
+on exactly this ring. The `TODO(marcel)` carries both numbers and the
+experiment that would find the edge.
 
 **4. This box is about five times slower than it was on 2026-08-26.** The
 stream probe reads 123 s of initial load and 103 frames over 33 ms where night

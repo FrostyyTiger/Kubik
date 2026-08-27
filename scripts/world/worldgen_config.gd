@@ -189,14 +189,28 @@ const FOG_START_RATIO := 0.4
 ## LOCAL, not a world fact: it changes what the host streams, never what the
 ## world contains, so a host with a different value generates the same world.
 ##
-## TODO(marcel): 4 is a guess and the pair probe could not test it. The number
-## that matters is how far a body travels between nearing the edge of its ring
-## and the next ring landing, and on this box the host ran at 595 ms frames -
-## where a sprinting peer outruns any ring you care to name. On a machine that
-## holds 60 fps, walk a peer away from the host and watch `--pair-probe`'s
-## "chunks built for its ring" against the moment it falls: if it never falls,
-## try 3 and find the edge, because every chunk of this is collision the host
-## builds for terrain nobody looks at.
+## TODO(marcel): MEASURED AT 3 AND 4, AND THE PROBE STILL CANNOT DECIDE.
+##
+## Forward+, seed 42, same commit, `--pair-probe` with `--set`:
+##
+##     3   PASS   median 0.217 m, worst 1.464 m, 38 chunks built for the ring
+##     4   PASS   median 0.217 m, worst 1.300 m, 46 chunks built for the ring
+##
+## Neither dropped the peer below the surface, so 3 looks like 17% less
+## collision built for terrain nobody looks at, for free.
+##
+## IT IS NOT FREE, AND THE PROBE IS WHY. `PairProbe.SPRINT_OUT_M` is 100.0: the
+## peer turns round at 100 m, and both runs show exactly ONE `floor false`
+## frame - the same step-up at about 40 m. Neither value was ever put under
+## pressure. "3 never fell" means "3 survives a 100 m out-and-back on a 4 ms
+## host", which is not the question.
+##
+## The question is how far a body travels between nearing the edge of its ring
+## and the next ring landing, and answering it needs a LONGER EXCURSION, not
+## another run at 100 m: raise SPRINT_OUT_M to something like 800, or give the
+## probe a sustained-run mode that keeps going until the peer either falls or
+## reaches the world edge, and watch for the first frame where `floor` goes
+## false somewhere that is not a step. Do that before trimming this to 3.
 @export var sim_radius_chunks := 4
 
 ## How many chunks of solid rock to build below the surface. The world is 320
