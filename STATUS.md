@@ -61,9 +61,26 @@ engines manage about one frame a second and it would measure the machine
 again. **This is the night-2 acceptance test**: find a big boulder, push it
 alone, then push it together.
 
-**5. Hard rule 7 is UNDECIDED, and the stream probe is why.** Not red, not
-satisfied. On Forward+ (RTX 5080, `--view High --strict`, seed 42) the same
-commit does not agree with itself:
+**5. Hard rule 7 is ANSWERABLE and provisionally not met.** Two runs on
+ganymede with its GPU finally working (`--view High --strict`, seed 42) give
+**holes 0** — hard rule 6 green — and **20 and 24 frames over 33 ms**, worst
+frame 35.8–40.4 ms. Both FAIL, with a tight spread. That does not settle it,
+but it means the gate has stopped being undecidable: two dedicated-box runs
+suggest **the game does not hold 33 ms at High during a sprint on a 3070 Ti**,
+and the next step is an interleaved ABAB run against the pre-Stage-11 commit.
+
+**And ganymede is the right box for it, which was the surprise.** Two runs of
+identical code there vary ~9% on chunks/s (78.1–85.2); three runs on the RTX
+5080 desktop vary ~60% (93.3–150.7), because that machine has a desktop, a
+compositor and another game competing for the card. The faster box is the less
+trustworthy instrument. The `TODO(marcel)` on `stream_probe.gd` is amended to
+say so and to name ganymede as where comparative runs belong.
+
+The rest of this item is the history of why that took so long, and it stands as
+a lesson about single runs even though the hardware premise has changed:
+
+On Forward+ (RTX 5080, `--view High --strict`, seed 42) the same commit does
+not agree with itself:
 
 | `8500d3e`, identical code, three runs | >33 ms | built/s | |
 | --- | --- | --- | --- |
@@ -106,13 +123,30 @@ churniest boundary there is, and the plan says frozen, not freed — and
 promotion was an extra pass per column, measured on the worker at 8.40 → 7.77
 ms per column over 797 columns, which is not subject to this confound.
 
-**6. This box is about five times slower than it was on 2026-08-26.** The
-stream probe reads 123 s of initial load and 103 frames over 33 ms where night
-1 recorded 24.8 s and 1. Stage 9's own commit, re-run in a worktree within the
-hour, gives 123.4 s and 104 — so nothing regressed, and per-chunk worker cost
-is unchanged at 8.3 ms. It is starvation, not work. Worth knowing before
-anybody reads a night-2 number against a night-1 one: **a number from a
-different day is not a baseline.**
+**6. ~~This box is about five times slower than it was.~~ SOLVED — the GPU was
+never being used.** ganymede has an RTX 3070 Ti and shipped with
+`nvidia-headless-595-open`, the **compute-only** driver: `nvidia-smi`, CUDA and
+the kernel modules all work and look healthy, which is why nobody suspected it,
+but it installs no graphics userspace and no
+`/usr/share/vulkan/icd.d/nvidia_icd.json`. The Vulkan loader found no ICD and
+Mesa fell back to llvmpipe, so **every frame in world feel v1 was drawn on the
+CPU** while the GPU sat at 39 °C with 1 MiB used.
+
+Fixed 2026-08-27 with one package against the already-loaded kernel driver, no
+reboot: `libnvidia-gl-595` + `vulkan-tools`. Godot now reports `Vulkan 1.4.329
+— Forward+ — NVIDIA GeForce RTX 3070 Ti`, through the existing `xvfb-run` line
+unchanged — Xvfb satisfies the windowing call and Vulkan renders on the card.
+
+"It is starvation, not work" was **right about the mechanism and wrong about
+the cause**: the starver was the software rasteriser competing with the chunk
+workers for the same cores. That is why per-chunk cost held at 8.3 ms while
+wall-clock load went 24.8 s → 123 s — the work per chunk never changed, the
+number of chunks getting worked on did. **The 5x was never a property of the
+box**, and it was not thermal drift either.
+
+Same probe, same seed, same machine, now on the GPU: **holes 0, 20–24 frames
+over 33 ms, worst frame 35.8–40.4 ms** against 595–709 ms. Roughly 15x on the
+worst frame.
 
 **7. The velocity-biased queue is switched off.** At `STREAM_HEADING_BIAS = 6`
 the ground ahead of a sprinting player is loaded to the full 96 m radius,

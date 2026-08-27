@@ -281,6 +281,19 @@ the address left at `127.0.0.1`.
 Both windows print to the same editor console, prefixed `[Net/host]` and
 `[Net/client:<id>]` so you can tell them apart.
 
+### Playing with somebody who is not on your LAN
+
+`enet_transport.gd` currently offers port forwarding as the answer for
+non-LAN play, and there is a much easier one: **a Tailscale share needs no port
+forwarding at all.** Both machines join the tailnet, the client joins the
+host's tailnet IP, and ENet sees an ordinary routable address.
+
+Tested 2026-08-27: a **Mac joined a Windows host over Tailscale** and the host
+logged the whole handshake — peer connected, world state sent, character
+spawned, zero errors. That is world feel v1's host-authoritative input path
+carrying a real second player, on a second machine, over a real network, rather
+than two processes on one box.
+
 ### Skipping the menu
 
 Clicking through the menu on every test run gets old. Anything after a bare

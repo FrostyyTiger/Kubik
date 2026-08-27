@@ -3,10 +3,31 @@
 The run of `docs/plans/world-feel-v1.md`, on `feat/world-feel-v1` from `main`
 at `a4bddbe`. Night 1 is streaming and the forest; night 2 is physics.
 
-**Where this ran.** ganymede: headless, Mesa llvmpipe, no Vulkan. Every
-**streaming** number here is CPU and is meaningful. Everything **visual** is
-tuned blind on the Compatibility renderer and is marked as such, section by
-section.
+**Where this ran, and this is now history rather than description.** Both
+nights ran on ganymede: headless, **Mesa llvmpipe, no Vulkan** - every frame in
+this document was drawn by the CPU. Everything **visual** was tuned blind on
+the Compatibility renderer and is marked as such, section by section.
+
+**That was never a property of the box.** ganymede has an RTX 3070 Ti and it
+was not being used: the machine shipped with `nvidia-headless-595-open`, the
+COMPUTE-ONLY driver. `nvidia-smi`, CUDA and the kernel modules all work and
+look healthy - which is exactly why nobody suspected it - but it installs no
+graphics userspace and no `/usr/share/vulkan/icd.d/nvidia_icd.json`. The Vulkan
+loader found no ICD, reported zero devices, and Mesa fell back to llvmpipe
+while the GPU sat at 39 °C with 1 MiB used.
+
+Fixed on 2026-08-27 with one package against the already-loaded kernel driver,
+no reboot - `libnvidia-gl-595` plus `vulkan-tools` - and Godot now reports
+`Vulkan 1.4.329 - Forward+ - Using Device #0: NVIDIA GeForce RTX 3070 Ti`
+through the existing `xvfb-run` line unchanged: Xvfb satisfies the windowing
+call and Vulkan renders on the card.
+
+**So every frame time below is a software-rendered number.** They are left
+exactly as measured, because they are what the run actually recorded - but they
+are no longer evidence about the game, and the sections that leaned on them are
+corrected in place. The **streaming** numbers that are pure worker cost
+(per-chunk generation, per-column flora, chunk counts, hashes) are unaffected;
+what moves is anything with a frame time in it.
 
 ---
 
@@ -874,6 +895,15 @@ host's own frame time, so the thresholds measure how fast two engines run on one
 machine, not whether prediction works. Same call as Stage 9's physics probe, and
 the probe printed the arithmetic rather than a verdict it could not support.
 
+> **Why those frames were 595 ms (found 2026-08-27):** ganymede was rendering
+> in software - see "Where this ran" at the top - so two Godot instances were
+> both rasterising on the CPU that the host's own simulation needed. **The
+> reasoning below stands and the premise has changed.** The verdict was right
+> that the number measured the machine; it is now wrong to say ganymede *cannot*
+> measure it. With the GPU in use this probe is worth re-running here, and the
+> numbers in this section are **measured under software rendering and are not a
+> baseline** for anything.
+
 ### Settled on Forward+: PASS
 
 Marcel ran the same command on the Windows box (RTX 5080, Vulkan 1.4.341,
@@ -918,9 +948,9 @@ It is not. Stage 9's commit, checked out into a worktree and run on this box
 | **Stage 10** | **123.1 s** | **1** | **103** | 709 ms | 13.9 / 13.6 s |
 
 Stage 10 is indistinguishable from its own baseline and marginally better on
-holes. The box is about five times slower today than when night 1's numbers
-were taken, with identical per-chunk worker cost (8.3 ms) - it is starvation,
-not per-chunk work. **Config `dbf9369c`, heightmap `76cccdb6`, spawn
+holes. The box was about five times slower that day than when night 1's numbers
+were taken, with identical per-chunk worker cost (8.3 ms) - **starvation, not
+per-chunk work.** **Config `dbf9369c`, heightmap `76cccdb6`, spawn
 `(-44, -124)`, 2,370 chunks: the world did not move.**
 
 The lesson is the one Stage 5 already taught and this stage had to learn again:
@@ -935,6 +965,22 @@ worktree turned a reported regression into a measured non-event.
 > is entitled to say. Had it come back the other way, the delta would not have
 > been quotable. The load-time collapse - 24.8 s to 123 s, on both commits - is
 > far outside any plausible noise band and stands on its own.
+
+> **And read back again after the GPU was found (2026-08-27):** "starvation,
+> not per-chunk work" was **right about the mechanism and wrong about the
+> cause**. The starver was the software rasteriser. ganymede was rendering
+> every frame on the CPU - see "Where this ran" at the top - so llvmpipe and
+> the chunk workers were competing for the same cores, and the worse the frame
+> the less worker time was left to build the next chunk. That is why per-chunk
+> cost held at 8.3 ms while wall-clock load went 24.8 s to 123 s: the work per
+> chunk never changed, the number of chunks getting worked on did.
+>
+> **The 5x was never a property of the box**, and it was not thermal drift or
+> background load either, which is what was assumed at the time. It was one
+> missing driver package. With the GPU actually rendering, the same probe at
+> High on the same machine gives **holes 0, 20-24 frames over 33 ms and a worst
+> frame of 35.8-40.4 ms** - a worst frame roughly **15x** better than the 595-709
+> ms recorded here.
 
 ### Also
 
@@ -1200,13 +1246,22 @@ holds are the ones most likely to move, because they are the difference between
 
 ## The stream gate on real hardware: UNDECIDED, and why that is the finding
 
-**Hard rule 6 is green. Hard rule 7 is undecided, and the probe is the reason.**
+**Hard rule 6 is green. Hard rule 7 is ANSWERABLE and not yet answered.**
 
-Ganymede cannot decide this gate - at 700 ms frames nothing keeps a frontier
-ahead of a 13 m/s sprint, and its numbers sit at holes 3-4 and ~105 long frames
-whatever the commit. So Marcel ran it on the Windows box (RTX 5080, Forward+,
-`--view High --strict`, seed 42), ten runs in a session. The intended answer was
-a before/after on Stage 11-12. The actual answer is about the instrument.
+> **This section was written believing ganymede could not decide frame-time
+> gates. That was true of ganymede-with-a-software-rasteriser and is no longer
+> true of ganymede** - see "Where this ran" at the top, and "Ganymede can decide
+> it, and is the better instrument" at the end. Everything between here and
+> there is left as written, because the finding about the PROBE survives the
+> hardware entirely. All ganymede frame numbers quoted in it are **measured
+> under software rendering and are not a baseline** for the game.
+
+Ganymede could not decide this gate at the time - at 700 ms frames nothing keeps
+a frontier ahead of a 13 m/s sprint, and its numbers sat at holes 3-4 and ~105
+long frames whatever the commit. So Marcel ran it on the Windows box (RTX 5080,
+Forward+, `--view High --strict`, seed 42), ten runs in a session. The intended
+answer was a before/after on Stage 11-12. The actual answer is about the
+instrument.
 
 ### The same commit does not agree with itself
 
@@ -1323,3 +1378,61 @@ is a coin flip for every frame near the line and has no averaging in it at all.
 
 So the recommendation above is not a hope, it is the shape of the instrument
 that already works in this repo.
+
+## Ganymede can decide it, and is the better instrument
+
+Written 2026-08-27, after the GPU was found. This supersedes every "ganymede
+cannot decide this gate" above.
+
+### The gate, on a card
+
+Stream probe, `--view High --strict`, seed 42, two runs back to back on
+ganymede with the RTX 3070 Ti actually rendering:
+
+| | holes | frames > 33 ms | worst | built/s | frontier p10 |
+| --- | --- | --- | --- | --- | --- |
+| run 1 | **0** | 24 | 40.4 / 39.2 ms | 79.3 / 85.2 | 48 m |
+| run 2 | **0** | 20 | 35.8 / 38.5 ms | 78.1 / 80.8 | 48 m |
+
+Against the software-rendered numbers in this document - ~104 long frames,
+595-709 ms worst, 123 s load, holes 3 - **the worst frame improved about
+fifteenfold and holes went to zero.**
+
+### Hard rule 7: answerable, and provisionally not met
+
+Both runs FAIL at 20-24 frames over 33 ms, and unlike the Windows numbers the
+spread is tight. **That does not settle it**, but the gate has stopped being
+undecidable and become a measurement somebody can take: two dedicated-box runs
+suggest **the game does not hold 33 ms at High during a sprint on a 3070 Ti**,
+and the next step is an interleaved ABAB run against the pre-Stage-11 commit
+rather than another single pair.
+
+Nothing above is retroactively re-marked. The old numbers stay as measured;
+they simply stop being evidence about the game.
+
+### The reproducibility is the finding
+
+| box | runs of identical code | chunks/s | spread |
+| --- | --- | --- | --- |
+| **ganymede**, dedicated headless | 2 | 78.1 - 85.2 | **~9%** |
+| Windows desktop, RTX 5080 | 3 | 93.3 - 150.7 | **~60%** |
+
+The faster machine is the *less* trustworthy instrument, and the reason is not
+the card: that box has a desktop, a compositor and another game competing for
+it. ganymede has an X server that exists only to satisfy a windowing call.
+
+**This is the direct answer to the `TODO(marcel)` left on `stream_probe.gd`.**
+That note says the probe cannot compare two commits, and it was right about the
+evidence available at the time - a threshold count taken once per commit on a
+contended desktop, sequentially, is a coin flip. It can compare two commits: on
+a dedicated box, interleaved, reporting medians. **ganymede is where comparative
+runs belong**, and it is where the pair probe belongs too, for the same reason
+and with the added one that a second engine no longer has to share a CPU with a
+rasteriser.
+
+### And Stage 10 ran for a real second player
+
+Not a probe: a Mac joined a Windows host over a **Tailscale share, with no port
+forwarding**, and the host logged the whole handshake - peer connected, world
+state sent, character spawned, zero errors. Stage 10's host authority has now
+carried a real second player on a second machine over a real network.

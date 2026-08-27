@@ -1,6 +1,11 @@
 class_name StreamProbe
 
-## TODO(marcel): THIS PROBE CANNOT CURRENTLY COMPARE TWO COMMITS.
+## TODO(marcel): THIS PROBE CAN COMPARE TWO COMMITS - ON A DEDICATED BOX,
+## INTERLEAVED, REPORTING MEDIANS. Everything below was written when the only
+## comparative data came from a contended desktop, and it concluded the probe
+## could not compare commits at all. That was too pessimistic; see the
+## amendment at the end of this note. The diagnosis of WHY those runs were
+## useless is unchanged and is still the useful part.
 ##
 ## It is a good gate - "did this build ever drop a frame or leave a hole" - and
 ## it is not a measuring instrument, which is what world feel v1 kept trying to
@@ -50,6 +55,29 @@ class_name StreamProbe
 ## Until then: trust `holes`, which is a count of a discrete event and was
 ## stable at 0 across all ten runs, and treat the frame numbers as a smoke
 ## alarm rather than as a measurement.
+##
+## --- AMENDMENT, 2026-08-27: RUN THEM ON GANYMEDE ---------------------------
+##
+## The ten runs above were all taken on a Windows DESKTOP, which has a
+## compositor, a browser and another game competing for the card. Two runs of
+## identical code on ganymede - headless, an X server that exists only to
+## satisfy a windowing call, nothing else on the machine - vary by about NINE
+## percent on chunks/s (78.1 - 85.2) against about SIXTY percent on the desktop
+## (93.3 - 150.7).
+##
+## The faster machine is the less trustworthy instrument, and it is not the
+## card's fault. So: comparative runs belong HERE, not on the fast box. The
+## method in the list above is unchanged - interleave ABAB, five runs each,
+## median chunks/s with its spread, print the run order - it simply has
+## somewhere to run now.
+##
+## (Ganymede was itself useless for this until 2026-08-27, for a reason worth
+## knowing: it shipped with the COMPUTE-ONLY nvidia driver, so Vulkan found no
+## ICD and Mesa fell back to llvmpipe. Every world feel v1 frame time was drawn
+## on the CPU by a rasteriser competing with the chunk workers for cores. One
+## package - libnvidia-gl-595 - and the worst frame went from ~700 ms to
+## ~38 ms. If a frame number here ever looks impossible again, check
+## `vulkaninfo --summary` before believing it.)
 
 extends Node
 
