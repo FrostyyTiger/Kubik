@@ -1383,3 +1383,179 @@ It needs real work, and the write-up names which:
 | if it is a constant, turn it and photograph it | **it is not a constant** - photographed at three contrast values and two density settings, all on disk |
 | this epic does not become about grass | **held** - no flora file is changed, nothing outside the lane is touched |
 | heightmap hash / spawn / trees | **unchanged - nothing was shipped** |
+
+---
+
+## Stage 9 - Docs, night 2
+
+`STATUS.md` points here. What follows is the summary Marcel works from.
+
+### Hard rule 6, measured the way the rule asks
+
+The rule: *"the stream probe's long-frame count and chunks/s at the end of
+night 2 must be no worse than the `e7c5d9d` baseline, measured the way Stage 7's
+gate is measured."* So: **night 2's HEAD interleaved against Stage 0's own
+commit** (`ccce281`, whose streaming code is byte-identical to `e7c5d9d`'s),
+three runs each, ABAB, run order and wall clock recorded. Not against night 1's
+remembered table - that table was taken on a different evening, and this
+document has already caught the box drifting 17% between sessions.
+
+| order | started (UTC) | built/s out | built/s back | 48 m settle out | > 33 ms | holes |
+| --- | --- | --- | --- | --- | --- | --- |
+| A1 - Stage 0 | 23:19 | 80.2 | 87.7 | 10,210 | 0 | 0 |
+| B1 - night 2 | 23:23 | 85.2 | 94.7 | 9,652 | 0 | 0 |
+| A2 - Stage 0 | 23:26 | 75.8 | 83.7 | 10,529 | 1 | 0 |
+| B2 - night 2 | 23:29 | 75.6 | 81.0 | 10,994 | 0 | 0 |
+| A3 - Stage 0 | 23:32 | 77.8 | 82.8 | 10,386 | 0 | 0 |
+| B3 - night 2 | 23:35 | 76.2 | 84.2 | 10,913 | 1 | 0 |
+
+| | Stage 0 (A) | **night 2 (B)** | |
+| --- | --- | --- | --- |
+| built/s, out | 77.8 (75.8-80.2) | 76.2 (75.6-85.2) | -2.1%, spreads overlap |
+| built/s, back | 83.7 (82.8-87.7) | 84.2 (81.0-94.7) | +0.6%, spreads overlap |
+| frames over 33 ms | 0 (0-1) | 0 (0-1) | identical |
+| 48 m settle, out | 10,386 (10,210-10,529) | 10,913 (9,652-10,994) | +5%, spreads overlap |
+| holes | **0** | **0** | hard rule 4 |
+
+**HARD RULE 6: MET. The honest reading of every row is "no measurable
+difference".** Two nights of work - a second heightmap pyramid, two pyramid
+lookups plus a log and a sqrt per far vertex, a colour pass through the same
+pyramid, and an impostor ring covering four times the ground - cost nothing the
+stream probe can see, because Stage 7's cadence change gave back what Stages 2,
+4 and 6 took.
+
+**And the 48 m settle that night 1 flagged is answered.** Night 1 saw 10,933 ms
+against a remembered range of 9,671-10,623 and correctly refused to conclude
+from one run. Interleaved: 10,386 against 10,913, spreads overlapping, on a box
+that measured the *same Stage 0 commit* at 10,210 and 10,529 in the same
+half-hour. There was nothing there.
+
+### The probe table, one column per stage
+
+All ganymede, all deterministic, all asserted identical over two runs in the
+same session. Nothing in night 2 touches a far-mesh vertex, so the last three
+columns are the same numbers:
+
+| | Stage 0 | Stage 2 | Stage 3 | Stage 4 | Stage 6 | **night 2 HEAD** |
+| --- | --- | --- | --- | --- | --- | --- |
+| FIZZ rms, all | 0.373 | 0.395 | 0.607 | 0.607 | 0.607 | **0.607** |
+| FIZZ max, all | 33.322 | 22.523 | 21.570 | 21.570 | 21.570 | **21.570** |
+| ROUGHNESS, all | 4.5894 | 2.4784 | 2.5648 | 2.5648 | 2.5648 | **2.5648** |
+| PEAK LOSS mean | +60.27 | +114.76 | +55.28 | +55.28 | +55.28 | **+55.28** |
+| PEAK LOSS worst | +128.01 | +173.89 | +81.14 | +81.14 | +81.14 | **+81.14** |
+| VALLEY GAIN mean | -1.09 | -0.34 | +0.53 | +0.53 | +0.53 | **+0.53** |
+| far mesh vertices | 95,088 | 95,088 | 95,088 | 95,088 | 95,088 | **95,088** |
+
+Far mesh build time is deliberately NOT in that row any more. It is a
+wall-clock number, and this night measured the same commit at 1,449 (night 1),
+1,688, 1,696, 1,709 and 1,658 ms. **Interleaved, Stage 6 against Stage 5:
+1,712 ms (1,705-1,715) against 1,696 (1,688-1,709) - no measurable
+difference.** That is the only form of it worth writing down.
+
+### Night 2 against its own headline
+
+**The far forest stopped being a decal and started being scenery.** It was
+drawn with the CHARACTER material - the treatment whose entire job is to stop a
+thing fogging into what is behind it - and it now fogs like the terrain and
+mixes half way towards the hillside it stands on by the time it reaches the
+fog. **It also stopped ending.** The ring runs to the fog at every preset
+instead of half way, carries 34% more trees over four times the ground, and
+shrinks away at its outer edge instead of stopping at a circle.
+
+**And it did that while streaming got faster, not slower.** Against Stage 6,
+interleaved: chunks/s +7.3% out and +11.2% back, the 48 m settle -7.4%, all
+three with non-overlapping spreads. Against Stage 0, interleaved: no measurable
+difference on anything.
+
+**The meadow is still gravel, and night 2 says why rather than papering over
+it.** It is not a colour constant - the arithmetic is in Stage 8 and it is a
+lighting-band gap, not a colour gap. It needs a decoration LOD or a different
+tuft model, which is the bail-out the plan wrote for exactly this.
+
+### Every night-2 value, what it is now, and why
+
+| knob | plan's value | shipped | why |
+| --- | --- | --- | --- |
+| `far_tree` at High | `fog_end` = 800 m | **800 m** | as asked. Also 400 low, 500 medium, 1000 ultra |
+| `far_tree_tint` | 0.5 | **0.5** | unchanged. 0.0 and 1.0 photographed; at 1.0 the far cones take the treeline band's brown and stop reading as trees |
+| the LOD ramp | 3 bands: all / 1-in-4 / 1-in-16 | **4 bands**, + 1-in-64 at 8x past 600 m | three bands measured 1.52x the Stage 6 ring against a 1.25x gate, and took 9% off chunks/s on the return leg. Four bands measure 1.17x |
+| `REBUILD_STEP_M` | 16 m (existing) | **24 m** | the budget is work per METRE, and the radius doubled while the cadence did not. Costs a longer overlap at the handover, never a gap |
+| `OUTER_FADE_M` | `FADE_M` = 12 m | **48 m** | 12 m of radius at 800 m is inside a single fog band, so the fade would not happen at all |
+| `LOD_COARSE_M` | 400 m | **400 m** | the plan's number, and where the ring used to end |
+| `LOD_COARSEST_M` | new | **600 m** | where the fog is already 87% of the frame |
+| meadow tuft contrast | "turn it and photograph it" | **not changed** | it is not a constant. Stage 8 has the ramp arithmetic and five photographs |
+| `flora_draw_fraction` | - | **1.0, unchanged** | 0.55 visibly works and is the per-machine quality dial, not a look constant. On F4 |
+
+`far_tree_tint` is LOCAL and unhashed, on F4 as `distance: far tree tint`, like
+every other knob in this epic (hard rules 2 and 12).
+
+### For Marcel to rule on, night 2
+
+1. **`far_tree_tint`, three ways.** `build/tour/dist-6-tint0` (0.0),
+   `build/tour/dist-6` (0.5, shipped), `build/tour/dist-6-tint10` (1.0) -
+   `6-postcard`, `14-postcard-dusk` and `16-spawn-postcard` at each. Shipped at
+   0.5. 0.0 is the material fix alone and the cones are still noticeably green
+   at distance; 1.0 goes too far and the wooded ridge becomes a brown one.
+2. **The ring reaching the fog:** `build/tour/dist-7` against
+   `build/tour/dist-6`, full 17-shot tours. **`5-lake` is the shot** - the far
+   shore and the mid-distance ridges go from bare to wooded. `16-spawn-postcard`
+   barely moves, because everything it can see was already inside 400 m.
+3. **The meadow, if you want the postcard tonight:** F4, `flora drawn`, 1.0 ->
+   0.55. `build/tour/dist-8-draw55`. It is the quality dial and it is not
+   shipped as a default; the picture says what it buys.
+
+### What night 2 did not do
+
+- **The meadow is still gravel.** Stage 8 is a documented bail-out with the
+  arithmetic, five photographs and three named fixes, none of which belongs in
+  a distance epic.
+- **The plan's 1.25x ring gate was not met by the plan's own band table**, and
+  is met by the four-band table that replaced it. Both numbers are in Stage 7.
+- **`world.gd` was not touched**, which is what stopped Stage 8's second
+  candidate: a flora density that falls continuously with range lives in
+  `World._flora_fraction_for()` and that file is another lane's.
+- **The 400 m far-mesh ring boundary is still the loudest thing the far probe
+  sees**, exactly as night 1 left it. Night 2 changed no far-mesh vertex. The
+  fix is a geomorph and it is bigger than a knob.
+
+### Files night 2 touched
+
+Owned outright, per the plan's file list:
+
+```
+scripts/world/far_field_job.gd        scripts/world/flora/far_trees.gd
+scripts/world/flora/far_trees_job.gd  scripts/world/flora/far_tree_meshes.gd
+scripts/world/worldgen_config.gd
+```
+
+Shared, append-only:
+
+- **`scripts/world/look.gd`** - ONE appended block at the end of the file: a
+  `static var` and `far_tree_material()`. **`figure_material()` is not
+  touched**, and nothing above line 690 moves. This is the collision point the
+  plan named and it is clean.
+- **`scripts/ui/debug_hud.gd`** - one row appended to `LOCAL_TUNING_ROWS`.
+
+`scripts/game/game.gd` was not touched at all in night 2, and neither was
+`scripts/character/`.
+
+**Nothing outside the list was changed.** `scripts/world/flora/flora_models.gd`
+was edited during Stage 8's investigation and every edit was reverted; the tree
+is clean and the palette is byte-identical to `364c1b9`'s.
+
+### Gates, night 2
+
+| gate | result |
+| --- | --- |
+| heightmap hash | **`76cccdb6`** |
+| spawn | **(-44, -124)** |
+| trees | **28,383** |
+| config hash | `3d45b8fc` |
+| self-tests | green at the end of every stage |
+| far probe determinism | **PASS**, tables IDENTICAL over two runs |
+| far probe unchanged from night 1 | **MET, bit-identical** |
+| stream probe holes | **0**, every run of every ABAB - twelve runs |
+| hard rule 6 - long frames and chunks/s no worse than Stage 0 | **MET**, ABAB, no measurable difference |
+| Stage 7's 1.25x ring gate | **MET at 1.17x** |
+| `figure_material()` untouched | **yes** |
+| `scripts/character/` untouched | **yes** |
