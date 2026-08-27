@@ -25,13 +25,54 @@ signal rebuilt(count: int, elapsed_ms: int)
 
 ## How far the centre must move before the ring is rebuilt, in metres.
 ##
-## The plan's number. It is twice the chunk size, so the ring is rebuilt half
-## as often as the voxel region is refreshed - which is affordable because an
-## impostor 200 m away moving 16 m late is a sub-pixel error.
-const REBUILD_STEP_M := 16.0
+## THREE chunks since distance v1 Stage 7, and it was two before that.
+##
+## The plan's original number was 16 m - twice the chunk size, so the ring was
+## rebuilt half as often as the voxel region is refreshed, which was affordable
+## because an impostor 200 m away moving 16 m late is a sub-pixel error.
+##
+## Stage 7 doubles the ring's radius, and a rebuild that costs half again as
+## much at the same cadence is half again as much of a worker pool that runs
+## ONE GDScript task at a time - measured, on the stream probe, as 9% off
+## chunks/s on the return leg. Work per metre walked is what that budget is
+## really made of, so the cadence moves with the radius: 24 m puts the ring
+## back at Stage 6's cost per metre and the extra LOD band below puts it under.
+##
+## WHAT A LONGER STEP COSTS is a longer OVERLAP at the handover, never a gap.
+## The far mesh's hole and the ring's inner edge are both cut at the frontier
+## captured when the job was submitted, so a stale ring draws impostors where
+## real trees have since landed - and world feel v1 Stage 3 settled that trade
+## explicitly: an impostor and a real tree overlapping for a second is
+## invisible, because it is the same species at the same place at the same
+## height, and a gap is not. This makes an invisible window 50% longer.
+const REBUILD_STEP_M := 24.0
 
 ## How far in from the inner edge an impostor grows to full size, in metres.
 const FADE_M := 12.0
+
+## And how far in from the OUTER edge it shrinks away again, in metres.
+##
+## FOUR TIMES THE INNER FADE, and the asymmetry is the point rather than an
+## oversight. The inner fade covers a handover 96 m from the player, where 12 m
+## of walking is a visible distance and a longer fade would leave half-size
+## trees standing next to full-size ones. The outer edge is 800 m away, where
+## 12 m of radius subtends almost nothing and the whole fade would happen
+## inside a single fog band - which is to say it would not happen at all. 48 m
+## is still less than one fog band's width out there, and it is enough that the
+## last trees visibly shrink rather than stop.
+const OUTER_FADE_M := 48.0
+
+## Where the second LOD step begins, in metres. Past it one candidate cell in
+## sixteen is considered and each impostor is drawn four times as wide. The
+## plan's number, and it is also where the ring used to END.
+const LOD_COARSE_M := 400.0
+
+## And the third, which the plan did not ask for and the measurement did. Past
+## it one cell in sixty-four, drawn eight times as wide. See the band table in
+## FarTreesJob: three bands cost 1.52x the Stage 6 ring against a gate of
+## 1.25x, and took 9% off the stream probe's chunks/s on the way back - which
+## is hard rule 6. 600 m is where the fog is already 87% of the frame.
+const LOD_COARSEST_M := 600.0
 
 var _job: FarTreesJob = null
 var _task := -1
@@ -121,10 +162,16 @@ func _start_if_idle() -> void:
 	job.outer_blocks = minf(_config.far_tree_m, _config.fog_end_m) \
 		/ _config.block_size
 	job.fade_blocks = FADE_M / _config.block_size
+	job.outer_fade_blocks = OUTER_FADE_M / _config.block_size
 	# The exact band reaches 1.6 times the voxel radius, so the handover to
 	# real trees and a good stretch beyond it are drawn candidate for
 	# candidate.
 	job.lod_blocks = job.inner_blocks * 1.6
+	# And the coarse band starts where the ring used to stop. Clamped above the
+	# first step so a preset with a small fog can never put the second step
+	# INSIDE the first, which would silently drop the 1-in-4 band entirely.
+	job.lod2_blocks = maxf(LOD_COARSE_M / _config.block_size, job.lod_blocks)
+	job.lod3_blocks = maxf(LOD_COARSEST_M / _config.block_size, job.lod2_blocks)
 	_job = job
 	_task = WorkerThreadPool.add_task(job.run, false, "kubik far trees")
 

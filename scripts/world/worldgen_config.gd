@@ -148,10 +148,16 @@ const TREE_RESERVE_MARGIN := 3.0
 ## nobody, and a camera far plane short of the fog - which is what shipped
 ## until Stage 0 - is a wall with nothing behind it.
 const VIEW_PRESETS := [
-	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 200.0},
-	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 300.0},
-	{"name": "high", "radius": 12, "fog_end": 800.0, "far_tree": 400.0},
-	{"name": "ultra", "radius": 16, "fog_end": 1000.0, "far_tree": 500.0},
+	# FAR_TREE IS THE FOG, AT EVERY PRESET - distance v1 Stage 7. It used to be
+	# half of it, so the far half of every wooded ridge was bald and the far
+	# field painted it forest-green: a mown slope. World feel v1 Stage 7 raised
+	# High from 300 to 400 for this reason and did not close the gap; this
+	# closes it. What pays for it is the LOD ramp in FarTreesJob, which keeps
+	# the candidate count growing with the radius rather than with its square.
+	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 400.0},
+	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 500.0},
+	{"name": "high", "radius": 12, "fog_end": 800.0, "far_tree": 800.0},
+	{"name": "ultra", "radius": 16, "fog_end": 1000.0, "far_tree": 1000.0},
 ]
 
 ## view_distance value meaning "leave the numbers below exactly as they are".
