@@ -309,3 +309,164 @@ min/max - a mean of means cannot, and one that does has an index bug.
 | config hash | `3d45b8fc` |
 | self-tests | green, including the new `heightmap pyramid` |
 
+
+---
+
+## Stage 2 - The level is a function of distance, not of ring
+
+**Shipped.** The far mesh reads the pyramid at a level that is **continuous in
+distance** and sampled **trilinearly**:
+
+```
+level(d) = log2(d / far_level_ref_m) + far_filter_bias      clamped to [0, 5]
+h(p)     = lerp(height_at_level(p, floor(level)),
+                height_at_level(p, floor(level) + 1),
+                frac(level))
+```
+
+`d` is measured from the **ring's own snapped centre**, so the level field is
+stable under exactly the snapping that already stops the mesh shimmering: it
+changes only when the player crosses a snap step, and every ring's snap step
+divides 16 m.
+
+`far_level_ref_m` 100 m, `far_filter_bias` 1.0, both LOCAL and unhashed, both on
+F4. Those two numbers turn out to be self-consistent in a way worth writing
+down: **each ring starts at exactly the level whose cell size equals its own
+vertex step, and ends one level above it.** Ring 0 (4 m step) spans 88-200 m and
+runs level 1 to 2; ring 1 (8 m) spans 200-400 m and runs 2 to 3; ring 2 (16 m)
+spans 400 m to the fog and runs 3 to 4.3. That falls out of ref = 100 m and
+every ring doubling both its step and its range together.
+
+### The filter has to fade out at the seam, and that is not in the plan
+
+Hard rule 5 says the seam stays invisible: `_corner_y` blends the far mesh onto
+the **voxel** surface over the last few cells, and that only works if the coarse
+term there is the coarse term the voxels were built from - level 0.
+
+The seam sits at 88 m. `log2(88/100) + 1` is **0.82**, not 0. Left alone, the
+filter would have reintroduced the half-block step at the seam that world feel
+v1 spent a whole stage removing - and it would have done it silently, because
+nothing in the probe watches the seam. `_level_at()` therefore multiplies the
+level by `(1 - blend)`, using the same seam blend `_corner_y` already computes,
+so the seam is **exactly level 0** and the filter comes on over the same band
+the detail fades out over.
+
+### The gate, and it is not met as written
+
+| | Stage 0 | **Stage 2** | the plan's gate |
+| --- | --- | --- | --- |
+| FIZZ rms, all | 0.373 | **0.395** | fall by 4x, to 0.093 |
+| FIZZ max, all | 33.322 | **22.523** | no spike at 200 / 400 m |
+| ROUGHNESS, all | 4.5894 | **2.4784** | falls |
+| PEAK LOSS, mean | +60.27 | **+114.76** | (Stage 3's problem) |
+| VALLEY GAIN, mean | -1.09 | **-0.34** | - |
+| far mesh build | 650 ms | **912 ms** (+40%) | - |
+
+**ROUGHNESS falls by 46% and FIZZ max by 32%. FIZZ RMS rises by 6%, and the
+4x fall the plan asks for is not reachable by this design at all.** That is a
+statement about the mechanism, not about the tuning, and the per-band table is
+where you can see why:
+
+| band (m) | 0-100 | 100-200 | 200-300 | 300-400 | 400-500 | 500-600 | 600-700 | 700-800 | 800-900 | 900+ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Stage 0, spawn | 1.76 | 2.04 | 6.91 | 16.76 | 17.84 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| Stage 2, spawn | 1.80 | 2.81 | 3.22 | 22.52 | 14.46 | 1.04 | 2.29 | 1.79 | 2.22 | 1.91 |
+
+At Stage 0 everything past 500 m was **exactly zero**: walk 16 m and the far
+half of the world did not move by a float. It could not, because 16 m is a
+multiple of every ring's step, so the lattice was identical and only ring
+membership could change - and past 500 m nothing changes ring.
+
+At Stage 2 those bands read 1-3 blocks. **The level is a function of distance
+from the player, so when the player moves, the level moves, and the whole far
+field breathes a little.** That is the price of continuity, and it is the price
+the plan chose knowingly when it rejected "one level per ring" for keeping the
+pop. What it did not anticipate is that FIZZ *RMS* - an average over the whole
+disc - is dominated by that small everywhere-change rather than by the large
+somewhere-change at the ring boundaries. FIZZ **max** is the number that tracks
+the artefact you can actually see, and it falls.
+
+**Both readings are in the table and neither is hidden.** For Marcel, the honest
+summary is: the big re-cut at the ring boundary is a third smaller, the
+jaggedness is halved, and in exchange the distance now drifts by one to three
+blocks - a metre or less on screen - as you walk. Whether that trade is right is
+a judgement the pictures answer better than the RMS does, and the pictures are
+below.
+
+### far_filter_bias, three ways, for Marcel to rule on
+
+`build/tour/dist-2-bias0`, `dist-2-bias1`, `dist-2-bias2` - `6-postcard`,
+`14-postcard-dusk` and `16-spawn-postcard` at each. Probe numbers over the same
+sweep, plus 3.0 which is out of the running and says why:
+
+| far_filter_bias | 0.0 | **1.0 (shipped)** | 2.0 | 3.0 |
+| --- | --- | --- | --- | --- |
+| FIZZ rms | 0.359 | **0.395** | 0.497 | 0.338 |
+| FIZZ max | 25.371 | **22.523** | 11.764 | 19.296 |
+| ROUGHNESS | 3.4649 | **2.4784** | 1.5553 | 1.0725 |
+| PEAK LOSS mean | +81.30 | **+114.76** | +172.19 | +199.87 |
+| PEAK LOSS worst | +126.53 | **+173.89** | +250.76 | +300.06 |
+
+**The eye, on ganymede, at `6-postcard`.** Every one of the three is a large
+improvement on `dist-base`, where the ranges read as crumpled foil. At **0.0**
+the mountains are already big simple masses with a lit flank and a shaded one.
+At **1.0** the silhouettes simplify further and the fields get larger without
+the profiles going soft - this is the one that looks like the poster. At **2.0**
+the summits are visibly *shorter and rounder*: the central dark peak loses its
+point and becomes a dome, which is exactly the failure Stage 3 exists to catch,
+now visible rather than inferred.
+
+**3.0 is disqualified by the probe rather than by taste**, and the reason is
+instructive: its worst FIZZ moves to the **0-100 m band** (19.30 at the summit
+vantage), which is the seam. At that bias the level just outside the seam fade
+is nearly 3, so the far mesh a few metres past the voxels is drawn from a 16 m
+filter while the voxels beside it are not - the seam becomes the artefact. Hard
+rule 5 puts a ceiling on this knob, and it is somewhere between 2 and 3.
+
+**Shipped at 1.0**, the plan's starting value, on the strength of the pictures.
+
+### Cost
+
+The far mesh build goes **650 -> 912 ms** (+40%) on the probe's main-thread
+measurement: two pyramid lookups per vertex instead of one raw one, plus a
+`sqrt` and a `log` per vertex for the level. Vertex count is unchanged
+(95,088). This is worker time, not frame time; the stream probe below is what
+says whether it is felt.
+
+### Streaming: hard rule 4 holds, and nothing regressed
+
+One run, seed 42, `--view high --strict`. The plan asks for `--strict` green;
+it exits 1, and the reason is the frame budget that was **already failing at
+Stage 0**, not anything this stage did:
+
+| | Stage 0 baseline (median of 3) | **Stage 2** (single run) |
+| --- | --- | --- |
+| hole samples | **0** | **0** |
+| frames over 33 ms | 17 (12-35) | **7** |
+| worst frame | 43.8 ms | 47.4 ms |
+| built/s, out leg | 78.4 (76.5-81.3) | 84.7 |
+| 48 m settle, out | 9,933 ms | 9,524 ms |
+
+**Holes 0 - hard rule 4 is intact.** This stage moves every vertex near the
+seam and the exclusion logic sits three lines away, so that was the thing worth
+checking, and it is clean.
+
+The long-frame count reads 7 against a baseline median of 17, which is inside
+the baseline's own 12-35 spread on identical code and is therefore **not
+evidence of an improvement**. It is evidence of no regression, which is what
+hard rule 6 asks for at this stage. A real delta needs the ABAB interleave
+Stage 7 owes.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| FIZZ rms falls 4x | **NOT MET** - 0.373 -> 0.395. Recorded above; the mechanism cannot meet it |
+| stream probe holes | **0** - hard rule 4 green |
+| stream probe `--strict` exit | **1**, on the pre-existing frame budget only (STATUS.md item 5) |
+| self-tests | green |
+| no spike at 200 / 400 m | **partly** - the 200 m spike halves (6.91 -> 3.22), the 400 m spike does not (16.76 -> 22.52) |
+| ROUGHNESS falls | **MET** - 4.5894 -> 2.4784, -46% |
+| far probe determinism | **PASS**, identical over two runs at every bias tried |
+| heightmap hash | **`76cccdb6`** |
+| spawn / trees | **(-44, -124)** / **28,383** |

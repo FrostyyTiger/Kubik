@@ -138,6 +138,16 @@ var elapsed_ms := 0
 ## six.
 var _seam_radius := 0.0
 
+## The ring currently being built, snapped to its own grid, in blocks. The mip
+## level is a function of the distance from HERE - the same snapped centre the
+## ring's vertices are laid out from, so the level of a given world position is
+## stable under exactly the snapping that already stops the mesh shimmering.
+var _ring_cx := 0
+var _ring_cz := 0
+
+## 1 / ln(2). GDScript has log() and no log2().
+const INV_LN2 := 1.4426950408889634
+
 ## HOW FAR THE PER-SECTOR HOLE SITS INSIDE THE FRONTIER, in far-field cells.
 ##
 ## The plan says two, which is what the single-radius hole always used. Two is
@@ -172,6 +182,11 @@ var _band_treeline := 0
 
 func run() -> void:
 	var _t0 := Time.get_ticks_msec()
+	# THE PYRAMID IS BUILT ON FIRST USE, and this is the first use. Idempotent
+	# and behind a mutex, so the cost lands once, on this worker, inside this
+	# job's elapsed_ms - which is where it is visible rather than hidden in a
+	# startup total.
+	heightmap.build_pyramid()
 	var bs: float = config.block_size
 	var base_step: int = config.far_step
 	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
@@ -263,6 +278,8 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# skirts only have to cover the gaps between.
 	var cx := int(floor(float(center.x) / float(step))) * step
 	var cz := int(floor(float(center.y) / float(step))) * step
+	_ring_cx = cx
+	_ring_cz = cz
 
 	var span := int(ceil(outer / float(step))) + 1
 	var skirt_drop := float(step) * SKIRT_DEPTH_CELLS * bs
@@ -284,10 +301,10 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
 
-			var h00 := heightmap.height_at(float(bx0), float(bz0))
-			var h10 := heightmap.height_at(float(bx1), float(bz0))
-			var h11 := heightmap.height_at(float(bx1), float(bz1))
-			var h01 := heightmap.height_at(float(bx0), float(bz1))
+			var h00 := _filtered(bx0, bz0, band)
+			var h10 := _filtered(bx1, bz0, band)
+			var h11 := _filtered(bx1, bz1, band)
+			var h01 := _filtered(bx0, bz1, band)
 
 			# Corner order is the +Y face order from ChunkMesher, which is
 			# clockwise seen from above - the same winding the voxels use, so
@@ -345,6 +362,51 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				_push_skirt(e[0], e[1], skirt_drop, shaded,
 					verts, normals, colors, indices)
+
+
+## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
+##
+## Continuous in distance and NOT a function of which ring the vertex belongs
+## to. The naive fix - ring 0 reads level 1, ring 1 level 2, ring 2 level 3 -
+## removes the aliasing and keeps the pop, because the ring boundary is still a
+## discrete step at a fixed distance from the player and a mountain still
+## changes shape when it crosses one. A continuous level gives adjacent
+## vertices adjacent levels, so the surface stays continuous and the boundary
+## stops being an event.
+##
+## AND IT FADES TO ZERO ACROSS THE SEAM BAND. Hard rule 5: `_corner_y` blends
+## the far mesh onto the voxel surface over the last few cells, and that only
+## works if the coarse term there is the same coarse term the voxels were built
+## from - level 0. The seam sits at 88 m, which log2(88/100) + 1 puts at level
+## 0.8, so without this the filter would reintroduce the half-block step that
+## world feel v1 spent a stage removing. Multiplying by (1 - blend) makes the
+## seam exactly level 0 and lets the filter come on over the same band the
+## detail fades out over.
+func _level_at(bx: int, bz: int, band: float) -> float:
+	var bs: float = config.block_size
+	var dx := float(bx - _ring_cx)
+	var dz := float(bz - _ring_cz)
+	var d_m := sqrt(dx * dx + dz * dz) * bs
+	if d_m <= 0.001:
+		return 0.0
+	var level := log(d_m / maxf(config.far_level_ref_m, 1.0)) * INV_LN2 \
+		+ config.far_filter_bias
+	level = clampf(level, 0.0, float(Heightmap.MAX_LEVEL))
+	if band > 0.0 and level > 0.0:
+		var sx := float(bx - center.x)
+		var sz := float(bz - center.y)
+		var blend := clampf(
+			1.0 - (sqrt(sx * sx + sz * sz) - _seam_radius) / band, 0.0, 1.0)
+		level *= 1.0 - blend
+	return level
+
+
+## The coarse height at one vertex, read off the pyramid at that vertex's level.
+func _filtered(bx: int, bz: int, band: float) -> float:
+	var level := _level_at(bx, bz, band)
+	if level <= 0.0:
+		return heightmap.height_at(float(bx), float(bz))
+	return heightmap.height_filtered(float(bx), float(bz), level)
 
 
 ## Altitude bands - look v1's far field as a stacked backdrop.

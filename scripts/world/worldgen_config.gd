@@ -884,6 +884,38 @@ const FOG_START_RATIO := 0.4
 ## quad. Blocks of colour on the far peaks rather than speckle.
 @export var far_zone_cell_m := 24.0
 
+## THE MIP LEVEL THE FAR MESH READS, as a function of distance. Distance v1
+## Stage 2, and the two knobs that decide how calm the far country is.
+##
+## The far mesh used to sample the 2 m heightmap every 8 or 16 m and keep
+## whatever landed on the lattice - a texture read without mipmaps. Heightmap
+## now carries a filtered pyramid, and the level is chosen CONTINUOUSLY from
+## the distance to the ring's snapped centre:
+##
+##     level(d) = log2(d / far_level_ref_m) + far_filter_bias
+##
+## clamped to [0, Heightmap.MAX_LEVEL] and sampled trilinearly. Continuous
+## rather than one level per LOD ring, because a level per ring fixes the
+## aliasing and KEEPS THE POP: the ring boundary is still a discrete step at a
+## fixed distance from the player, so a mountain still re-cuts itself when it
+## crosses one.
+##
+## far_level_ref_m is the distance at which level 0 is exactly right - about
+## where a 2 m feature is a pixel or two. 100 m, so 200 m reads level 1, 400 m
+## level 2, 800 m level 3.
+##
+## far_filter_bias is the margin on top, and it is the main LOOK knob in this
+## epic. Nyquist says a 16 m sample spacing needs content band-limited to 32 m,
+## so a ring is critically sampled by the level matching its own step and still
+## aliases a little; one level coarser is the cheapest honest margin. 0 is "no
+## margin", 2 is "twice as smooth as the theory asks".
+##
+## LOOK, NOT SHAPE, so both are LOCAL and unhashed - hard rule 2. Nothing about
+## what the world IS reads them; they choose which mip the backdrop is drawn
+## from and nothing else.
+@export var far_level_ref_m := 100.0
+@export var far_filter_bias := 1.0
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -1110,6 +1142,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
+	"far_level_ref_m", "far_filter_bias",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

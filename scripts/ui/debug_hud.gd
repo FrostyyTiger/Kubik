@@ -94,6 +94,10 @@ const LOCAL_TUNING_ROWS := [
 	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
 	["wind_strength", "wind", 0.0, 3.0, 0.1],
 	["night_life", "night life", 0.0, 2.0, 0.1],
+	# DISTANCE V1, appended at the end of the table. Hard rule 12: every
+	# starting value in the plan is reachable from F4.
+	["far_level_ref_m", "distance: level ref (m)", 25.0, 400.0, 5.0],
+	["far_filter_bias", "distance: filter bias", 0.0, 3.0, 0.1],
 ]
 
 var config: WorldgenConfig = null
