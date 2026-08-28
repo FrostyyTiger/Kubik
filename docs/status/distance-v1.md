@@ -1559,3 +1559,84 @@ is clean and the palette is byte-identical to `364c1b9`'s.
 | Stage 7's 1.25x ring gate | **MET at 1.17x** |
 | `figure_material()` untouched | **yes** |
 | `scripts/character/` untouched | **yes** |
+
+---
+
+## Carried forward - what distance v1 leaves for the next plan
+
+Everything below is *known and measured*, not suspected. Nothing here blocks
+the merge; all of it is work a later plan should read before it re-derives it.
+
+### A look pass owns these two
+
+1. **The meadow tufts read as gravel.** The full argument is Stage 8 and
+   `STATUS.md` item 8. Short version: the meadow shows its TOP face and is
+   drawn LIT at `#809137`; a one-voxel grass blade shows VERTICAL faces drawn
+   SHADED at `#272B2D`. It is a lighting-band gap, not a colour gap, and no
+   albedo constant crosses it - tripling the blade only reaches `#464C4F`.
+   Three fixes, in the order they are worth trying:
+   - **a decoration LOD** - past some distance a tuft becomes one flat,
+     upward-facing (and therefore LIT) patch instead of twenty vertical faces.
+     Fixes the cause and takes triangles off the near field at the same time.
+   - **a tuft model with more upward-facing surface**, so a blade is not a
+     column whose visible area is almost entirely vertical.
+   - **`flora_draw_fraction`** as a stopgap: 0.55 visibly works
+     (`build/tour/dist-8-draw55`) and is deliberately not shipped, because it
+     is the per-machine quality dial and it thins the grass at your feet as
+     hard as the grass at 100 m.
+2. **`shade_desat` is the mechanism under (1).** 0.55 at noon is what makes
+   every shaded surface in the game a variant of one grey-violet. That is the
+   poster's whole idea and this epic did not argue with it - but a look pass
+   that ever revisits it should know the meadow speckle is downstream.
+
+### A distance v2 owns these three
+
+3. **The 400 m far-mesh ring boundary is still the loudest thing the far probe
+   sees** - FIZZ max 21.6 there against 1-4 blocks everywhere else. A third
+   smaller than before the epic, and still a boundary. The mechanism to remove
+   it rather than reduce it is a **geomorph**: blend the two rings' surfaces
+   across the boundary instead of switching between them. That is a bigger
+   change than a knob and it was never in this plan.
+4. **PEAK LOSS is +55.28 blocks at 600 m.** Better than the +60.27 the game had
+   *before* this epic, which is the gate Stage 3 was actually run against - but
+   the plan's absolute 4-block line is unreachable by any filter, because ring 2
+   takes one sample every 16 m from a grid whose content runs down to 2 m. What
+   would reach it is a different LOD scheme, not a better filter.
+5. **FIZZ rms is 63% worse than pre-epic** (0.373 -> 0.607) and that is the
+   design's price, not a bug: making the mip level continuous in
+   distance-from-player is what stops a mountain re-cutting itself at a ring
+   boundary, and it necessarily makes the whole far field breathe as you walk.
+   FIZZ *max* - the artefact you can see - fell by 35%. A geomorph (3) would not
+   fix the rms and might raise it.
+
+### Method
+
+6. **`--strict` still exits 1 on about half of all runs, on exactly one long
+   frame.** The measurement is settled - twelve runs across three ABAB batches
+   give 0 or 1 long frames, every time, against the "20 and 24" that
+   `STATUS.md` item 5 used to carry. What is not settled is the **standard**:
+   whether a gate should fail on one frame over 33 ms in a three-minute sprint.
+   That is a decision, not a measurement, and it is Marcel's.
+7. **Ring rebuild time is not in the stream probe's report.** Stage 7's gate was
+   measured by grepping `[FarTrees] N impostors in N ms` out of the log and
+   taking a median. It worked, and it should be a column if ring cost is ever
+   gated again.
+
+### Lane
+
+8. **A flora density that falls continuously with range belongs in
+   `World._flora_fraction_for()`**, which is another lane's file. That is what
+   stopped Stage 8's second candidate, and it is the right place for it when
+   someone owns `world.gd`.
+9. **`debug_hud.gd` reaches into `world.get_node_or_null("FarField")`** for the
+   F3 far-mesh readout, because `world.gd` was not on this lane's list. If
+   `world.gd` ever gains a `far_field_stats()`, that is the better call site.
+
+### Taste, still on F4 and still Marcel's
+
+| knob | shipped | photographed alternatives |
+| --- | --- | --- |
+| `far_filter_bias` | 1.0 | `dist-2-bias0`, `dist-2-bias2` (3.0 disqualified by the seam) |
+| `far_peak_gain` | 0.60 | `dist-3-gain035`, `dist-3-gain080` |
+| `far_normal_m` | 96 | `dist-4-n48` |
+| `far_tree_tint` | 0.5 | `dist-6-tint0`, `dist-6-tint10` |
