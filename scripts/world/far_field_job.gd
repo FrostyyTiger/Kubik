@@ -191,11 +191,7 @@ func run() -> void:
 	var base_step: int = config.far_step
 	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
 	# forest zone in BLOCKS; _band_color works in metres.
-	if config.far_band_m > 0.0 and generator != null \
-			and generator.zone_thresholds.size() > TerrainGenerator.ZONE_FOREST:
-		var treeline_m: float = \
-			generator.zone_thresholds[TerrainGenerator.ZONE_FOREST] * bs
-		_band_treeline = int(floor(treeline_m / config.far_band_m))
+	_band_treeline = treeline_band(generator, config)
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
 
 	# Where the voxels take over. Quads well inside this are skipped - the
@@ -405,7 +401,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 func _far_zone(bx: int, bz: int, altitude: float, ring: int) -> int:
 	if ring == 0:
 		return generator.surface_zone_at(bx, bz, altitude)
-	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
+	return backdrop_zone(generator, bx, bz, altitude)
 
 
 ## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
@@ -426,6 +422,12 @@ func _far_zone(bx: int, bz: int, altitude: float, ring: int) -> int:
 ## world feel v1 spent a stage removing. Multiplying by (1 - blend) makes the
 ## seam exactly level 0 and lets the filter come on over the same band the
 ## detail fades out over.
+## THE SAME EXPRESSION AS level_at_distance() BELOW, WRITTEN OUT. It is the one
+## piece of duplication in this file and it is here for a measured reason: this
+## runs nine times per quad, twenty-odd thousand quads per build, and routing it
+## through the static cost the far mesh 1,449 -> 1,727 ms per rebuild - 19% of a
+## job that already shares a single-GDScript-task pool with chunk generation.
+## Distance v1 Stage 6. Change one, change the other.
 func _level_at(bx: int, bz: int, band: float) -> float:
 	var bs: float = config.block_size
 	var dx := float(bx - _ring_cx)
@@ -451,6 +453,8 @@ func _level_at(bx: int, bz: int, band: float) -> float:
 ## towards a parallel pyramid of maxima, which gives a summit back the height a
 ## box filter took off it without giving back the frequency that was fizzing.
 ## At 0 this is the plain filter and the second pyramid is never read.
+## The same expression as filtered_height() below, written out - see the note on
+## _level_at(). Nine calls per quad is where the far mesh's build time lives.
 func _filtered(bx: int, bz: int, band: float) -> float:
 	var level := _level_at(bx, bz, band)
 	if level <= 0.0:
@@ -480,12 +484,7 @@ func _filtered(bx: int, bz: int, band: float) -> float:
 ## the forest keeps the colour it was authored with, and clamped either side so
 ## a 400 m peak does not run away to white.
 func _band_color(color: Color, y_m: float) -> Color:
-	var step_amount: float = config.far_band_step
-	if step_amount <= 0.0 or config.far_band_m <= 0.0:
-		return color
-	var band := int(floor(y_m / config.far_band_m))
-	var k := clampf(1.0 + step_amount * float(band - _band_treeline), 0.85, 1.25)
-	return Color(color.r * k, color.g * k, color.b * k, color.a)
+	return band_color(color, y_m, config, _band_treeline)
 
 
 ## The slope of the FLANK, not of the facet: the heightmap's gradient over
@@ -625,3 +624,96 @@ func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color
 	indices.push_back(first)
 	indices.push_back(first + 2)
 	indices.push_back(first + 3)
+
+
+# --- What the backdrop looks like, for anything drawn IN FRONT of it ----------
+#
+# Distance v1 Stage 6. The impostor ring converges each tree's colour towards
+# the hillside it stands on, and "the hillside's colour" has to be the one this
+# job actually paints or the two drift apart the first time either is tuned.
+# So the four rules that decide it - the level, the filtered height, the zone
+# and the altitude band - are static functions here, and the instance methods
+# above are one-line calls into them. There is exactly one implementation of
+# each, and FarTreesJob calls the same one.
+#
+# Pure: no job state, nothing but the generator, the config and a position.
+# Safe from any worker, which is where both callers are.
+
+
+## The mip level the far mesh reads at a given distance from the ring's centre.
+##
+## The seam fade is NOT here and belongs to _level_at: it needs the job's own
+## seam radius, and out where the impostors stand there is no seam - the
+## nearest of them is at the voxel radius, which is where the seam ends.
+static func level_at_distance(config: WorldgenConfig, d_m: float) -> float:
+	if d_m <= 0.001:
+		return 0.0
+	var level := log(d_m / maxf(config.far_level_ref_m, 1.0)) * INV_LN2 \
+		+ config.far_filter_bias
+	return clampf(level, 0.0, float(Heightmap.MAX_LEVEL))
+
+
+## The height the far mesh draws at one place, read off the pyramid at `level`
+## and pulled back towards the maxima by far_peak_gain. Level 0 is the raw
+## grid, which is the surface the voxels are built from.
+static func filtered_height(heightmap: Heightmap, config: WorldgenConfig,
+		bx: float, bz: float, level: float) -> float:
+	if level <= 0.0:
+		return heightmap.height_at(bx, bz)
+	var mean := heightmap.height_filtered(bx, bz, level)
+	var gain: float = config.far_peak_gain
+	if gain <= 0.0:
+		return mean
+	return lerpf(mean, heightmap.height_max_filtered(bx, bz, level), gain)
+
+
+## The zone the far mesh paints past ring 0: altitude alone, no jitter and a
+## dither of exactly 0.5, with the slope override kept. See _far_zone above,
+## which carries the reasoning.
+static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
+		altitude: float) -> int:
+	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
+
+
+## The band the treeline falls in. Read from the generator's own thresholds
+## rather than re-derived, so the bands agree with where the forest stops.
+static func treeline_band(generator: TerrainGenerator,
+		config: WorldgenConfig) -> int:
+	if config.far_band_m <= 0.0 or generator == null \
+			or generator.zone_thresholds.size() <= TerrainGenerator.ZONE_FOREST:
+		return 0
+	var treeline_m: float = \
+		generator.zone_thresholds[TerrainGenerator.ZONE_FOREST] * config.block_size
+	return int(floor(treeline_m / config.far_band_m))
+
+
+## The altitude band applied to one colour. See _band_color above.
+static func band_color(color: Color, y_m: float, config: WorldgenConfig,
+		band_treeline: int) -> Color:
+	var step_amount: float = config.far_band_step
+	if step_amount <= 0.0 or config.far_band_m <= 0.0:
+		return color
+	var band := int(floor(y_m / config.far_band_m))
+	var k := clampf(1.0 + step_amount * float(band - band_treeline), 0.85, 1.25)
+	return Color(color.r * k, color.g * k, color.b * k, color.a)
+
+
+## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
+## conversion and before the per-vertex jitter and aspect shade.
+##
+## What an impostor converges towards. It reads the FILTERED height rather than
+## the raw one on purpose: the question this answers is "what colour is the
+## mountain the eye sees behind this tree", and the mountain the eye sees is
+## the one drawn off the pyramid. Near a summit the two differ by tens of
+## blocks - that is Stage 0's PEAK LOSS - and a tree that converged towards the
+## true ground's zone while the far mesh beside it drew a different one would
+## be a green cone on a grey slope, which is the artefact this is here to
+## remove.
+static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
+		config: WorldgenConfig, bx: int, bz: int, d_m: float,
+		band_treeline: int) -> Color:
+	var h := filtered_height(heightmap, config, float(bx), float(bz),
+		level_at_distance(config, d_m))
+	var zone := backdrop_zone(generator, bx, bz, h)
+	return band_color(Block.color_of(TerrainGenerator.ZONE_SURFACE[zone]),
+		h * config.block_size, config, band_treeline)

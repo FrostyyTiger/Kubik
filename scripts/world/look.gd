@@ -695,3 +695,54 @@ static func predict(albedo_linear: Color, lit: bool,
 			desat.b * shade_linear.b)
 	return Color(clampf(out.r, 0.0, 1.0), clampf(out.g, 0.0, 1.0),
 		clampf(out.b, 0.0, 1.0)).linear_to_srgb()
+
+
+# --- The far trees ------------------------------------------------------------
+#
+# Distance v1 Stage 6. Appended here rather than beside figure_material()
+# because a character redesign is editing that function in a parallel lane, and
+# the whole point of this stage is that the two do not collide: the behaviour
+# change lives at the CALL SITE, in FarTreeMeshes.material(), and look.gd gains
+# one function and the static var it needs.
+
+static var _far_tree: ShaderMaterial = null
+
+
+## A TREE IS SCENERY. A PERSON IS NOT. Do not change this back.
+##
+## Until distance v1 Stage 6 the impostor ring was drawn with
+## figure_material(), which is the treatment that stops a CHARACTER dissolving
+## into the hillside behind it: fog_dark_mix 1.0, so a figure fogs toward the
+## dark colour rather than toward the hillside's own. Applied to two thousand
+## cones on a mountainside it does the exact opposite of what the far field is
+## for - it forbids the forest from receding, so a wooded ridge at 500 m reads
+## as a stand of green triangles pasted onto the picture instead of as part of
+## the mountain.
+##
+## Grep found only two callers of figure_material(): voxel_model.gd, which is
+## characters, and FarTreeMeshes, which is not. So the impostor ring was the
+## one piece of SCENERY in the game drawn as a figure, and it sat precisely
+## where the eye compares it against the terrain it is supposed to belong to.
+##
+## So: the terrain's fog (fog_dark_mix 0.0) and the terrain's grain, and NO
+## CONTACT BAND. The contact band draws a dark line along the bottom half of
+## every half-metre cell of a vertical face; on a six-triangle cone at 200 m
+## that is not a line where a block meets the ground, it is horizontal stripes
+## across the whole tree.
+##
+## The grain is left at the shader's own default rather than wired to
+## apply_local_knobs(), and that is deliberate rather than an oversight: the
+## grain is faded out entirely by 45 m (see OPAQUE_SHADER) and the nearest
+## impostor in the game stands at the voxel radius, 96 m at High. It can never
+## be visible on one. Setting it to the terrain's value is a statement about
+## which family this material belongs to, not an effect.
+static func far_tree_material() -> ShaderMaterial:
+	if _far_tree != null:
+		return _far_tree
+	_mutex.lock()
+	if _far_tree == null:
+		_far_tree = _make(OPAQUE_SHADER)
+		_far_tree.set_shader_parameter("fog_dark_mix", 0.0)
+		_far_tree.set_shader_parameter("contact_band", 1.0)
+	_mutex.unlock()
+	return _far_tree

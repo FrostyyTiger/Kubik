@@ -68,6 +68,40 @@ here on this list is filled by what a playtest taught us.
    the shade ink. `docs/status/world-feel-v1.md` has every number, three bugs
    worth reading about, and three open items in `STATUS.md`.
 
+   **Distance v1 - the far country holds still, and the forest recedes** ran
+   over two nights, 2026-08-27/28, on `feat/distance-v1`, all ten stages.
+   [plans/distance-v1.md](plans/distance-v1.md). Night 1 is the ground: a
+   filtered heightmap mip pyramid, a mip level chosen continuously from
+   distance rather than per LOD ring, a max-pyramid dilation that gives the
+   summits their height back, and the end of the far field's zone dither.
+   Night 2 is what grows on it: the impostor forest stopped being drawn with
+   the CHARACTER material (a one-line bug that forbade the far forest from
+   receding), each impostor now converges towards the hillside it stands on,
+   and the ring runs to the fog at every preset instead of half way - 34% more
+   trees over four times the ground, and streaming got FASTER doing it.
+   ROUGHNESS -44%, the worst re-cut at a ring boundary -35%, and the drawn
+   summit is higher than it was before the epic. Same heightmap hash, same
+   spawn, same 28,383 trees, every stage: this epic changed how the far country
+   is DRAWN and never what it IS. `docs/status/distance-v1.md` has every number
+   with a provenance column, three gates that could not be met as written and
+   what was run instead, and a **"Carried forward"** section at the end.
+
+   **What it leaves for the next plan**, in one line each - the detail is in
+   that section:
+   - The **meadow tufts still read as gravel**, and it is not a colour
+     constant: the ground is drawn lit and a grass blade's faces are drawn
+     shaded, which no albedo change crosses. Wants a **decoration LOD** (a
+     distant tuft becomes one flat lit patch) or a tuft model with more
+     upward-facing surface. A look pass, not a distance pass.
+   - The **400 m far-mesh ring boundary** is reduced, not removed. Removing it
+     is a **geomorph** - blend the two rings across the boundary rather than
+     switching - and that is a plan, not a knob.
+   - **`--strict` fails on exactly one long frame** in about half of all runs.
+     The measurement is settled; the STANDARD is not, and that is Marcel's
+     call.
+   - A **continuous flora density ramp** belongs in
+     `World._flora_fraction_for()`, which no lane owned this run.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or

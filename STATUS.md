@@ -1,17 +1,19 @@
 # Status
 
-The latest run is **distance v1, night 1**, on `feat/distance-v1`:
-`docs/status/distance-v1.md`. The far country's geometry and colour - a
-filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
-dilation, and the end of the far field's zone dither. **Night 2 is not started**
-(the impostor material, the ring reaching the fog, the meadow).
+The latest run is **distance v1, both nights**, on `feat/distance-v1`:
+`docs/status/distance-v1.md`. Night 1 is the far country's geometry and colour -
+a filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
+dilation, and the end of the far field's zone dither. Night 2 is what grows on
+it: the impostor forest stops being drawn as a CHARACTER, converges towards the
+hillside it stands on, and runs to the fog instead of half way. **The meadow is
+still gravel and Stage 8 says why** - see item 8 below.
 
 It is the first status doc in this project with **no "Tuned blind" section**:
 ganymede's GPU works now, so every tone was judged against a picture taken on
 the same box. A **provenance column** replaces it - which box each number came
 from and whether it is a single run or an interleaved median.
 
-Three things in it are worth reading even if you do not read the rest:
+Five things in it are worth reading even if you do not read the rest:
 
 - The far field already lost **60 blocks of summit at 600 m before this epic
   touched it**, so two of the plan's gates were written against a baseline
@@ -21,6 +23,19 @@ Three things in it are worth reading even if you do not read the rest:
   play. Caught before any baseline was recorded.
 - The plan's "fade the grain with distance" was **already done** in look v2 and
   the plan's premise for it was wrong.
+- **Night 1's own headline number was not reproducible.** The far mesh build,
+  recorded as 1,449 ms, measures 1,696 ms at the *same commit* one evening
+  later. Nothing changed but the session. Every comparative number in night 2
+  is an interleaved median because of it.
+- **Stage 7's ring gate could not be met by the plan's own band table**, by
+  arithmetic and then by measurement. It is met by the four-band table that
+  replaced it, and both numbers are written down.
+
+**Night 2's own acceptance test, for Marcel:** stand where you can see a wooded
+ridge 500 m away. It should be wooded, its trees should sit *in* the hillside
+rather than on top of it, and they should fade into the fog rather than
+stopping at a circle. `build/tour/dist-7/5-lake.png` against
+`build/tour/dist-6/5-lake.png` is that comparison on ganymede.
 
 The previous run is **world feel v1**, finished 2026-08-27 on
 `feat/world-feel-v1`: `docs/status/world-feel-v1.md`. Both nights are done -
@@ -83,13 +98,39 @@ engines manage about one frame a second and it would measure the machine
 again. **This is the night-2 acceptance test**: find a big boulder, push it
 alone, then push it together.
 
-**5. Hard rule 7 is ANSWERABLE and provisionally not met.** Two runs on
-ganymede with its GPU finally working (`--view High --strict`, seed 42) give
-**holes 0** — hard rule 6 green — and **20 and 24 frames over 33 ms**, worst
-frame 35.8–40.4 ms. Both FAIL, with a tight spread. That does not settle it,
-but it means the gate has stopped being undecidable: two dedicated-box runs
-suggest **the game does not hold 33 ms at High during a sprint on a 3070 Ti**,
-and the next step is an interleaved ABAB run against the pre-Stage-11 commit.
+**5. Hard rule 7: the frame budget is much closer to met than the last entry
+said, and distance v1 did not move it.** The previous entry, written from two
+runs, reported **20 and 24 frames over 33 ms** and called the rule provisionally
+not met. Distance v1's night 2 ran the interleaved comparison that entry asked
+for - twelve `--view High --strict` runs on ganymede across three ABAB batches,
+seed 42 - and the long-frame count on **every one of them is 0 or 1**, worst
+frame 22.6–46.4 ms.
+
+The 20-24 was not wrong, it was a single pair of runs on a box that this epic
+has now caught drifting 17% between sessions on an identical commit. The
+threshold count is the worst possible instrument for that, which
+`stream_probe.gd`'s own note says: it turns a drifting continuous quantity into
+a coin flip. `--strict` still exits 1 on about half the runs, on exactly one
+long frame.
+
+**Distance v1, night 2 HEAD against the pre-epic commit, ABAB, three runs each,
+run order recorded:**
+
+| | Stage 0 (pre-epic) | night 2 HEAD |
+| --- | --- | --- |
+| built/s, out | 77.8 (75.8–80.2) | 76.2 (75.6–85.2) |
+| built/s, back | 83.7 (82.8–87.7) | 84.2 (81.0–94.7) |
+| frames over 33 ms | 0 (0–1) | 0 (0–1) |
+| holes | **0** | **0** |
+
+**Every row overlaps. Hard rule 6 of that epic — "do not make a failing rule
+fail harder" — is MET, and the honest reading is "no measurable difference"**,
+across two nights that added a second heightmap pyramid, two pyramid lookups
+per far vertex, a colour pass through it and an impostor ring covering four
+times the ground.
+
+What is still open here is the *standard*, not the measurement: one long frame
+per run is not zero, and `--strict` is written to fail on it.
 
 **And ganymede is the right box for it, which was the surprise.** Two runs of
 identical code there vary ~9% on chunks/s (78.1–85.2); three runs on the RTX
@@ -175,6 +216,39 @@ the ground ahead of a sprinting player is loaded to the full 96 m radius,
 against 40 m without it — and it reintroduces holes, which is a hard rule. The
 mechanism is in and one constant turns it on; the status doc says what would
 have to change first.
+
+**8. The meadow tufts read as gravel, and it is not a colour constant.** From
+`16-spawn-postcard`: the ground cover reads as grey rubble scattered over green
+grass. Distance v1 Stage 8 was scoped to fix it if it was a constant and to
+stop if it was not, and it is not.
+
+The reason, from `Look`'s own ramp at noon: **the meadow presents its TOP face
+and is drawn LIT at `#809137`; a grass blade is a one-voxel column whose
+visible faces are VERTICAL, so the ones facing away from the sun are drawn
+SHADED at `#272B2D`.** The shade band is `mix(albedo, luma, 0.55) *
+grey-violet`, so it throws away most of the hue before multiplying. Tripling
+the blade's albedo — which overshoots the ground on the lit face and is
+therefore already wrong — only reaches `#464C4F`. **It is a lighting-band gap,
+not a colour gap, and no albedo constant crosses it.** Photographed at x1.40,
+x1.75 and with the tuft's own base/tip spread narrowed: all three are
+indistinguishable from HEAD.
+
+Range-thinning through the knobs that exist (`flora_radius_m` 64 -> 32,
+`flora_far_fraction` 0.25 -> 0.15) barely moves it either, because the speckle
+is dominated by the band already inside the full-density circle. A fraction
+that falls continuously with range lives in `World._flora_fraction_for()`.
+
+**What does work, and is deliberately not shipped:** `flora_draw_fraction`
+1.0 -> 0.55 (`build/tour/dist-8-draw55`). It is the per-machine QUALITY dial,
+and it thins the grass at your feet as hard as the grass at 100 m. It is on F4
+as `flora drawn` if you want the postcard now.
+
+**Three fixes are named and all three are a look pass:** a decoration LOD that
+turns a distant tuft into one flat lit patch (which would also take triangles
+off the near field), a tuft model with more upward-facing surface, or a
+look-pass decision about `shade_desat` — 0.55 at noon is what makes every
+shaded surface in the game a variant of one grey-violet, and the meadow speckle
+is downstream of it.
 
 Earlier runs, newest first:
 
