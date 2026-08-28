@@ -682,3 +682,119 @@ frames. It was eight rigid poles at Stage 0.
 
 Green: 30 character tests, world suite passed, swatch transfer and value tiers
 PASS.
+
+---
+
+## Stage 5 — the human, the elf and the dwarf
+
+Committed as `feat(character): stage 5 - ...`. The first stage in this run whose
+output is a judgement rather than a number, and the least predictable.
+
+### The constraint that shaped it, stated first
+
+**The generators author at 64 and the design doc's stacks are written at 96.**
+Stage 2 put the scale at the output, which is what made it small and safe; the
+price is that the finest authorable feature is one author voxel, which lands as
+one or two output voxels.
+
+Checked before starting rather than discovered halfway: **ten of the design
+doc's twelve stack numbers are reachable exactly from the author grid**, and
+two are off by one voxel — 2 cm.
+
+| | doc @96 | author | lands at |
+| --- | --- | --- | --- |
+| human head | 32 | 21 | **32** |
+| human torso / legs | 30 / 24 | 20 / 16 | **30 / 24** |
+| elf head | 28 | 19 | **28** |
+| elf torso / legs | 30 / 36 | 20 / 24 | **30 / 36** |
+| dwarf head | 30 | 20 | **30** |
+| dwarf legs | 16 | 11 | 17 (+1) |
+| lizardfolk head / torso / legs | 24 / 30 / 30 | 16 / 20 / 20 | **24 / 30 / 30** |
+
+The human now stacks **legs 24, torso 30, head 32, pelvis 10** — the design
+doc's numbers exactly, including the pelvis of 10 that its own arithmetic
+implied but its text wrote as 8.
+
+**The dwarf keeps `torso` at 27 against the doc's 26**, and the reason is worth
+recording. Its `legs` of 16 is not reachable (the leg part is 10 author voxels,
+which is 15), so taking the torso to 26 leaves the stack a voxel short and
+`pelvis_height()` hands the dwarf a **one-voxel pelvis** — and with it a pelvis
+part this race has never had. `rig completeness` caught that within a minute.
+27 keeps the pelvis at zero, which is what "no neck, no pelvis, by
+construction" means for this race.
+
+### What landed
+
+**The liner, as geometry.** Stage 1 put the slot in; this puts voxels in it. All
+three races now have inked rows at the collar, the elbow and the boot top —
+three of the four places the design doc names.
+
+**The human — the diagonal.** A baldric from the left shoulder to the right hip,
+drawn across the front three slices so it survives a three-quarter view, with a
+liner row along its lower edge. It is the only diagonal in the game, and it is
+drawn rather than modelled: with flat vertex colour a painted band and a raised
+one read the same at any distance a silhouette is judged at, and a painted one
+cannot clip through armour. Plus a belt that hangs past one hip, and a hood
+bunched at the back of the neck.
+
+**The rolled sleeve pays for itself twice.** The forearm is skin and the upper
+arm is cloth, and the boundary lands on `ARM_SPLIT` — which is where the elbow
+now is. So the liner ring the design asks for and the crease the joint already
+cuts are the same row. Two ideas, one voxel.
+
+**The elf — the collar, not the ears.** A ring the neck comes up through,
+standing five output voxels above the shoulder line. The design doc is emphatic
+about why: the ears do not survive a helmet, and the moment armour puts a helm
+on this race it becomes a narrow human. The collar is torso, is under the helm,
+and is always there.
+
+**The dwarf — the head sits between the shoulders.** Not above them. A head that
+pokes above reads as a person; a head set inside the shoulder line reads as
+mass. Instead of the human's ziggurat stepping in toward the neck, the dwarf's
+shoulders carry straight up past the point where the head bone sits and the
+neck opening is cut out of them.
+
+**`torso_rise` is a new table field**, not a number inside a generator: the elf's
+collar and the dwarf's shoulders both live above their slice of the stack, and
+two other things need to know — `parts match the table` would otherwise report a
+torso taller than the table says, and it is exactly the sort of per-race fact
+the fourth pillar wants readable. It does **not** move the head bone; the rise is
+geometry around the head, not a change to where the head is.
+
+### The budget moved once, with the measurement
+
+| | worst character | budget |
+| --- | --- | --- |
+| Stage 3, the grid | 40,268 | 44,000 |
+| Stage 4, the joints | 42,428 | 44,000 |
+| **Stage 5, the bodies** | **44,936** | **48,000** |
+
+Stage 4's insets cost 2,160 and Stage 5's liner rows, raised shoulders and
+collar cost another 2,500. Every one of those is a new face where two materials
+meet, which is precisely what the design asks for — the cost *is* the feature.
+
+### What this stage did not do
+
+Named so a later run does not have to guess:
+
+- **Hands and boots are not up 15%.** The design doc's exaggeration at the
+  extremities is a proportion change to four parts across three races and it is
+  the one item here with no test behind it.
+- **The elf's hair is untouched** — still the side-of-head slab the design doc
+  criticises, which widens the one race whose whole idea is narrowness. It lives
+  in `hair.py` and wants its own pass.
+- **No tapering sleeves** (8 at the shoulder to 5 at the wrist), **no tool on
+  the dwarf's belt**, **no beard rings**.
+
+The silhouette pairs that mattered here were already passing and still are;
+these are identity and texture rather than separation, and the pair that has to
+move is the lizardfolk's, which is Stage 6.
+
+| pair, front on | Stage 4 | Stage 5 |
+| --- | --- | --- |
+| human / elf | — | 0.544 |
+| **human / lizardfolk** | 0.863 | **0.866** |
+| worst across all options | 0.863 | 0.875 |
+
+Green: 30 character tests, world suite passed, swatch transfer and value tiers
+PASS.

@@ -527,7 +527,12 @@ func _test_parts_match_table():
 			["head", "head_w + 2 * ear_out", "x", int(t["head_w"]) + 2 * ear],
 			["head", "head + neck", "y", int(t["head"]) + neck],
 			["torso", "torso_w", "x", t["torso_w"]],
-			["torso", "torso", "y", t["torso"]],
+			# A TORSO PART MAY BE TALLER THAN ITS SLICE OF THE STACK, by exactly
+			# `torso_rise` - the elf's standing collar and the dwarf's raised
+			# shoulders both live above the point where the head bone sits. The
+			# rise is tabled rather than tolerated, so this stays an equality.
+			["torso", "torso + torso_rise", "y",
+				int(t["torso"]) + int(t.get("torso_rise", 0))],
 			["torso", "torso_d", "z", t["torso_d"]],
 			["leg", "legs", "y", t["legs"]],
 			["arm", "arm_len", "y", t["arm_len"]],

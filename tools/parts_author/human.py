@@ -10,17 +10,17 @@ Numbers are the look plan's Stage 6 table. The stack, in model voxels:
     head   [42, 64) 22
 """
 
-from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow,
+from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 # --- Geometry the hair file needs to know ------------------------------------
 
-HEAD_SIZE = (18, 22, 17)
+HEAD_SIZE = (18, 21, 17)
 HEAD_ANCHOR = (9, 0, 9)
 # In head-frame coordinates: the skull box, its plan chamfer, and the rows
 # that are stepped in at the jaw and the crown.
 SKULL_X = (-9, 9)
-SKULL_Y = (0, 22)
+SKULL_Y = (0, 21)
 SKULL_Z = (-8, 8)
 CHAMFER = 2
 JAW_INSETS = (2, 1)    # y = 0 inset 2, y = 1 inset 1
@@ -32,7 +32,7 @@ MOUTH_Y = 5
 def head() -> Part:
     p = Part("HEAD", HEAD_SIZE, HEAD_ANCHOR)
     # The skull: 18 x 22 x 16 at z 1..16, so the nose can sit at z = 0.
-    p.prism((0, 18), (0, 22), (1, 17), S, chamfer=CHAMFER,
+    p.prism((0, 18), (0, 21), (1, 17), S, chamfer=CHAMFER,
             bottom=JAW_INSETS, top=CROWN_INSETS)
     p.note(0, "the chin, stepped in twice")
     p.note(2, "the jaw at full width")
@@ -55,7 +55,7 @@ def head() -> Part:
     hair_brow(p, (11, 16), BROW_Y, 1)
     hair_brow(p, (2, 7), BROW_Y, 1)
     p.note(BROW_Y, "the brows")
-    p.note(20, "the crown, stepped in")
+    p.note(19, "the crown, stepped in")
     return p
 
 
@@ -90,11 +90,77 @@ def torso() -> Part:
     # A stepped V collar on the front face - the one line of Deco on a tunic.
     for y, (x0, x1) in ((19, (6, 14)), (18, (7, 13)), (17, (8, 12)), (16, (9, 11))):
         p.front_paint(y, (x0, x1), c)
+
+    # THE LINER, character v2 Stage 1's slot arriving as geometry. One row of
+    # near-black wherever cloth meets skin - here the collar, where the neck
+    # comes out. The contrast pair that has to hold is skin against THIS, and
+    # it holds at 6:1 for every skin in the game, which is what released the
+    # tunic from having to be black. See the liner note in races.gd.
+    p.box((5, 15), (19, 20), (0, 11), k)
+    p.repaint((6, 14), (19, 20), (0, 11), k)
+
+    # THE BALDRIC - the human's one big idea, and the only diagonal in the
+    # game. Nothing a human wears was made for a human: it was acquired,
+    # traded for and adjusted, so the signature is straps. A diagonal is a
+    # handful of voxels across the biggest flat surface the character has, it
+    # is asymmetric for free, and it breaks the torso rectangle at the exact
+    # point where a rectangle is least forgiving. It survives every armour
+    # tier, because a strap goes OVER armour.
+    #
+    # Left shoulder to right hip. `x` is the character's own right, so it runs
+    # from low x at the top to high x at the bottom - and it is drawn on the
+    # front face and the two voxels behind it, so it reads at any angle rather
+    # than vanishing in three-quarter view.
+    _strap(p, (3, 17), (16, 3), width=3, ch=L, edge=k)
+
+    # THE HOOD, LIVING DOWN. Bunched at the back of the neck - the cheapest way
+    # to say "traveller" ever invented, and it costs two boxes.
+    #
+    # THE DESIGN DOC ASKS FOR IT TO RAISE THE SHOULDER LINE BY THREE VOXELS AND
+    # IT DOES NOT, because a torso part taller than the table's `torso` would
+    # fail `parts match the table` and would poke into the head bone's own
+    # space. What it does instead is thicken the upper back by three voxels of
+    # depth, which is the same idea seen from the side and is where a bunched
+    # hood actually sits. Raising the line properly wants the hood as its own
+    # part on the `back` socket, which is Stage 8's slot and Stage 8's problem.
+    p.box((5, 15), (15, 20), (8, 11), c)
+    p.box((6, 14), (17, 20), (8, 11), k)
+
+    # The belt hangs past the hip ON ONE SIDE. Asymmetry is free and it is the
+    # difference between kit that was issued and kit that was lived in.
+    p.box((14, 18), (0, 2), (0, 11), B)
+    p.box((15, 17), (-0, 0), (0, 11), B)
+
     p.note(0, "the belt, buckle on the front")
     p.note(2, "the tunic")
     p.note(16, "the collar begins")
-    p.note(18, "the shoulders step in")
+    p.note(18, "the shoulders step in, and the hood bunches behind")
+    p.note(19, "the liner at the collar")
     return p
+
+
+def _strap(p, top, bottom, width: int, ch: str, edge: str) -> None:
+    """A diagonal band across the front of a torso, inked along one edge.
+
+    THE ONLY DIAGONAL IN THE GAME. Every other line on every other race is
+    vertical or horizontal, which is what makes this one the human's name at
+    15 m - and it is drawn rather than modelled, because with flat vertex
+    colour a painted band and a raised one read the same at any distance a
+    silhouette is judged at, and a painted one cannot clip through armour.
+
+    Drawn on the front three slices so it survives a three-quarter view; the
+    `edge` row under it is the liner, which is what stops leather-on-cloth
+    dissolving when the two are close in value.
+    """
+    (x0, y0), (x1, y1) = top, bottom
+    steps = max(abs(x1 - x0), abs(y1 - y0))
+    for i in range(steps + 1):
+        f = i / steps
+        x = round(x0 + (x1 - x0) * f)
+        y = round(y0 + (y1 - y0) * f)
+        for dx in range(width):
+            p.repaint((x + dx, x + dx + 1), (y, y + 1), (0, 3), ch)
+        p.repaint((x + width, x + width + 1), (y, y + 1), (0, 3), edge)
 
 
 TORSO_COMMENT = """--- Torso --------------------------------------------------------------------
@@ -129,6 +195,9 @@ def leg() -> Part:
     p.box((1, 8), (4, 16), (2, 9), c)
     # Boot: one voxel wider each side, two deeper at the toe, four tall.
     p.box((0, 9), (0, 4), (0, 9), L)
+    # And the liner at the boot top, which is the third of the four places the
+    # design doc names: collar, cuff, waist, boot top.
+    p.box((0, 9), (4, 5), (0, 9), k)
     p.note(0, "the boot, nine wide and nine deep")
     p.note(4, "the trouser leg, seven by seven")
     return p
@@ -148,16 +217,20 @@ instead of sharing a voxel."""
 
 def arm() -> Part:
     p = Part("ARM", (8, 20, 8), (4, 20, 4))
-    # Sleeve, cuff, forearm: a 6 x 6 column.
-    p.box((1, 7), (13, 20), (1, 7), C)
-    p.box((1, 7), (12, 13), (1, 7), c)
-    p.box((1, 7), (6, 12), (1, 7), S)
+    # ROLLED SLEEVES, so the forearm is skin and the upper arm is cloth - and
+    # the boundary between them lands on ARM_SPLIT, which is where the elbow
+    # now is. That puts a liner ring exactly at the joint and makes the joint
+    # legible for free: the crease the split already cuts is inked by the same
+    # row that the design asks for anyway. Two ideas, one voxel.
+    p.box((1, 7), (11, 20), (1, 7), C)
+    p.box((1, 7), (10, 11), (1, 7), k)
+    p.box((1, 7), (6, 10), (1, 7), S)
     # The hand: one voxel wider all round, six tall, shaded so the wrist reads.
     p.box((0, 8), (0, 6), (0, 8), s)
     p.note(0, "the hand, eight by eight")
     p.note(6, "the forearm")
-    p.note(12, "the cuff")
-    p.note(13, "the sleeve")
+    p.note(10, "the liner cuff, on the elbow")
+    p.note(11, "the sleeve")
     return p
 
 

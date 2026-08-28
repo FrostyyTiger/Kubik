@@ -78,6 +78,21 @@ const BUILD_NAMES := ["stocky", "lean"]
 # summing the table - a height computed from the table would only prove the
 # table agrees with itself.
 
+# `torso_rise` IS HOW FAR THE TORSO PART RISES ABOVE ITS SLICE OF THE STACK.
+# Zero for the human and the lizardfolk. Five for the elf, whose standing
+# collar is a ring the neck comes up through; four for the dwarf, whose
+# shoulders carry straight past the point where the head bone sits so that the
+# head is set BETWEEN them rather than above them.
+#
+# It is a table field rather than a number inside a generator because two other
+# things need to know: `parts match the table` would otherwise report a torso
+# taller than the table says, and it is exactly the sort of per-race fact the
+# fourth pillar wants readable rather than buried in Python.
+#
+# It does NOT move the head bone. The head still sits at `torso`, which is what
+# keeps the stack summing and the height test honest; the rise is geometry
+# around the head, not a change to where the head is.
+
 ## Model voxels, for readability of the tables below.
 const V := VoxelModel.VOXEL_M
 
@@ -95,7 +110,7 @@ const TABLE := [
 	# the armpit. `head_d` is the skull; the nose is one more in front of it.
 	{
 		"name": "human",
-		"total": 96, "legs": 24, "torso": 30, "head": 33,
+		"total": 96, "legs": 24, "torso": 30, "head": 32,
 		"torso_w": 30, "torso_d": 17, "head_w": 27, "head_d": 24,
 		"leg_w": 12, "arm_len": 30, "arm_w": 12,
 		"lean_deg": 0.0,
@@ -103,7 +118,7 @@ const TABLE := [
 	},
 	{
 		"name": "elf",
-		"total": 108, "legs": 36, "torso": 30, "head": 33,
+		"total": 108, "legs": 36, "torso": 30, "head": 28, "torso_rise": 5,
 		"torso_w": 18, "torso_d": 12, "head_w": 24, "head_d": 24,
 		"leg_w": 9, "arm_len": 36, "arm_w": 9,
 		"neck": 5, "ear_out": 9,
@@ -112,7 +127,7 @@ const TABLE := [
 	},
 	{
 		"name": "dwarf",
-		"total": 72, "legs": 15, "torso": 27, "head": 30,
+		"total": 72, "legs": 15, "torso": 27, "head": 30, "torso_rise": 5,
 		"torso_w": 39, "torso_d": 21, "head_w": 30, "head_d": 24,
 		"leg_w": 15, "arm_len": 24, "arm_w": 15,
 		"lean_deg": 0.0,

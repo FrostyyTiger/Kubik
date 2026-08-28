@@ -27,23 +27,31 @@ const USER_PATH := "user://character_tuning_v3.tres"
 ## Mesh triangles per character WITH hair and beard, the number the height
 ## self-test and the gallery's budget sheet gate on.
 ##
-## 6000 in character v1 at 1/8 of a block. 24000 at 1/16. **44000 at 1/24, and
-## it is MEASURED rather than predicted** - character v2 Stage 3, on the GPU:
+## 6000 in character v1 at 1/8 of a block. 24000 at 1/16. **48000 at 1/24, and
+## every one of those numbers is MEASURED rather than predicted.**
 ##
-##     stocky human      38,828      stocky elf        33,472
-##     stocky dwarf      40,268      stocky lizardfolk 37,828
+## It moved twice inside character v2, once per stage that added geometry, and
+## both moves are recorded because a budget nobody measured is a budget nobody
+## can argue with later:
 ##
-## Worst 40,268, rounded up to the next 4,000. The design doc predicted "about
-## 40,000" from a 2.25x surface-area argument and the measured ratio against
-## Stage 2's 17,788 is 2.264, so the prediction was good - but the plan says
-## re-measure rather than predict, and the reason is that a budget nobody
-## measured is a budget nobody can argue with later.
+##     Stage 3, the grid       worst 40,268 (dwarf)   budget 44000
+##     Stage 5, the bodies     worst 44,936 (dwarf)   budget 48000
 ##
-## Four players is 161k triangles, doubled to 322k by the shadow pass. That is
+## Stage 4's joint insets cost 2,160 triangles - a limb that was one unbroken
+## column now has a crease in it. Stage 5's liner rows, raised dwarf shoulders
+## and elf collar cost another 2,500: every one of those is a new face where
+## two materials meet, which is precisely what the design asks for, so the cost
+## is the feature rather than an overrun.
+##
+## The design doc predicted "about 40,000" from a 2.25x surface-area argument
+## and the bare rescale came in at 40,268, so the prediction was good. What it
+## could not predict is that inking a figure costs triangles.
+##
+## Four players is 180k triangles, doubled to 360k by the shadow pass. That is
 ## nothing on a 3070 Ti and less than nothing on Marcel's 5080; triangles were
 ## never the constraint on this decision. The retained voxel list was the one
 ## worth watching, and it is in the status doc.
-const TRIANGLE_BUDGET := 44000
+const TRIANGLE_BUDGET := 48000
 
 
 # --- Locomotion ---------------------------------------------------------------
