@@ -137,6 +137,7 @@ func _sheets() -> Dictionary:
 		"anim-poses": _sheet_anim_poses,
 		"study": _sheet_study,
 		"silhouettes": _sheet_silhouettes,
+		"palette-tiers": _sheet_palette_tiers,
 		"masks-40": _sheet_masks_40,
 		"outline": _sheet_outline,
 		"variants": _sheet_variants,
@@ -491,7 +492,7 @@ func _aim_at_swatches() -> void:
 ## converted exactly as apply() converts them before publishing - so the sheet
 ## predicts from the same numbers the shader was handed, and a disagreement is
 ## the TRANSFER and never a stale uniform.
-func _report_swatches(image: Image) -> void:
+func _report_swatches(image: Image, json_name := "swatches") -> void:
 	# STRAIGHT FROM THE KEYFRAME, not from the wrappers: this is the same
 	# Dictionary apply() published, so a disagreement is the transfer and never
 	# a value that was converted twice on its way to the prediction.
@@ -540,7 +541,7 @@ func _report_swatches(image: Image) -> void:
 		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
 		"grain_forced_off": true,
 	}
-	var path := "%s/swatches.json" % _out_dir
+	var path := "%s/%s.json" % [_out_dir, json_name]
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify(report, "  "))
@@ -1230,6 +1231,148 @@ func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> 
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
+
+
+# --- The value tiers -----------------------------------------------------------
+#
+# CHARACTER V2 STAGE 1'S GATE, and the reason a data-only stage has one.
+#
+# The liner is a SHAPE, so the stage that introduces the slot changes no
+# picture: the liner voxels arrive with the re-authored parts several stages
+# later. That would leave the single highest-value decision in the design doc
+# unverified for four stages, which is exactly how a palette ships wrong.
+#
+# So the palette is photographed as flat swatches through the real ground
+# material and MEASURED - the same swatch machinery look v2 built, at the same
+# 6-units-per-channel tolerance - and the luminance relationships the design
+# rests on are asserted as arithmetic rather than trusted:
+#
+#   - every skin clears the liner by at least 6:1  (the worst case in the game
+#     is the darkest human at 6.1:1, and that number IS the argument for the
+#     liner: the old rule managed 2.1:1)
+#   - every race spans at least three of the five value tiers
+#   - no two races sit in the same place in the mid band, which is the torso,
+#     which is most of what you see at 15 m
+
+## How far apart two races' mid tiers have to be, in luminance. The design
+## doc's palettes clear this with 0.046 at the tightest (human against elf).
+const MID_BAND_MIN_GAP := 0.03
+
+## The floor under skin-to-liner contrast. The whole point of the slot.
+const LINER_MIN_RATIO := 6.0
+
+
+func _sheet_palette_tiers() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	_swatch_probes.clear()
+
+	var holder := Node3D.new()
+	_subjects_root.add_child(holder)
+	var half := SWATCH_SIZE * 0.5
+	# One row per race, five tiers across. Laid out in the same frame the
+	# swatch sheet uses so the sampler and the tolerance are the same ones.
+	var rows := Races.RACE_COUNT
+	for race in rows:
+		for t in Races.TIER_NAMES.size():
+			var hex: String = Races.tier_hex(race, Races.TIER_NAMES[t])
+			var linear := Color.html(hex).srgb_to_linear()
+			var cx := (float(t) - float(Races.TIER_NAMES.size() - 1) * 0.5) * SWATCH_PITCH
+			var cy := SWATCH_SHADE_Y + (float(rows - 1) * 0.5 - float(race)) * SWATCH_PITCH
+			holder.add_child(_swatch_quad([
+				Vector3(cx - half, cy - half, SUBJECT_Z),
+				Vector3(cx + half, cy - half, SUBJECT_Z),
+				Vector3(cx + half, cy + half, SUBJECT_Z),
+				Vector3(cx - half, cy + half, SUBJECT_Z),
+			], Vector3.BACK, linear))
+			_swatch_probes.append({
+				"name": "%s %s" % [Races.name_of(race), Races.TIER_NAMES[t]],
+				"authored": hex, "linear": linear, "lit": false,
+				"centre": Vector3(cx, cy, SUBJECT_Z)})
+
+	# GRAIN OFF for the reason the swatch sheet turns it off, and CONTACT BAND
+	# off for a reason that is this sheet's alone.
+	#
+	# The contact band darkens the bottom half of every half-metre cell of a
+	# VERTICAL face, which is what puts a printed line where a block meets the
+	# ground. These swatches are vertical faces stacked four rows high, so each
+	# row lands at a different point inside its half-metre cell and is darkened
+	# by a different amount - measured, before this line existed, as a clean
+	# gradient down the sheet: the bottom race off by 0, the top race off by 11
+	# against a tolerance of 6, with the misses in a perfect vertical order.
+	# That is the sheet measuring its own Y coordinate, not the palette.
+	#
+	# The one-row swatch sheet never hit it because a single row at y = 3.2
+	# happens to sit in the light half of its cell. That is luck, and it is
+	# worth knowing it was luck.
+	var mat := Look.opaque_material()
+	mat.set_shader_parameter("grain_amount", 0.0)
+	mat.set_shader_parameter("grain_hue", 0.0)
+	mat.set_shader_parameter("contact_band", 1.0)
+	_aim_at_swatches()
+	var image := await _capture()
+	_save_image(image, "palette-tiers")
+	_report_swatches(image, "palette-tiers")
+	Look.apply_local_knobs(config)
+
+	_report_value_tiers()
+
+
+## The arithmetic the palette has to satisfy, printed and judged.
+func _report_value_tiers() -> void:
+	print("[Gallery] --- value tiers ---")
+	var liner_y := _luminance(Races.LINER_HEX)
+	print("[Gallery] liner %s Y=%.4f, and every skin must clear it by %.1fx" % [
+		Races.LINER_HEX, liner_y, LINER_MIN_RATIO])
+
+	var bad := 0
+	var worst := 1e9
+	var worst_name := ""
+	for race in Races.RACE_COUNT:
+		var line := ""
+		for i in Races.skin_count(race):
+			var hex: String = Races.SKIN_HEX[race][i]
+			var ratio := _luminance(hex) / liner_y
+			line += " %s %5.1fx" % [hex, ratio]
+			if ratio < worst:
+				worst = ratio
+				worst_name = "%s %s" % [Races.name_of(race), hex]
+			if ratio < LINER_MIN_RATIO:
+				bad += 1
+		print("[Gallery]   %-11s%s" % [Races.name_of(race), line])
+	print("[Gallery]   worst skin/liner %.2f:1 (%s), %d under %.1f" % [
+		worst, worst_name, bad, LINER_MIN_RATIO])
+
+	print("[Gallery]   %-11s %8s %8s %8s %8s" % ["race", "deep", "mid", "light", "accent"])
+	var mids := []
+	for race in Races.RACE_COUNT:
+		var ys := []
+		for tier in ["deep", "mid", "light", "accent"]:
+			ys.append(_luminance(Races.tier_hex(race, tier)))
+		mids.append(ys[1])
+		print("[Gallery]   %-11s %8.4f %8.4f %8.4f %8.4f" % [
+			Races.name_of(race), ys[0], ys[1], ys[2], ys[3]])
+
+	var gap_bad := 0
+	var min_gap := 1e9
+	for i in mids.size():
+		for j in range(i + 1, mids.size()):
+			var gap: float = absf(mids[i] - mids[j])
+			min_gap = minf(min_gap, gap)
+			if gap < MID_BAND_MIN_GAP:
+				gap_bad += 1
+				print("[Gallery]   %s and %s share a mid band: %.4f apart" % [
+					Races.name_of(i), Races.name_of(j), gap])
+	print("[Gallery]   closest pair of mid tiers %.4f apart, floor %.2f, %d too close" % [
+		min_gap, MID_BAND_MIN_GAP, gap_bad])
+	print("[Gallery]   VALUE TIERS: %s" % ["PASS" if bad == 0 and gap_bad == 0 else "FAIL"])
+
+
+## Relative luminance of an sRGB hex, on the LINEAR values - the same weights
+## the shader's own shade band uses.
+static func _luminance(hex: String) -> float:
+	var c := Color.html(hex).srgb_to_linear()
+	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
 
 
 # --- The outline-event metric --------------------------------------------------

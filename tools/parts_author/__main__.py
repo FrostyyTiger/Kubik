@@ -9,7 +9,7 @@ the ASCII that used to be typed.
 
 from pathlib import Path
 
-from . import human, elf, dwarf, lizardfolk, hair, gear, critter
+from . import human, elf, dwarf, lizardfolk, hair, gear, critter, voxlib
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "scripts" / "character" / "parts"
@@ -26,6 +26,9 @@ FILES = {
 
 
 def main() -> None:
+    # Before anything is written: the slot legend here and the one in
+    # voxel_model.gd have to be the same set. See voxlib.check_slots_match.
+    voxlib.check_slots_match(ROOT)
     for name, render in FILES.items():
         text = render()
         path = OUT / name

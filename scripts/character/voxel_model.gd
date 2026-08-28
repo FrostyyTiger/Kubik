@@ -58,6 +58,9 @@ const VOXEL_M := 0.03125
 ## Semantic slots. A part is authored in these, never in colours - the same
 ## voxels resolved through a different palette are a different-looking
 ## character, and that is what makes a palette swap free.
+## NEW SLOTS ARE APPENDED, NEVER INSERTED. The index IS the `.vox` palette
+## index minus one (see VoxLoader), so renumbering an existing slot would
+## silently re-colour every model anyone has ever exported.
 enum {
 	SKIN = 0,
 	SKIN_SHADED = 1,
@@ -72,11 +75,32 @@ enum {
 	TOOTH = 10,
 	METAL = 11,
 	WOOD = 12,
+	# --- Character v2 Stage 1 ---
+	LINER = 13,
+	SKIN_VENTRAL = 14,
+	TRIM_BRIGHT = 15,
+	METAL_DARK = 16,
+	SCALE_A = 17,
+	SCALE_B = 18,
 }
 
-const SLOT_COUNT := 13
+const SLOT_COUNT := 19
 
 ## The legend, shared by every part file. `.` and space are empty.
+##
+## THE CONVENTION IS THAT LOWERCASE IS THE DARKER SIBLING of its uppercase -
+## `S`/`s` skin, `C`/`c` cloth, `X`/`x` metal, `A`/`a` scale. Half the legend is
+## therefore derivable rather than memorised, which is the only reason nineteen
+## of these is still a thing a person can read a slice in.
+##
+## THE CEILING, since the tech plan asks. `parse()` reads ONE CHARACTER per
+## voxel out of a GDScript string, so the hard limit is printable ASCII (95)
+## minus `.` and space (both mean empty) and minus `"` and `\` (which would
+## have to be escaped in the source): **91**. That is not the real limit. The
+## real limit is the legend someone can hold in their head while reading a
+## slice, and the upper/lower convention roughly doubles it: call it **about
+## 24**. Past that the format wants two characters per voxel, which is a
+## different file format and a different decision.
 const SLOT_CHARS := {
 	"S": SKIN,
 	"s": SKIN_SHADED,
@@ -91,11 +115,18 @@ const SLOT_CHARS := {
 	"T": TOOTH,
 	"X": METAL,
 	"D": WOOD,
+	"k": LINER,
+	"v": SKIN_VENTRAL,
+	"R": TRIM_BRIGHT,
+	"x": METAL_DARK,
+	"A": SCALE_A,
+	"a": SCALE_B,
 }
 
 const SLOT_NAMES := [
 	"skin", "skin_shaded", "hair", "iris", "eye_white", "mouth",
 	"cloth", "cloth_dark", "leather", "belt", "tooth", "metal", "wood",
+	"liner", "skin_ventral", "trim_bright", "metal_dark", "scale_a", "scale_b",
 ]
 
 ## AO levels are 0 (fully enclosed) to 3 (fully open), exactly as in

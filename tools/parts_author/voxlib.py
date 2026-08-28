@@ -29,7 +29,9 @@ Two ways to author:
 
 from __future__ import annotations
 
-# The slot letters, exactly VoxelModel.SLOT_CHARS.
+# The slot letters, exactly VoxelModel.SLOT_CHARS. `check_slots_match()` below
+# is what keeps "exactly" true - these are two copies of one fact in two
+# languages, and nothing else would notice them drifting apart.
 S = "S"   # skin
 s = "s"   # skin, shaded
 H = "H"   # hair
@@ -43,9 +45,48 @@ B = "B"   # belt
 T = "T"   # tooth
 X = "X"   # metal
 D = "D"   # wood
+# --- Character v2 Stage 1. Lowercase is the darker sibling of its uppercase.
+k = "k"   # liner - the fixed near-black at every skin/cloth boundary
+v = "v"   # skin, ventral - the countershaded belly, throat, underside of tail
+R = "R"   # trim, bright - the raised rim that makes metal read as metal
+x = "x"   # metal, dark - the body a bright rim sits on
+A = "A"   # scale/mail checker, the lighter of the two adjacent values
+a = "a"   # scale/mail checker, the darker
 EMPTY = "."
 
-SLOTS = set("SsHEWMCcLBTXD")
+SLOTS = set("SsHEWMCcLBTXDkvRxAa")
+
+
+def check_slots_match(root) -> None:
+    """`SLOTS` above and `VoxelModel.SLOT_CHARS` are one fact in two languages.
+
+    Nothing else in the build would notice them drifting apart: a generator
+    that paints a letter the runtime has never heard of writes a part file
+    that `VoxelModel.parse()` rejects at load with an error naming a slice and
+    a row, which is a long way from the line that caused it. So the generator
+    refuses to write anything at all until the two agree.
+
+    Read out of the GDScript by regex rather than by parsing it. That is
+    normally a bad idea and is the right one here: the block is a literal
+    dictionary of one-character keys, the alternative is a GDScript parser,
+    and a regex that stops matching is a loud failure rather than a quiet one.
+    """
+    import re
+
+    source = (root / "scripts" / "character" / "voxel_model.gd").read_text()
+    block = re.search(r"const SLOT_CHARS := \{(.*?)\n\}", source, re.S)
+    if block is None:
+        raise SystemExit(
+            "voxlib: could not find SLOT_CHARS in voxel_model.gd. If the "
+            "declaration moved or was reformatted, fix this regex - do not "
+            "delete the check.")
+    theirs = set(re.findall(r'"(.)":', block.group(1)))
+    if theirs != SLOTS:
+        raise SystemExit(
+            "voxlib: the slot legends disagree.\n"
+            "  only in voxel_model.gd: %s\n"
+            "  only in voxlib.py:      %s"
+            % (sorted(theirs - SLOTS) or "-", sorted(SLOTS - theirs) or "-"))
 
 
 def _fmt(v: float) -> str:

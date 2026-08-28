@@ -211,3 +211,116 @@ spawn         OK at (-44, -124) <- unchanged
   hillside means the emissive uniform reached the terrain material". That gate
   is not achievable on this renderer and would have failed on noise. Replaced
   with a tolerance and a targeted check; see the plan.
+
+---
+
+## Stage 1 — the liner slot and nineteen palette entries
+
+Committed as `feat(character): stage 1 - ...`. Data only: no geometry moved, no
+part file changed, and `python -m tools.parts_author` still produces a zero diff.
+
+### What landed
+
+**13 slots to 19**, appended and never inserted — the index *is* the `.vox`
+palette index minus one, so renumbering would silently re-colour every model
+anyone ever exports. `LINER` (`k`), `SKIN_VENTRAL` (`v`), `TRIM_BRIGHT` (`R`),
+`METAL_DARK` (`x`), `SCALE_A` (`A`), `SCALE_B` (`a`). The legend's convention is
+that lowercase is the darker sibling of its uppercase — `S`/`s`, `C`/`c`,
+`X`/`x`, `A`/`a` — so half of it is derivable rather than memorised.
+
+**The ceiling on `SLOT_CHARS`, since the tech plan asks.** `parse()` reads one
+character per voxel out of a GDScript string, so the hard limit is printable
+ASCII (95) minus `.` and space minus `"` and `\`: **91**. The practical limit is
+the legend a person can hold while reading a slice — call it **about 24**. Past
+that the format wants two characters per voxel, which is a different format.
+Both numbers are in the docstring.
+
+**The look v2 tunic rule is retired**, and its four values are kept in the file
+as a comment with the date and the arithmetic that produced them, because a
+value someone chose for a stated reason is worth more on the page than in the
+history.
+
+**`CLOTH_DARK` stopped being a multiple of `CLOTH`.** It was `_scale(cloth,
+0.75)`; it is now the race's authored `deep` tier. Two authored values rather
+than one value and a multiplier that drifts away from the design as the mid tier
+is retuned.
+
+**Countershading is derived, not tabled.** `SKIN_VENTRAL` is the wearer's own
+skin mixed toward white by 0.55 in linear space, so it tracks a skin swap: a
+belly is the same hide with the sun on it. `_lighten()` is a mix and not a
+scale, because a scale by 1.5 takes a bright skin past 1.0 and clips it to a
+different hue.
+
+**A cross-language check.** `voxlib.SLOTS` and `VoxelModel.SLOT_CHARS` are one
+fact in two languages and nothing in the build would have noticed them drifting.
+`python -m tools.parts_author` now refuses to write a single file until they
+agree, by reading the `SLOT_CHARS` block out of the GDScript with a regex.
+Negative-tested: adding a bogus letter to the Python set stops the run and names
+it.
+
+### The gate
+
+`--sheet palette-tiers` — the palette photographed as flat swatches through the
+real ground material, measured with look v2's swatch machinery, plus the
+arithmetic the design rests on:
+
+```
+worst skin/liner 6.08:1 (human #4A2C17), 0 under 6.0
+race            deep      mid    light   accent
+human         0.0899   0.1913   0.6459   0.2874
+elf           0.0586   0.2375   0.6459   0.2008
+dwarf         0.0544   0.1155   0.5429   0.2332
+lizardfolk    0.1159   0.2880   0.4701   0.4564
+closest pair of mid tiers 0.0462 apart, floor 0.03, 0 too close
+VALUE TIERS: PASS
+[Swatches] worst channel delta 1 (tolerance 6): PASS
+```
+
+**6.08:1 in the worst case, against the 2.1:1 the old rule scraped.** Every one
+of the design doc's stated luminances was re-derived from its hex and every one
+checked out exactly, which is worth recording: the palette arithmetic in that
+document is sound.
+
+The gate pins the **darkest skin**, not the liner: the human's `#4A2C17` is what
+sits at 6.08, so if a re-authored skin ever drops under, it is the skin that
+moves. The liner hex is not negotiable.
+
+### One thing found while building the sheet
+
+The four swatch rows failed the 6-unit transfer check on first run, by a clean
+gradient — bottom race off by 0, top race off by 11, misses in perfect vertical
+order. That is **the shader's contact band**, which darkens the bottom half of
+every half-metre cell of a vertical face. Stacked rows land at different points
+inside their cells and are darkened by different amounts, so the sheet was
+measuring its own Y coordinate. Turned off for this sheet exactly as the grain
+already is, for the same stated reason, and restored afterwards.
+
+Worth knowing: **the existing one-row swatch sheet never hit this because y=3.2
+happens to fall in the light half of its cell.** That is luck, and it is now
+written down as luck.
+
+### What it looks like
+
+`build/character/v2-1/closeup-three-quarter.png`. The four black shirts are
+gone: the human is slate, the elf a cooler slate, the dwarf madder red, the
+lizardfolk warm ochre, and for the first time the four are telling apart by
+colour at four metres. There is **no liner in the picture yet** — the liner is a
+shape and its voxels arrive with the re-authored parts in Stage 5. That is the
+stage plan working as intended, not an omission.
+
+### Counts, unchanged and expected to be
+
+| | Stage 0 | Stage 1 |
+| --- | --- | --- |
+| worst character, triangles | 17,788 | 17,788 |
+| human / lizardfolk IoU, front | 0.913 | 0.913 |
+| cross-race variant pairs over 0.70 | 15 of 94 | 15 of 94 |
+| generator diff | empty | empty |
+
+`png_diff` against Stage 0: `masks-40` and `critter-walk` identical — the masks
+are unshaded and the critter has no cloth — and every sheet with a clothed
+character changed, by 1.6% to 6.4% of its pixels. That is the tunic moving and
+nothing else.
+
+Green: 28 character tests, world suite passed, heightmap `76cccdb6`, spawn
+`(-44, -124)`.

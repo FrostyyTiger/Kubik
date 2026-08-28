@@ -147,21 +147,85 @@ const CLOTH_HEX := "#7A6A4F"
 const LEATHER_HEX := "#3A2A1E"
 const BELT_HEX := "#5A4632"
 
-## Per-race tunic, where the race has one. Elf green, dwarf brown, human and
-## lizardfolk a warm near-black.
+# --- The liner, and the value tiers -------------------------------------------
+#
+# THE LOOK V2 TUNIC RULE IS RETIRED, character v2 Stage 1, and the reason it had
+# to go is arithmetic rather than taste.
+#
+# It asked that cloth and skin cross a value ratio of 0.5 or lower - one at most
+# half the other - for EVERY skin a player can pick. Each race's five skins span
+# most of the luminance range (the human's from 0.033 to 0.632), so a tunic
+# clears all five only by sitting below the darkest or above the lightest. Above
+# is impossible for every race but the lizardfolk. Below works, and it is the
+# only thing that works, so four races solved one constraint and arrived at the
+# same answer:
+#
+#     human #262119 Y 0.0157   elf #465C44 Y 0.0937
+#     dwarf #34271C Y 0.0226   lizardfolk #302A1F Y 0.0238
+#
+# Four hues, all under Y 0.10, against grass at Y 0.221. On screen that is four
+# black rectangles, and the elf's is nominally green and six times the human's
+# luminance and you cannot tell. The constraint had exactly one solution.
+#
+# THE FIX IS STRUCTURAL: put a fixed dark LINER between skin and cloth - one or
+# two voxels of a constant near-black at every boundary where skin meets cloth,
+# at the collar, the cuff, the waist and the boot top. The pair that has to
+# carry the contrast becomes skin/liner, and it holds BY CONSTRUCTION:
+#
+#     lightest elf  #F5E3D3   144.8x the liner
+#     darkest human #4A2C17     6.1x the liner   <- the worst case in the game
+#
+# 6.1:1 against the 2.1:1 the old rule scraped. And the cloth is then free: any
+# hue, any value above about Y 0.03, because it is no longer the thing doing the
+# separating. This is how comic inking works and it is why an inked figure can
+# wear any colour without dissolving.
+
+## The liner. ONE VALUE FOR EVERY RACE AND EVERY PALETTE, and never a player
+## pick - the moment it varies it stops being a constant the contrast can be
+## proved against.
+const LINER_HEX := "#14100C"
+
+## Every race spans at least three value tiers, and places them in the same
+## structural spots so the cast reads as one family. Grass is Y 0.221 and dusk
+## sky is Y 0.03 to 0.08: a character that is entirely mid-value dissolves into
+## the meadow and one that is entirely dark dissolves into dusk. The old cast
+## was entirely dark, which is why it was VISIBLE at both times of day and
+## IDENTIFIABLE at neither.
 ##
-## LOOK V2 STAGE 5 DARKENED ALL FOUR, and the reason is arithmetic rather than
-## taste. The plan asks that cloth and skin cross a value ratio of 0.5 or lower
-## - one at most half the other - for EVERY skin a player can pick. Each race's
-## five skins span a wide band of luminance (the human's from 0.033 to 0.632),
-## so a tunic clears all five only by sitting below the darkest or above the
-## lightest. Above is impossible for every race except the lizardfolk, and only
-## just. Below works for all four, and these are the values that do it: worst
-## ratio 0.47 / 0.47 / 0.48 / 0.48 against the darkest skin of each race.
+##     liner  0.005 - 0.012   every skin/cloth boundary, seams, boot tops
+##     deep   0.03  - 0.09    legs, the lower half, under-layer, shadowed cloth
+##     mid    0.15  - 0.30    the torso mass; the race's main hue lives here
+##     light  0.45  - 0.70    ONE element: hair, a collar, a beard, a belly
+##     accent any            saturated, under 10% of silhouette, the identity
 ##
-## Hue is each race's own, unchanged - the elf is still green and the dwarf
-## still brown; only the value moved.
-const TUNIC_HEX := ["#262119", "#465C44", "#34271C", "#302A1F"]
+## The light tier does a specific job: it is what stays visible when the whole
+## figure has gone to silhouette at dusk. The elf's white hair is already doing
+## it by accident and it is the only thing in `silhouettes-15.png` that works.
+##
+## Measured Y, in order human / elf / dwarf / lizardfolk.
+const DEEP_HEX := ["#4C5566", "#3E4550", "#7A2320", "#7A5A26"]    # .090 .059 .054 .116
+const MID_HEX := ["#6E7A8C", "#7C8794", "#A83A2E", "#B98A3A"]     # .191 .238 .116 .288
+const LIGHT_HEX := ["#D8D2C2", "#D8D2C2", "#D9C08A", "#C9B48E"]   # .646 .646 .543 .478
+const ACCENT_HEX := ["#B98A34", "#8C6FB0", "#B07A2A", "#9FB8C4"]  # .287 .201 .233 .456
+
+## Fixed material slots that are nobody's race in particular.
+##
+## A MATERIAL IS ONE BASE VALUE PLUS A HUE AND A SATURATION. Form comes from the
+## baked AO; contrast comes from putting two materials next to each other, never
+## from shading one of them. So metal looks like metal because a BRIGHT RIM sits
+## beside a DARK BODY across a real geometric edge that the mesher's own AO
+## darkens - `TRIM_BRIGHT` over `METAL_DARK`, 6.6x apart, with one voxel of
+## relief between them. Hand-painting a second shading on top of the baked AO
+## double-darkens every concave corner and produces mud; see the design doc's
+## argument against non-metallic-metal painting.
+const TRIM_BRIGHT_HEX := "#B9C0C9"   # Y 0.522, the steel rim
+const METAL_DARK_HEX := "#4A5058"    # Y 0.079, the body it sits on
+
+## The scale/mail checker, two ADJACENT values one step apart. Free LOD: at 5 m
+## you see individual scales, at 15 m the checker averages to a flat Y 0.10,
+## which is what mail looks like from across a field.
+const SCALE_A_HEX := "#47665A"       # Y 0.116
+const SCALE_B_HEX := "#3C574D"       # Y 0.083
 
 
 # --- Options -----------------------------------------------------------------
@@ -301,7 +365,12 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 	var skin := _linear(SKIN_HEX[r][clampi(skin_index, 0, SKIN_HEX[r].size() - 1)])
 	var hair := _linear(HAIR_HEX[r][clampi(hair_index, 0, HAIR_HEX[r].size() - 1)])
 	var eyes := _linear(EYE_HEX[r][clampi(eye_index, 0, EYE_HEX[r].size() - 1)])
-	var cloth := _linear(TUNIC_HEX[r])
+	# THE TORSO'S MID TIER IS THE CLOTH. Released from the look v2 rule: it is
+	# the race's main hue at its own value, because the liner is what separates
+	# it from skin now. `CLOTH_DARK` is the deep tier rather than a scale of the
+	# mid, so the two tiers are authored values rather than one value and a
+	# multiplier that drifts.
+	var cloth := _linear(MID_HEX[r])
 	return {
 		VoxelModel.SKIN: skin,
 		# Derived rather than authored: a shaded skin that is not the skin
@@ -312,13 +381,40 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 		VoxelModel.EYE_WHITE: _linear(EYE_WHITE_HEX),
 		VoxelModel.MOUTH: _scale(skin, 0.55),
 		VoxelModel.CLOTH: cloth,
-		VoxelModel.CLOTH_DARK: _scale(cloth, 0.75),
+		VoxelModel.CLOTH_DARK: _linear(DEEP_HEX[r]),
 		VoxelModel.LEATHER: _linear(LEATHER_HEX),
 		VoxelModel.BELT: _linear(BELT_HEX),
 		VoxelModel.TOOTH: _linear(TOOTH_HEX),
 		VoxelModel.METAL: _linear(METAL_HEX),
 		VoxelModel.WOOD: _linear(WOOD_HEX),
+		VoxelModel.LINER: _linear(LINER_HEX),
+		# COUNTERSHADING, and it costs zero extra voxels because it is a palette
+		# split of a slot that already exists. Derived from the skin rather than
+		# tabled so it tracks the player's pick: a belly is the same animal's
+		# hide with the sun on it, not a different colour. Mixed toward white in
+		# LINEAR space, which is what "lighter" physically means.
+		VoxelModel.SKIN_VENTRAL: _lighten(skin, 0.55),
+		VoxelModel.TRIM_BRIGHT: _linear(TRIM_BRIGHT_HEX),
+		VoxelModel.METAL_DARK: _linear(METAL_DARK_HEX),
+		VoxelModel.SCALE_A: _linear(SCALE_A_HEX),
+		VoxelModel.SCALE_B: _linear(SCALE_B_HEX),
 	}
+
+
+## The race's own tier colours, for anything that needs one directly rather
+## than through a slot - the gallery's palette sheet, and the armour trim later.
+static func tier_hex(race: int, tier: String) -> String:
+	var r := valid_race(race)
+	match tier:
+		"liner": return LINER_HEX
+		"deep": return DEEP_HEX[r]
+		"mid": return MID_HEX[r]
+		"light": return LIGHT_HEX[r]
+		"accent": return ACCENT_HEX[r]
+	return LINER_HEX
+
+
+const TIER_NAMES := ["liner", "deep", "mid", "light", "accent"]
 
 
 ## sRGB hex to the linear value the renderer actually wants. See Block.COLORS:
@@ -332,6 +428,13 @@ static func _linear(hex: String) -> Color:
 ## Alpha is left alone.
 static func _scale(c: Color, f: float) -> Color:
 	return Color(c.r * f, c.g * f, c.b * f, c.a)
+
+
+## Toward white by `f`, in LINEAR space. Scaling cannot lighten - a scale by 1.5
+## takes a bright skin past 1.0 and clips it to a different hue - so the light
+## direction is a mix and the dark direction is a multiply. Alpha is left alone.
+static func _lighten(c: Color, f: float) -> Color:
+	return Color(lerpf(c.r, 1.0, f), lerpf(c.g, 1.0, f), lerpf(c.b, 1.0, f), c.a)
 
 
 # --- The rig -----------------------------------------------------------------
