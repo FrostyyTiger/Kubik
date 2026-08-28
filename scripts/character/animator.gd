@@ -269,15 +269,21 @@ const RIG_SHAPES := {
 		"root": "hips",
 		"lean": "torso",
 		# Opposite ends of the cycle: one leg forward while the other is back.
+		#
+		# `lower` IS OPTIONAL, and its absence is a statement rather than an
+		# omission: a rig shape with no `lower` key is a rig with no knee, which
+		# is the correct description of the critter's trot and of anything else
+		# built from rigid parts that does not have one. Nothing branches on
+		# which races have knees.
 		"legs": [
-			{"bone": "leg_r", "phase": 0.0},
-			{"bone": "leg_l", "phase": 0.5},
+			{"bone": "leg_r", "lower": "leg_r_lower", "phase": 0.0},
+			{"bone": "leg_l", "lower": "leg_l_lower", "phase": 0.5},
 		],
 		# Arms in antiphase with the leg on their OWN side, which is what a
 		# person does and what makes a walk read as a walk.
 		"arms": [
-			{"bone": "arm_r", "phase": 0.5},
-			{"bone": "arm_l", "phase": 0.0},
+			{"bone": "arm_r", "lower": "arm_r_lower", "phase": 0.5},
+			{"bone": "arm_l", "lower": "arm_l_lower", "phase": 0.0},
 		],
 	},
 	"trot": {
@@ -403,8 +409,24 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var tuck := deg_to_rad(config.jump_tuck_deg)
 	var rising := not state.grounded and state.rising
 	for entry in (shape["legs"] as Array):
-		var angle: float = tuck if rising else swing * sin(TAU * (phase + float(entry["phase"])))
+		var leg_phase := float(entry["phase"])
+		var angle: float = tuck if rising else swing * sin(TAU * (phase + leg_phase))
 		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, 0.0)}
+		if entry.has("lower"):
+			# A KNEE BENDS ONE WAY. A knee that hyperextends is the single most
+			# obviously wrong thing a procedural rig can do, and a plain sine
+			# does it for half of every cycle. So the angle is a RECTIFIED sine
+			# - negative half clipped away - which is also, conveniently, what a
+			# knee actually does: straight through stance, bent through swing.
+			#
+			# A quarter cycle behind the hip, because the knee's peak bend is
+			# at mid-swing and the hip's extreme is at contact.
+			var bend := -deg_to_rad(config.knee_swing_deg) * moving * maxf(
+				0.0, sin(TAU * (phase + leg_phase + 0.25)))
+			if rising:
+				# Tucked under, which is most of what makes a tuck read as one.
+				bend = -tuck
+			pose[entry["lower"]] = {"rot": Vector3(bend, 0.0, 0.0)}
 
 	var falling := not state.grounded and not state.rising
 	# Arms out while falling. Positive Z rotation swings the right arm's tip
@@ -413,11 +435,19 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var arms: Array = shape["arms"]
 	for i in arms.size():
 		var entry: Dictionary = arms[i]
-		var angle := arm_swing * sin(TAU * (phase + float(entry["phase"])))
+		var arm_phase := float(entry["phase"])
+		var angle := arm_swing * sin(TAU * (phase + arm_phase))
 		# The first arm in the list is the right one, and outward is +Z for it
 		# and -Z for its mirror.
 		var side := 1.0 if i % 2 == 0 else -1.0
 		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, out * side)}
+		if entry.has("lower"):
+			# An elbow bends the OTHER WAY from a knee, and it is the same
+			# rectified expression with the opposite sign. Positive X swings the
+			# forearm's tip forward, which is the only direction an elbow goes.
+			pose[entry["lower"]] = {"rot": Vector3(
+				deg_to_rad(config.elbow_swing_deg) * moving * maxf(
+					0.0, sin(TAU * (phase + arm_phase + 0.25))), 0.0, 0.0)}
 
 	if not state.grounded:
 		bob = 0.0
@@ -463,10 +493,23 @@ static func _pose_sit(config: CharacterConfig, legs_m: float, t: float,
 		"hips": {"pos": Vector3(0.0, -legs_m + config.sit_lift_vox * v, 0.0)},
 		"torso": {"rot": Vector3(deg_to_rad(-4.0), 0.0, 0.0),
 			"pos": Vector3(0.0, config.breath_vox * v * sin(TAU * config.breath_hz * t), 0.0)},
-		"leg_r": {"rot": Vector3(deg_to_rad(90.0), 0.0, 0.0)},
-		"leg_l": {"rot": Vector3(deg_to_rad(90.0), 0.0, 0.0)},
+		# THIGHS FLAT, SHINS DOWN - which is what sitting is, and which was not
+		# available before there was a knee. Until character v2 Stage 4 this
+		# pose was legs straight out in front, and the v1 status doc records
+		# what that cost: "a sitting character photographed from the front looks
+		# like a standing character with short legs", because its legs pointed
+		# along its own forward axis straight at the camera. Knees up fixes the
+		# pose rather than the camera.
+		"leg_r": {"rot": Vector3(deg_to_rad(78.0), 0.0, 0.0)},
+		"leg_l": {"rot": Vector3(deg_to_rad(78.0), 0.0, 0.0)},
+		"leg_r_lower": {"rot": Vector3(deg_to_rad(-72.0), 0.0, 0.0)},
+		"leg_l_lower": {"rot": Vector3(deg_to_rad(-72.0), 0.0, 0.0)},
 		"arm_r": {"rot": Vector3(deg_to_rad(-20.0), 0.0, deg_to_rad(6.0))},
 		"arm_l": {"rot": Vector3(deg_to_rad(-20.0), 0.0, deg_to_rad(-6.0))},
+		# Forearms resting forward on the knees rather than hanging through
+		# them.
+		"arm_r_lower": {"rot": Vector3(deg_to_rad(34.0), 0.0, 0.0)},
+		"arm_l_lower": {"rot": Vector3(deg_to_rad(34.0), 0.0, 0.0)},
 	}
 	_apply_chains(pose, config, t, 0.0)
 	_apply_head_look(pose, extra)
@@ -488,8 +531,17 @@ static func _pose_downed(config: CharacterConfig, legs_m: float) -> Dictionary:
 		"torso": {"rot": Vector3(deg_to_rad(6.0), 0.0, 0.0)},
 		"leg_r": {"rot": Vector3(deg_to_rad(-8.0), 0.0, 0.0)},
 		"leg_l": {"rot": Vector3(deg_to_rad(-8.0), 0.0, 0.0)},
+		# One knee drawn up, the other nearly straight. A body on its back with
+		# two identical legs reads as a doll laid down; asymmetry reads as
+		# someone who fell. Free, and it is the same argument the armour ladder
+		# makes about symmetry meaning "issued" and asymmetry meaning "lived
+		# through".
+		"leg_r_lower": {"rot": Vector3(deg_to_rad(-38.0), 0.0, 0.0)},
+		"leg_l_lower": {"rot": Vector3(deg_to_rad(-12.0), 0.0, 0.0)},
 		"arm_r": {"rot": Vector3(0.0, 0.0, deg_to_rad(55.0))},
 		"arm_l": {"rot": Vector3(0.0, 0.0, deg_to_rad(-55.0))},
+		"arm_r_lower": {"rot": Vector3(deg_to_rad(22.0), 0.0, 0.0)},
+		"arm_l_lower": {"rot": Vector3(deg_to_rad(10.0), 0.0, 0.0)},
 	}
 	_apply_chains(pose, config, 0.0, 0.0)
 	return pose
@@ -508,6 +560,11 @@ static func _apply_wave(pose: Dictionary, config: CharacterConfig, t: float,
 		deg_to_rad(10.0) * strength,
 		0.0,
 		(deg_to_rad(150.0) + swing) * strength)}
+	# THE WAVE IS AT THE ELBOW, not the shoulder, now that there is one. A whole
+	# arm swinging from the shoulder is a semaphore; a raised upper arm with the
+	# forearm doing the moving is a wave. The upper arm holds still at 150
+	# degrees out and the oscillation moves down one joint.
+	pose["arm_r_lower"] = {"rot": Vector3(0.0, 0.0, deg_to_rad(28.0) * strength + swing * 1.6)}
 
 
 ## The head follows the camera, clamped and already smoothed by update().

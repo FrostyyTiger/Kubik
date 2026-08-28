@@ -38,6 +38,7 @@ func _ready() -> void:
 		"phase by distance": _test_phase_by_distance,
 		"idle converges": _test_idle_converges,
 		"poses differ": _test_poses_differ,
+		"knees bend one way": _test_knee_never_hyperextends,
 		"sprint lean": _test_sprint_lean,
 		"animator cost": _measure_animator_cost,
 		"chain lag": _test_chain_lag,
@@ -387,6 +388,97 @@ func _test_part_parsing():
 ## model built back-to-front would have looked exactly like a correct one and
 ## the bug would have surfaced as "the new character walks backwards".
 ##
+
+## A KNEE BENDS ONE WAY, AND SO DOES AN ELBOW.
+##
+## The single most obviously wrong thing a procedural rig can do is bend a knee
+## backwards, and a plain sine does it for half of every cycle. The knee angle
+## is therefore a RECTIFIED sine - see Animator._pose_locomotion - and this is
+## the check that it stays rectified through every pose, every speed and every
+## race, including the ones assembled by hand rather than by arithmetic.
+##
+## SIGN CONVENTION, since it is the whole test: a positive rotation about X
+## swings a downward-hanging bone's tip toward -Z, which is FORWARD. So a knee,
+## whose shin swings backward, must never be positive; an elbow, whose forearm
+## swings forward, must never be negative. Both are checked against the REST
+## pose, which is what `apply_pose` treats them as offsets from.
+##
+## It walks the static poses too, because those are hand-written numbers and a
+## typed minus sign is exactly the kind of thing that produces a character
+## sitting with its shins through its thighs.
+func _test_knee_never_hyperextends():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var worst_knee := 0.0
+	var worst_elbow := 0.0
+	var worst_where := ""
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		for mode in [LocomotionState.MODE_WALK, LocomotionState.MODE_SPRINT,
+				LocomotionState.MODE_PRECISION]:
+			for grounded in [true, false]:
+				for rising in [true, false]:
+					for step in 90:
+						var st := LocomotionState.new()
+						st.speed = 5.0
+						st.mode = mode
+						st.grounded = grounded
+						st.rising = rising
+						var pose := Animator.pose_for(
+							st, float(step) / 90.0, 0.0, config, dims)
+						bad += _check_joint_signs(pose, "%s mode %d" % [
+							Races.name_of(race), mode])
+		# The hand-written poses, which arithmetic does not protect.
+		for pose_id in [LocomotionState.POSE_SIT, LocomotionState.POSE_DOWNED,
+				LocomotionState.POSE_WAVE]:
+			var st := LocomotionState.new()
+			st.grounded = true
+			st.pose = pose_id
+			var pose := Animator.pose_for(st, 0.0, 0.0, config, dims,
+				{"wave": 1.0})
+			bad += _check_joint_signs(pose, "%s pose %d" % [
+				Races.name_of(race), pose_id])
+
+	# And report the extremes actually reached, so a knee that never bends at
+	# all is as visible as one that bends the wrong way.
+	var st_walk := LocomotionState.new()
+	st_walk.speed = 5.0
+	st_walk.grounded = true
+	for step in 90:
+		var pose := Animator.pose_for(st_walk, float(step) / 90.0, 0.0, config,
+			Races.dims(Races.HUMAN))
+		if pose.has("leg_r_lower"):
+			worst_knee = minf(worst_knee, (pose["leg_r_lower"]["rot"] as Vector3).x)
+		if pose.has("arm_r_lower"):
+			worst_elbow = maxf(worst_elbow, (pose["arm_r_lower"]["rot"] as Vector3).x)
+	if worst_knee > -0.01:
+		print("  the human's knee never bends at all through a walk cycle")
+		bad += 1
+	print("knees bend one way: human knee to %.1f deg, elbow to %.1f deg, %d checks failed" % [
+		rad_to_deg(worst_knee), rad_to_deg(worst_elbow), bad])
+	return 1 if bad > 0 else 0
+
+
+## Every lower-limb bone in one pose, against its allowed direction.
+func _check_joint_signs(pose: Dictionary, where: String) -> int:
+	var bad := 0
+	for bone in pose:
+		var entry: Dictionary = pose[bone]
+		if not entry.has("rot"):
+			continue
+		var x: float = (entry["rot"] as Vector3).x
+		# A hair past zero is float noise, not a hyperextension.
+		if bone.begins_with("leg_") and bone.ends_with("_lower") and x > 0.001:
+			print("  %s: %s bends %+.2f deg - a knee hyperextending" % [
+				where, bone, rad_to_deg(x)])
+			bad += 1
+		elif bone.begins_with("arm_") and bone.ends_with("_lower") and x < -0.001:
+			print("  %s: %s bends %+.2f deg - an elbow hyperextending" % [
+				where, bone, rad_to_deg(x)])
+			bad += 1
+	return bad
+
 ## THE PART FILES AND THE RACE TABLE ARE ONE DESIGN IN TWO LANGUAGES.
 ##
 ## `races.gd` says a human head is `head_w` 18 wide and `head` 22 tall;

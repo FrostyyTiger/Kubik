@@ -576,3 +576,109 @@ appear to. The option sweep still reports 15 of 94 pairs over 0.70, worst 0.901.
 Green: 29 character tests, world suite passed, heightmap `76cccdb6`, swatch
 transfer and value tiers PASS, outline metric still 0 bare / 2 with
 placeholders.
+
+---
+
+## Stage 4 — the knee and the elbow, added rather than substituted
+
+Committed as `feat(character): stage 4 - ...`. Four new bones per race, five on
+the lizardfolk's list for Stage 6, and **not one existing pose was rewritten**.
+
+### The naming decision was the whole stage
+
+`leg_r` keeps its name and gains a child `leg_r_lower`. It does not become
+`leg_upper`. `Rig.apply_pose()` has one contract — *a pose that says nothing
+about a bone leaves it at rest* — so on the day the four bones landed, every
+static pose, the critter, the trot and every self-test that names a bone kept
+working. The poses that wanted knees were then refined **because someone chose
+to**, not to stop the build being red.
+
+The design doc's tech-list item 7 says "every existing pose describes limbs that
+no longer exist in one piece". With additive naming that is simply not true, and
+the difference between the two readings is a stage against a rewrite.
+
+The **part** keys got the honest names instead — `leg_upper`, `leg_lower`,
+`arm_upper`, `arm_lower` — because a part key is an asset contract with one
+consumer (`assets/characters/`, which ships empty) and a bone name is a pose
+contract with a dozen. Rename the cheap one.
+
+### The limb is still authored as one piece
+
+`voxlib.split_limb()` cuts a finished limb at an author height. No race's
+drawing code knows where its own knee is, and two halves cannot drift apart
+about the width they meet at. Nine lines per race instead of a rewrite:
+
+```python
+leg_upper, leg_lower = split_limb(leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
+```
+
+**The joint is an inset, never a gap.** A hole between two segments shows
+daylight through a leg the moment it bends. The bottom slice of the upper
+segment and the top slice of the lower are narrowed by one voxel all round and
+repainted in `LINER`, so the limb stays solid and gains a crease the mesher's
+own AO darkens — the same trick as the liner at a collar, and at the elbow it
+lands where a rolled sleeve would put one. The footprint is measured from *that
+slice*, so a leg whose boot is wider than its trouser insets the trouser and
+not the boot.
+
+### The segment length is read off the part, not halved from the table
+
+They are not the same number. The dwarf's legs are 15 voxels and its segments
+are 8 and 8, because the grid map rounds each half up. `bone_table()` therefore
+asks the part how tall it is. Same argument as the height self-test measuring a
+built rig rather than summing the table — and it removes a whole class of
+"the table and the part disagree" bug that Stage 3 had just spent an hour on.
+
+`hand_r` and `hand_l` reparent from `arm_r`/`arm_l` to the forearms. A hand
+parented to the upper arm would stay put while the elbow bent, which is the
+single most obviously wrong thing a two-segment arm can do.
+
+### A knee bends one way
+
+The angle is a **rectified** sine — the negative half clipped — a quarter cycle
+behind the hip, which is also what a knee actually does: straight through
+stance, bent through swing. A plain sine hyperextends for half of every cycle.
+The elbow is the same expression with the opposite sign.
+
+`knee_swing_deg := 45` and `elbow_swing_deg := 25`, both on the F8 panel.
+
+**`knees bend one way`** is the new gate: every race × three modes × grounded ×
+rising × 90 phase samples, plus the three hand-written poses, asserting no
+`leg_*_lower` ever rotates positive and no `arm_*_lower` ever rotates negative.
+It also asserts the knee *does* bend, so a joint that never moves fails as
+loudly as one that bends backwards. Human knee reaches −45.0°, elbow +25.0°,
+zero violations.
+
+### Four poses refined because they now can be
+
+- **`sit`** was legs straight out in front, and the v1 status doc records the
+  cost: "a sitting character photographed from the front looks like a standing
+  character with short legs", because its legs pointed along its own forward
+  axis at the camera. Thighs at 78° and shins at −72° is what sitting is. The
+  pose is fixed rather than the camera.
+- **`downed`** gets one knee drawn up and the other nearly straight. A body on
+  its back with two identical legs reads as a doll laid down; asymmetry reads as
+  someone who fell.
+- **`wave`** moves to the elbow. A whole arm swinging from the shoulder is a
+  semaphore; a raised upper arm with the forearm doing the moving is a wave.
+- **The jump tuck** gets a knee, which is most of what makes a tuck read as one.
+
+### Numbers
+
+| | Stage 3 | Stage 4 |
+| --- | --- | --- |
+| bones, human | 15 | **19** |
+| worst character, triangles | 40,268 | 42,428 |
+| human / lizardfolk IoU, front | 0.880 | 0.863 |
+| character self-tests | 29 | **30** |
+
+Triangles rose 2,160 — the joint insets add faces where a limb used to be one
+unbroken column. Still under the 44,000 budget set in Stage 3, and the budget
+does not move. The IoU shift of −0.017 is the crease showing in the silhouette;
+the pair is still the worst and still over, which is Stage 6's job.
+
+`anim-human-walk.png` now shows a bent trailing knee in five of its eight
+frames. It was eight rigid poles at Stage 0.
+
+Green: 30 character tests, world suite passed, swatch transfer and value tiers
+PASS.

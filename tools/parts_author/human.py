@@ -10,7 +10,7 @@ Numbers are the look plan's Stage 6 table. The stack, in model voxels:
     head   [42, 64) 22
 """
 
-from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 # --- Geometry the hair file needs to know ------------------------------------
@@ -197,20 +197,38 @@ height, big hands and boots, no neck: the look plan's "stocky", and the
 shape every other race is measured against in the silhouette sheets."""
 
 
+# --- Where this race's knee and elbow go -------------------------------------
+#
+# Character v2 Stage 4. The limb is authored full length above and cut here, so
+# the drawing code never has to know where the joint is. Both splits are the
+# midpoint of the author-grid limb, which is what the design doc asks for - "the
+# legs are 24, and 12/12 thigh and shin"; at the author grid of 64 that is 8/8.
+LEG_SPLIT = 8
+ARM_SPLIT = 10
+
+
 def render() -> str:
+    leg_upper, leg_lower = split_limb(
+        leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
+    arm_upper, arm_lower = split_limb(
+        arm(), ARM_SPLIT, "ARM_UPPER", "ARM_LOWER")
     parts = {
         "head": head(),
         "torso": torso(),
         "pelvis": pelvis(),
-        "leg": leg(),
-        "arm": arm(),
+        "leg_upper": leg_upper,
+        "leg_lower": leg_lower,
+        "arm_upper": arm_upper,
+        "arm_lower": arm_lower,
     }
     blocks = [
         parts["head"].gd("HEAD", HEAD_COMMENT),
         parts["torso"].gd("TORSO", TORSO_COMMENT),
         parts["pelvis"].gd("PELVIS", PELVIS_COMMENT),
-        parts["leg"].gd("LEG", LEG_COMMENT),
-        parts["arm"].gd("ARM", ARM_COMMENT),
+        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
+        parts["leg_lower"].gd("LEG_LOWER"),
+        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
+        parts["arm_lower"].gd("ARM_LOWER"),
     ]
     return gd_file("PartsHuman", DOC, blocks,
                    {k: k.upper() for k in parts}, "human.py")

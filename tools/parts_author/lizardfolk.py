@@ -9,7 +9,7 @@ The stack, in model voxels:
     head   [42, 60) 18
 """
 
-from .voxlib import (Part, gd_file, solid_eyes,
+from .voxlib import (split_limb, Part, gd_file, solid_eyes,
                      S, s, M, E, W, C, c, B, X, T)
 
 HEAD_SIZE = (16, 18, 24)
@@ -190,13 +190,29 @@ not applied by the animator, so it survives every pose and the animator
 never learns that one race stands differently from the others."""
 
 
+# --- Where this race's knee and elbow go -------------------------------------
+#
+# Character v2 Stage 4. The limb is authored full length above and cut here, so
+# the drawing code never has to know where the joint is. Both splits are the
+# midpoint of the author-grid limb, which is what the design doc asks for - "the
+# legs are 24, and 12/12 thigh and shin"; at the author grid of 64 that is 8/8.
+LEG_SPLIT = 9
+ARM_SPLIT = 10
+
+
 def render() -> str:
+    leg_upper, leg_lower = split_limb(
+        leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
+    arm_upper, arm_lower = split_limb(
+        arm(), ARM_SPLIT, "ARM_UPPER", "ARM_LOWER")
     parts = {
         "head": head(),
         "torso": torso(),
         "pelvis": pelvis(),
-        "leg": leg(),
-        "arm": arm(),
+        "leg_upper": leg_upper,
+        "leg_lower": leg_lower,
+        "arm_upper": arm_upper,
+        "arm_lower": arm_lower,
         "tail_1": tail("TAIL_1", (6, 6, 10), (3, 0, 0), None),
         "tail_2": tail("TAIL_2", (4, 4, 10), (2, -1, 0), None),
         "tail_3": tail("TAIL_3", (4, 4, 8), (2, -1, 0), 5),
@@ -205,8 +221,10 @@ def render() -> str:
         parts["head"].gd("HEAD", HEAD_COMMENT),
         parts["torso"].gd("TORSO", TORSO_COMMENT),
         parts["pelvis"].gd("PELVIS", PELVIS_COMMENT),
-        parts["leg"].gd("LEG", LEG_COMMENT),
-        parts["arm"].gd("ARM", ARM_COMMENT),
+        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
+        parts["leg_lower"].gd("LEG_LOWER"),
+        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
+        parts["arm_lower"].gd("ARM_LOWER"),
         parts["tail_1"].gd("TAIL_1", TAIL_COMMENT),
         parts["tail_2"].gd("TAIL_2"),
         parts["tail_3"].gd("TAIL_3"),

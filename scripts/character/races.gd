@@ -510,14 +510,49 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 		{"name": "head", "parent": "torso", "rest": Vector3(0, torso, 0) * V,
 			"part": "head"},
 		{"name": "arm_r", "parent": "torso", "rest": Vector3(arm_x, shoulder_y, 0) * V,
-			"part": "arm"},
+			"part": "arm_upper"},
 		{"name": "arm_l", "parent": "torso", "rest": Vector3(-arm_x, shoulder_y, 0) * V,
-			"part": "arm", "mirror": true},
+			"part": "arm_upper", "mirror": true},
 		{"name": "leg_r", "parent": "hips", "rest": Vector3(leg_x, 0, 0) * V,
-			"part": "leg"},
+			"part": "leg_upper"},
 		{"name": "leg_l", "parent": "hips", "rest": Vector3(-leg_x, 0, 0) * V,
-			"part": "leg", "mirror": true},
+			"part": "leg_upper", "mirror": true},
 	]
+
+	# THE KNEE AND THE ELBOW - character v2 Stage 4.
+	#
+	# ADDED, NOT SUBSTITUTED, and that is the whole design. `leg_r` keeps its
+	# name and gains a child; it does not become `leg_upper`. `Rig.apply_pose()`
+	# has one contract and it is written down there: a pose that says nothing
+	# about a bone leaves it at rest. So every static pose, the critter, the
+	# trot and every self-test that names a bone kept working on the day these
+	# four landed, and the poses that wanted knees were refined afterwards
+	# because someone chose to rather than to stop the build being red.
+	#
+	# The cost is that `leg_r` names a thigh, which is slightly dishonest. The
+	# PART keys got the honest names instead - `leg_upper`, `leg_lower` - because
+	# a part key is an asset contract with one consumer (assets/characters/, and
+	# it ships empty) while a bone name is a pose contract with a dozen. Rename
+	# the cheap one.
+	#
+	# THE SEGMENT LENGTH IS READ OFF THE PART, not computed as `legs / 2`. The
+	# two are not the same number: the dwarf's legs are 15 voxels and its
+	# segments are 8 and 8, because the grid map rounds each half up. Deriving
+	# the offset from the part that is actually there is the only version that
+	# cannot drift, and it is the same argument as the height self-test
+	# measuring a built rig rather than summing the table.
+	var set_for_bones := part_set(race, build)
+	var thigh := _segment_height(set_for_bones, "leg_upper", float(legs) * 0.5)
+	var upper_arm := _segment_height(set_for_bones, "arm_upper", float(arm_len) * 0.5)
+	for side in [["r", 1.0], ["l", -1.0]]:
+		var suffix: String = side[0]
+		var mirrored: bool = suffix == "l"
+		out.append({"name": "leg_%s_lower" % suffix, "parent": "leg_%s" % suffix,
+			"rest": Vector3(0, -thigh, 0) * V,
+			"part": "leg_lower", "mirror": mirrored})
+		out.append({"name": "arm_%s_lower" % suffix, "parent": "arm_%s" % suffix,
+			"rest": Vector3(0, -upper_arm, 0) * V,
+			"part": "arm_lower", "mirror": mirrored})
 
 	# The tail is a CHAIN, and the chain machinery is generic because the
 	# critter in Stage 13 needs it too. Bones are named `<chain>_1..n` and the
@@ -554,6 +589,16 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 	return out
 
 
+
+## The built height of a limb segment, in model voxels, or a fallback.
+##
+## Read off the part rather than halved from the table, because the two are not
+## the same number after a non-integer change of grid. See bone_table().
+static func _segment_height(parts: Dictionary, part_name: String, fallback: float) -> float:
+	if parts.has(part_name) and (parts[part_name] as Dictionary).has("size"):
+		return float((parts[part_name]["size"] as Vector3i).y)
+	return fallback
+
 ## The six sockets, on every race, positioned from that race's own numbers.
 ##
 ## ALL SIX EXIST EVERYWHERE even where nothing will ever hang on them, because
@@ -566,9 +611,16 @@ static func socket_table(race: int, build := STOCKY) -> Array:
 	var arm_len: int = t["arm_len"]
 	var pelvis := pelvis_height(race, build)
 	var chest_y := float(torso) * 0.7
+	# THE HANDS HANG OFF THE FOREARM since character v2 Stage 4, not off the
+	# shoulder. `arm_r` is now the upper arm, so a hand parented to it would
+	# stay put while the elbow bent - which is the single most obviously wrong
+	# thing a two-segment arm can do. The offset is the FOREARM's length, read
+	# off its part for the same reason the elbow's is.
+	var forearm := _segment_height(part_set(race, build), "arm_lower",
+		float(arm_len) * 0.5)
 	return [
-		{"name": "hand_r", "parent": "arm_r", "rest": Vector3(0, -arm_len, 0) * V, "socket": true},
-		{"name": "hand_l", "parent": "arm_l", "rest": Vector3(0, -arm_len, 0) * V, "socket": true},
+		{"name": "hand_r", "parent": "arm_r_lower", "rest": Vector3(0, -forearm, 0) * V, "socket": true},
+		{"name": "hand_l", "parent": "arm_l_lower", "rest": Vector3(0, -forearm, 0) * V, "socket": true},
 		{"name": "neck", "parent": "torso", "rest": Vector3(0, torso, 0) * V, "socket": true},
 		{"name": "chest", "parent": "torso", "rest": Vector3(0, chest_y, -float(torso_d) * 0.5) * V, "socket": true},
 		{"name": "back", "parent": "torso", "rest": Vector3(0, chest_y, float(torso_d) * 0.5) * V, "socket": true},

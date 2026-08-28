@@ -63,6 +63,18 @@ const TRIANGLE_BUDGET := 44000
 ## Precision crawl amplitude, as a fraction of the walk's.
 @export var precision_swing_ratio := 0.4
 
+## How far the knee bends at the top of its swing, in degrees. Character v2
+## Stage 4, and the reason the grid moved: a 16-voxel leg split in two has
+## segments 8 voxels long, a joint half its own thickness. At 24 it is 12 and 12.
+##
+## The knee's angle is a RECTIFIED sine - it bends one way only - so this is the
+## peak and there is no negative half. Starting value.
+@export var knee_swing_deg := 45.0
+
+## And the elbow, which bends forward and much less: an arm at a walk is mostly
+## a pendulum, and an elbow that matched the knee reads as a jog.
+@export var elbow_swing_deg := 25.0
+
 ## Torso pitched forward at sprint, in degrees. The single strongest cue that
 ## a character is running rather than walking quickly.
 @export var sprint_lean_deg := 12.0
@@ -175,6 +187,8 @@ const TUNING_ROWS := [
 	["sprint_swing_deg", "sprint leg swing (deg)", 0.0, 120.0, 1.0],
 	["arm_swing_ratio", "arm swing / leg swing", 0.0, 2.0, 0.05],
 	["precision_swing_ratio", "precision / walk swing", 0.0, 1.0, 0.05],
+	["knee_swing_deg", "knee bend (deg)", 0.0, 120.0, 1.0],
+	["elbow_swing_deg", "elbow bend (deg)", 0.0, 120.0, 1.0],
 	["sprint_lean_deg", "sprint torso lean (deg)", 0.0, 45.0, 1.0],
 	["bob_walk_vox", "walk hip bob (vox)", 0.0, 18.0, 0.1],
 	["bob_sprint_vox", "sprint hip bob (vox)", 0.0, 24.0, 0.1],

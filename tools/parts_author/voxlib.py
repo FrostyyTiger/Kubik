@@ -431,6 +431,76 @@ class Frame(Cells):
                     self.put(x, y, z, ch)
 
 
+def split_limb(p: Part, at: int, name_upper: str, name_lower: str,
+               inset: int = 1, joint=None):
+    """Cut a full-length limb into two segments at author height `at`.
+
+    CHARACTER V2 STAGE 4. A rigid single-segment limb has exactly one
+    expressive degree of freedom - its angle - and every technique that makes a
+    walk read as weight rather than as machinery needs a second: the knee
+    bending through swing, the foot rolling heel to toe, the contact pose, the
+    compression on landing. None of them can be faked by animating the one
+    angle harder.
+
+    THE LIMB IS STILL AUTHORED AS ONE PIECE and cut afterwards, which is the
+    whole reason this is nine lines per race instead of a rewrite. A leg is
+    drawn as a leg - boot, trouser, the lot - and no race's drawing code has to
+    know where its own knee is or keep two halves agreeing about the width they
+    meet at.
+
+    THE JOINT IS AN INSET, NEVER A GAP. A hole between two segments shows
+    daylight through a leg the moment it bends, which is worse than no knee at
+    all. The bottom slice of the upper segment and the top slice of the lower
+    one are narrowed by `inset` all round and repainted in `joint` - so the limb
+    stays solid and acquires a crease that the mesher's own baked AO darkens.
+    Same trick as the liner at a collar, and at the elbow it lands exactly where
+    a rolled sleeve would put one.
+
+    The anchors are both TOPS: the upper segment pivots at the hip or shoulder,
+    the lower at the knee or elbow. So a pose rotates each about the joint above
+    it, which is what a joint is.
+    """
+    if joint is None:
+        joint = k
+    (_, _), (y0, y1), (_, _) = p.bounds()
+    assert y0 <= at < y1, (p.name, at, (y0, y1))
+    ax, ay, az = p.anchor
+
+    upper = Part(name_upper, (p.w, p.h - at, p.d), (ax, p.h - at, az))
+    lower = Part(name_lower, (p.w, at, p.d), (ax, at, az))
+    for (x, y, z), ch in p.cells.items():
+        if y >= at:
+            upper.put(x, y - at, z, ch)
+        else:
+            lower.put(x, y, z, ch)
+
+    _ink_joint_slice(upper, 0, inset, joint)
+    _ink_joint_slice(lower, at - 1, inset, joint)
+    return upper, lower
+
+
+def _ink_joint_slice(p: Part, y: int, inset: int, ch: str) -> None:
+    """Narrow one slice to `inset` inside its own footprint and repaint it.
+
+    The footprint is measured from THAT SLICE rather than from the part, so a
+    leg whose boot is wider than its trouser insets the trouser and not the
+    boot - the crease is at the joint, not at whatever the part's widest point
+    happens to be.
+    """
+    here = [(x, z) for (x, yy, z) in p.cells if yy == y]
+    if not here:
+        return
+    xs = [c[0] for c in here]
+    zs = [c[1] for c in here]
+    x0, x1 = min(xs) + inset, max(xs) + 1 - inset
+    z0, z1 = min(zs) + inset, max(zs) + 1 - inset
+    if x0 >= x1 or z0 >= z1:
+        return  # already too thin to crease; leave it solid
+    for (x, z) in here:
+        p.erase(x, y, z)
+    p.box((x0, x1), (y, y + 1), (z0, z1), ch)
+
+
 def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
             generator: str, extra: str = "") -> str:
     """Assemble a parts file. `doc` is the class docstring without the `## `
