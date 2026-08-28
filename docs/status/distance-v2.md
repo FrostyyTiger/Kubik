@@ -801,3 +801,94 @@ rather than two runs.
 | hard rule 1 | **MET** - far probe at 0.0 identical to Stage 7's on every geometry row; far mesh 103,608 vertices |
 | self-tests | green |
 | cost | far mesh **256,328** vertices at 1.0 (2.47x), 1,874 ms per rebuild |
+
+---
+
+## Stage 9 - The 400 m boundary, measured
+
+**The claim this stage exists to test:**
+
+> the power-of-two step ladder may have removed it without a geomorph. Every
+> 16 m shelf is also an 8 m shelf, so a mountain crossing 400 m should
+> subdivide its shelves rather than move them, and there is nothing left to
+> re-cut.
+
+**Verdict: UNCHANGED-OR-WORSE as shipped, and the plan's reasoning is right
+anyway.** The step ladder is not what breaks it. Something else is, it was
+found by measurement, and the fix is one line - which this stage does not ship,
+because of what it would cost elsewhere.
+
+### The number
+
+`ganymede, deterministic`, seed 42, max and rms FIZZ over a 50 m window
+straddling each boundary, blocks:
+
+| | 200 m max / rms | 400 m max / rms |
+| --- | --- | --- |
+| `far_terrace 0.0` (= `f23c3f0`) | 4.60 / 0.462 | **21.57 / 1.611** |
+| `far_terrace 1.0` (shipped) | 24.00 / 2.869 | **80.00 / 6.090** |
+
+The 400 m boundary is **3.7x worse on the max and 3.8x worse on the rms**. It is
+the largest single regression in this epic, and it is exactly the artefact
+carried item 3 is about.
+
+### Why, and it is not the step ladder
+
+Two experiments, each a five-line change to `_cell()` / `_cell_h()`, each run
+through the whole far probe at `far_terrace 1.0`. Neither is shipped; both are
+in `build/probe/s9-expA.txt` and `s9-expB.txt`.
+
+| | 200 m max | **400 m max** | 400 m rms | FIZZ max, whole disc |
+| --- | --- | --- | --- | --- |
+| `f23c3f0`, smooth | 4.60 | **21.57** | 1.611 | 21.570 |
+| shipped: each ring quantises **its own** height at **its own** step | 24.00 | **80.00** | 6.090 | 80.000 |
+| **A**: every ring at the **same step** (32 blocks), each sampling its own cell centre | 32.00 | **96.00** | 5.888 | 96.000 |
+| **B**: every ring at the **same sample point** (the 32-block cell centre), each at its own step | 8.00 | **16.00** | 4.259 | **21.404** |
+
+**Experiment A makes it worse. Experiment B all but removes it** - 16 blocks at
+the 400 m boundary against `f23c3f0`'s 21.57, and a whole-disc FIZZ max of
+21.404, also under the smooth mesh's.
+
+So the plan's claim is **correct about the step ladder and wrong about what was
+breaking the boundary**. Making the two rings quantise to the same set of
+heights (A) does nothing; the shelves were never moving because 32 is not a
+multiple of 16. They were moving because **the two rings sample the cell height
+at different world points** - ring 1 at the centre of a 16-block cell, ring 2 at
+the centre of the 32-block cell containing it, which are up to 8 blocks apart,
+and on a mountain flank 8 blocks of horizontal offset is tens of blocks of
+height before anything is quantised at all.
+
+The subset property is real. It applies to the SET of heights a cell may land
+on, not to which one it picks, and which one it picks is decided by where the
+sample was taken.
+
+### Why Experiment B is not shipped
+
+Because the sample point every ring would have to share is **the coarsest
+ring's**. Ring 0's 4 m cells and ring 1's 8 m cells would then all read the same
+height as the 16 m cell containing them, and the far country would be made of
+**16 m blocks at every range** - at 100 m as much as at 900. That is the direct
+contradiction of this epic's own one-sentence idea, "bigger blocks the further
+away you go", and it would flatten the near half of the far field where the LOD
+is spending its vertices precisely to avoid that.
+
+There is no finer shared grid: ring 0's cell centres sit at multiples of 8 plus
+4, ring 1's at multiples of 16 plus 8, ring 2's at multiples of 32 plus 16, and
+no two of those coincide anywhere. Sharing a sample point means sharing the
+coarsest one.
+
+**What would get both** is a geomorph, and the plan is explicit that this stage
+does not build one - but the measurement changes what a geomorph has to do.
+It does not have to blend two surfaces: it has to blend the SAMPLE POSITION
+across the boundary, which is a much smaller thing. Over the last cell or two of
+ring 1, move the cell-height sample from the ring-1 centre to the ring-2 centre.
+Both surfaces are then continuous into the boundary and the subset property
+does the rest. That is the shape of it, written down here so the next plan does
+not start from "blend the two rings' surfaces".
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| a FIZZ-max number at the 400 m boundary for both knob settings, in the status doc, with the verdict written out | **MET.** 21.57 at `far_terrace 0.0`, **80.00** at 1.0, plus rms for both, plus the two experiments that say why |
+| carried item 3 | **stays open, and is now a different ticket.** Not "the ring boundary is the loudest thing the probe sees, and the fix is a geomorph of the surfaces" but "the two rings sample the cell height 8 blocks apart, and the fix is a geomorph of the sample POSITION". Experiment B is the proof that closing it closes the boundary: 16 blocks, under the pre-epic 21.57 |
