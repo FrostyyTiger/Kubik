@@ -723,7 +723,7 @@ class Surface extends RefCounted:
 		y_off_blocks = -0.5 * config.detail_amp
 		seam_end_blocks = maxf(float(config.voxel_radius_chunks * Chunk.SIZE)
 			- float(2 * config.far_step), 0.0) \
-			+ float(config.far_step) * FarFieldJob.SEAM_BAND_CELLS
+			+ float(config.far_step) * FarFieldJob.TERRACE_FADE_CELLS
 		var verts: PackedVector3Array = job.arrays[Mesh.ARRAY_VERTEX] \
 			if not job.arrays.is_empty() else PackedVector3Array()
 

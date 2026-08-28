@@ -100,6 +100,22 @@ const SKIRT_DEPTH_CELLS := 1.0
 ## few hundred quads on a ring of tens of thousands.
 const SEAM_BAND_CELLS := 4.0
 
+## HOW MANY TIMES LONGER THE TERRACE'S OWN FADE IS. Distance v2 Stage 8.
+##
+## Decision 5 says terracing fades in as the seam band fades out, and the seam
+## band is four cells because that is what the DETAIL samples need: long enough
+## that the fade is not itself an edge, short enough that the extra noise samples
+## are a few hundred quads on a ring of tens of thousands.
+##
+## The terrace has neither constraint and a harder job. What it is fading
+## between is not "coarse" and "coarse plus a little noise" - it is the VOXEL
+## surface and a quantised one, and those differ by up to half a ring-0 step
+## plus a detail_amp wherever the ground is steep. Over four cells that is a
+## visible ramp on a summit; over twelve it is not. It costs nothing: the fade
+## is a multiply on a number the cell cache already holds, and no extra sample
+## is taken for it.
+const TERRACE_FADE_CELLS := 12.0
+
 ## Blocks to raise the far mesh by inside the band, to meet the TOP of a voxel
 ## rather than its centre.
 ##
@@ -214,7 +230,16 @@ const INV_LN2 := 1.4426950408889634
 ## overlap is invisible - the far mesh sits half a detail_amp below the voxel
 ## surface and the voxels are drawn over it - whereas a gap is a hole in the
 ## world. Hard rule S1: never a hole, at any speed.
-const FRONTIER_OVERLAP_CELLS := 8
+## TWELVE SINCE DISTANCE V2 STAGE 8, and it was eight before that. The mechanism
+## is the one this constant was always about: the hole is cut to the frontier
+## captured when the job was SUBMITTED, and the mesh that expresses it lands a
+## rebuild later. Terracing makes that rebuild 12% slower - 1,650 ms to 1,852 -
+## and at 13 m/s the player covers proportionally more ground inside the window.
+## An interleaved ABAB found one hole sample in three terraced runs against
+## none in three smooth ones and none in distance v1's twelve; four more cells
+## of overlap is 8 m more of ground that is drawn twice and never a gap. Hard
+## rule S1 is a property, not a threshold.
+const FRONTIER_OVERLAP_CELLS := 12
 
 ## THE FRONTIER, one radius in CHUNKS per angular sector (world feel v1 Stage
 ## 3). The far mesh cuts its hole only where the voxels have actually arrived,
@@ -957,8 +982,12 @@ func _terrace_at(i: int, j: int) -> float:
 	var half := _t_step / 2
 	var dx := float(_ring_cx + i * _t_step + half - center.x)
 	var dz := float(_ring_cz + j * _t_step + half - center.y)
+	# THE TERRACE'S FADE IS LONGER THAN THE DETAIL'S - see TERRACE_FADE_CELLS.
+	# Still zero at the seam and still one where the detail has gone, which is
+	# what decision 5 asks for; it just gets there over more ground.
+	var band := _t_band * TERRACE_FADE_CELLS / SEAM_BAND_CELLS
 	var blend := clampf(
-		1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / _t_band, 0.0, 1.0)
+		1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / band, 0.0, 1.0)
 	return _t_amount * (1.0 - blend)
 
 
@@ -1007,18 +1036,44 @@ func _push_skirt(a: Vector3, b: Vector3, drop: float, color: Color,
 ## a step. Everywhere else the two depths are equal and this is a rectangle,
 ## which is what a block's side face is.
 ##
-## Drawn BOTH WAYS ROUND for the same reason a skirt is: see above. A riser
-## faces the lower neighbour, so correct single-sided winding would be visible
-## from the only side you can see it from - but "the only side you can see it
-## from" is an argument about occlusion, and a riser that faces the wrong way is
-## invisible, which looks exactly like the crack it was meant to cover.
+## BOTH WAYS ROUND, FOR A RISER AS WELL AS FOR A SKIRT, and the flag is here
+## because that was tried the other way and photographed.
+##
+## A skirt has to be drawn both ways because it is needed at the OUTER edge of a
+## ring, where "outside" faces away from the player, and at the inner edge
+## against the voxel hole, where it faces towards them; one rule cannot serve
+## both and a skirt facing the wrong way is invisible, which looks exactly like
+## the crack it was meant to cover.
+##
+## A RISER LOOKS LIKE IT HAS NO SUCH AMBIGUITY AND IT DOES. The argument for
+## single-sided is that a riser always faces its lower neighbour, which is the
+## only side it can be seen from, because the higher cell's own top quad is in
+## the way from the other. That argument holds on a gentle slope and fails on a
+## STEEP one: where consecutive cells drop by more than a cell width the top
+## quads are narrow slivers between tall risers, they occlude nothing, and the
+## silhouette of a cliff is made of risers facing several different ways at
+## once.
+##
+## Measured, seed 42, Forward+ on ganymede, `6-postcard`: single-sided saves
+## 75,760 vertices - 255,128 down to 179,368, from 2.46x the smooth mesh to
+## 1.73x - and opens a bright SEE-THROUGH GASH down the steep face of the
+## central massif, 1,063 pixels of the far band that get brighter by a mean of
+## 46 sRGB levels because the mountain behind is showing through. Cropped and
+## compared at `build/probe/crop-dbl.png` against `crop-single.png`.
+##
+## So: both ways round, and the vertices are the price. "No holes on the
+## horizon" is Stage 2's gate and it is not tradeable against a vertex count.
 func _push_riser(a: Vector3, b: Vector3, drop_a: float, drop_b: float,
 		color: Color, verts: PackedVector3Array, normals: PackedVector3Array,
-		colors: PackedColorArray, indices: PackedInt32Array) -> void:
+		colors: PackedColorArray, indices: PackedInt32Array,
+		both_sides := true) -> void:
 	var a_down := a - Vector3(0.0, drop_a, 0.0)
 	var b_down := b - Vector3(0.0, drop_b, 0.0)
-	_push_quad(a, b, b_down, a_down, color, verts, normals, colors, indices)
+	# The first is the winding that faces the LOWER neighbour - the one a
+	# single-sided riser would keep. See the note above for why it does not.
 	_push_quad(a_down, b_down, b, a, color, verts, normals, colors, indices)
+	if both_sides:
+		_push_quad(a, b, b_down, a_down, color, verts, normals, colors, indices)
 
 
 ## Four corners in, one flat-shaded quad out. The normal is derived from the
@@ -1259,7 +1314,7 @@ static func terrace_offset(heightmap: Heightmap, config: WorldgenConfig,
 	var bs: float = config.block_size
 	var seam := maxf(float(config.voxel_radius_chunks * Chunk.SIZE)
 		- float(2 * config.far_step), 0.0)
-	var band := float(config.far_step) * SEAM_BAND_CELLS
+	var band := float(config.far_step) * TERRACE_FADE_CELLS
 	if band > 0.0:
 		amount *= 1.0 - clampf(1.0 - (d_m / bs - seam) / band, 0.0, 1.0)
 		if amount <= 0.0:

@@ -691,3 +691,113 @@ not only a geometric one.
 | hard rule 1 | **MET, photographically** - `n2-s7-t0` and `n1-t0` are pixel-identical over the far band |
 | `--strict` | **MET** - twice running at `far_terrace 1.0`, holes 0, 1 long frame each, PASS both |
 | self-tests | green |
+
+---
+
+## Stage 8 - The seam, and where the steps begin
+
+**Shipped, in Stage 2**, and then improved here by a factor of two.
+
+The fade itself was written in Stage 2 rather than here, and that was a
+deliberate re-ordering: leaving it out would have put a terrace ring at 90 m in
+every night-1 postcard, and Stage 6's whole test is a person looking at those
+postcards. `_terrace_at()` drives `far_terrace` from the same seam-band factor
+`_corner_y()` already uses - zero where the detail is at full strength, one
+where the detail has faded. One multiply, because the knob takes a continuous
+value.
+
+What this stage added is a way to see whether it works, and a constant.
+
+### The measurement
+
+New far-probe row: sample the drawn far-mesh height on a ring 6 blocks outside
+the voxel hole, and compare it against the surface the player actually stands
+on - `height_at + detail_at + VOXEL_TOP_BIAS_BLOCKS`, the top face of the
+topmost solid block, which is what `_corner_y` is written to reproduce there.
+`ganymede, deterministic`, seed 42, blocks:
+
+| vantage | `far_terrace 0` | terrace, 4-cell fade | terrace, **12-cell fade** |
+| --- | --- | --- | --- |
+| spawn | max 2.926 / rms 0.557 | 4.257 / 0.891 | **3.370 / 0.583** |
+| summit | max 19.994 / rms 2.652 | 18.241 / 4.208 | **18.989 / 2.978** |
+| lake | max 0.504 / rms 0.366 | 1.340 / 0.506 | **0.680 / 0.379** |
+
+And the 0-100 m FIZZ band, which is "does anything move near the player as I
+walk":
+
+| vantage | `far_terrace 0` | 4-cell fade | **12-cell fade** |
+| --- | --- | --- | --- |
+| spawn | 1.75 | 3.61 | **2.30** |
+| summit | 4.82 | 19.36 | **8.77** |
+| lake | 1.76 | 4.55 | **2.80** |
+
+**`TERRACE_FADE_CELLS = 12`**, three times the detail's own four. Decision 5
+says the terrace fades in as the seam band fades out and this still does - zero
+at the seam, one where the detail has gone - it just gets there over more
+ground. The detail band is four cells because that is what the noise samples
+need; the terrace is fading between the **voxel surface** and a **quantised**
+one, which differ by up to half a ring-0 step plus a detail_amp wherever the
+ground is steep, and over four cells that is a visible ramp on a summit.
+
+**The summit vantage's ~19 blocks is not terracing.** It is there at
+`far_terrace 0` too (19.994), and it is the far mesh's own linear interpolation
+across an 8-block quad on the steepest ground in the world. What terracing does
+to it, with the wider fade, is nothing.
+
+### Two things went wrong here and both are recorded
+
+**1. A hole. Hard rule S1.** The first interleaved ABAB at `far_terrace 1.0`
+reported **one hole sample** in one of three runs, against none in three smooth
+runs and none in distance v1's twelve. The mechanism is the one
+`FRONTIER_OVERLAP_CELLS` was always about: the far mesh's hole is cut to the
+frontier captured when the job was **submitted**, and terracing makes that job
+12% slower (1,650 -> 1,852 ms), so at 13 m/s the player covers proportionally
+more ground inside the window. **`FRONTIER_OVERLAP_CELLS` 8 -> 12**: four more
+cells, 8 m more ground drawn twice, never a gap.
+
+**2. Single-sided risers, tried and reverted, with the picture.** A riser looks
+like it needs only the winding that faces its lower neighbour - the higher
+cell's own top quad should be in the way from the other side. That is true on a
+gentle slope and **false on a steep one**, where consecutive cells drop by more
+than a cell width, the top quads are narrow slivers between tall risers, and the
+silhouette of a cliff is made of risers facing several ways at once.
+
+Measured: single-sided saves **75,760 vertices** - 255,128 down to 179,368,
+2.46x the smooth mesh down to 1.73x - and opens a bright **see-through gash**
+down the steep face of the central massif in `6-postcard`: 1,063 pixels of the
+far band brighter by a mean of 46 sRGB levels, because the mountain behind is
+showing through. `build/probe/crop-dbl.png` against `crop-single.png`, cropped
+from the same frame at 4x.
+
+Reverted. "No holes on the horizon" is Stage 2's gate and it is not tradeable
+against a vertex count. The flag stays on `_push_riser` with the argument
+written next to it.
+
+### The interleaved measurement, after both
+
+`ganymede, ABAB median`, seed 42, `--view High`, three runs each, run order
+A B A B A B, all six on the shipped code:
+
+| | `far_terrace 0` | `far_terrace 1` |
+| --- | --- | --- |
+| holes | **0 (0-0)** | **0 (0-0)** |
+| frames over 33 ms | 2 (0-5) | **1 (1-5)** |
+| built/s, out | 79.1 (76.2-80.1) | 75.7 (74.8-79.7) |
+| built/s, back | 85.9 (82.5-88.8) | 81.9 (81.6-86.1) |
+
+**Holes zero on every run of both.** Every other row's spread overlaps, and the
+long-frame counts run higher on BOTH sides than distance v1's 0-1 because this
+box had been running Godot continuously for hours by then - which is exactly the
+drift `STATUS.md` item 5 documents and the reason this is an interleaved median
+rather than two runs.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| walk out from the meadow and back; nothing pops at 96 m | **MET at spawn and lake** - the seam disagreement is 3.37 and 0.68 blocks max against the smooth mesh's own 2.93 and 0.50, and the 0-100 m fizz band is 2.30 and 2.80 against 1.75 and 1.76. **At the summit vantage the number is 18.99 blocks and it is 19.99 with the knob off** - the far mesh's own quad linearisation on the steepest ground in the world, which terracing neither causes nor worsens |
+| no step appears inside the voxel radius | **MET by construction and by measurement** - `_terrace_at` returns exactly 0 at the seam radius, the far mesh draws nothing inside the hole at all, and the terrace-compliance rows (which exclude the fade band) are 100% outside it |
+| never a hole | **MET, 0 on six interleaved runs**, after `FRONTIER_OVERLAP_CELLS` 8 -> 12 |
+| hard rule 1 | **MET** - far probe at 0.0 identical to Stage 7's on every geometry row; far mesh 103,608 vertices |
+| self-tests | green |
+| cost | far mesh **256,328** vertices at 1.0 (2.47x), 1,874 ms per rebuild |
