@@ -102,6 +102,50 @@ here on this list is filled by what a playtest taught us.
    - A **continuous flora density ramp** belongs in
      `World._flora_fraction_for()`, which no lane owned this run.
 
+   **Distance v2 - the far country is made of blocks too** ran over two nights,
+   2026-08-28, on `feat/distance-v2`, all eleven stages.
+   [plans/distance-v2.md](plans/distance-v2.md). Distance v1 fixed what the far
+   country is COLOURED; this one fixes what it is MADE OF. Marcel's complaint
+   was that the background "feels like a different game - one is a cube based
+   game, and the other one is just sort of an edge based vector game", and the
+   code agreed: near terrain is cubes and near trees are staircases of leaf
+   voxels, while the far field was a smooth surface with six-sided cones on it,
+   built to match the near field's SILHOUETTE and never its SURFACE.
+
+   Now every far cell has one height, quantised to that ring's own cell width -
+   4 m at the seam, 8 m at 200 m, 16 m to the fog - and the difference to each
+   lower neighbour is a vertical riser, lit as a voxel's side face is. The
+   impostor forest is stepped pyramids standing on the shelves. **PEAK LOSS at
+   600 m fell from +55.28 blocks to +13.40**, so a summit is drawn 27 m short at
+   the real scale against 110 m before the epic; past 500 m the far country now
+   holds perfectly still, FIZZ exactly 0.00 against 2.11-3.27. Same heightmap
+   hash, same spawn, same 28,383 trees, same 580 impostors: this epic changed
+   how the far country is DRAWN and never what it IS.
+
+   **It ships OFF, on one knob.** `far_terrace` is on F4 at 0.0, 0.0 is
+   `f23c3f0` byte for byte at every stage, and moving it rebuilds the far mesh
+   and the impostor ring in place - no reroll, no voxel chunk, the player
+   standing still. `docs/status/distance-v2.md` has every number with a
+   provenance column, four gates that could not be met as written, and a
+   **"Carried forward"** section at the end.
+
+   **What it leaves for the next plan**, in one line each:
+   - The **400 m ring boundary is 3.7x LOUDER** with the terrace on, and Stage 9
+     found out why: not the step ladder, which changes nothing, but the two
+     rings **sampling the cell height 8 blocks apart**. A geomorph of the sample
+     POSITION removes it entirely - measured at 16.00 against the pre-epic
+     21.57 - and is a much smaller thing than blending two surfaces.
+   - **PEAK LOSS's residue is bimodal at exactly one ring-2 step**: eleven
+     summits land within 10 blocks, nine fall a whole shelf short because the
+     96-block ridge test did not fire. A narrower or two-tier test would move
+     it.
+   - **The far mesh is 2.47x the vertices** and its upload is on the main
+     thread. Single-sided risers halve the cost and tear a see-through gash down
+     every steep face; getting both needs a watertight shell.
+   - **`--rendering-driver` after the `--` selects nothing, silently**, so the
+     Compatibility half of every check in this project may have been Forward+.
+     README fixed; no earlier epic's `-gl` set has been checked.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or

@@ -892,3 +892,234 @@ not start from "blend the two rings' surfaces".
 | --- | --- |
 | a FIZZ-max number at the 400 m boundary for both knob settings, in the status doc, with the verdict written out | **MET.** 21.57 at `far_terrace 0.0`, **80.00** at 1.0, plus rms for both, plus the two experiments that say why |
 | carried item 3 | **stays open, and is now a different ticket.** Not "the ring boundary is the loudest thing the probe sees, and the fix is a geomorph of the surfaces" but "the two rings sample the cell height 8 blocks apart, and the fix is a geomorph of the sample POSITION". Experiment B is the proof that closing it closes the boundary: 16 blocks, under the pre-epic 21.57 |
+
+---
+
+## Stage 10 - Docs, night 2
+
+### The postcards, final
+
+Seed 42, ganymede, RTX 3070 Ti. `far_terrace 0.0` is pixel-identical at every
+stage of this epic, so the two `t0` sets stand for all of them.
+
+| | Forward+ | Compatibility |
+| --- | --- | --- |
+| `far_terrace 0.0` | `build/tour/n1-t0` | `build/tour/n1-t0-gl` |
+| `far_terrace 1.0`, shipped | **`build/tour/final-t1`** | **`build/tour/final-t1-gl`** |
+
+Step-edge strength on `6-postcard`'s far-massif band - mean absolute vertical
+luma gradient, sky excluded:
+
+| | `far_terrace 0` | `far_terrace 1` |
+| --- | --- | --- |
+| Forward+ | 2.764 | **4.428** |
+| Compatibility | 2.926 | **5.033** |
+
+Also on disk, all `far_terrace 1.0`, Forward+, seed 42:
+
+| tour | what it shows |
+| --- | --- |
+| `d2-t1-rs050`, `d2-t1-rs070`, `d2-t1-rs100` | `far_riser_shade` at 0.50, 0.70 and 1.00 |
+| `n1-t1` | night 1's end, before the band lock and the wider seam fade |
+| `n2-s7-t1` | Stage 7, the band lock, against `n1-t1` |
+| `n2-t1-dbl` vs `n2-t1` | double-sided against single-sided risers - `build/probe/crop-dbl.png` and `crop-single.png` are the 4x crop that decided it |
+
+### Every constant this epic moved
+
+| constant | `f23c3f0` | shipped | why, in one line |
+| --- | --- | --- | --- |
+| `far_terrace` | - | **0.0**, on F4 | ships OFF; 1.0 is the epic and 0.0 is the way back |
+| `far_riser_shade` | - | **1.0**, on F4 | the plan's 0.7 measured as a dimmer, not a contrast knob |
+| `TERRACE_LEVEL_RING` | - | **0** (pyramid level 2) | swept 0/1/2/per-ring; chosen on PEAK LOSS and the seam dip |
+| `RIDGE_SPAN_BLOCKS` | - | **96** | `far_normal_m`'s half-span: a ridge read at the scale a flank is |
+| `TERRACE_FADE_CELLS` | - | **12** | three times the detail's fade; halves the seam artefact |
+| `FRONTIER_OVERLAP_CELLS` | 8 | **12** | a 12% slower rebuild put one hole back; hard rule S1 |
+| `SKIRT_DEPTH_CELLS` | 1.0 | **1.0 + `far_terrace`** | a terraced ring can disagree with its coarser neighbour by most of a step |
+| `far_band_m` | 60.0 | **lerp(60, ring step, `far_terrace`)** | decision 7; 16 m at ring 2, exactly 60 at knob 0 |
+| `far_band_step` | 0.03 | **0.03 x band_m / 60** | the constant preserved is the value change per METRE |
+| `LONG_FRAMES_ALLOWED` | (0) | **1** | decision 11 |
+| spruce / larch impostor | `_cone(6)`, 12 tris | **`_stack([1, .66, .33])`, 32 tris** | a cone under flat shading is six diamond facets |
+| broadleaf impostor | octahedron, 12 tris | **stepped crown, 34 tris** | the same language as the spruce beside it |
+| krummholz impostor | `_cone(6, .7)`, 12 tris | **`_stack([1, .6])`, 22 tris** | two tiers; three boxes tall is a small spruce |
+| snag impostor | `_post`, 8 tris | **unchanged** | a four-sided post is already a box |
+
+Everything above is per-machine LOOK. **`PROPERTIES` and `hash_key()` are
+untouched**, so nothing this epic added crosses the network or can refuse a
+join.
+
+### The whole table
+
+`ganymede, deterministic`, seed 42, `--view high`, blocks.
+
+| | `f23c3f0` | S1 | S2 | S4 | S5 | S7 | **S8 (shipped)** |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FIZZ rms | 0.607 | 1.279 | 1.279 | 1.267 | 1.267 | 1.267 | **1.261** |
+| FIZZ max | 21.570 | 80.0 | 80.0 | 80.0 | 80.0 | 80.0 | **80.0** |
+| FIZZ past 500 m | 2.11-3.27 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | **0.00** |
+| FIZZ 0-100 m (spawn/summit/lake) | 1.75/4.82/1.76 | 3.61/19.36/4.55 | " | " | " | " | **2.30/8.77/2.80** |
+| ROUGHNESS | 2.5648 | 15.46 | 15.46 | 16.13 | 16.13 | 16.13 | **16.04** |
+| 200 m boundary max/rms | 4.60/0.462 | 32.0/2.884 | " | 24.0/2.869 | " | " | **24.0/2.869** |
+| 400 m boundary max/rms | 21.57/1.611 | 80.0/6.152 | " | 80.0/6.090 | " | " | **80.0/6.090** |
+| PEAK LOSS at 600 m | +55.28 | +29.40 | +29.40 | +13.40 | +13.40 | +13.40 | **+13.40** |
+| VALLEY GAIN | +0.53 | -6.53 | -6.53 | -6.53 | -6.53 | -6.53 | **-6.53** |
+| seam vs voxel surface, max | 2.93/19.99/0.50 | - | - | - | - | 4.26/18.24/1.34 | **3.37/18.99/0.68** |
+| shelf move over 200 m, rms | 5.74/5.25/8.34 | 4.58/6.63/5.20 | " | 4.78/6.79/5.31 | " | " | **4.78/6.85/5.31** |
+| terrace compliance | 0% | 100% | 100% | 100% | 100% | 100% | **100%** |
+| far mesh verts, in game | 103,608 | 103,608 | 229,824 | 232,136 | 232,136 | 232,136 | **256,328** |
+| far mesh build, ms | 1,650 | 1,406 | 1,719 | 1,782 | 1,782 | 1,830 | **1,874** |
+| impostors at spawn | 580 | 580 | 580 | 580 | 580 | 580 | **580** |
+| impostor triangles | 6,764 | 6,764 | 6,764 | 6,764 | 17,700 | 17,700 | **17,700** |
+
+Every column but the first is `far_terrace 1.0`. **At 0.0 every stage reproduces
+the first column character for character**, checked by the far probe at Stages
+0, 1, 2, 4, 5, 7 and 8, and pixel-for-pixel in the tour at Stage 7.
+
+### Gates, both nights
+
+| gate | result |
+| --- | --- |
+| heightmap hash | **`76cccdb6`** - unchanged, hard rule 7 |
+| spawn | **(-44, -124)** |
+| trees | **28,383** |
+| config hash | **`3d45b8fc`** |
+| impostors at spawn, both knob settings | **580 / 580** - hard rule 8 |
+| self-tests | **green at the end of every stage** |
+| far probe determinism | **PASS**, tables IDENTICAL over two runs, at every stage and both knob settings |
+| hard rule 1 - 0.0 is `f23c3f0` | **MET at every stage**, geometrically and photographically |
+| hard rule 2 - no player term in the quantisation | **MET after Stage 1's second attempt**, and the rule needed restating: nothing the quantisation READS may depend on the player either |
+| hard rule 3 - powers of two across rings | **MET**, 8 / 16 / 32 blocks, 100% compliance |
+| hard rule 4 - tops keep `_flank_normal` | **MET**, only risers take a side-face treatment |
+| hard rule 5 - `scripts/character/` and `world.gd` untouched | **MET**, neither file appears in any diff |
+| hard rule 6 - `look.gd` append-only, `figure_material()` unmodified | **MET - `look.gd` was not touched at all.** Stage 3 turned out not to need it: a riser already carries a horizontal normal and goes through the existing ramp |
+| hard rule 7 - heightmap hash unchanged | **MET** |
+| hard rule 8 - same seed, spawn, tree count | **MET** |
+| hard rule S1 - never a hole | **MET, 0 on six interleaved runs**, after `FRONTIER_OVERLAP_CELLS` 8 -> 12 |
+| `--strict` | **PASS** at Stages 0, 2 and 7; at Stage 8 the interleaved ABAB is the number, and holes are 0 on all six |
+| vertex count under 4x | **MET at 2.47x** |
+| impostor triangles under 4x | **MET at 2.62x** |
+
+### Gates that could not be met as written, all four in one place
+
+1. **Stage 1, "walk 200 m and back; a named shelf does not change height."** A
+   named shelf does move, at a ring boundary. The honest comparison is that over
+   a 200 m walk the terraced far field moves rms 4.78 / 6.85 / 5.31 blocks
+   against the smooth mesh's own 5.74 / 5.25 / 8.34 - **less, on average, than
+   the game already did** - and inside a ring it does not move at all, FIZZ
+   past 500 m being exactly `0.00` against 2.11-3.27.
+2. **Stage 5, "852 impostors at the shot's vantage."** 580 at spawn on
+   ganymede; 852 is Marcel's own vantage on his box. What the gate is really
+   about - that terracing does not change the count - is met exactly.
+3. **Stage 6, "the far country redraws in under two seconds."** The far mesh
+   does, at 1.87 s. The impostor ring follows 0.9 s later because this engine
+   build serialises GDScript across the worker pool, so the complete redraw is
+   about 2.7 s on this box. **The gate was unreachable as written from the
+   moment it was written**: the plan's own budget is "1,299 ms of far mesh and
+   1,312 ms of impostors - about a second and a half", and those add to 2.6 s.
+   What the gate protects - no reroll, no chunk rebuilt, the player standing
+   still - is met with a factor of fifteen to spare.
+4. **Stage 9, the 400 m boundary.** Measured, verdict written out, and worse:
+   80.00 against 21.57. The stage's own gate ("a number and a verdict") is met;
+   the hope behind it is not.
+
+### What night 2 did not do
+
+- **`look.gd` was never opened.** The one file this epic was most likely to
+  collide with the character lane on. Stage 3 was expected to append a riser
+  shade helper and did not need to.
+- **No geomorph**, as the plan instructs. Stage 9 measured what one would have
+  to do instead, which is a smaller thing than the plan assumed.
+- **`far_zone_cell_m` and the zone thresholds were not touched.** The snow/rock
+  boundary is a ZONE boundary, drawn on the zone-cell grid; terracing moved the
+  altitude bands onto risers and left the zone fields where look v1 put them.
+- **The flora density ramp**, decision 15 - `World._flora_fraction_for()` is
+  another lane's file and this epic did not open `world.gd`.
+
+### For Marcel to rule on
+
+1. **`far_terrace`, the whole epic.** `build/tour/final-t1` against
+   `build/tour/n1-t0`, and the same pair on Compatibility. Shipped at **0.0** -
+   this is your call to make, not a default anyone should assume.
+2. **`far_riser_shade`, three ways.** `d2-t1-rs050` / `d2-t1-rs070` /
+   `d2-t1-rs100`. Shipped at **1.00**, which is the near field's own ratio; the
+   plan's 0.70 is on disk and it is darker, not more contrasty.
+3. **`far_band_step` after the lock.** Shipped at **0.03** with the interval
+   scaled, which preserves the value change per metre exactly. `n2-s7-t1`
+   against `n1-t1` is what the lock is worth: 0.23 sRGB levels.
+
+### Carried forward
+
+Everything below is measured, not suspected.
+
+#### This epic owns these five
+
+1. **The 400 m ring boundary is 3.7x worse with the terrace on** - 80.00 max
+   against `f23c3f0`'s 21.57 - and Stage 9 found the mechanism and the fix.
+   **It is not the step ladder.** Two rings quantising to the same set of
+   heights changes nothing (experiment A, 96.00); two rings sampling the cell
+   height at the same world point all but removes it (experiment B, **16.00**,
+   under the pre-epic number). What a geomorph has to blend is the SAMPLE
+   POSITION over the last cell or two of the finer ring, not the two surfaces.
+2. **PEAK LOSS's residue is bimodal at exactly one ring-2 step.** Eleven of the
+   twenty summits land within +1.7 to +9.7 blocks of the truth; the other nine
+   fall +32.7 to +41.9 short because the 96-block ridge test did not fire on
+   their cell. A narrower or two-tier test would move it. The gate is met by a
+   factor of four, so this is taste, and it wants an eye on a picture rather
+   than another sweep.
+3. **The far mesh is 2.47x the vertices at `far_terrace 1.0` and its upload runs
+   on the main thread.** Single-sided risers would take that to 1.73x and tear a
+   see-through gash down every steep face (Stage 8, with the crop). Getting both
+   needs a genuinely watertight shell - one face per boundary, wound outward,
+   with the solid below actually closed - which is a mesher change and not a
+   constant.
+4. **VALLEY GAIN is now -6.53 blocks** against `f23c3f0`'s +0.53: a basin floor
+   lands on the shelf below it, symmetrically with the peaks. It is the price of
+   a 16 m step and not a filter error, and nobody has looked at whether a valley
+   floor drawn 3 m low reads badly.
+5. **`TERRACE_LEVEL_RING` is a taste knob that is a `const`.** Three values were
+   swept and the table is in Stage 1; the shipped one is best on PEAK LOSS and
+   on the seam and worst on the 400 m boundary. If (1) is ever fixed, this
+   should be re-swept, and it may want to be on F4.
+
+#### Method
+
+6. **The `-gl` half of every "both renderers" check in this project may not have
+   happened.** `--rendering-driver` after the `--` is passed to the game, not to
+   the engine, and selects nothing, with no error. The README is corrected and
+   distance v2's own pair was re-taken; **no earlier epic's `-gl` set has been
+   checked.**
+7. **The knob's full redraw is 2.7 s on ganymede**, not the plan's two seconds -
+   1.87 s of far mesh and 0.9 s of impostor ring, serialised because this engine
+   build runs one GDScript task at a time. Halving either would need the job
+   itself to get cheaper, which is the GDExtension conversation.
+
+#### Untouched by this epic, and still open exactly as distance v1 left them
+
+- **1. The meadow tufts read as gravel.** A look pass, unchanged.
+- **2. `shade_desat` is the mechanism under (1).** Not argued with.
+- **5. FIZZ rms is 63% worse than pre-epic** (0.373 -> 0.607). Still true at
+  `far_terrace 0.0`, which is what that item measures. Worth one line of
+  precision: at 1.0 the mechanism it names - a mip level continuous in
+  distance-from-player - **does not apply to the terraced surface at all**,
+  which is why FIZZ past 500 m is exactly zero; the 1.261 rms at 1.0 is ring
+  boundaries instead, which is item (1) above.
+- **7. Ring rebuild time is still not in the stream probe's report.** This epic
+  added a triangle count to `FarTrees.stats()` and a printed line, and did not
+  touch the stream probe's table.
+- **8. A continuous flora density ramp belongs in
+  `World._flora_fraction_for()`**, which is still another lane's file. Decision
+  15.
+- **9. `debug_hud.gd` reaches into `world.get_node_or_null("FarField")`**, and
+  **this epic added a second such reach** - `FarField.apply_far_knobs()` finds
+  the node the same way, for the same reason. If `world.gd` ever gains a
+  `far_field()` accessor, there are now two call sites for it.
+
+### The one number to lead with
+
+It is not FIZZ and it is not PEAK LOSS, though PEAK LOSS is the best number in
+the epic: **+55.28 blocks of lost summit at 600 m down to +13.40**, which is a
+mountain drawn 27 m short instead of 110 m short at the real scale.
+
+It is that a person standing in the valley can move one number on F4, without
+moving and without pressing F7, and watch the background stop being a different
+game. `build/tour/final-t1/6-postcard.png` against
+`build/tour/n1-t0/6-postcard.png` is that, on this box, on both renderers.

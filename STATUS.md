@@ -1,46 +1,63 @@
 # Status
 
-The latest run is **distance v1, both nights**, on `feat/distance-v1`:
+The latest run is **distance v2, both nights**, on `feat/distance-v2`:
+`docs/status/distance-v2.md`. **The far country is made of blocks too** - one
+height per far-field cell, quantised to that ring's own cell width, with the
+difference to each lower neighbour drawn as a vertical riser. 4 m steps at the
+seam, 8 m at 200 m, 16 m to the fog, lit tops and shaded risers in the near
+field's own lighting language, and the impostor forest is stepped pyramids
+standing on the shelves instead of six-sided cones floating over them.
+
+**It ships OFF.** `far_terrace` is on F4 at 0.0, and 0.0 is `f23c3f0` byte for
+byte - checked by the far probe at seven stages and pixel-for-pixel in the tour.
+Turning it up rebuilds the far mesh and the impostor ring **in place**, without
+a reroll, without rebuilding a voxel chunk and without the player moving, which
+is how the whole epic is meant to be judged.
+
+Five things in it are worth reading even if you read nothing else:
+
+- **PEAK LOSS at 600 m went from +55.28 blocks to +13.40.** The far field draws
+  a summit 27 m short at the real scale, against 110 m before this epic and
+  120 m before distance v1. Carried item 4 has never had a better number.
+- **Past 500 m the far country now holds perfectly still** - FIZZ exactly `0.00`
+  in every band at every vantage, against 2.11-3.27 before.
+- **Hard rule 2 needed restating and the measurement found out why.** "No player
+  term in the height quantisation" was satisfied to the letter by the first
+  implementation, which quantised a height whose INPUT was a mip level chosen
+  from the distance to the player. The terraces swam - rms 9.8-13.6 blocks over
+  a 200 m walk. Nothing the quantisation reads may depend on the player either.
+- **The knob was wired end to end and reached nothing.** `World.setup()` keeps a
+  deliberate CLONE of the config, so the F4 panel and the far-field jobs were
+  reading different objects. It compiled, logged a rebuild every time and
+  changed nothing on screen. What caught it was a self-test printing the vertex
+  count at 0.0 and at 1.0 and getting the same number twice.
+- **`--rendering-driver` after the `--` selects nothing**, so the "both
+  renderers" half of every check in this project may have been taken twice on
+  Forward+. Fixed in the README; no earlier epic's `-gl` set has been checked.
+
+**The acceptance test, for Marcel:** stand in the valley where
+`Screenshot 2026-08-28 161152.png` was taken, open F4, and move
+`distance: far terrace` from 0 to 1. The far country should redraw in under two
+seconds without the world streaming back in around you, and the mountains should
+stop being a different game.
+`build/tour/final-t1/6-postcard.png` against `build/tour/n1-t0/6-postcard.png`
+is that comparison on ganymede, and `final-t1-gl` / `n1-t0-gl` is the same pair
+on Compatibility.
+
+**What it did not fix, measured:** the 400 m ring boundary is 3.7x LOUDER with
+the terrace on - 80.00 blocks against 21.57 - and Stage 9 found out why, which
+is not what the plan assumed. See item 9 below.
+
+The previous run is **distance v1, both nights**, on `feat/distance-v1`:
 `docs/status/distance-v1.md`. Night 1 is the far country's geometry and colour -
 a filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
 dilation, and the end of the far field's zone dither. Night 2 is what grows on
 it: the impostor forest stops being drawn as a CHARACTER, converges towards the
 hillside it stands on, and runs to the fog instead of half way. **The meadow is
-still gravel and Stage 8 says why** - see item 8 below.
+still gravel and its Stage 8 says why** - see item 8 below.
 
-It is the first status doc in this project with **no "Tuned blind" section**:
-ganymede's GPU works now, so every tone was judged against a picture taken on
-the same box. A **provenance column** replaces it - which box each number came
-from and whether it is a single run or an interleaved median.
-
-Five things in it are worth reading even if you do not read the rest:
-
-- The far field already lost **60 blocks of summit at 600 m before this epic
-  touched it**, so two of the plan's gates were written against a baseline
-  nobody had measured. Both are recorded as not met, with what was run instead.
-- The new far probe **was aliased against the mesh it measures** on its first
-  version, and reported a ring boundary as perfect that is plainly visible in
-  play. Caught before any baseline was recorded.
-- The plan's "fade the grain with distance" was **already done** in look v2 and
-  the plan's premise for it was wrong.
-- **Night 1's own headline number was not reproducible.** The far mesh build,
-  recorded as 1,449 ms, measures 1,696 ms at the *same commit* one evening
-  later. Nothing changed but the session. Every comparative number in night 2
-  is an interleaved median because of it.
-- **Stage 7's ring gate could not be met by the plan's own band table**, by
-  arithmetic and then by measurement. It is met by the four-band table that
-  replaced it, and both numbers are written down.
-
-**Night 2's own acceptance test, for Marcel:** stand where you can see a wooded
-ridge 500 m away. It should be wooded, its trees should sit *in* the hillside
-rather than on top of it, and they should fade into the fog rather than
-stopping at a circle. `build/tour/dist-7/5-lake.png` against
-`build/tour/dist-6/5-lake.png` is that comparison on ganymede.
-
-The previous run is **world feel v1**, finished 2026-08-27 on
-`feat/world-feel-v1`: `docs/status/world-feel-v1.md`. Both nights are done -
-streaming and the forest, then Jolt, host-authoritative input, bodies, the push
-and the slide.
+The run before that is **world feel v1**, finished 2026-08-27 on
+`feat/world-feel-v1`: `docs/status/world-feel-v1.md`.
 
 ## Open items for Marcel
 
@@ -249,6 +266,57 @@ off the near field), a tuft model with more upward-facing surface, or a
 look-pass decision about `shade_desat` — 0.55 at noon is what makes every
 shaded surface in the game a variant of one grey-violet, and the meadow speckle
 is downstream of it.
+
+**9. The 400 m far-mesh ring boundary is 3.7x louder with `far_terrace` on, and
+distance v2 found out why.** 80.00 blocks of worst-case FIZZ against
+`f23c3f0`'s 21.57. It is the largest single regression in that epic and it is
+the one thing in it that is worse rather than better.
+
+**It is not the step ladder**, which is what the plan assumed. Two experiments,
+each five lines, each run through the whole far probe:
+
+| | 400 m max fizz |
+| --- | --- |
+| `f23c3f0`, smooth | 21.57 |
+| shipped: each ring quantises its own height at its own step | **80.00** |
+| every ring at the SAME STEP, each sampling its own cell centre | 96.00 - worse |
+| every ring at the SAME SAMPLE POINT, each at its own step | **16.00 - gone** |
+
+The shelves were never moving because 32 is not a multiple of 16. They move
+because the two rings sample the cell height at **different world points** -
+ring 1 at the centre of a 16-block cell, ring 2 at the centre of the 32-block
+cell containing it, up to 8 blocks apart, which on a flank is tens of blocks of
+height before anything is quantised.
+
+**So a geomorph has a smaller job than anyone thought.** It does not have to
+blend two surfaces; it has to blend the SAMPLE POSITION across the boundary -
+over the last cell or two of the finer ring, move the cell-height sample from
+the fine centre to the coarse one - and the power-of-two ladder does the rest.
+The third row is not shipped because the point every ring would have to share is
+the coarsest ring's, and the far country would then be 16 m blocks at every
+range, which is the opposite of the whole idea.
+
+**10. `--rendering-driver` after the `--` does nothing, silently.** Anything
+after `--` is passed to the game, not to the engine, so the README's own
+documented second tour line
+
+    godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
+
+took its pictures on Forward+ as well. No error, no warning: both directories
+fill up and the images differ by a frame of the day cycle. Caught in distance v2
+Stage 6 because the two "renderers" produced identical measurements to three
+decimal places. **The README is fixed and distance v2's own pair was re-taken.
+Every earlier `-gl` set in this project was taken with the flag in the old
+position and none of them has been checked.**
+
+**11. The far mesh's vertex upload is on the main thread and terracing more than
+doubles it** - 103,608 to 256,328 vertices at `far_terrace 1.0`. Interleaved
+ABAB says holes 0 on every run of both settings and every other row's spread
+overlaps, so it is not a measured regression; it is a thing that is now twice as
+big in front of a budget that is already the tightest one in the project.
+Single-sided risers would take it to 179,368 and tear a see-through gash down
+every steep face (photographed, `build/probe/crop-single.png`). Getting both
+needs a watertight shell, which is a mesher change.
 
 Earlier runs, newest first:
 
