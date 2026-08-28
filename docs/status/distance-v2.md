@@ -358,3 +358,72 @@ Left on F4 as `distance: riser shade` so Marcel can overrule it in one spinbox.
 
 `build/tour/d2-t1-rs050`, `d2-t1-rs070` and `d2-t1-rs100` are the three, all at
 `far_terrace 1.0`, seed 42, Forward+. Shipped at 1.00.
+
+---
+
+## Stage 4 - The peaks keep their height
+
+**Shipped**, and it is the biggest number in the epic.
+
+Decision 9: a cell that is a local maximum of the flank rounds **up**; every
+other cell rounds to nearest. `RIDGE_SPAN_BLOCKS = 96` - `far_normal_m`'s own
+half-span, the window `_flank_normal` already averages the slope over, so "local
+maximum of the FLANK" is read at the scale the flank is read at rather than at
+the scale of one cell. A local maximum over one cell fires on every bump; over
+96 blocks it fires on summits.
+
+In **blocks** rather than in cells, so the ring converts it to a whole number of
+its own cells and every ring asks the same question - a cell that is a ridge in
+ring 1 and not in ring 2 is another block of difference at the 400 m boundary.
+The four neighbour heights come out of the cell cache, which is what makes the
+test affordable: they are cells of this ring, so on a mountainside most of them
+have already been computed for their own quads.
+
+### PEAK LOSS at 600 m
+
+`ganymede, deterministic`, seed 42, twenty summits, blocks. Positive means the
+drawn summit is **lower** than `height_at()` says it is.
+
+| | mean | worst | best | over 4 blocks |
+| --- | --- | --- | --- | --- |
+| pre-distance-v1 (unfiltered) | +60.27 | +128.01 | +11.76 | 20 of 20 |
+| `f23c3f0` (distance v1's end state) | +55.28 | +81.14 | +13.30 | 20 of 20 |
+| distance v2 Stage 1-3 (terraced, round to nearest) | +29.40 | +65.72 | +1.72 | 17 of 20 |
+| **Stage 4 (round up at ridges)** | **+13.40** | **+41.85** | **-30.28** | **12 of 20** |
+
+**+55.28 -> +13.40 is a 76% improvement on carried item 4**, and the far field
+now draws a summit at 600 m within about 27 m of the real mountain at the 1:4
+scale, against 110 m before this epic and 120 m before distance v1.
+
+### And the residue is exactly one step, which is worth writing down
+
+Every drawn height in the Stage 4 table is one of four numbers - 862.5, 830.5,
+798.5, 766.5 - which are 32 blocks apart, ring 2's step, minus the half-block
+`y_offset`. So the error is no longer a filter losing amplitude. It is
+**quantisation, and it is bimodal**: eleven of the twenty summits land on the
+shelf just under their true height (+1.7 to +9.7, essentially exact) and the
+other nine fall a whole step short (+32.7 to +41.9) because the ridge test did
+not fire on their cell - the true peak sits between two cell centres, or a
+neighbour exactly 96 blocks away is higher.
+
+A narrower or two-tier ridge test would move that. It was not tried: the gate is
+met by a factor of four and this is the sort of tuning that wants Marcel's eye
+on a picture rather than another sweep. **Carried forward.**
+
+### VALLEY GAIN, the mirror
+
+Unchanged by this stage at **-6.53 mean** (worst +14.50, best -17.33, 17 of 20
+outside the 4-block line) against `f23c3f0`'s +0.53. Negative means the drawn
+valley floor is **lower** than the truth. That is quantisation again and it is
+symmetric with the peaks: a basin floor lands on the shelf below it. It is the
+price of a 16 m step and it is not a filter error.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| PEAK LOSS at 600 m no worse than `f23c3f0`'s +55.28 | **MET with room - +13.40**, 76% better |
+| ridges are not visibly inflated against the smooth mesh at 0 | **checked in Stage 6** on the final night-1 tour; the arithmetic bound is one step, and the worst over-shoot measured is -30.28 blocks against ring 2's 32-block step, so no summit gains more than one shelf |
+| hard rule 1 | **MET** - far probe at 0.0 identical to Stage 2's on every geometry row |
+| self-tests | green |
+| cost | far mesh 1,719 -> **1,782 ms** (+3.7%), 229,824 -> **232,136** vertices (+1.0%) |

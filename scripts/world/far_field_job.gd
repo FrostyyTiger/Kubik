@@ -147,6 +147,27 @@ const SKIRT_SHADE := 0.7
 ## coarser levels - and that boundary is Stage 9's subject, measured there.
 const TERRACE_LEVEL_RING := 0
 
+## HOW WIDE A "LOCAL MAXIMUM OF THE FLANK" IS, in blocks each side. Distance v2
+## Stage 4, decision 9.
+##
+## Rounding to nearest saws a summit flat: a peak whose true height falls just
+## below a step boundary loses up to half a step, and at ring 2 half a step is
+## 8 m. So a cell that is a local maximum rounds UP and every other cell rounds
+## to nearest - a ridgeline keeps its height and gains at most one step, a
+## hillside stays honest.
+##
+## 96 blocks is far_normal_m's own half-span, which is the window _flank_normal
+## already averages the slope over, so "local maximum of the FLANK" is read at
+## the scale the flank is read at rather than at the scale of one cell. A local
+## maximum over one cell would fire on every bump; over 96 blocks it fires on
+## summits.
+##
+## In blocks rather than in cells so the test asks the same question in every
+## ring - the ring converts it to a whole number of its own cells - which
+## matters because a cell that is a ridge in ring 1 and not in ring 2 is another
+## block of difference at the 400 m boundary.
+const RIDGE_SPAN_BLOCKS := 96
+
 var heightmap: Heightmap = null
 var generator: TerrainGenerator = null
 var config: WorldgenConfig = null
@@ -301,6 +322,9 @@ var _t_t := PackedFloat32Array()
 var _t_off := 0
 var _t_w := 0
 
+## RIDGE_SPAN_BLOCKS in this ring's own cells, at least one.
+var _t_ridge := 1
+
 ## TRUE WHEN EVERY CELL OF THIS RING IS TERRACED ALL THE WAY - far_terrace 1.0
 ## and no seam band, which is rings 1 and 2 at the shipped value.
 ##
@@ -448,8 +472,14 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	_t_band = band
 	_t_full = _t_amount >= 1.0 and band <= 0.0
 	if _t_amount > 0.0:
-		_t_off = span + 1
-		_t_w = 2 * span + 3
+		# The margin is the RIDGE reach PLUS ONE, not one cell. A quad asks its
+		# four riser neighbours to quantise themselves, and each of those asks
+		# its own four ridge neighbours for a raw height - so the outermost quad
+		# in the loop reaches ridge + 1 cells past the ring, and at ring 0 that
+		# is thirteen.
+		_t_ridge = maxi(RIDGE_SPAN_BLOCKS / step, 1)
+		_t_off = span + _t_ridge + 1
+		_t_w = 2 * _t_off + 1
 		var cells := _t_w * _t_w
 		_t_h.resize(cells)
 		_t_h.fill(NAN)
@@ -844,9 +874,31 @@ func _cell(i: int, j: int) -> int:
 	if not is_nan(_t_hq[at]):
 		return at
 	var step := float(_t_step)
-	_t_hq[at] = round(_cell_h(i, j) / step) * step
+	var h := _cell_h(i, j)
+	# STAGE 4, decision 9: round UP at a local maximum of the flank, to nearest
+	# everywhere else. Every result is still an exact multiple of the step, so
+	# the step ladder and Stage 1's gate are untouched.
+	_t_hq[at] = (ceil(h / step) if _is_ridge(i, j, h) else round(h / step)) * step
 	_t_t[at] = _terrace_at(i, j)
 	return at
+
+
+## Is this cell a local maximum of the FLANK - a summit rather than a bump?
+##
+## Four cached neighbour heights at RIDGE_SPAN_BLOCKS either side, off the same
+## filtered pyramid the cell's own height came from. The filtered pyramid and
+## not the raw grid: the raw grid is the aliasing distance v1 spent a night
+## removing, and a local maximum is precisely the place an unfiltered sample is
+## most biased.
+##
+## Four cached reads rather than four fresh pyramid lookups is what makes this
+## affordable. The neighbours are cells of this ring, so on a mountainside most
+## of them have already been computed for their own quads and the ones outside
+## the ring are the reason the cache carries a margin.
+func _is_ridge(i: int, j: int, h: float) -> bool:
+	var r := _t_ridge
+	return h >= _cell_h(i - r, j) and h >= _cell_h(i + r, j) \
+		and h >= _cell_h(i, j - r) and h >= _cell_h(i, j + r)
 
 
 ## The raw filtered height at one cell's CENTRE, cached.
