@@ -488,3 +488,139 @@ the middle.
 | triangle count for the impostor ring under 4x baseline | **MET at 2.62x** - 6,764 -> 17,700 |
 | hard rule 1 | **MET** - far probe at 0.0 identical to Stage 4's on every geometry row; at 0.0 the ring is cones and octahedra, byte for byte |
 | self-tests | green |
+
+---
+
+## Stage 6 - Docs, night 1
+
+**Night 1's test, in one line:** stand at Marcel's vantage, press the F4 toggle,
+and the mountains stop being a different game.
+
+### The postcards
+
+Seed 42, ganymede, RTX 3070 Ti. Four full seventeen-shot tours:
+
+| | Forward+ | Compatibility |
+| --- | --- | --- |
+| `far_terrace 0.0` | `build/tour/n1-t0` | `build/tour/n1-t0-gl` |
+| `far_terrace 1.0` | `build/tour/n1-t1` | `build/tour/n1-t1-gl` |
+
+**`6-postcard` is the pair to look at**, and `16-spawn-postcard` is the one that
+shows the forest. At 0 the massifs are smooth shells with contour bands painted
+on them and the far treeline is a row of green triangles; at 1 they are stacks
+of blocks with lit tops and shaded sides, and the treeline is a row of chunky
+trees standing on chunky ground. The near spruce in the right foreground of
+`16-spawn-postcard` stops arguing with the distance.
+
+The step-edge measurement - mean absolute **vertical** luma gradient over the
+far-massif band, sky excluded, which is what "do the steps read" is as a number
+because a terrace draws horizontal edges:
+
+| | `far_terrace 0` | `far_terrace 1` |
+| --- | --- | --- |
+| Forward+ | 2.764 | **4.405** |
+| Compatibility | 2.926 | **5.037** |
+
+**The two renderers agree**, which is not something this project takes for
+granted - look v2's blocking finding was exactly a case where they did not.
+
+### And the "both renderers" gate nearly did not happen at all
+
+The README's own documented command for the second tour is
+
+```
+godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
+```
+
+and **everything after `--` is passed to the game, not to the engine**, so that
+line selects no driver and takes the second set of pictures on Forward+ as well.
+It is not an error and there is no warning: both directories fill up, the images
+differ by a frame of the day cycle, and nothing says the comparison did not
+happen. Caught here because the two "renderers" produced *identical* step-edge
+numbers to three decimal places. README corrected.
+
+Every earlier `-gl` set in this project was taken with the flag in that
+position. Whether any of them is actually a Compatibility picture is not
+something this run checked, and it is worth someone checking.
+
+### The knob, and whether it is under two seconds
+
+`ganymede`, seed 42, `--view high`, the two costs measured separately because
+they are separate jobs:
+
+| | `far_terrace 0` | `far_terrace 1` |
+| --- | --- | --- |
+| far mesh rebuild (far probe, main thread, 98 meshes) | 1,649 ms | **1,782 ms** |
+| impostor ring rebuild (`[FarTrees]`, spawn) | 817 ms | **912 ms** |
+
+The far mesh is what changes the mountains and it lands **1.8 s** after the
+spinbox moves. The ring follows about **0.9 s** later, because this engine build
+serialises GDScript across the worker pool, so the complete redraw is about
+**2.7 s** on this box.
+
+**The two-second gate is met for the far mesh and missed for the pair**, and it
+was unreachable as written from the moment it was written: the plan's own
+budget is "1,299 ms of far mesh and 1,312 ms of impostors - about a second and a
+half", and those two numbers add to 2.6 s. ganymede is the slower box; on
+Marcel's the far mesh should land near 1.4 s and the whole redraw near 2.2 s.
+
+What the gate was actually protecting is met with room: **no voxel chunk is
+rebuilt, the player does not move, and F7 is not pressed.** Against F7's 39,023
+ms and 3,276 chunks that is a factor of fifteen, and the self-test asserts the
+chunk set is untouched at every stage.
+
+### Every constant this epic has moved, so far
+
+| constant | before | night 1 | why |
+| --- | --- | --- | --- |
+| `far_terrace` | new | **0.0**, on F4 | ships OFF. 1.0 is the epic; 0.0 is `f23c3f0` byte for byte, and the way back |
+| `far_riser_shade` | new | **1.0**, on F4 | the plan's 0.7 measured as a dimmer, not a contrast knob - see Stage 3 |
+| `TERRACE_LEVEL_RING` | new | **0** (level 2) | swept 0/1/2 and per-ring; chosen on PEAK LOSS and on the seam dip - see Stage 1 |
+| `RIDGE_SPAN_BLOCKS` | new | **96** | `far_normal_m`'s own half-span, so a ridge is read at the scale a flank is |
+| `SKIRT_DEPTH_CELLS` | 1.0 | **1.0 + `far_terrace`** | a terraced ring can disagree with its coarser neighbour by most of a step; exactly the old length at 0 |
+| `LONG_FRAMES_ALLOWED` | new (was 0) | **1** | decision 11 - `--strict` used to exit 1 on about half of all clean runs |
+| spruce impostor | `_cone(6)`, 12 tris | **`_stack([1.0, .66, .33])`, 32 tris** | a cone under flat shading is six diamond facets, and the eye reads diamonds where it expects steps |
+| broadleaf impostor | octahedron, 12 tris | **stepped crown, 34 tris** | same language as the spruce beside it |
+| krummholz impostor | `_cone(6, 0.7)`, 12 tris | **`_stack([1.0, .6])`, 22 tris** | two tiers; three boxes tall is a small spruce |
+| snag impostor | `_post`, 8 tris | **unchanged** | a four-sided post is already a box |
+| `far_band_m` | 60.0 | night 2 | Stage 7 |
+| `far_band_step` | 0.03 | night 2 | Stage 7 |
+
+### Night 1's numbers in one table
+
+`ganymede, deterministic`, seed 42, `--view high`, all heights in blocks.
+
+| | `f23c3f0` | Stage 1 | Stage 2 | Stage 4 | Stage 5 |
+| --- | --- | --- | --- | --- | --- |
+| FIZZ rms | 0.607 | 1.279 | 1.279 | **1.267** | 1.267 |
+| FIZZ max | 21.570 | 80.0 | 80.0 | **80.0** | 80.0 |
+| FIZZ past 500 m | 2.11-3.27 | **0.00** | **0.00** | **0.00** | **0.00** |
+| ROUGHNESS | 2.5648 | 15.4619 | 15.4619 | **16.1283** | 16.1283 |
+| 200 m boundary, max / rms | 4.60 / 0.462 | 32.0 / 2.884 | 32.0 / 2.884 | **24.0 / 2.869** | 24.0 / 2.869 |
+| 400 m boundary, max / rms | 21.57 / 1.611 | 80.0 / 6.152 | 80.0 / 6.152 | **80.0 / 6.090** | 80.0 / 6.090 |
+| PEAK LOSS at 600 m, mean | +55.28 | +29.40 | +29.40 | **+13.40** | +13.40 |
+| VALLEY GAIN, mean | +0.53 | -6.53 | -6.53 | -6.53 | -6.53 |
+| shelf move over 200 m, rms | 5.74/5.25/8.34 | 4.58/6.63/5.20 | " | 4.78/6.79/5.31 | " |
+| terrace compliance | 0% | **100%** | **100%** | **100%** | **100%** |
+| far mesh vertices (in game) | 103,608 | 103,608 | 229,824 | **232,136** | 232,136 |
+| far mesh build, ms | 1,650 | 1,406 | 1,719 | **1,782** | 1,782 |
+| impostors at spawn | 580 | 580 | 580 | 580 | **580** |
+| impostor triangles | 6,764 | 6,764 | 6,764 | 6,764 | **17,700** |
+
+Every column is at `far_terrace 1.0` except the first. **At `0.0` every stage
+reproduces the first column character for character**, which the far probe
+checked at Stages 0, 1, 2, 4 and 5.
+
+### What night 1 bought, and what it cost
+
+**Bought.** The far country is made of blocks, at 4 m near and 16 m at the fog,
+with lit tops and shaded risers in the near field's own lighting language. Past
+500 m it now holds **perfectly** still - FIZZ exactly `0.00` in every band at
+every vantage, against 2.11-3.27 before. A summit at 600 m is drawn within
+27 m of the real mountain at the 1:4 scale, against 110 m before this epic and
+120 m before distance v1. And all of it is one knob away from being off.
+
+**Cost.** Twice the far-mesh vertices for five per cent of the build time,
+2.6x the impostor triangles for twelve per cent of the ring's. And the two ring
+boundaries: the 400 m one is 80 blocks of worst-case fizz against `f23c3f0`'s
+21.6, which is Stage 9's subject and the largest single regression in the epic.
