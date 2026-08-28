@@ -86,6 +86,22 @@ const FIZZ_OFFSET_BLOCKS := 32
 ## is the only thing left that can differ.
 const SHELF_OFFSET_BLOCKS := 400
 
+## THE SEAM, distance v2 Stage 8: how far past the voxel boundary to read the
+## far mesh's opinion of the ground, in blocks, and how many samples round.
+##
+## The far mesh's inner edge is at voxel_radius - 2 * far_step (176 blocks at
+## High), and just outside it _corner_y() blends the far mesh onto the VOXEL
+## surface - coarse + detail + half a block, which is the top face of the
+## topmost solid block. So the two meshes are supposed to meet at exactly the
+## same altitude there, and the number that says whether terracing broke that
+## is the difference between them, sampled on a ring just outside the hole.
+##
+## 6 blocks out rather than 0: the quad whose CENTRE is at the hole radius has
+## corners either side of it, and sampling exactly on the edge reads whichever
+## quad the lookup grid happened to claim.
+const SEAM_PROBE_OUT_BLOCKS := 6
+const SEAM_PROBE_SAMPLES := 720
+
 ## FIZZ: the sampling lattice, in blocks. Anchored to the WORLD, not to the
 ## centre, so the sample set does not move when the centre does.
 ##
@@ -228,6 +244,7 @@ func _measure() -> PackedStringArray:
 	edge_count.fill(0)
 	var terrace := PackedStringArray()
 	var shelf_rows := PackedStringArray()
+	var seam_rows := PackedStringArray()
 
 	for v in vantages:
 		var centre: Vector2i = v["centre"]
@@ -257,6 +274,7 @@ func _measure() -> PackedStringArray:
 			v["name"], float(fizz["rms"]), float(fizz["max"]), float(rough["mean"]),
 			fizz["bands"]])
 		terrace.append("[FarProbe] %-14s %s" % [v["name"], _terrace_row(a)])
+		seam_rows.append("[FarProbe] %-14s %s" % [v["name"], _seam_row(a, centre)])
 
 	print("[FarProbe]   ... %d meshes built so far" % _builds)
 	var total_rms := sqrt(fizz_sq / maxf(float(fizz_n), 1.0))
@@ -279,6 +297,12 @@ func _measure() -> PackedStringArray:
 	# TERRACE COMPLIANCE, Stage 1's gate as a number rather than as a promise.
 	out.append("[FarProbe] terrace: ground-quad corners on their ring's step grid")
 	out.append_array(terrace)
+
+	# THE SEAM, Stage 8's gate as a number: does the far mesh still meet the
+	# voxel surface where the voxels stop?
+	out.append("[FarProbe] seam: far mesh against the voxel surface, %d blocks out (blocks)" % [
+		SEAM_PROBE_OUT_BLOCKS])
+	out.append_array(seam_rows)
 
 	# AND THE SHELF HELD STILL OVER A 200 m WALK - the other half of that gate.
 	out.append("[FarProbe] shelf stability over a %d m walk (drawn height, blocks)" % [
@@ -553,6 +577,43 @@ func _roughness(s: Surface, centre: Vector2i) -> Dictionary:
 
 func _snap(b: int) -> int:
 	return int(floor(float(b) / float(FIZZ_STEP_BLOCKS))) * FIZZ_STEP_BLOCKS
+
+
+## STAGE 8'S GATE AS A NUMBER: does the far mesh still meet the voxel surface
+## at the seam, with the terrace on?
+##
+## The voxel surface a player stands on is `height_at + detail_at +
+## VOXEL_TOP_BIAS_BLOCKS` - the coarse height plus the per-block detail plus
+## half a block, because "the topmost solid block in a column is floor(surface)
+## and the face you see is its top". `_corner_y()` computes exactly that at the
+## seam and fades to the plain coarse height a band further out, which is what
+## makes the boundary invisible.
+##
+## Terracing inside that band would break the agreement the band exists to
+## create, so `_terrace_at()` fades the terrace in over the same cells the
+## detail fades out over. If that fade is right this number is the same with the
+## knob at 0 and at 1. If it is wrong, this is where the step appears.
+func _seam_row(s: Surface, centre: Vector2i) -> String:
+	var r := maxf(float(_config.voxel_radius_chunks * Chunk.SIZE)
+		- float(2 * _config.far_step), 0.0) + float(SEAM_PROBE_OUT_BLOCKS)
+	var worst := 0.0
+	var sum_sq := 0.0
+	var n := 0
+	for k in SEAM_PROBE_SAMPLES:
+		var a := TAU * float(k) / float(SEAM_PROBE_SAMPLES)
+		var bx := float(centre.x) + cos(a) * r
+		var bz := float(centre.y) + sin(a) * r
+		var drawn := s.height_at(bx, bz)
+		if is_nan(drawn):
+			continue
+		var voxel := _heightmap.height_at(bx, bz) + _generator.detail_at(bx, bz) \
+			+ FarFieldJob.VOXEL_TOP_BIAS_BLOCKS
+		var d := absf(drawn - voxel)
+		worst = maxf(worst, d)
+		sum_sq += d * d
+		n += 1
+	return "max %6.3f  rms %6.3f  over %d samples" % [
+		worst, sqrt(sum_sq / maxf(float(n), 1.0)), n]
 
 
 ## STAGE 1'S GATE AS A NUMBER: are the drawn corner heights on their ring's

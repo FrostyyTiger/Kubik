@@ -600,7 +600,16 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# gradient across the quad - and a lighting normal from the slope
 			# of the whole flank rather than of this one facet. See the two
 			# helpers below.
-			color = _band_color(color, mid_h * bs)
+			# THE BAND INTERVAL IS THE RING'S STEP HEIGHT, distance v2 Stage 7,
+			# so a band boundary IS a shelf boundary and lands on a riser
+			# instead of wandering across a slope. Per quad rather than per
+			# ring, because the terrace fades across the seam band and the
+			# interval fades with it.
+			var band_m := band_m_at(config, step, terr)
+			var band_tl := _band_treeline
+			if band_m != config.far_band_m:
+				band_tl = treeline_band(generator, config, band_m)
+			color = _band_color(color, mid_h * bs, band_m, band_tl)
 			var flank := _flank_normal(bx0 + step / 2, bz0 + step / 2)
 
 			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices, flank)
@@ -797,8 +806,9 @@ func _filtered(bx: int, bz: int, band: float) -> float:
 ## distance; the two axes stop fighting each other. Zeroed at the treeline so
 ## the forest keeps the colour it was authored with, and clamped either side so
 ## a 400 m peak does not run away to white.
-func _band_color(color: Color, y_m: float) -> Color:
-	return band_color(color, y_m, config, _band_treeline)
+func _band_color(color: Color, y_m: float, band_m: float,
+		band_treeline: int) -> Color:
+	return band_color(color, y_m, config, band_treeline, band_m)
 
 
 ## The slope of the FLANK, not of the facet: the heightmap's gradient over
@@ -1105,25 +1115,65 @@ static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 
 ## The band the treeline falls in. Read from the generator's own thresholds
 ## rather than re-derived, so the bands agree with where the forest stops.
+##
+## `band_m` overrides config.far_band_m, which distance v2 Stage 7 needs: the
+## band interval is now per RING, so the band the treeline falls in is too.
 static func treeline_band(generator: TerrainGenerator,
-		config: WorldgenConfig) -> int:
-	if config.far_band_m <= 0.0 or generator == null \
+		config: WorldgenConfig, band_m := 0.0) -> int:
+	var m := band_m if band_m > 0.0 else config.far_band_m
+	if m <= 0.0 or generator == null \
 			or generator.zone_thresholds.size() <= TerrainGenerator.ZONE_FOREST:
 		return 0
 	var treeline_m: float = \
 		generator.zone_thresholds[TerrainGenerator.ZONE_FOREST] * config.block_size
-	return int(floor(treeline_m / config.far_band_m))
+	return int(floor(treeline_m / m))
 
 
 ## The altitude band applied to one colour. See _band_color above.
 static func band_color(color: Color, y_m: float, config: WorldgenConfig,
-		band_treeline: int) -> Color:
+		band_treeline: int, band_m := 0.0) -> Color:
 	var step_amount: float = config.far_band_step
 	if step_amount <= 0.0 or config.far_band_m <= 0.0:
 		return color
-	var band := int(floor(y_m / config.far_band_m))
+	var m := band_m if band_m > 0.0 else config.far_band_m
+	if m <= 0.0:
+		return color
+	# THE TOTAL VALUE CHANGE IS THE CONSTANT, NOT THE PER-BAND STEP. Distance v2
+	# Stage 7 takes the interval from 60 m to a ring's own cell width - 16 m at
+	# ring 2, about four times as many bands - and far_band_step at 0.03 per
+	# band would be four times too strong at that density. Scaling it by the
+	# same ratio keeps the value change per METRE of altitude exactly where look
+	# v1 and look v2 put it, and keeps the 0.85-1.25 clamp landing at the same
+	# altitudes. It also makes far_band_step still mean what its label says.
+	step_amount *= m / config.far_band_m
+	var band := int(floor(y_m / m))
 	var k := clampf(1.0 + step_amount * float(band - band_treeline), 0.85, 1.25)
 	return Color(color.r * k, color.g * k, color.b * k, color.a)
+
+
+## THE ALTITUDE BAND INTERVAL AT ONE DISTANCE, in metres. Distance v2 Stage 7,
+## decision 7.
+##
+## The colour has been drawing contour steps since look v1 - one band per quad,
+## "which is what makes the band edge a hard stepped line along the quad grid
+## rather than a gradient interpolated across it". It was drawing them onto a
+## SMOOTH slope, so the band edge wandered along the triangle grid: that is the
+## chevron zigzag where snow meets rock in Marcel's shot, the colour saying
+## terraced while the shape said smooth.
+##
+## Lock the interval to the ring's own step height and the two stop fighting:
+## a band boundary is a shelf boundary, so it lands on a riser. 60 m -> 16 m at
+## ring 2.
+##
+## LERPED BY far_terrace RATHER THAN SWITCHED, so at 0.0 it is exactly 60 m and
+## hard rule 1 holds for the colour as well as for the geometry. There is no
+## point locking bands to shelves that are not being drawn.
+static func band_m_at(config: WorldgenConfig, step_blocks: int,
+		terrace: float) -> float:
+	if terrace <= 0.0:
+		return config.far_band_m
+	return lerpf(config.far_band_m, float(step_blocks) * config.block_size,
+		clampf(terrace, 0.0, 1.0))
 
 
 ## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
@@ -1143,8 +1193,17 @@ static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 	var h := filtered_height(heightmap, config, float(bx), float(bz),
 		level_at_distance(config, d_m))
 	var zone := backdrop_zone(generator, bx, bz, h)
+	# THE SAME BAND INTERVAL THE MESH USES AT THIS DISTANCE, distance v2
+	# Stage 7. An impostor converges towards the colour the far mesh paints
+	# behind it, and if the two disagreed about where a band edge is the tree
+	# would converge towards a colour that is not there.
+	var bm := band_m_at(config, ring_step_blocks(config, d_m),
+		clampf(config.far_terrace, 0.0, 1.0))
+	var tl := band_treeline
+	if bm != config.far_band_m:
+		tl = treeline_band(generator, config, bm)
 	return band_color(Block.color_of(TerrainGenerator.ZONE_SURFACE[zone]),
-		h * config.block_size, config, band_treeline)
+		h * config.block_size, config, tl, bm)
 
 
 ## THE RING'S CELL WIDTH AT ONE DISTANCE, in blocks - which is also that ring's

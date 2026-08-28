@@ -624,3 +624,70 @@ every vantage, against 2.11-3.27 before. A summit at 600 m is drawn within
 2.6x the impostor triangles for twelve per cent of the ring's. And the two ring
 boundaries: the 400 m one is 80 blocks of worst-case fizz against `f23c3f0`'s
 21.6, which is Stage 9's subject and the largest single regression in the epic.
+
+---
+
+# Night 2
+
+## Stage 7 - The bands land on the risers
+
+**Shipped**, and the honest finding is that **Stage 2 had already done Stage 7's
+job**, so what this stage actually buys is smaller than the plan expected and is
+measured rather than asserted.
+
+`far_band_m` is now the ring's own step height instead of a flat 60 m - 16 m at
+ring 2, four times as many bands - lerped by `far_terrace` so it is exactly 60 m
+at 0.0 and hard rule 1 holds for the colour as well as for the geometry. There
+is no point locking bands to shelves that are not being drawn.
+
+`far_band_step` is scaled by the same ratio, `0.03 * band_m / 60`, so **the
+constant preserved is the total value change per METRE of altitude**, which is
+what look v1 and look v2 tuned and where the 0.85-1.25 clamp lands. The knob on
+F4 still means what its label says.
+
+`treeline_band` takes the interval too, and `backdrop_color` computes the same
+interval at the impostor's own distance - an impostor converges towards the
+colour the far mesh paints behind it, and if the two disagreed about where a
+band edge is the tree would converge towards a colour that is not there.
+
+### Why the chevron was already gone
+
+The plan's diagnosis is right: look v1 applies one band per quad to the quad's
+MIDDLE height, "which is what makes the band edge a hard stepped line along the
+quad grid rather than a gradient interpolated across it", and it was drawing
+those steps onto a **smooth** slope. That is the chevron.
+
+But since Stage 2 the quad's middle height IS the quantised cell height. A band
+index computed from it can therefore only change where the SHELF changes -
+which is a riser - whatever the interval is. Locking the interval changes how
+many bands there are, not whether they land on risers.
+
+### What the lock is worth, measured
+
+`build/tour/n2-s7-t1/6-postcard.png` against `build/tour/n1-t1/6-postcard.png`,
+same seed, same vantage, Forward+ on ganymede - the far-massif band, per pixel:
+
+| | mean \|dL\| | worst | pixels differing by more than 4 |
+| --- | --- | --- | --- |
+| `far_terrace 1.0`, 60 m bands -> ring-step bands | **0.23** | 1.9 | **0.00%** |
+| `far_terrace 0.0`, before -> after | **0.0000** | 0.0 | 0.00% |
+
+Under a quarter of one sRGB level, and nothing anywhere in the frame moves by
+more than two. **Shipped anyway**, because it is structurally the right
+statement - one shelf, one tone, instead of three or four shelves sharing a
+band - and because it costs nothing. It is not a fix and this document should
+not claim it is one.
+
+The second row is the other half of the point: at `far_terrace 0.0` the two
+tours are **pixel-identical**, so hard rule 1 now has a photographic proof and
+not only a geometric one.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| the snow/rock boundary is a stepped line along block edges, not a chevron across facets | **MET, and by Stage 2 rather than by this stage.** `n1-t0/6-postcard` against `n1-t1/6-postcard`: at 0 the boundaries between rock and snow are irregular diagonals across the smooth shell, at 1 they are staircases along block edges. Locking the interval moved the picture by 0.23 luma |
+| look v2's monotonic bands not undone | **MET** - `band_color` is untouched except for the interval and the matching step scale; still monotonic, still zeroed at the treeline, still clamped either side |
+| hard rule 1 | **MET, photographically** - `n2-s7-t0` and `n1-t0` are pixel-identical over the far band |
+| `--strict` | **MET** - twice running at `far_terrace 1.0`, holes 0, 1 long frame each, PASS both |
+| self-tests | green |
