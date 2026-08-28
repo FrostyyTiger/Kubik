@@ -425,7 +425,12 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	_ring_cz = cz
 
 	var span := int(ceil(outer / float(step))) + 1
-	var skirt_drop := float(step) * SKIRT_DEPTH_CELLS * bs
+	# A RING-BOUNDARY SKIRT GROWS WITH THE TERRACE. One cell of drop covers any
+	# mismatch a smooth heightmap can produce across one cell; a terraced one can
+	# also disagree with its coarser neighbour by most of a step. Costs nothing -
+	# "a skirt that is too long is buried in the hillside, a skirt that is too
+	# short is a hole in the horizon" - and is exactly the old length at 0.
+	var skirt_drop := float(step) * (SKIRT_DEPTH_CELLS + _t_amount) * bs
 
 	# Only the innermost ring touches the voxels, so only it pays for the
 	# detail samples. A band of zero switches _corner_y() back to the plain
@@ -566,20 +571,65 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 
 			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices, flank)
 
-			# One skirt per edge whose neighbour is not in this ring. The four
+			# One skirt per edge whose neighbour is not in this ring, and one
+			# RISER per edge whose neighbour is in this ring and lower. The four
 			# edges are in the same order as the corners, so edge k runs from
-			# corner k to corner k+1.
+			# corner k to corner k+1; the two extra numbers are the neighbour's
+			# offset in CELLS, and the two after that are this edge's raw corner
+			# heights.
+			#
+			# A RISER IS A SKIRT WHOSE DEPTH IS THE HEIGHT DIFFERENCE TO THE
+			# NEIGHBOUR instead of a fixed drop, which is the whole of Stage 2:
+			# the machinery that draws a vertical quad off a cell edge has been
+			# here since terrain v1 and only the depth is new. Ring-boundary
+			# skirts stay - they cover cracks between rings, which risers do not,
+			# and the two coexist.
 			var edges := [
-				[p0, p1, 0, -step], [p1, p2, step, 0],
-				[p2, p3, 0, step], [p3, p0, -step, 0],
+				[p0, p1, 0, -step, 0, -1, r00, r10],
+				[p1, p2, step, 0, 1, 0, r10, r11],
+				[p2, p3, 0, step, 0, 1, r11, r01],
+				[p3, p0, -step, 0, -1, 0, r01, r00],
 			]
 			var shaded := Color(color.r * SKIRT_SHADE, color.g * SKIRT_SHADE,
 				color.b * SKIRT_SHADE, color.a)
 			for e in edges:
-				if _in_ring(bx0 + e[2], bz0 + e[3], step, inner, outer):
+				var nbx: int = bx0 + e[2]
+				var nbz: int = bz0 + e[3]
+				if not _in_ring(nbx, nbz, step, inner, outer):
+					_push_skirt(e[0], e[1], skirt_drop, shaded,
+						verts, normals, colors, indices)
 					continue
-				_push_skirt(e[0], e[1], skirt_drop, shaded,
-					verts, normals, colors, indices)
+				if _t_amount <= 0.0:
+					continue
+				# A neighbour outside the heightmap emitted no quad of its own,
+				# so there is no shelf for a riser to stand against. Left exactly
+				# as it was before this epic: hard rule 1 is about every edge,
+				# including the ones at the edge of the world.
+				if not heightmap.in_bounds(nbx, nbz):
+					continue
+				var nat := _cell(i + e[4], j + e[5])
+				var nt: float = _t_t[nat]
+				var nq: float = _t_hq[nat]
+				# THE GAP, AT BOTH ENDS OF THE EDGE. Both cells blend from the
+				# same raw corner sample, so at far_terrace 0 this is exactly
+				# zero at both ends and no riser is emitted at all - and where
+				# the terrace is fading in across the seam band (Stage 8) the two
+				# ends can differ, which is why the riser is a trapezoid rather
+				# than a rectangle.
+				var da: float
+				var db: float
+				if _t_full:
+					da = hq - nq
+					db = da
+				else:
+					var ra: float = e[6]
+					var rb: float = e[7]
+					da = lerpf(ra, hq, terr) - lerpf(ra, nq, nt)
+					db = lerpf(rb, hq, terr) - lerpf(rb, nq, nt)
+				if da <= 0.0 and db <= 0.0:
+					continue
+				_push_riser(e[0], e[1], maxf(da, 0.0) * bs, maxf(db, 0.0) * bs,
+					shaded, verts, normals, colors, indices)
 
 
 ## The zone of one far-field quad.
@@ -857,8 +907,28 @@ func _in_ring(bx0: int, bz0: int, step: int, inner: float, outer: float) -> bool
 func _push_skirt(a: Vector3, b: Vector3, drop: float, color: Color,
 		verts: PackedVector3Array, normals: PackedVector3Array,
 		colors: PackedColorArray, indices: PackedInt32Array) -> void:
-	var a_down := a - Vector3(0.0, drop, 0.0)
-	var b_down := b - Vector3(0.0, drop, 0.0)
+	_push_riser(a, b, drop, drop, color, verts, normals, colors, indices)
+
+
+## The same curtain with a DIFFERENT DEPTH AT EACH END - a terrace riser.
+## Distance v2 Stage 2.
+##
+## Two depths rather than one because the terrace fades in across the seam band
+## (Stage 8), so for a few cells either side of it two neighbouring cells are
+## terraced by different amounts and the gap between them is a wedge rather than
+## a step. Everywhere else the two depths are equal and this is a rectangle,
+## which is what a block's side face is.
+##
+## Drawn BOTH WAYS ROUND for the same reason a skirt is: see above. A riser
+## faces the lower neighbour, so correct single-sided winding would be visible
+## from the only side you can see it from - but "the only side you can see it
+## from" is an argument about occlusion, and a riser that faces the wrong way is
+## invisible, which looks exactly like the crack it was meant to cover.
+func _push_riser(a: Vector3, b: Vector3, drop_a: float, drop_b: float,
+		color: Color, verts: PackedVector3Array, normals: PackedVector3Array,
+		colors: PackedColorArray, indices: PackedInt32Array) -> void:
+	var a_down := a - Vector3(0.0, drop_a, 0.0)
+	var b_down := b - Vector3(0.0, drop_b, 0.0)
 	_push_quad(a, b, b_down, a_down, color, verts, normals, colors, indices)
 	_push_quad(a_down, b_down, b, a, color, verts, normals, colors, indices)
 

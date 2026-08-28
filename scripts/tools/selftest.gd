@@ -1679,6 +1679,16 @@ func _test_far_terrace_knob():
 	if int(stats1["rebuilds"]) <= rebuilds0:
 		print("  the knob did not rebuild the far mesh at all")
 		bad += 1
+	# AND THE MESH IS ACTUALLY DIFFERENT. Distance v2 Stage 2: a terraced far
+	# field emits a riser wherever a cell is higher than its neighbour, so the
+	# vertex count must GROW. Without this the test passed while the knob did
+	# nothing at all - World keeps a SNAPSHOT of the config, and the far mesh
+	# was being rebuilt from the old value every time. Everything else about
+	# the wiring was correct and everything else about this test was green.
+	if int(stats1["vertices"]) <= verts0:
+		print("  far_terrace 1.0 emitted %d vertices against %d at 0.0 - no risers, so the knob is not reaching the job" % [
+			stats1["vertices"], verts0])
+		bad += 1
 
 	# 3. And it did not touch a single voxel chunk.
 	var chunks1 := world.loaded_chunk_count() + world.queued_chunk_count()

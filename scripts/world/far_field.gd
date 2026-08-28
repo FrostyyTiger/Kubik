@@ -217,6 +217,29 @@ static func apply_far_knobs(world: Node, far_trees: Node,
 	var far_field: Node = world.get_node_or_null("FarField") if world != null else null
 	if far_field == null or not far_field.has_method("rebuild_in_place"):
 		return fallback
+	# WORLD KEEPS A SNAPSHOT OF THE CONFIG, NOT THE LIVE ONE, and without this
+	# line the whole stage compiles, runs, rebuilds the far mesh and changes
+	# nothing on screen.
+	#
+	# World.setup() clones the config on purpose: "the panel writes into the
+	# config Game holds, and if the world read from that too, then moving a
+	# slider would change the terrain of chunks not yet streamed in while
+	# leaving the ones already around the player alone - a world that disagrees
+	# with itself along a line you cannot see." That reasoning is exactly right
+	# for a SHAPE knob and has nothing to say about these eleven, every one of
+	# which is read only by FarFieldJob and FarTreesJob - checked by grep, not
+	# assumed - and both of which rebuild their whole output at once. There is
+	# no half-old half-new state for a look knob to leave behind.
+	#
+	# So the moved values are copied into the snapshot the two jobs actually
+	# read, and only those. Nothing else in the snapshot is touched, and F7
+	# still re-clones everything as it always did.
+	#
+	# FOUND BY THE SELF-TEST, which asserted the vertex count and got the same
+	# number at 0.0 and at 1.0. It is the reason that assertion exists.
+	if world.config != null:
+		for key in moved:
+			world.config.set(key, config.get(key))
 	if not far_field.rebuild_in_place():
 		return fallback
 	# The ring is rebuilt too: far_terrace moves the shelf every impostor

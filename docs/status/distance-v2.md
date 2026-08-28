@@ -214,3 +214,83 @@ levels. That boundary is Stage 9's subject and is measured there.
 | hard rule 1 | **MET** - far probe at 0.0 identical to `f23c3f0` on every geometry row, far mesh 103,608 vertices at both 0.0 and 1.0 |
 | self-tests | green |
 | far probe determinism | **PASS**, tables IDENTICAL over two runs, at both knob settings |
+
+---
+
+## Stage 2 - The terrace
+
+**Shipped.** A cell gets one height, its top quad is flat, and the difference to
+each lower neighbour is a vertical riser. The riser is `_push_skirt` with the
+neighbour's height gap instead of a fixed drop - the machinery has been in
+`_build_ring` since terrain v1 and only the depth is new. Ring-boundary skirts
+stay: they cover cracks *between* rings, which risers do not, and the two
+coexist.
+
+Two details the plan did not specify and both are load-bearing:
+
+- **A riser is a trapezoid, not a rectangle.** Its depth at each end is the gap
+  between this cell's blended corner and the neighbour's blended corner at the
+  same world position, and both blends start from the same raw sample. So at
+  `far_terrace 0.0` it is exactly zero at both ends and no riser is emitted at
+  all - hard rule 1 by arithmetic rather than by a branch - and across the seam
+  band, where two neighbouring cells are terraced by different amounts, the gap
+  really is a wedge.
+- **A ring-boundary skirt grows with the terrace**,
+  `step * (SKIRT_DEPTH_CELLS + far_terrace)`. One cell of drop covers anything a
+  smooth heightmap can produce across one cell; a terraced one can also disagree
+  with its coarser neighbour by most of a step. Exactly the old length at 0.0.
+
+### The bug this stage was nearly shipped with
+
+`far_terrace` reached the far mesh in a self-test, in a probe, and nowhere else.
+**`World.setup()` keeps a CLONE of the config, deliberately** - "the panel writes
+into the config Game holds, and if the world read from that too, then moving a
+slider would change the terrain of chunks not yet streamed in while leaving the
+ones already around the player alone." The F4 panel writes into Game's config;
+`FarField` and `FarTrees` read World's snapshot. So the knob was correctly wired
+end to end, rebuilt the far mesh on every turn of the spinbox, and rebuilt it
+**from the old value**.
+
+It compiled, ran, logged a rebuild and changed nothing on screen. What caught it
+was one line of the Stage 0 self-test printing the vertex count at 0.0 and at
+1.0 and getting the same number twice.
+
+The fix is three lines in `apply_far_knobs`: copy the moved keys, and only
+those, into the snapshot the two jobs read. The clone rule exists for **shape**
+knobs and has nothing to say about these eleven, every one of which was checked
+by grep to be read by `FarFieldJob` and `FarTreesJob` and nothing else, and both
+of which rebuild their whole output at once - there is no half-old half-new
+state for a look knob to leave behind.
+
+The self-test now asserts the vertex count **grows** at 1.0. It reads
+9,744 -> 20,632 -> 9,744.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| no holes on the horizon from any tour vantage | **MET** - `build/tour/d2-t1` against `build/tour/d2-t0`, seed 42, Forward+ on the RTX 3070 Ti. `6-postcard`, `5-lake`, `2-summit` and `16-spawn-postcard` all show a continuous horizon |
+| vertex count under 4x the baseline | **MET at 2.22x** - 103,608 -> **229,824** in game at seed 42, spawn. The plan predicted "roughly 2-3x" |
+| `--strict` passes | **MET** - twice running at `far_terrace 1.0`: holes **0**, 1 long frame each, PASS both |
+| far mesh build cost | 1,645 -> **1,719 ms** per mesh, +4.5%, `ganymede, deterministic-ish` (98 meshes, main thread, uncontended). The fully-terraced path takes ONE cached centre sample per cell instead of four bilinear corner samples, which is why doubling the vertices costs five per cent |
+| hard rule 1 | **MET** - far probe at 0.0 identical to Stage 1's and to `f23c3f0`; far mesh 103,608 vertices |
+| self-tests | green |
+
+The far probe's geometry table is **identical to Stage 1's at both knob
+settings**, which is the right answer and worth saying: risers are vertical, the
+probe excludes vertical quads by an exact test, and the drawn ground height at a
+world position is decided by the top quads alone. Stage 2 added surface, not
+height.
+
+### The picture
+
+`build/tour/d2-t0/6-postcard.png` against `build/tour/d2-t1/6-postcard.png` is
+the pair to look at first. At 0 the massifs are smooth shells with contour bands
+painted on them; at 1 they are stacks of blocks with lit tops and dark sides,
+and the diamond facets Marcel called rhomboids are gone. Decision 2 asked for
+unmistakable rather than subtle and this is not subtle.
+
+**What it also shows, and Stage 3 owns it:** at `SKIRT_SHADE`'s 0.7 the risers
+on a shaded flank go nearly black, and a mid-distance ridge reads as a dark
+band. That is the "harsh stripes" the plan told this run to photograph rather
+than quietly fix.
