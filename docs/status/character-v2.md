@@ -324,3 +324,117 @@ nothing else.
 
 Green: 28 character tests, world suite passed, heightmap `76cccdb6`, spawn
 `(-44, -124)`.
+
+---
+
+## Stage 2 — the generators take the grid as a parameter
+
+Committed as `feat(character): stage 2 - ...`. `python -m tools.parts_author`
+produces a **zero diff**, which is the gate, and
+`python -m tools.parts_author --res 96` produces a whole cast on the new grid.
+
+### The mechanism, and it is smaller than the plan proposed
+
+The plan said: express every dimension the race table names as a lookup into a
+Python mirror of `Races.TABLE`, and wrap every remaining literal in a scale
+call. That is 1,887 lines of edits — and here is the problem with it, which
+only became clear with the files open:
+
+**at RES 64 every scale call is the identity, so the byte-identity gate cannot
+see those edits at all.** It would have been the largest and least-checkable
+change in the run, gated by a test that is blind to exactly the thing being
+changed.
+
+So the scaling happens **once, at output**, and every generator still authors
+at 64 and knows nothing about it. `Part.slices()` and `Part.gd()` are the only
+functions that have ever heard of `RES`. The rule:
+
+> An author voxel `a` occupies the half-open output span `[U(a), U(a + 1))`.
+
+Because `U` is applied to **coordinates and never to lengths**, two boxes that
+met at author y = 18 still meet at `U(18)`, whatever `U` does to it — so
+adjacency, abutting shapes and solidity survive by construction rather than by
+each call site rounding compatibly. Every drawing method, every `Frame`, every
+hair footprint and every skull test is untouched and stays in author space,
+which also means there is no inverse map to get wrong anywhere except in the
+one function that builds the output grid.
+
+**This is a deviation from the plan and it is a simplification, not a
+shortcut.** What was given up: the generators do not read the race table, so
+the two remain separate statements of one design. What replaces it is better —
+see the new self-test below, which checks the two agree in the built artefact
+rather than trusting them to share a source.
+
+`U_len()` exists beside `U()` for the rare thing that is a thickness rather
+than a position, with a floor of 1: a one-voxel rim that scales to nothing is
+not a thinner rim, it is a missing one. Nothing uses it yet; the armour trim
+will.
+
+### What the gate caught, immediately
+
+`U` was first written as `int(v * RES / AUTHOR_RES + 0.5)`. `int` truncates
+**toward zero**, so it maps −4.5 to −4 while mapping 4.5 to 4 — and anchors
+here are routinely negative: the sword is authored in its socket's frame at
+x = −5, and two tail links sit at y = −1.
+
+At RES 64, where the map is supposed to be the identity, three anchors moved.
+`git diff --stat` came back with `parts_gear.gd`, `parts_hair.gd` and
+`parts_lizardfolk.gd` and 12 changed lines. `math.floor` fixes it.
+
+That is the gate paying for itself inside ten minutes, and it is worth being
+precise about what it proved: a bug that only shows on negative coordinates, in
+a function whose whole job is to be the identity at the resolution being
+tested.
+
+**And what the gate cannot prove.** At 64 the scaling is the identity, so the
+zero diff says nothing about whether the scaling is *right*. That is the height
+self-test and the new part/table test, on the far side of Stage 3.
+
+### What 96 produces
+
+Checked by inspection before it is committed to, against the tech plan's
+Stage 3 table:
+
+| part | at 96 | the plan's table |
+| --- | --- | --- |
+| human head | 27 × 33 × 26 | `head_w` 27, `head` 33 (26 = 24 skull + 2 nose) |
+| human torso | 30 × 30 × 17 | `torso_w` 30, `torso` 30, `torso_d` 17 |
+| human leg | 14 × 24 × 14 | `legs` 24 |
+
+Anchors interpolate rather than round: the torso's depth anchor is **8.5** in a
+17-deep part — the exact middle — and not 8.25, which is what scaling 5.5
+directly would have given. `_scale_anchor()` interpolates `U` for this reason,
+and getting it wrong lists a whole part a quarter of a voxel to one side, which
+is the exact failure mode the lattice-versus-index note in `VoxelModel` warns
+about.
+
+### The new self-test, and it found two things on its first run
+
+`parts match the table`: for every race, the built part's size against what
+`races.gd` claims — head width and height, torso width, height and depth, leg
+length, arm length. The two are one design in two languages, edited by
+different hands for different reasons, and **nothing had ever checked they
+agree**. It matters more from this stage on, because they now scale through
+different code.
+
+It failed immediately on the elf: head part 28 wide against `head_w` 16, and 25
+tall against `head` 22. Both turned out to be documented rules rather than bugs
+— ears are part of the head part (`ear_out` each side) and the neck is authored
+as the bottom slices of the head so that a head-look pivots at the base of the
+neck. The test now encodes those two rules instead of the raw equality, which
+makes it a check on the rules rather than on the numbers.
+
+Depth is deliberately not checked against `head_d`: the head carries the nose
+in front of the skull, so it is larger by a margin that is itself
+resolution-dependent.
+
+### Counts, unchanged
+
+| | Stage 1 | Stage 2 |
+| --- | --- | --- |
+| worst character, triangles | 17,788 | 17,788 |
+| human / lizardfolk IoU, front | 0.913 | 0.913 |
+| generator diff at `--res 64` | empty | empty |
+| character self-tests | 28 | **29** |
+
+Green: 29 character tests, world suite passed.

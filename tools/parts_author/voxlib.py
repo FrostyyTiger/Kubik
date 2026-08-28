@@ -29,6 +29,101 @@ Two ways to author:
 
 from __future__ import annotations
 
+import math
+
+# --- The grid ----------------------------------------------------------------
+#
+# THE RESOLUTION IS A NUMBER IN THIS FILE, which is the single most important
+# fact about the character redesign: nothing under scripts/character/parts/ is
+# drawn by hand, so moving the grid is a re-run rather than a rewrite, and the
+# 96-vs-128 decision stops being one-way. See docs/plans/character-v2-tech.md
+# Stage 2.
+#
+# EVERY GENERATOR STILL AUTHORS AT 64 AND KNOWS NOTHING ABOUT THIS. That is
+# deliberate, and it is what makes the change small enough to be safe. The
+# alternative - wrapping every literal in every generator in a scale call - is
+# 1,887 lines of edits whose correctness cannot be checked by the one gate that
+# actually proves something, because at RES 64 every scale call is the identity
+# and the edits are invisible to it.
+#
+# Instead the scaling happens ONCE, at output. A part is authored, drawn and
+# reasoned about entirely on the 64 grid; `Part.slices()` and `Part.gd()` are
+# the only things that have ever heard of RES. So:
+#
+#   - every drawing method, every frame, every hair footprint and every skull
+#     test stays in author space and is untouched;
+#   - there is no inverse map to get wrong, because nothing ever has to ask
+#     "which author voxel did this scaled voxel come from" anywhere except in
+#     the one function that builds the output grid;
+#   - at RES 64 the map is the identity, so the byte-identity gate is exact.
+#
+# THE RULE: an author voxel `a` occupies the half-open scaled span
+# `[U(a), U(a + 1))`. Adjacency, abutting boxes and solidity are preserved by
+# construction, because U is applied to COORDINATES and never to lengths - two
+# boxes that met at author y = 18 still meet at U(18), whatever U does to it.
+
+## The grid every generator is written against. Not a knob.
+AUTHOR_RES = 64
+
+## The grid to emit. 64 reproduces the committed files byte for byte.
+## `python -m tools.parts_author --res 96` is the character v2 grid.
+RES = AUTHOR_RES
+
+
+def U(v: int) -> int:
+    """An author coordinate to an output coordinate.
+
+    ROUND HALF UP, and consistently, which is the whole of why this is a
+    function and not an inline multiply. Python's `round` is banker's rounding:
+    `round(16.5)` is 16 and `round(17.5)` is 18. Used here that would map a
+    part's depth of 11 to 16 while the box filling it mapped to 17, and the
+    part would be one slice short of itself at some resolutions and not at
+    others. Half-up is monotonic and boring, which is what a coordinate map has
+    to be.
+
+    AND `math.floor`, NOT `int`. `int` truncates toward zero, so it maps -4.5
+    to -4 while mapping 4.5 to 4 - and anchors here are routinely negative: a
+    sword is authored in its socket's frame with anchor x = -5, and a tail link
+    sits at y = -1. The first version of this function used `int` and moved
+    three anchors at RES 64, where the map is supposed to be the identity. The
+    byte-identity gate caught it on three files, which is exactly what that
+    gate is for.
+    """
+    return math.floor(v * RES / AUTHOR_RES + 0.5)
+
+
+def U_len(n: int) -> int:
+    """A LENGTH, for the rare thing that is a thickness rather than a position.
+
+    Not the same function: a length has no origin, so it cannot be the
+    difference of two mapped coordinates without depending on where it starts.
+    At least 1, because a one-voxel rim that scales to nothing is not a thinner
+    rim, it is a missing one.
+    """
+    return max(1, math.floor(n * RES / AUTHOR_RES + 0.5))
+
+
+def _axis_map(n: int) -> list[int]:
+    """For each output index along an axis of author length `n`, the author
+    index it came from. Length `U(n)` by construction."""
+    out: list[int] = []
+    for a in range(n):
+        out.extend([a] * (U(a + 1) - U(a)))
+    return out
+
+
+def _scale_anchor(a: float) -> float:
+    """An anchor is a LATTICE point and may sit on a half voxel - the top
+    centre of a 9-wide leg is x = 4.5. So it is scaled by interpolating U
+    rather than by rounding through it: at RES 96 a depth-11 part becomes 17
+    deep and its middle, 5.5, becomes 8.5 and not 8.25. Getting this wrong
+    lists the whole part a quarter of a voxel to one side, which is exactly the
+    class of error the lattice-versus-index note in VoxelModel warns about."""
+    lo = int(a // 1)
+    frac = a - lo
+    return U(lo) + frac * (U(lo + 1) - U(lo))
+
+
 # The slot letters, exactly VoxelModel.SLOT_CHARS. `check_slots_match()` below
 # is what keeps "exactly" true - these are two copies of one fact in two
 # languages, and nothing else would notice them drifting apart.
@@ -201,14 +296,33 @@ class Part(Cells):
     def note(self, y: int, text: str) -> None:
         self.notes[y] = text
 
+    def size_out(self) -> tuple[int, int, int]:
+        """The part's size on the OUTPUT grid."""
+        return (U(self.w), U(self.h), U(self.d))
+
+    def anchor_out(self) -> tuple[float, float, float]:
+        return tuple(_scale_anchor(a) for a in self.anchor)
+
     def slices(self) -> list[list[str]]:
+        """The ASCII, on the output grid.
+
+        THE ONLY PLACE RES IS APPLIED. Every cell above was authored, drawn and
+        checked at 64; this walks the output grid and asks which author voxel
+        each output voxel falls inside. The three axis maps make that a lookup
+        rather than arithmetic, so there is no rounding decision taken twice.
+
+        The `w - 1 - col` inversion is the same one it always was and is
+        applied on the OUTPUT width: the first character of a row is the left
+        of the picture, which is the character's own right. See VoxelModel.
+        """
+        mx, my, mz = _axis_map(self.w), _axis_map(self.h), _axis_map(self.d)
         out = []
-        for y in range(self.h):
+        for y in my:
             rows = []
-            for z in range(self.d):
+            for z in mz:
                 rows.append("".join(
-                    self.cells.get((self.w - 1 - col, y, z), EMPTY)
-                    for col in range(self.w)))
+                    self.cells.get((mx[len(mx) - 1 - col], y, z), EMPTY)
+                    for col in range(len(mx))))
             out.append(rows)
         return out
 
@@ -230,13 +344,22 @@ class Part(Cells):
             for text in comment.rstrip("\n").split("\n"):
                 lines.append(("# " + text).rstrip())
             lines.append("")
+        w_out, h_out, d_out = self.size_out()
         lines.append("const %s := {" % const_name)
-        lines.append('\t"size": Vector3i(%d, %d, %d),' % (self.w, self.h, self.d))
-        lines.append('\t"anchor": Vector3(%s, %s, %s),' % tuple(_fmt(a) for a in self.anchor))
+        lines.append('\t"size": Vector3i(%d, %d, %d),' % (w_out, h_out, d_out))
+        lines.append('\t"anchor": Vector3(%s, %s, %s),' % tuple(
+            _fmt(a) for a in self.anchor_out()))
         lines.append('\t"slices": [')
-        per_line = max(1, (76 - 3) // (self.w + 4))
+        per_line = max(1, (76 - 3) // (w_out + 4))
+        # Notes are keyed by AUTHOR slice; a note lands on the first output
+        # slice that author slice became, so "y = 5, the mouth" still points at
+        # the mouth whatever the grid is.
+        note_at = {}
+        for a in range(self.h):
+            if a in self.notes:
+                note_at[U(a)] = self.notes[a]
         for y, rows in enumerate(self.slices()):
-            note = self.notes.get(y)
+            note = note_at.get(y)
             if note is not None:
                 lines.append("\t\t# y = %d, %s" % (y, note))
             quoted = ['"%s"' % r for r in rows]

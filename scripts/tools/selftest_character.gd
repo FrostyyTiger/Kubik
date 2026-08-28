@@ -28,6 +28,7 @@ func _ready() -> void:
 		"mesher ao": _test_mesher_ao,
 		"palette swap": _test_palette_swap,
 		"part parsing": _test_part_parsing,
+		"parts match the table": _test_parts_match_table,
 		"eyes forward": _test_eyes_forward,
 		"rig completeness": _test_rig_completeness,
 		"character height": _test_character_height,
@@ -386,6 +387,77 @@ func _test_part_parsing():
 ## model built back-to-front would have looked exactly like a correct one and
 ## the bug would have surfaced as "the new character walks backwards".
 ##
+## THE PART FILES AND THE RACE TABLE ARE ONE DESIGN IN TWO LANGUAGES.
+##
+## `races.gd` says a human head is `head_w` 18 wide and `head` 22 tall;
+## `human.py` draws one 18 wide and 22 tall. Nothing has ever checked that
+## those two agree, and they are edited by different hands for different
+## reasons - the table for the rig's rest offsets, the generator for the
+## drawing. A disagreement does not crash: it produces a character whose arms
+## hang off the side of its shoulders by a voxel, which is a thing you find by
+## looking, three stages later, at a sheet you were looking at for another
+## reason.
+##
+## It matters more from character v2 Stage 2 on, because the two now scale
+## THROUGH DIFFERENT CODE - `voxlib.U()` in Python and the tabled numbers in
+## GDScript - and the byte-identity gate at the author grid cannot see a
+## disagreement that only appears at another one.
+##
+## Depth is not checked against `head_d`: the head part carries the nose in
+## front of the skull, so its depth is deliberately larger, and by a margin
+## that is itself resolution-dependent. The comment in `races.gd` says so.
+func _test_parts_match_table():
+	var bad := 0
+	var report := PackedStringArray()
+	for race in Races.RACE_COUNT:
+		if not Races.has_part_set(race):
+			continue
+		var t := Races.dims(race)
+		var parts := Races.part_set(race)
+		# THE HEAD PART IS NOT THE SKULL, and the two ways it is not are both
+		# documented rules rather than slack in the test:
+		#
+		#  - EARS ARE PART OF THE HEAD, so the elf's head part is `head_w` plus
+		#    `ear_out` on each side. That is why the elf's ears survive being
+		#    authored once and mirrored, and why they move with a head-look.
+		#  - THE NECK IS PART OF THE HEAD, authored as the bottom slices of it,
+		#    so the head bone sits at the top of the torso and the head pivots
+		#    about the BASE of the neck - which is where a head-look should
+		#    pivot. `races.gd` says this in as many words and warns that
+		#    offsetting by `neck` in the bone table as well would double-count
+		#    it.
+		#
+		# Both were found by this test on its first run, which is the argument
+		# for having written it.
+		var ear: int = int(t.get("ear_out", 0))
+		var neck: int = int(t.get("neck", 0))
+		var checks := [
+			["head", "head_w + 2 * ear_out", "x", int(t["head_w"]) + 2 * ear],
+			["head", "head + neck", "y", int(t["head"]) + neck],
+			["torso", "torso_w", "x", t["torso_w"]],
+			["torso", "torso", "y", t["torso"]],
+			["torso", "torso_d", "z", t["torso_d"]],
+			["leg", "legs", "y", t["legs"]],
+			["arm", "arm_len", "y", t["arm_len"]],
+		]
+		for check in checks:
+			var part_name: String = check[0]
+			if not parts.has(part_name):
+				continue
+			var size: Vector3i = parts[part_name]["size"]
+			var got: int = size.x if check[2] == "x" else (
+				size.y if check[2] == "y" else size.z)
+			var want: int = check[3]
+			if got != want:
+				print("  %s part %s is %d %s, but the table's %s says %d" % [
+					Races.name_of(race), part_name, got, check[2], check[1], want])
+				bad += 1
+		report.append("%s %dp" % [Races.name_of(race), parts.size()])
+	print("parts match the table: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+
 ## Two assertions, and the second is the one that matters:
 ##
 ##   1. In model space, the iris voxels sit forward of the head's own centre.
