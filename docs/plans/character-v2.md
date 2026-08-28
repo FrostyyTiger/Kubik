@@ -34,9 +34,10 @@ game ships on.
 
 **2. Three research lanes ran in parallel** - one on voxel character design and
 silhouette, one on animation sets for procedural rigid-part rigs, one on armour
-as a visual system. Their findings are folded in where they survived contact
-with the codebase and argued with where they did not. See **The research lane**
-near the end, including the one that produced nothing.
+as a visual system. A fourth, Kimi-backed lane ran as a
+genuinely independent opinion - a different model family, no access to this
+repo at all. All four are folded in where they survived contact with the
+codebase and argued with where they did not. See **The research lane**.
 
 ---
 
@@ -821,17 +822,71 @@ and it degrades gracefully. Real IK is a later decision on smoother ground.
 Marcel's brief said to treat the parallel research as a peer's opinion to argue
 with. Here is the argument.
 
-### The Kimi lane produced nothing
+### The Kimi lane landed late, and it independently confirmed the central decision
 
-`/home/kimi/work/character-research-kimi.md` does not exist. Polled at 15:29,
-15:38 and 15:44 UTC; the directory contains one file, `fizzbuzz.js`, timestamped
-12:37, and a `.claude` directory created at 15:37. The brief at
-`/tmp/kimi_brief.md` is good and the questions it asks are the right ones - if
-that lane lands later, the sections most worth re-reading against it are the
-per-race design language and the resolution decision, because those are the two
-places a second opinion could genuinely move this doc.
+**Corrected 2026-08-28.** The first version of this section recorded that the
+Kimi lane had produced nothing - true when written, polled at 15:29, 15:38 and
+15:44 UTC on the 27th. It landed at **20:18**, four and a half hours after this
+doc was committed: `/home/kimi/work/character-research-kimi.md`, 246 lines. The
+original wording is kept above in the git history rather than quietly replaced.
 
-This section stays as the record that the lane was checked, not skipped.
+It is worth the wait, and the reason is what it agrees with.
+
+**It arrived at 96 voxels at 1/24 of a block, and rejected 128, independently.**
+Different model family, no access to this repository, no sight of this document,
+and the same number for compatible reasons: *"Going to 128 voxels would cost ~4×
+memory and animation overhead for detail that is invisible at 8 m and may
+introduce visual noise."* Its own tradeoff table marks 128 as "unnecessary" for
+face detail and "marginal extra gain" for armour tiers.
+
+That is the strongest form of evidence available for a judgement call - two
+independent derivations converging on one number - and it is the single most
+useful thing the peer lane could have produced. The resolution decision above
+stands on its own arithmetic; it now also stands on somebody else's.
+
+It converged on the per-race silhouette rules too, which is more surprising:
+elf as "the vertical wedge", dwarf as "the wide pyramid", lizardfolk as "the
+forward-leaning arrow" with digitigrade legs and a tail. It names the
+lizardfolk's failure mode in almost the words this doc uses - *"human in a
+lizard costume... if the side view looks like a human with a tail, redesign the
+torso angle and leg joint"* - having never seen the 0.868 IoU that says so.
+
+**Three things it has that this doc did not:**
+
+1. **A minimum silhouette delta for armour to feel like an upgrade:** a chest
+   piece that does not change the shoulder outline by **at least 2 voxels per
+   side** will not read as armour. That is a concrete floor under the tier
+   ladder's outline events, and it should become a gate in the harness.
+2. **A floor on feature size at gameplay distance:** nothing smaller than about
+   3×3 voxels matters at 8-15 m. Stronger than this doc's own claim, and it
+   sharpens the point - at 96 voxels the win is *bigger features*, not finer
+   ones. Authoring 1-voxel detail at the new grid would waste the raise.
+3. **Hytale's texel-density argument**, which is an argument for raising that
+   this doc missed: characters are authored at twice the world's density *so
+   that they read as protagonists rather than as environment*. Our characters
+   sit on 0.5 m terrain blocks; at 1/24 they are 24× finer than the ground they
+   stand on. That is a reason to raise beyond the knee.
+
+**Where I disagree with it, and it is the big one: "target 7.5 heads tall."**
+Same error as my own design lane, arrived at independently, which is a useful
+warning about where the published advice all points. It is correct for a medium
+that can carry a face at 1/8 of the frame; at 15 m ours would be 12 px. Look
+v1's stocky, third-of-the-height read stays, and the pixel table is why. Kimi
+also proposes the elf at 8.0 heads and the dwarf at 4.5 - the *ratio* between
+them is right and is roughly what this doc's proportions already encode; the
+absolute scale is wrong for our distances.
+
+I also do not take its armour-fitting rule - *"every armour piece needs at least
+one race-specific variant"* - as stated. The normalised-frame rule above
+(proportions relative, thicknesses absolute) gets one authored set onto four
+bodies, and this doc already names the two places the lizardfolk genuinely needs
+a variant. Kimi is right that a literal one-size-fits-all piece will clip; it is
+wrong that the answer is per-race variants everywhere.
+
+**On its own terms it was the right lane to run.** `docs/kimi.md` on this box
+says a model that cannot see the codebase is a genuinely independent opinion,
+and that the same blindness makes it sometimes wrong about *this* codebase. Both
+halves showed up exactly as advertised.
 
 ### Where my own research was right
 
