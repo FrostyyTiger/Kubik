@@ -989,14 +989,33 @@ const FOG_START_RATIO := 0.4
 ## v2 Stage 3.
 ##
 ## A riser already carries its own HORIZONTAL normal - _push_quad derives it
-## from the winding - so the lighting ramp lits or shades it exactly as it does
-## a voxel's side face, which is the whole "one lighting language, both halves"
-## of decision 8. This is the extra albedo margin on top, and it starts at
-## SKIRT_SHADE's 0.7 because a skirt is the same kind of surface and 0.7 is
-## what the far mesh has always drawn one at.
+## from the winding, and only the top quad is handed _flank_normal instead - so
+## Look's three-band ramp lits or shades it exactly as it does a voxel's side
+## face, and Block.aspect_shade applies the same slope_tint (x0.90 for a wall)
+## and aspect_tint. That is decision 8's "one lighting language, both halves",
+## and it is true before this constant is applied at all.
 ##
-## 1.0 is "the ramp alone, no margin". LOCAL and unhashed.
-@export var far_riser_shade := 0.7
+## SHIPPED AT 1.0, NOT AT THE PLAN'S 0.7, AND THE PICTURES DECIDED IT. The plan
+## expected the near field's contrast to be STRONGER than a 0.7 multiplier and
+## it is the other way round: the near field's lit-top-to-shaded-side ratio is
+## the ramp's own (distance v1 measured a lit meadow top at #809137 against
+## shaded verticals at #272B2D, a luma ratio of 0.31) times slope_tint's 0.90,
+## with no albedo margin anywhere. 1.0 IS matching the near field exactly.
+##
+## Measured on the far massifs of `6-postcard`, seed 42, Forward+ on ganymede -
+## mean absolute vertical luma gradient over the whole far band, which is what
+## "do the steps read" is as a number:
+##
+##     far_terrace 0    2.764        (no steps at all)
+##     riser 0.50       3.052   mean luma  90.8
+##     riser 0.70       3.547   mean luma  96.4
+##     riser 1.00       4.073   mean luma 103.1
+##
+## Darkening the risers makes the mountain darker and the steps WEAKER, both
+## monotonically. It is not a contrast knob; it is a dimmer. Left on F4 as
+## `distance: riser shade` so Marcel can overrule it in one spinbox, with the
+## 0.50 and 0.70 tours on disk.
+@export var far_riser_shade := 1.0
 
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0

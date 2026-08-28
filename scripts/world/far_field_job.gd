@@ -114,6 +114,10 @@ const VOXEL_TOP_BIAS_BLOCKS := 0.5
 ## ground seen edge-on through a crack, and a crack that lights up BRIGHTER
 ## than the terrain around it draws the eye straight to the artefact it is
 ## there to hide.
+##
+## A TERRACE RISER IS NOT A SKIRT and does not use this - see far_riser_shade,
+## which starts at the same 0.7 and is a knob because a riser is a real surface
+## with a real normal, where a skirt is a curtain hiding a crack.
 const SKIRT_SHADE := 0.7
 
 ## WHICH RING'S CELL SIZE THE TERRACE IS CUT AT - for every ring, not just for
@@ -592,6 +596,28 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			]
 			var shaded := Color(color.r * SKIRT_SHADE, color.g * SKIRT_SHADE,
 				color.b * SKIRT_SHADE, color.a)
+			# THE RISER IS A SIDE FACE, distance v2 Stage 3, and most of what
+			# makes it one is already true before this line.
+			#
+			# A riser carries its own HORIZONTAL normal - _push_quad derives it
+			# from the winding, and only the top quad is given _flank_normal
+			# instead. So it goes through Look's three-band ramp exactly as a
+			# voxel's side face does (lit, half-lit or in shade by
+			# dot(NORMAL, LIGHT)), and through Block.aspect_shade's slope_tint
+			# and aspect_tint exactly as a voxel's side face does. That is
+			# decision 8's "one lighting language, both halves", and it costs
+			# nothing.
+			#
+			# WHAT IT DOES NOT GIVE IS CONTRAST ON THE SUNLIT FLANK. There, a
+			# terrace top (flank normal, tilted sunward) and a riser (horizontal,
+			# facing downhill and therefore also sunward) both land in the lit
+			# band, so both are drawn at albedo * sun and the steps stop reading
+			# as steps at exactly the range where the eye is looking for them.
+			# far_riser_shade is the margin that keeps them apart on both flanks,
+			# and it is a knob because how much of it is taste.
+			var riser := Color(color.r * config.far_riser_shade,
+				color.g * config.far_riser_shade,
+				color.b * config.far_riser_shade, color.a)
 			for e in edges:
 				var nbx: int = bx0 + e[2]
 				var nbz: int = bz0 + e[3]
@@ -629,7 +655,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				if da <= 0.0 and db <= 0.0:
 					continue
 				_push_riser(e[0], e[1], maxf(da, 0.0) * bs, maxf(db, 0.0) * bs,
-					shaded, verts, normals, colors, indices)
+					riser, verts, normals, colors, indices)
 
 
 ## The zone of one far-field quad.
@@ -1067,3 +1093,4 @@ static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 	var zone := backdrop_zone(generator, bx, bz, h)
 	return band_color(Block.color_of(TerrainGenerator.ZONE_SURFACE[zone]),
 		h * config.block_size, config, band_treeline)
+

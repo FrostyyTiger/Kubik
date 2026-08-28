@@ -294,3 +294,67 @@ unmistakable rather than subtle and this is not subtle.
 on a shaded flank go nearly black, and a mid-distance ridge reads as a dark
 band. That is the "harsh stripes" the plan told this run to photograph rather
 than quietly fix.
+
+---
+
+## Stage 3 - The risers are side faces
+
+**Shipped, and the plan's starting value was moved by the pictures.**
+
+Most of this stage was already true when Stage 2 landed, which is the useful
+finding. A riser carries its own **horizontal** normal - `_push_quad` derives
+one from the winding, and only the top quad is handed `_flank_normal` instead -
+so it goes through Look's three-band ramp exactly as a voxel's side face does,
+and through `Block.aspect_shade`'s `slope_tint` (x0.90 for a wall) and
+`aspect_tint` exactly as a voxel's side face does. That is decision 8's "one
+lighting language, both halves", for nothing. Tops keep `_flank_normal`,
+unchanged.
+
+### The near field's real numbers, and what they say about 0.7
+
+Distance v1 Stage 8 recorded a lit meadow top at `#809137` against shaded
+vertical faces at `#272B2D` under `shade_desat = 0.55`. In rec709 luma that is
+134.9 against 42.3 - **a ratio of 0.31** - and it is produced entirely by the
+lighting ramp, with `slope_tint`'s 0.90 on top and no albedo multiplier
+anywhere.
+
+So the plan's expectation that "the near field's real contrast is stronger" than
+`SKIRT_SHADE`'s 0.7 is the wrong way round: **`far_riser_shade = 1.0` IS
+matching the near field exactly**, and 0.7 is darker than the near field on the
+shaded side and much darker on the lit one.
+
+### And the pictures agree, monotonically
+
+Measured on the far massifs of `6-postcard` - the whole band above the treeline,
+sky excluded by a luma ceiling - seed 42, Forward+ on the RTX 3070 Ti.
+`ganymede, eye` made into a number: the mean absolute **vertical** luma gradient,
+which is what "do the steps read" is, because a terrace draws horizontal edges.
+
+| | mean \|dL/dy\| | pairs over 20 | mean luma | sd |
+| --- | --- | --- | --- | --- |
+| `far_terrace 0` | 2.764 | 2.30% | 110.2 | 48.6 |
+| riser shade 0.50 | 3.052 | 1.95% | 90.8 | 51.9 |
+| riser shade 0.70 (the plan's) | 3.547 | 2.46% | 96.4 | 52.1 |
+| **riser shade 1.00 (shipped)** | **4.073** | **2.54%** | 103.1 | 52.4 |
+
+Darkening the risers makes the mountain darker and the steps **weaker**, both
+monotonically. It is not a contrast knob, it is a dimmer - the contrast is the
+ramp's and the ramp is already applied. At 0.70 a mid-distance ridge in
+`6-postcard` goes nearly black, which is the "harsh stripes" the plan told this
+run to photograph rather than quietly fix; it is photographed, and the fix was
+to stop dimming.
+
+Left on F4 as `distance: riser shade` so Marcel can overrule it in one spinbox.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| a postcard at `far_terrace` 0 vs 1 from the same vantage, both renderers | **Forward+ MET** (`d2-t0` / `d2-t1`). **Compatibility deferred to Stage 6** - the first opengl3 pair was taken while Stage 5 was mid-edit and logged 5,162 script errors, so it is discarded rather than reported. Re-taken clean in Stage 6 |
+| the terraced one reads as blocks and not as a contour map | **MET** - the step-edge measurement above, 2.764 -> 4.073, and `6-postcard` at 1.0 is stacked boxes with lit tops and dark sides where at 0.0 it is a smooth shell with contour bands painted on it |
+| self-tests | green |
+
+### For Marcel to rule on
+
+`build/tour/d2-t1-rs050`, `d2-t1-rs070` and `d2-t1-rs100` are the three, all at
+`far_terrace 1.0`, seed 42, Forward+. Shipped at 1.00.
