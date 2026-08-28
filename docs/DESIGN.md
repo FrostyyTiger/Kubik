@@ -211,21 +211,34 @@ legs as separate parts.
 - **Customisation** = palette swaps plus part picks.
 - **Gear** = models attached to bones, or part swaps.
 
-**Settled by character v1, re-settled by look v1.** One model voxel is **1/16
-of a block, 3.125 cm**, and a human is **64 voxels = 2.00 m**. (Character v1
-built them at 1/8; look v1 halved the voxel for the detail a face and a hand
-need, and re-authored every part.) Characters and terrain therefore do not
-share a voxel grid, and the chunk mesher is not the character mesher: two
-systems, not one, and they meet only in the material and the baked-AO rule.
+**Settled by character v1, re-settled by look v1, re-settled by character v2.**
+One model voxel is **1/24 of a block, 2.083 cm**, and a human is **96 voxels =
+2.00 m**. (Character v1 built at 1/8; look v1 halved the voxel for the detail a
+face and a hand need; character v2 took it to 1/24.) Characters and terrain
+therefore do not share a voxel grid, and the chunk mesher is not the character
+mesher: two systems, not one, and they meet only in the material and the
+baked-AO rule.
+
+**The reason for 1/24 is a knee, not detail.** A 16-voxel leg split in two
+gives segments 8 voxels long - a limb whose joint is half its own thickness. At
+96 the legs are 24 and a 12/12 thigh and shin is a joint you can watch bend.
+And **not 128**: at 15 m, the far edge of the band the game is played in, one
+voxel is 1.5 px at 64, 0.98 px at 96 and 0.73 px at 128. Below a pixel, detail
+does not render - it aliases, and shimmers whenever the character moves. 96 is
+the last grid whose atomic unit is still a pixel where the game is played.
 
 The four races, at the crown, all built and measured:
 
 | Race | Height | Silhouette |
 | --- | --- | --- |
-| Human | 64 vox, 2.00 m | the reference: square, stepped shoulders |
-| Elf | 72 vox, 2.25 m | tall and narrow, ears six voxels out each side |
-| Dwarf | 48 vox, 1.50 m | as wide as it is tall, and always bearded |
-| Lizardfolk | 60 vox, 1.88 m | tail, crest, snout, leaning 8 degrees forward |
+| Human | 96 vox, 2.00 m | the reference: square, stepped shoulders |
+| Elf | 108 vox, 2.25 m | tall and narrow, ears nine voxels out each side |
+| Dwarf | 72 vox, 1.50 m | as wide as it is tall, and always bearded |
+| Lizardfolk | 90 vox, 1.88 m | tail, crest, snout, leaning 8 degrees forward |
+
+**Every height in metres is unchanged by the grid move** - the totals and the
+voxel size moved by reciprocal factors - so the capsule, the camera pivot and
+the speed table were untouched by it.
 
 **The collider is identical for every race** - a capsule, radius 0.4 m, height
 2.0 m, with the camera pivot at 1.5 m. Race is never a stat: the dwarf's head

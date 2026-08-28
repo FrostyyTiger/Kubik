@@ -64,8 +64,25 @@ face of your model should be at MINIMUM Y - the side you look at in
 MagicaVoxel's default view. If your models come out back to front,
 `VoxLoader.FLIP_DEPTH` is the one line to change.
 
-**Scale.** One model voxel is 3.125 cm, sixteen to a block. A human is 64 voxels
-tall; see `Races.TABLE` for every race's dimensions.
+**Scale.** One model voxel is **2.083 cm, twenty-four to a block**. A human is
+**96 voxels** tall; see `Races.TABLE` for every race's dimensions.
+
+> **This changed in character v2 and it is a break.** It was 3.125 cm and 64
+> voxels, sixteen to a block. A `.vox` authored against the old grid loads at
+> **two thirds** of its intended size, silently, because the format carries no
+> scale and there is nothing to compare it against but the part it replaces.
+>
+> There is no compatibility path and deliberately none: MagicaVoxel writes no
+> scale metadata, so a sidecar file declaring one would be a format nobody has
+> ever written a file for. This directory ships empty, so the break costs
+> exactly nothing today - which is why the grid moved now rather than after the
+> first model landed.
+>
+> What the loader does do: it compares a replacement's bounding box against the
+> ASCII part it stands in for and warns when they differ by more than about a
+> third, naming the old grid as the likely cause. It warns rather than
+> rejecting, because art being a different shape is the entire point of a
+> drop-in.
 
 **The pivot** is inherited from the ASCII part being replaced, because a `.vox`
 file carries no anchor and inventing one from the bounding box would put a

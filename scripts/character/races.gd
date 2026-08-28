@@ -38,20 +38,45 @@ const BUILD_NAMES := ["stocky", "lean"]
 
 # --- The stack ---------------------------------------------------------------
 #
-# ONE MODEL VOXEL IS 1/16 OF A BLOCK since look v1, and a human is 64 of them.
-# The look plan's Stage 6 table is the source of every number below; the
-# pelvis is what the stack does not otherwise spend, and it is the part the
-# root bone `hips` carries:
+# ONE MODEL VOXEL IS 1/24 OF A BLOCK since character v2, and a human is 96 of
+# them. See `VoxelModel.VOXEL_M` for why 96 and why not 128; the short version
+# is that a 16-voxel leg cannot have a knee and a 24-voxel one can.
 #
-#     legs   [0, 16)  16
-#     pelvis [16, 22)  6
-#     torso  [22, 42) 20
-#     head   [42, 64) 22
+#     legs   [0, 24)  24
+#     pelvis [24, 33)  9
+#     torso  [33, 63) 30
+#     head   [63, 96) 33
 #                     --
-#                      64
+#                      96
 #
 # Head a third of the height, big hands, big boots - the Cube World stack the
-# scheme is named after, one step finer than character v1 drew it.
+# scheme is named after.
+#
+# STAGE 3 MOVED THE GRID AND NOTHING ELSE. Every number in the table below is
+# its 64-grid value times 1.5, rounded, and no race's DESIGN changed here -
+# that is Stages 5 and 6. Isolating the two is the point: if a silhouette
+# number moves in this commit it is a bug, not a decision.
+#
+# THE PELVIS ABSORBS THE ROUNDING, and that is why it is derived rather than
+# tabled. `pelvis_height()` is `total - legs - torso - head - neck`, so the
+# stack sums to `total` by construction whatever 1.5x did to the parts. The elf
+# is the case that needs it: its neck and pelvis were 3 and 3, which are 4.5
+# and 4.5, and something has to give.
+#
+# EVERY HEIGHT IN METRES IS UNCHANGED - 2.00, 2.25, 1.50, 1.875 - because the
+# totals and the voxel size moved by reciprocal factors. So the capsule, the
+# camera pivot, MAX_STEP, the speed table and `player.gd` are untouched, and
+# hard rule 3 still holds: race is never a stat.
+#
+# THE DESIGN DOC'S HUMAN STACK SUMS TO 94, NOT 96. It writes "total 96, legs
+# 24, pelvis 8, torso 30, head 32". Since the pelvis is derived the code cannot
+# reproduce that error; with the doc's other three numbers the pelvis comes out
+# at 10. Stage 5 resolves it as a design question. This stage uses the
+# mechanical 1.5x, which puts the human at legs 24, torso 30, head 33,
+# pelvis 9. It is the same class of slip character v1 found in its own plan's
+# table, and it is why the height self-test measures the BUILT RIG rather than
+# summing the table - a height computed from the table would only prove the
+# table agrees with itself.
 
 ## Model voxels, for readability of the tables below.
 const V := VoxelModel.VOXEL_M
@@ -70,35 +95,35 @@ const TABLE := [
 	# the armpit. `head_d` is the skull; the nose is one more in front of it.
 	{
 		"name": "human",
-		"total": 64, "legs": 16, "torso": 20, "head": 22,
-		"torso_w": 20, "torso_d": 11, "head_w": 18, "head_d": 16,
-		"leg_w": 8, "arm_len": 20, "arm_w": 8,
+		"total": 96, "legs": 24, "torso": 30, "head": 33,
+		"torso_w": 30, "torso_d": 17, "head_w": 27, "head_d": 24,
+		"leg_w": 12, "arm_len": 30, "arm_w": 12,
 		"lean_deg": 0.0,
 		"silhouette": "the reference: square stepped shoulders",
 	},
 	{
 		"name": "elf",
-		"total": 72, "legs": 24, "torso": 20, "head": 22,
-		"torso_w": 12, "torso_d": 8, "head_w": 16, "head_d": 16,
-		"leg_w": 6, "arm_len": 24, "arm_w": 6,
-		"neck": 3, "ear_out": 6,
+		"total": 108, "legs": 36, "torso": 30, "head": 33,
+		"torso_w": 18, "torso_d": 12, "head_w": 24, "head_d": 24,
+		"leg_w": 9, "arm_len": 36, "arm_w": 9,
+		"neck": 5, "ear_out": 9,
 		"lean_deg": 0.0,
 		"silhouette": "tall and narrow, ears",
 	},
 	{
 		"name": "dwarf",
-		"total": 48, "legs": 10, "torso": 18, "head": 20,
-		"torso_w": 26, "torso_d": 14, "head_w": 20, "head_d": 16,
-		"leg_w": 10, "arm_len": 16, "arm_w": 10,
+		"total": 72, "legs": 15, "torso": 27, "head": 30,
+		"torso_w": 39, "torso_d": 21, "head_w": 30, "head_d": 24,
+		"leg_w": 15, "arm_len": 24, "arm_w": 15,
 		"lean_deg": 0.0,
 		"silhouette": "as wide as it is tall, beard",
 	},
 	{
 		"name": "lizardfolk",
-		"total": 60, "legs": 18, "torso": 20, "head": 18,
-		"torso_w": 20, "torso_d": 11, "head_w": 16, "head_d": 16,
-		"leg_w": 8, "arm_len": 20, "arm_w": 8,
-		"snout": 8, "tail_len": 28, "tail_segments": [10, 10, 8],
+		"total": 90, "legs": 27, "torso": 30, "head": 27,
+		"torso_w": 30, "torso_d": 17, "head_w": 24, "head_d": 24,
+		"leg_w": 12, "arm_len": 30, "arm_w": 12,
+		"snout": 12, "tail_len": 42, "tail_segments": [15, 15, 12],
 		"lean_deg": 8.0,
 		"silhouette": "tail, crest, snout",
 	},
@@ -611,7 +636,8 @@ static func parts_for(def: CharacterDef) -> Dictionary:
 	for part_name in out.keys():
 		var original: Dictionary = out[part_name]
 		var replacement = VoxLoader.drop_in(race_name, part_name,
-			original.get("anchor", Vector3.ZERO))
+			original.get("anchor", Vector3.ZERO),
+			original.get("size", Vector3i.ZERO))
 		if replacement != null:
 			out[part_name] = replacement
 	return out

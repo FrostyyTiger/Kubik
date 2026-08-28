@@ -49,11 +49,31 @@ class_name VoxelModel
 ## below is deliberately the most boring one that can hold a voxel: an array of
 ## strings you can read in a terminal.
 
-## Metres per model voxel. 16 per 0.5 m block since look v1: a 2 m human is
-## 64 voxels tall. Character v1 built at 8 per block, the scale foliage v1
-## fixed for plants; the look plan halved it for characters alone, because a
-## face needs the resolution and a grass tuft does not. Plants stay at 1/8.
-const VOXEL_M := 0.03125
+## Metres per model voxel. **24 per 0.5 m block since character v2: a 2 m human
+## is 96 voxels tall**, and one voxel is 2.083 cm.
+##
+## The history, because the number has moved twice and each move had a reason.
+## Character v1 built at 8 per block, the scale foliage v1 fixed for plants.
+## Look v1 halved it to 16 for characters alone, because a face needs the
+## resolution and a grass tuft does not; plants stay at 1/8. Character v2 takes
+## it to 24, and the reason is NOT surface detail:
+##
+## A 16-voxel leg cannot have a knee. Split it and each segment is 8 voxels - a
+## limb whose joint is half its own thickness. At 96 the legs are 24, and a
+## 12/12 thigh and shin with a two-voxel joint is a joint you can see bend.
+## That is the whole argument; everything else the raise buys is a bonus.
+##
+## AND NOT 128. At the game's 75 degree FOV a 2 m character at 15 m - the far
+## edge of the band the game is actually played in - is 94 px tall at 1080p. So
+## one voxel is 1.5 px at 64, 0.98 px at 96, and 0.73 px at 128. Below one pixel
+## the detail does not render, it ALIASES, and every frame of movement makes it
+## shimmer. 96 is the last grid whose atomic unit is still a pixel at the
+## distance this game is played at. An independent research lane with no access
+## to this repository arrived at the same number for compatible reasons.
+##
+## Written as arithmetic rather than as a decimal so the reason stays attached
+## to the value: 2.00 m of human over 96 voxels.
+const VOXEL_M := 2.0 / 96.0
 
 ## Semantic slots. A part is authored in these, never in colours - the same
 ## voxels resolved through a different palette are a different-looking

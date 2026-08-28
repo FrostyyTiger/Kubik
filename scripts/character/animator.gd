@@ -32,8 +32,14 @@ extends RefCounted
 ## at 60 and the game feels different on two machines.
 
 ## The reference leg length the stride table is written against: the stocky
-## human's 16 voxels, 0.5 m. Every other race scales from it.
-const REFERENCE_LEG_M := 16.0 * VoxelModel.VOXEL_M
+## human's legs, 0.5 m. Every other race scales from it.
+##
+## THE LITERAL IS IN VOXELS AND THE VOXEL CHANGED SIZE. It was 16 at 1/16 of a
+## block and is 24 at 1/24 - the same half metre, a different number of voxels.
+## Miss this and every race's stride scales from a reference two thirds of the
+## right length, which reads as the whole cast mincing and is the sort of thing
+## that gets blamed on an amplitude knob for a week.
+const REFERENCE_LEG_M := 24.0 * VoxelModel.VOXEL_M
 
 ## Below this speed the character is standing still as far as the legs are
 ## concerned, and the swing blends out rather than shrinking asymptotically.
@@ -327,7 +333,11 @@ static func pose_for(state: LocomotionState, phase: float, t: float,
 		config: CharacterConfig, dims: Dictionary, extra := {}) -> Dictionary:
 	var pose := {}
 	var v := VoxelModel.VOXEL_M
-	var legs_m: float = float(dims.get("legs", 9)) * v
+	# NO DEFAULT. `dims` always comes from a race table or from a part file's
+	# own DIMS, both of which have `legs`; the old fallback of 9 was a fossil
+	# from the 1/8 grid and would now silently produce a character with legs
+	# three quarters of a voxel long rather than a loud failure.
+	var legs_m: float = float(dims["legs"]) * v
 
 	match state.pose:
 		LocomotionState.POSE_SIT:

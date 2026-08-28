@@ -438,3 +438,141 @@ resolution-dependent.
 | character self-tests | 28 | **29** |
 
 Green: 29 character tests, world suite passed.
+
+---
+
+## Stage 3 — the grid moves to 96, one model voxel is 1/24 of a block
+
+Committed as `feat(character): stage 3 - ...`. The grid moved and **no race's
+design changed**: every table number is its 64-grid value times 1.5, rounded,
+and every part is a regeneration. Isolating the two is the point — a silhouette
+number moving in this commit would be a bug, not a decision.
+
+### What moved
+
+`VoxelModel.VOXEL_M` from `0.03125` to `2.0 / 96.0`, written as arithmetic so
+the reason stays attached to the value. The race table, mechanically:
+
+| | total | legs | torso | head | neck | pelvis (derived) | torso_w | torso_d |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| human | 96 | 24 | 30 | 33 | — | 9 | 30 | 17 |
+| elf | 108 | 36 | 30 | 33 | 5 | 4 | 18 | 12 |
+| dwarf | 72 | 15 | 27 | 30 | — | 0 | 39 | 21 |
+| lizardfolk | 90 | 27 | 30 | 27 | — | 6 | 30 | 17 |
+
+**Every height in metres is unchanged** — 2.00, 2.25, 1.50, 1.875 — so nothing
+about the capsule, the camera pivot, `MAX_STEP`, the speed table or `player.gd`
+was touched. The pelvis is derived, so the stack sums to `total` by
+construction whatever 1.5x did to the parts; the elf is the case that needs it,
+since its neck and pelvis were 3 and 3 and 4.5 is not a voxel.
+
+**The design doc's human stack sums to 94, not 96** — "total 96, legs 24,
+pelvis 8, torso 30, head 32". The code cannot reproduce the error because the
+pelvis is derived; with the doc's other three numbers it comes out at 10. Stage
+5 resolves it as a design question.
+
+### Three things that scale silently, and would each have been a week
+
+- **`CharacterConfig`'s six `_vox` knobs.** They are in model voxels precisely
+  so a number means the same thing on a dwarf and an elf — which makes every
+  one of them two thirds of its old size *in metres* the moment the voxel
+  shrinks. All six multiplied by 1.5, their F8 spin ranges with them, and
+  `USER_PATH` bumped to `character_tuning_v3.tres` so a saved file from the old
+  grid is not read at all. Look v1 bumped `_v1` to `_v2` for exactly this
+  reason.
+- **`Animator.REFERENCE_LEG_M`** was `16.0 * VOXEL_M` — the same half metre, a
+  different number of voxels. Now 24.0. Miss it and every race's stride scales
+  from a reference two thirds of the right length, which reads as the whole
+  cast mincing and gets blamed on an amplitude knob for a week.
+- **`_pose_locomotion`'s `dims.get("legs", 9)`** — a fossil default from the
+  1/8 era. Now `dims["legs"]`, so a missing key is a loud failure rather than a
+  character with legs three quarters of a voxel long.
+
+### What the self-tests caught, and both were real
+
+**1. `eyes forward` fell from 1.0000 to 0.9981 on all four races.** The map
+sends an author voxel to a span that is alternately one and two output voxels
+wide. That is harmless for shapes — a mirrored pair of boxes lands on a
+mirrored pair of spans — and fatal for a feature ONE voxel across. The eye
+catchlights sit at author x = 5 and x = 12, an exact mirror pair about the
+head's centre line, and they scaled to spans of **one** and **two** voxels. The
+face acquired a half-voxel list: three and a half degrees of squint.
+
+The design doc chooses for us. Preserving it would need the face authored as a
+half and mirrored at output — real machinery. Dropping it costs a highlight
+that is one voxel on a grid where the doc's own floor is that "nothing smaller
+than about 3 x 3 voxels matters" and that "authoring 1-voxel detail at the new
+grid would waste the raise". The eye is specified there as "a 2 x 4 block of
+pure iris colour… one shape and one value". The catchlight was never part of
+that argument, so it is off, the iris blocks come out exactly symmetric, and
+the test passes at its original 0.999 with the threshold untouched.
+
+**2. `gear sockets` reported 204 voxel-cells of tunic inside a dwarf.** This one
+was subtle and it is the best thing this stage found.
+
+An anchor was being scaled by interpolating `U`. That sends the dwarf torso's
+central anchor of 7, in a 14-deep part, to **11** — while the part itself
+becomes **21** deep, whose middle is 10.5. Half a voxel of asymmetry, invisible
+on the part itself. But `races.gd` places the `chest` socket at
+`-torso_d * 0.5`, which is −10.5, **on the assumption that a part is symmetric
+about its own anchor**. It no longer was, so the socket sat half a voxel inside
+the torso's front face and the tunic landed inside the dwarf.
+
+An anchor is not a voxel index. It is a position expressed relative to its
+part, and what must survive a change of grid is that relationship — so it
+scales **proportionally**, `a * U(size) / size`. That sends 7 of 14 to 10.5 of
+21 and 5.5 of 11 to 8.5 of 17: both exactly the middle, both agreeing with the
+table.
+
+The trade, stated because it is real: an anchor that is the centre of a
+*sub-shape* is now off by up to a quarter of a voxel. The head's anchor is the
+skull's centre inside a part one deeper for the nose, so it lands at 13.76
+where the skull's true centre is 14 — 5 mm, on a head-look pivot. That replaces
+a half-voxel error on a socket, which is a placeholder inside a body.
+
+**And one clearance that had no margin left.** The pendant placeholder cleared
+the dwarf's beard by one voxel at 1/16 — 3.1 cm. At 1/24 the same one voxel is
+2.1 cm, and the beard closed on it: 30 cells. Character v1's status doc already
+flagged this clearance as tight. Moved out one author voxel rather than the
+test loosened.
+
+### The numbers
+
+| | Stage 2 (64) | Stage 3 (96) | ratio |
+| --- | --- | --- | --- |
+| human, triangles | 17,052 | 38,828 | 2.277 |
+| elf | 14,692 | 33,472 | 2.278 |
+| **dwarf (worst)** | **17,788** | **40,268** | **2.264** |
+| lizardfolk | 16,592 | 37,828 | 2.280 |
+| critter | 7,280 | 16,380 | 2.250 |
+| dwarf retained voxels | 17,646 | 59,787 | 3.388 |
+| dwarf retained memory | 413 KB | **1,401 KB** | |
+
+Surface area scales as 1.5² = 2.25 and volume as 1.5³ = 3.375. Measured 2.264
+and 3.388. **`TRIANGLE_BUDGET` is set from the measurement to 44,000** — the
+worst character rounded up to the next 4,000 — not from the design doc's
+predicted "about 40,000", which was a good prediction and is not a measurement.
+
+**Item 5 is settled: keep the list.** 1.37 MB for the worst character, 5.5 MB
+for a party of four, under the 8 MB threshold the plan sets for packing
+`(x, y, z, slot)` into a `PackedInt32Array`. The packing stays specified and
+unbuilt.
+
+### The silhouette did not move, which is the point
+
+| pair, front on | Stage 1 (64) | Stage 3 (96) | delta |
+| --- | --- | --- | --- |
+| human / elf | 0.530 | 0.544 | +0.014 |
+| human / dwarf | 0.561 | 0.532 | −0.029 |
+| **human / lizardfolk** | **0.913** | **0.880** | −0.033 |
+| elf / dwarf | 0.357 | 0.354 | −0.003 |
+| elf / lizardfolk | 0.534 | 0.530 | −0.004 |
+| dwarf / lizardfolk | 0.566 | 0.563 | −0.003 |
+
+Every pair inside the plan's ±0.05 tolerance, and human/lizardfolk is still the
+worst and still over. A finer grid does not fix a silhouette and it did not
+appear to. The option sweep still reports 15 of 94 pairs over 0.70, worst 0.901.
+
+Green: 29 character tests, world suite passed, heightmap `76cccdb6`, swatch
+transfer and value tiers PASS, outline metric still 0 bare / 2 with
+placeholders.

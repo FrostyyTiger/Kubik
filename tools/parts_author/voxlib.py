@@ -67,7 +67,7 @@ AUTHOR_RES = 64
 
 ## The grid to emit. 64 reproduces the committed files byte for byte.
 ## `python -m tools.parts_author --res 96` is the character v2 grid.
-RES = AUTHOR_RES
+RES = 96
 
 
 def U(v: int) -> int:
@@ -112,16 +112,38 @@ def _axis_map(n: int) -> list[int]:
     return out
 
 
-def _scale_anchor(a: float) -> float:
-    """An anchor is a LATTICE point and may sit on a half voxel - the top
-    centre of a 9-wide leg is x = 4.5. So it is scaled by interpolating U
-    rather than by rounding through it: at RES 96 a depth-11 part becomes 17
-    deep and its middle, 5.5, becomes 8.5 and not 8.25. Getting this wrong
-    lists the whole part a quarter of a voxel to one side, which is exactly the
-    class of error the lattice-versus-index note in VoxelModel warns about."""
-    lo = int(a // 1)
-    frac = a - lo
-    return U(lo) + frac * (U(lo + 1) - U(lo))
+def _scale_anchor(a: float, size: int) -> float:
+    """An anchor scales as a FRACTION OF ITS PART, not through `U`.
+
+    An anchor is a lattice point and may sit on a half voxel - the top centre
+    of a 9-wide leg is x = 4.5 - so it is not a voxel index and `U` is not the
+    right map for it. What it actually is, is a position expressed relative to
+    the part it belongs to, and the thing that must survive a change of grid is
+    that relationship.
+
+    THE ALTERNATIVE WAS TRIED FIRST AND IT PUT A TUNIC INSIDE A DWARF.
+    Interpolating `U` sends the dwarf torso's central anchor of 7, in a 14-deep
+    part, to 11 - while the part itself becomes 21 deep, whose middle is 10.5.
+    Half a voxel of asymmetry, invisible on the part. But `races.gd` places the
+    `chest` socket at `-torso_d * 0.5`, which is -10.5, on the assumption that
+    a part is symmetric about its own anchor. It no longer was, so the socket
+    sat half a voxel inside the torso's front face and the tunic placeholder
+    landed 204 voxel-cells inside a dwarf. The gear-socket self-test caught it.
+
+    Proportional scaling sends 7 of 14 to 10.5 of 21 and 5.5 of 11 to 8.5 of
+    17: both exactly the middle, both agreeing with the table.
+
+    WHAT IT COSTS, stated because it is a real trade. An anchor that is the
+    centre of a SUB-shape rather than of the whole part is now off by up to
+    half an output voxel: the head's anchor is the skull's centre, and the
+    skull sits inside a part that is one deeper for the nose, so proportional
+    scaling puts it at 13.76 where the skull's true centre is 14. That is
+    0.24 of a voxel, 5 mm, on a head-look pivot. The error it replaces was
+    0.5 of a voxel on a socket, which is a placeholder inside a body.
+    """
+    if size <= 0:
+        return 0.0
+    return a * (float(U(size)) / float(size))
 
 
 # The slot letters, exactly VoxelModel.SLOT_CHARS. `check_slots_match()` below
@@ -301,7 +323,8 @@ class Part(Cells):
         return (U(self.w), U(self.h), U(self.d))
 
     def anchor_out(self) -> tuple[float, float, float]:
-        return tuple(_scale_anchor(a) for a in self.anchor)
+        return tuple(_scale_anchor(a, n)
+                     for a, n in zip(self.anchor, (self.w, self.h, self.d)))
 
     def slices(self) -> list[list[str]]:
         """The ASCII, on the output grid.
@@ -456,7 +479,7 @@ def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
 
 
 def solid_eyes(p, x_centre: int, y0: int, z_face: int, gap: int = 6,
-               width: int = 2, height: int = 4, catchlight: bool = True,
+               width: int = 2, height: int = 4, catchlight: bool = False,
                clear=None) -> None:
     """Two solid iris blocks, one voxel proud of the face plane at `z_face`.
 
@@ -476,6 +499,41 @@ def solid_eyes(p, x_centre: int, y0: int, z_face: int, gap: int = 6,
             # highlight, and two of them read as a second pair of pupils.
             cx = x0 + width - 1 if sign < 0 else x0
             p.put(cx, y0 + height - 1, z_face - 1, W)
+
+
+# --- Why the catchlight defaults to OFF from character v2 Stage 3 -------------
+#
+# IT CANNOT BE MADE SYMMETRIC UNDER A NON-INTEGER GRID CHANGE, and a lopsided
+# glint is worse than no glint.
+#
+# The scale map `U` sends an author voxel to the span `[U(a), U(a + 1))`, which
+# at 96/64 is alternately one and two voxels wide. That is fine for every SHAPE
+# in the cast, because shapes here are boxes two or more voxels across and a
+# mirrored pair of boxes lands on a mirrored pair of spans. It is not fine for a
+# feature ONE voxel across: the human's catchlights sit at author x = 5 and
+# x = 12, an exact mirror pair about the head's centre line of 8.5, and they
+# scale to spans of ONE voxel and TWO voxels respectively. The face acquires a
+# half-voxel list to one side.
+#
+# It was found by the eyes-forward self-test, which measures the direction from
+# the head's centre to the iris centroid and asserts it points along the way the
+# character is travelling. That agreement dropped from 1.0000 to 0.9981 on all
+# four races - about three and a half degrees of squint - and the test is right
+# to object.
+#
+# Two ways out, and the design doc chooses for us. Preserving the catchlight
+# would need the face authored as a half and mirrored at output, which is real
+# machinery. Dropping it costs a highlight that is ONE VOXEL on a grid where
+# the design doc's own floor is that "nothing smaller than about 3 x 3 voxels
+# matters at 8-15 m" and that "authoring 1-voxel detail at the new grid would
+# waste the raise". The eye is specified there as "a 2 x 4 block of pure iris
+# colour... one shape and one value: it survives being two pixels tall". The
+# catchlight was never part of that argument.
+#
+# So it goes, the iris blocks come out exactly symmetric, and the eyes-forward
+# test passes at its original 0.999 without the threshold being touched. Stage 5
+# re-authors every face and may bring a highlight back as a 2 x 2 - which would
+# scale cleanly, because two is not one.
 
 
 def hair_brow(p, xr, y: int, z_face: int) -> None:

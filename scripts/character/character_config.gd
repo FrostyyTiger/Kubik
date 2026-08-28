@@ -16,18 +16,34 @@ extends Resource
 ## docs/status/character-v1.md under "Tuned blind - re-check these first",
 ## with its before and after.
 
-## `_v2` since look v1: every `_vox` knob below is in model voxels, and the
-## model voxel halved. A v1 file loaded here would move everything half as
-## far, so the old file is simply not read.
-const USER_PATH := "user://character_tuning_v2.tres"
+## `_v3` since character v2: every `_vox` knob below is in MODEL VOXELS, and
+## the model voxel has changed size again - 1/16 of a block to 1/24. A `_v2`
+## file loaded here would move everything two thirds as far in metres, so the
+## old file is simply not read. Look v1 bumped `_v1` to `_v2` for exactly this
+## reason when it halved the voxel; this is the same bump for the same reason,
+## and it is the whole cost of having knobs denominated in voxels.
+const USER_PATH := "user://character_tuning_v3.tres"
 
 ## Mesh triangles per character WITH hair and beard, the number the height
-## self-test and the gallery's budget sheet gate on. 6000 in character v1 at
-## 1/8 of a block; the finer voxel quadruples the surface, and the chamfers and
-## the hands add a little more, so 24000. Four players is under 100k, which is
-## the far field's own budget - see docs/status/look-v1-characters.md for
-## the measured numbers.
-const TRIANGLE_BUDGET := 24000
+## self-test and the gallery's budget sheet gate on.
+##
+## 6000 in character v1 at 1/8 of a block. 24000 at 1/16. **44000 at 1/24, and
+## it is MEASURED rather than predicted** - character v2 Stage 3, on the GPU:
+##
+##     stocky human      38,828      stocky elf        33,472
+##     stocky dwarf      40,268      stocky lizardfolk 37,828
+##
+## Worst 40,268, rounded up to the next 4,000. The design doc predicted "about
+## 40,000" from a 2.25x surface-area argument and the measured ratio against
+## Stage 2's 17,788 is 2.264, so the prediction was good - but the plan says
+## re-measure rather than predict, and the reason is that a budget nobody
+## measured is a budget nobody can argue with later.
+##
+## Four players is 161k triangles, doubled to 322k by the shadow pass. That is
+## nothing on a 3070 Ti and less than nothing on Marcel's 5080; triangles were
+## never the constraint on this decision. The retained voxel list was the one
+## worth watching, and it is in the status doc.
+const TRIANGLE_BUDGET := 44000
 
 
 # --- Locomotion ---------------------------------------------------------------
@@ -53,8 +69,8 @@ const TRIANGLE_BUDGET := 24000
 
 ## How far the hips rise and fall per step, in MODEL VOXELS rather than metres,
 ## so the number means the same thing on a dwarf and on an elf.
-@export var bob_walk_vox := 3.0
-@export var bob_sprint_vox := 6.0
+@export var bob_walk_vox := 4.5
+@export var bob_sprint_vox := 9.0
 
 ## Metres covered by one full cycle - two steps - at walk speed, for a stocky
 ## human. Every other race and scheme scales this by its own leg length.
@@ -83,7 +99,7 @@ const TRIANGLE_BUDGET := 24000
 @export var fall_arms_deg := 30.0
 
 ## The hips dip this far on landing and recover over this long.
-@export var land_squash_vox := 4.0
+@export var land_squash_vox := 6.0
 @export var land_squash_ms := 120.0
 
 
@@ -92,7 +108,7 @@ const TRIANGLE_BUDGET := 24000
 ## Idle torso rise. Small and slow: a character that visibly pumps while
 ## standing still reads as panting, not as breathing.
 @export var breath_hz := 0.25
-@export var breath_vox := 1.0
+@export var breath_vox := 1.5
 
 ## How high the hips sit above the ground in the two static poses, in model
 ## voxels.
@@ -106,8 +122,8 @@ const TRIANGLE_BUDGET := 24000
 ## Chosen by eye against the gallery's pose strip, so they live here rather
 ## than in the animator - and they are in the re-check table with everything
 ## else that was.
-@export var sit_lift_vox := 3.0
-@export var downed_lift_vox := 5.0
+@export var sit_lift_vox := 4.5
+@export var downed_lift_vox := 7.5
 
 ## Blink timing. The interval is drawn uniformly between the two bounds; the
 ## blink itself is a mesh swap, not a shader.
@@ -160,19 +176,19 @@ const TUNING_ROWS := [
 	["arm_swing_ratio", "arm swing / leg swing", 0.0, 2.0, 0.05],
 	["precision_swing_ratio", "precision / walk swing", 0.0, 1.0, 0.05],
 	["sprint_lean_deg", "sprint torso lean (deg)", 0.0, 45.0, 1.0],
-	["bob_walk_vox", "walk hip bob (vox)", 0.0, 12.0, 0.1],
-	["bob_sprint_vox", "sprint hip bob (vox)", 0.0, 16.0, 0.1],
+	["bob_walk_vox", "walk hip bob (vox)", 0.0, 18.0, 0.1],
+	["bob_sprint_vox", "sprint hip bob (vox)", 0.0, 24.0, 0.1],
 	["stride_walk_m", "walk stride (m)", 0.4, 3.0, 0.05],
 	["cycle_hz_max", "max leg rate (Hz)", 0.5, 8.0, 0.1],
 	["pose_smoothing", "pose blend rate", 1.0, 40.0, 0.5],
 	["jump_tuck_deg", "jump leg tuck (deg)", 0.0, 90.0, 1.0],
 	["fall_arms_deg", "fall arms out (deg)", 0.0, 90.0, 1.0],
-	["land_squash_vox", "landing dip (vox)", 0.0, 16.0, 0.1],
+	["land_squash_vox", "landing dip (vox)", 0.0, 24.0, 0.1],
 	["land_squash_ms", "landing dip (ms)", 20.0, 600.0, 10.0],
-	["sit_lift_vox", "sit hip height (vox)", 0.0, 16.0, 0.1],
-	["downed_lift_vox", "downed hip height (vox)", 0.0, 16.0, 0.1],
+	["sit_lift_vox", "sit hip height (vox)", 0.0, 24.0, 0.1],
+	["downed_lift_vox", "downed hip height (vox)", 0.0, 24.0, 0.1],
 	["breath_hz", "breathing (Hz)", 0.0, 2.0, 0.05],
-	["breath_vox", "breathing rise (vox)", 0.0, 6.0, 0.1],
+	["breath_vox", "breathing rise (vox)", 0.0, 9.0, 0.1],
 	["blink_min_s", "blink gap min (s)", 0.5, 20.0, 0.5],
 	["blink_max_s", "blink gap max (s)", 0.5, 30.0, 0.5],
 	["blink_ms", "blink length (ms)", 40.0, 400.0, 10.0],
