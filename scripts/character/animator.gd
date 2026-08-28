@@ -276,8 +276,8 @@ const RIG_SHAPES := {
 		# built from rigid parts that does not have one. Nothing branches on
 		# which races have knees.
 		"legs": [
-			{"bone": "leg_r", "lower": "leg_r_lower", "phase": 0.0},
-			{"bone": "leg_l", "lower": "leg_l_lower", "phase": 0.5},
+			{"bone": "leg_r", "lower": "leg_r_lower", "foot": "leg_r_foot", "phase": 0.0},
+			{"bone": "leg_l", "lower": "leg_l_lower", "foot": "leg_l_foot", "phase": 0.5},
 		],
 		# Arms in antiphase with the leg on their OWN side, which is what a
 		# person does and what makes a walk read as a walk.
@@ -427,6 +427,20 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 				# Tucked under, which is most of what makes a tuck read as one.
 				bend = -tuck
 			pose[entry["lower"]] = {"rot": Vector3(bend, 0.0, 0.0)}
+			if entry.has("foot"):
+				# THE HOCK BENDS THE OTHER WAY. On a digitigrade leg the ankle
+				# is raised and faces BACKWARD, so where the knee folds the
+				# shin back, the hock folds the foot forward under it - which
+				# is the joint that makes a lizardfolk read as an animal from
+				# any angle. Another quarter cycle behind the knee, so the
+				# three joints peak in sequence down the limb.
+				#
+				# A pose entry for a bone that does not exist costs nothing -
+				# `Rig.apply_pose` iterates the bones it HAS - so writing this
+				# for a human is free rather than a branch on race.
+				pose[entry["foot"]] = {"rot": Vector3(
+					deg_to_rad(config.hock_swing_deg) * moving * maxf(
+						0.0, sin(TAU * (phase + leg_phase + 0.5))), 0.0, 0.0)}
 
 	var falling := not state.grounded and not state.rising
 	# Arms out while falling. Positive Z rotation swings the right arm's tip

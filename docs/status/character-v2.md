@@ -798,3 +798,88 @@ move is the lizardfolk's, which is Stage 6.
 
 Green: 30 character tests, world suite passed, swatch transfer and value tiers
 PASS.
+
+---
+
+## Stage 6 — the lizardfolk gets a body
+
+Committed as `feat(character): stage 6 - ...`. **Zero race pairs over 0.70
+front-on**, for the first time in this project.
+
+| | v1 (llvmpipe) | Stage 0 (GPU) | Stage 6 |
+| --- | --- | --- | --- |
+| human / lizardfolk, front on | 0.868 | **0.913** | **0.664** |
+| human / lizardfolk, three-quarter | 0.619 | 0.759 | **0.606** |
+| race pairs over 0.70 | 1 | 1 | **0** |
+| cross-race variant pairs over 0.70 | 15 of 94 | 15 of 94 | **1 of 94** |
+| worst variant pair | 0.928 | 0.928 | **0.716** |
+
+### What did the work, in order
+
+1. **The torso, 30 voxels wide to 21.** Until now the lizardfolk's torso *was*
+   the human's torso, deliberately, so the metric could tell which feature was
+   doing the work. It answered: none of them could. Shoulder over height goes
+   from 0.333 to 0.233, into the gap between the elf's 0.17 and the human's
+   0.31 instead of on top of the human. This alone took 0.913 to 0.797.
+2. **The arms held forward** — a runner's arms, 34° at the shoulder and 46° at
+   the elbow. Front on this foreshortens them, and the arms were most of the
+   width the two races had in common. 0.794 to **0.664**.
+3. The head 27 to 24, a three-segment digitigrade leg, a mild crouch, four tail
+   links, and countershading.
+
+### The lean is on the torso, and finding that out cost the most
+
+It was baked into `hips`. The legs are children of `hips`, so the lean rotated
+them too: the character tipped from the ankles like a felled tree, feet swinging
+out behind it. On the torso the spine leans and the legs stay under the body,
+which is what a running animal does and what "its centre of mass is not over its
+feet" actually means. The head is a child of the torso, so "head low and forward"
+comes free, and the tail hangs off the hips and stays level to counterweight it.
+
+### The metric passed a character that was falling over
+
+Worth recording as plainly as possible, because it is the sharpest thing this
+stage learned.
+
+Sweeping the lean against `masks-40`, more lean always separated better. At
+**52° on the hips the pair measured 0.658 front on and 0.477 three-quarter** —
+comfortably past target, the best numbers of the whole run. The picture was a
+face-plant: head at ground level, body a diagonal stick, feet behind it.
+
+**A count can tell you a shape is not a human's. It cannot tell you it is good.**
+The plan gates every stage on counts because counts survive noise, and that is
+still right — but this is the failure mode of that discipline, and the answer is
+the one the plan already names: the count is the gate, and the picture is still
+judged by a person. Both sheets exist for a reason.
+
+The settled configuration is 26° of torso lean with a mild crouch, chosen by
+looking, and it is not the extreme the metric preferred.
+
+### Two more grid sharp edges
+
+- **The eyes had to move from gap 6 to gap 8.** A mirrored pair only stays
+  mirrored if its *scaled spans* mirror, which is stricter than being symmetric
+  in author space. At gap 6 the eyes scaled to `[5,8)` and `[17,20)` in a
+  24-wide head, and the mirror of `[5,8)` is `[16,19)`. The eyes-forward test
+  caught it at 0.9988. Same edge that took the catchlight out in Stage 3, and
+  the rule is now written down: **at a non-integer change of grid, check a
+  mirrored feature's spans, not its coordinates.**
+- **Three segments do not sum to the whole.** `U(7) + U(7) + U(6)` is 31 where
+  `U(20)` is 30. Harmless here because the bone offsets are read off the parts,
+  which is why they are read off the parts.
+
+### And a test that had silently stopped testing
+
+The height test compensates for the baked lean by standing the character
+upright before measuring — an axis-aligned bound of a rotated body reads taller
+than the body. It named `hips`. When the lean moved to the torso the
+compensation quietly stopped working and the lizardfolk measured 1.98 m against
+a tabled 1.88.
+
+`Rig` now **publishes** which bone it leaned and the test asks. A test that
+guesses where a thing is will stop testing the day it moves — and it will not
+say so.
+
+**Night 1 ends here.** Four races, four bodies, two-segment limbs and a
+three-segment one, a palette with a liner in it, no armour. 30 character tests,
+world suite green, heightmap `76cccdb6`, spawn `(-44, -124)`.

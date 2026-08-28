@@ -135,11 +135,18 @@ const TABLE := [
 	},
 	{
 		"name": "lizardfolk",
-		"total": 90, "legs": 27, "torso": 30, "head": 27,
-		"torso_w": 30, "torso_d": 17, "head_w": 24, "head_d": 24,
+		"total": 90, "legs": 30, "torso": 30, "head": 24,
+		"torso_w": 21, "torso_d": 17, "head_w": 24, "head_d": 24,
 		"leg_w": 12, "arm_len": 30, "arm_w": 12,
-		"snout": 12, "tail_len": 42, "tail_segments": [15, 15, 12],
-		"lean_deg": 8.0,
+		"snout": 12, "tail_len": 42, "tail_segments": [12, 12, 10, 8],
+		"lean_deg": 26.0,
+		# The digitigrade stance, in degrees about X, matched by bone-name
+		# suffix. Thigh forward, shin back, foot forward onto the toes.
+		"leg_stance": {"leg_r": 10.0, "leg_l": 10.0,
+			"leg_r_lower": -22.0, "leg_l_lower": -22.0,
+			"leg_r_foot": 14.0, "leg_l_foot": 14.0,
+			"arm_r": 34.0, "arm_l": 34.0,
+			"arm_r_lower": 46.0, "arm_l_lower": 46.0},
 		"silhouette": "tail, crest, snout",
 	},
 ]
@@ -568,6 +575,44 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 		out.append({"name": "arm_%s_lower" % suffix, "parent": "arm_%s" % suffix,
 			"rest": Vector3(0, -upper_arm, 0) * V,
 			"part": "arm_lower", "mirror": mirrored})
+		# THE THIRD LEG SEGMENT, and only the lizardfolk has one. A digitigrade
+		# animal stands on the end of a long foot with the ankle raised into a
+		# backward-facing hock, and that hock is the feature that reads as "not
+		# a person" from any angle - unlike the tail and the snout, which a
+		# front-on mask cannot see at all.
+		#
+		# Optional by the same rule the knee is: a race whose part set has no
+		# `leg_foot` simply does not get the bone, and nothing branches on
+		# which races are digitigrade.
+		if set_for_bones.has("leg_foot"):
+			out.append({"name": "leg_%s_foot" % suffix, "parent": "leg_%s_lower" % suffix,
+				"rest": Vector3(0, -_segment_height(set_for_bones, "leg_lower",
+					float(legs) / 3.0), 0) * V,
+				"part": "leg_foot", "mirror": mirrored})
+
+	# A DIGITIGRADE LEG IS BENT WHEN IT IS STANDING STILL, and that is the
+	# whole point of it. A dog at rest has a folded hind leg; only a person
+	# stands on straight columns. So the crouch belongs in the REST POSE, baked
+	# in exactly as the forward lean already is - not in the walk cycle, where
+	# it would vanish the moment the character stopped.
+	#
+	# It is also what finally moved the silhouette. The mask metric photographs
+	# a character in its rest pose, so a race whose legs were straight at rest
+	# and folded only while walking measured as a straight-legged race. Front on
+	# against the human this pair went 0.913 -> 0.797 on the torso narrowing
+	# alone, and the rest of the way on this.
+	#
+	# The numbers are a Z: thigh forward, shin back under the body, foot
+	# forward onto the toes. They are tabled per race rather than computed,
+	# because "what this animal's leg does when it is standing" is a fact about
+	# the animal.
+	var stance: Dictionary = t.get("leg_stance", {})
+	if not stance.is_empty():
+		for entry in out:
+			var bone_name: String = entry["name"]
+			for key in stance:
+				if bone_name.ends_with(key):
+					entry["rest_rot"] = Vector3(deg_to_rad(float(stance[key])), 0.0, 0.0)
 
 	# The tail is a CHAIN, and the chain machinery is generic because the
 	# critter in Stage 13 needs it too. Bones are named `<chain>_1..n` and the

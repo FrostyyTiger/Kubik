@@ -714,18 +714,28 @@ func _test_character_height():
 	for entry in _every_build():
 		var view := CharacterView.new()
 		view.build(_def_for(entry))
-		# MEASURED STANDING UPRIGHT. The lizardfolk's 8 degree lean is baked
-		# into its hips rest pose, and a leaning head's bounding box reaches
-		# higher at the back than the crown does - by two voxels at 1/16 of a
-		# block, which is past the tolerance. The table's number is the crown
+		# MEASURED STANDING UPRIGHT. The lizardfolk's forward lean is baked
+		# into a rest pose, and the AXIS-ALIGNED bound of a rotated body reads
+		# taller than the body: a 24-voxel head pitched 26 degrees bounds to
+		# 24*cos26 + 24*sin26, which is 32. The table's number is the crown
 		# height of the race stood straight, so that is what is measured; the
-		# lean is put back afterwards, though nothing else here reads it.
+		# lean goes back afterwards.
+		#
+		# THE RIG SAYS WHICH BONE IT LEANED. This used to name `hips`, and when
+		# character v2 Stage 6 moved the lean to the torso - so the spine leans
+		# and the legs stay under the body - the compensation silently stopped
+		# working and the lizardfolk measured 1.98 m against a tabled 1.88. A
+		# test that guesses where a thing is will stop testing the day it moves.
 		var rig: Rig = view.rig
-		var lean: float = rig.bones["hips"].rotation.x
-		rig.bones["hips"].rotation.x = 0.0
+		var leaned := rig.lean_bone
+		var lean := 0.0
+		if leaned != "" and rig.bones.has(leaned):
+			lean = rig.bones[leaned].rotation.x
+			rig.bones[leaned].rotation.x = 0.0
 		var got := view.height_m()
 		var crown := view.height_m(true)
-		rig.bones["hips"].rotation.x = lean
+		if leaned != "" and rig.bones.has(leaned):
+			rig.bones[leaned].rotation.x = lean
 		var want := Races.height_m(entry["race"], entry["build"])
 		var tris := view.triangle_count()
 		# A race still borrowing the human's parts is the wrong height BY

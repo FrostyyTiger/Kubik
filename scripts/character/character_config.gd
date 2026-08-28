@@ -83,6 +83,11 @@ const TRIANGLE_BUDGET := 48000
 ## a pendulum, and an elbow that matched the knee reads as a jog.
 @export var elbow_swing_deg := 25.0
 
+## And the hock, the third joint on a digitigrade leg. It folds FORWARD under
+## the animal where the knee folds the shin back, so it is positive where the
+## knee is negative. Only the lizardfolk has one.
+@export var hock_swing_deg := 30.0
+
 ## Torso pitched forward at sprint, in degrees. The single strongest cue that
 ## a character is running rather than walking quickly.
 @export var sprint_lean_deg := 12.0
@@ -197,6 +202,7 @@ const TUNING_ROWS := [
 	["precision_swing_ratio", "precision / walk swing", 0.0, 1.0, 0.05],
 	["knee_swing_deg", "knee bend (deg)", 0.0, 120.0, 1.0],
 	["elbow_swing_deg", "elbow bend (deg)", 0.0, 120.0, 1.0],
+	["hock_swing_deg", "hock bend (deg)", 0.0, 120.0, 1.0],
 	["sprint_lean_deg", "sprint torso lean (deg)", 0.0, 45.0, 1.0],
 	["bob_walk_vox", "walk hip bob (vox)", 0.0, 18.0, 0.1],
 	["bob_sprint_vox", "sprint hip bob (vox)", 0.0, 24.0, 0.1],
