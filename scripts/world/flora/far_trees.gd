@@ -88,6 +88,7 @@ var _generator: TerrainGenerator = null
 var _config: WorldgenConfig = null
 var _slots := {}   # species -> MultiMeshInstance3D
 var _count := 0
+var _triangles := 0
 var _last_ms := 0
 
 
@@ -129,6 +130,12 @@ func _process(_delta: float) -> void:
 
 	_apply(_job)
 	_last_ms = _job.elapsed_usec / 1000
+	# THE TRIANGLE COUNT, printed here rather than folded into Game's
+	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
+	# epic and has already spent its one line. Stage 5's gate is a ratio and
+	# nothing in the project reported the numerator.
+	print("[FarTrees] %d triangles over %d species meshes" % [
+		_triangles, _slots.size()])
 	rebuilt.emit(_job.count, _last_ms)
 	_job = null
 	_start_if_idle()
@@ -178,6 +185,7 @@ func _start_if_idle() -> void:
 
 func _apply(job: FarTreesJob) -> void:
 	_count = job.count
+	_triangles = 0
 	for species in job.buffers:
 		var buf: PackedFloat32Array = job.buffers[species]
 		var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
@@ -187,9 +195,19 @@ func _apply(job: FarTreesJob) -> void:
 		if slot == null:
 			slot = _make_slot(species)
 			_slots[species] = slot
+		# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
+		# chooses between the cone and the stepped pyramid (hard rule 1: at 0
+		# the ring is the one f23c3f0 drew), and a slot built once at the old
+		# value would keep drawing cones on terraced ground until the species
+		# happened to disappear and come back. FarTreeMeshes caches both, so
+		# this is a dictionary lookup and not a rebuild.
+		slot.multimesh.mesh = FarTreeMeshes.for_species(species, _config)
 		slot.multimesh.instance_count = n
 		slot.multimesh.buffer = buf
 		slot.visible = true
+		# Triangles the ring actually draws - the gate for Stage 5 is a ratio
+		# against the cone ring and nothing reported one.
+		_triangles += n * (slot.multimesh.mesh.surface_get_array_len(0) / 3)
 	for species in _slots:
 		if not job.buffers.has(species):
 			_slots[species].multimesh.instance_count = 0
@@ -215,7 +233,7 @@ func _make_slot(species: int) -> MultiMeshInstance3D:
 ## Impostors drawn, and how long the last rebuild took. For the F3 readout and
 ## for STATUS.md.
 func stats() -> Dictionary:
-	return {"impostors": _count, "rebuild_ms": _last_ms}
+	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles}
 
 
 ## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even

@@ -1146,3 +1146,92 @@ static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 	return band_color(Block.color_of(TerrainGenerator.ZONE_SURFACE[zone]),
 		h * config.block_size, config, band_treeline)
 
+
+## THE RING'S CELL WIDTH AT ONE DISTANCE, in blocks - which is also that ring's
+## terrace step height, by decision 4's cubic lock. Distance v2 Stage 5.
+static func ring_step_blocks(config: WorldgenConfig, d_m: float) -> int:
+	var step: int = config.far_step
+	for i in RING_OUTER_M.size():
+		if d_m < RING_OUTER_M[i]:
+			return step * RING_STEP_MULTIPLE[i]
+	return step * RING_STEP_MULTIPLE[RING_STEP_MULTIPLE.size() - 1]
+
+
+## The one pyramid level the terrace is cut from - see _t_level, which is this
+## expression written out for the reason given there.
+static func terrace_level(heightmap: Heightmap, config: WorldgenConfig) -> float:
+	var ring := clampi(TERRACE_LEVEL_RING, 0, RING_STEP_MULTIPLE.size() - 1)
+	return clampf(log(float(config.far_step * RING_STEP_MULTIPLE[ring])
+		/ float(heightmap.step)) * INV_LN2 + config.far_filter_bias,
+		0.0, float(Heightmap.MAX_LEVEL))
+
+
+## HOW FAR THE TERRACE MOVED THE GROUND AT ONE PLACE, in blocks. Distance v2
+## Stage 5, and it is the whole of the impostors' footing.
+##
+## Returns `far_terrace * (quantised - unquantised)` rather than the shelf
+## height itself, and that choice is what keeps hard rule 1 exact. An impostor
+## stands on `ground + 1` today, where `ground` is the TRUE voxel surface and
+## not the filtered one the far mesh draws - the two differ by tens of blocks at
+## a summit, which is PEAK LOSS. Snapping the tree to the shelf outright would
+## therefore move every far tree by that difference the moment this epic
+## shipped, at every value of the knob including zero. Adding the OFFSET moves
+## it by exactly as much as the ground under it moved and by nothing at
+## far_terrace 0.
+##
+## THE SAME QUANTISATION AS _cell() AND _is_ridge(), WRITTEN OUT. It is the
+## second piece of deliberate duplication in this file, for the reason the first
+## one carries: the job runs this expression tens of thousands of times a
+## rebuild off a cache, and the ring does it a few hundred times with no cache
+## at all. Change one, change the other.
+##
+## `d_m` decides the ring and therefore the step. FarTrees centres on the
+## player's exact block and FarField on the player's chunk, so a tree within one
+## cell of a ring boundary can pick the neighbouring ring's step; that is one
+## cell of disagreement at a boundary the far mesh already has a skirt for.
+static func terrace_offset(heightmap: Heightmap, config: WorldgenConfig,
+		bx: int, bz: int, d_m: float) -> float:
+	var amount := clampf(config.far_terrace, 0.0, 1.0)
+	if amount <= 0.0:
+		return 0.0
+	# The seam fade, the same one _terrace_at() applies: inside the band the far
+	# mesh computes the voxel surface on purpose and is not terraced, so a tree
+	# there must not be lifted onto a shelf that is not drawn.
+	var bs: float = config.block_size
+	var seam := maxf(float(config.voxel_radius_chunks * Chunk.SIZE)
+		- float(2 * config.far_step), 0.0)
+	var band := float(config.far_step) * SEAM_BAND_CELLS
+	if band > 0.0:
+		amount *= 1.0 - clampf(1.0 - (d_m / bs - seam) / band, 0.0, 1.0)
+		if amount <= 0.0:
+			return 0.0
+
+	var step := ring_step_blocks(config, d_m)
+	var level := terrace_level(heightmap, config)
+	# The cell grid is anchored to the WORLD, not to the player: _build_ring
+	# snaps its centre to floor(centre / step) * step, which is a multiple of
+	# step, so every cell corner is one too and the cell containing a block is
+	# the same cell from every vantage.
+	var half := step / 2
+	var cx := Chunk.floor_div(bx, step) * step + half
+	var cz := Chunk.floor_div(bz, step) * step + half
+	var h := _cell_height_at(heightmap, config, cx, cz, level)
+	var fstep := float(step)
+	var r := maxi(RIDGE_SPAN_BLOCKS / step, 1) * step
+	var ridge := h >= _cell_height_at(heightmap, config, cx - r, cz, level) \
+		and h >= _cell_height_at(heightmap, config, cx + r, cz, level) \
+		and h >= _cell_height_at(heightmap, config, cx, cz - r, level) \
+		and h >= _cell_height_at(heightmap, config, cx, cz + r, level)
+	var hq: float = (ceil(h / fstep) if ridge else round(h / fstep)) * fstep
+	return amount * (hq - h)
+
+
+## One cell-centre height off the terrace level, with the peak gain - the static
+## twin of _cell_h().
+static func _cell_height_at(heightmap: Heightmap, config: WorldgenConfig,
+		bx: int, bz: int, level: float) -> float:
+	var h := heightmap.height_filtered(float(bx), float(bz), level)
+	var gain: float = config.far_peak_gain
+	if gain <= 0.0:
+		return h
+	return lerpf(h, heightmap.height_max_filtered(float(bx), float(bz), level), gain)

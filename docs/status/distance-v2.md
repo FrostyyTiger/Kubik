@@ -427,3 +427,64 @@ price of a 16 m step and it is not a filter error.
 | hard rule 1 | **MET** - far probe at 0.0 identical to Stage 2's on every geometry row |
 | self-tests | green |
 | cost | far mesh 1,719 -> **1,782 ms** (+3.7%), 229,824 -> **232,136** vertices (+1.0%) |
+
+---
+
+## Stage 5 - The impostors are stepped, and they stand on the shelves
+
+**Shipped.** Both halves, and one thing the plan did not ask for.
+
+**The shape.** `_cone(6, 0.5, 1.0)` becomes `_stack([1.0, 0.66, 0.33], 0.5, 1.0)`
+- three boxes shrinking upward. `_stack_into` is one builder for all of them, so
+the spruce, the krummholz (two tiers, because a krummholz three boxes tall is a
+small spruce) and the broadleaf crown (three tiers that bulge, `[0.62, 1.0,
+0.72]`) cannot drift into different languages. **`_post` is left alone and that
+is deliberate**: a four-sided post IS a box already, so the "same language" the
+plan asks for is the language it is already in.
+
+**The footing.** `FarFieldJob.terrace_offset()` - how far the terrace **moved**
+the ground at a place, not where the shelf is. That distinction is what keeps
+hard rule 1 exact: a tree stands on `ground + 1`, the TRUE voxel surface, while
+the far mesh draws the FILTERED one, and at a summit those differ by tens of
+blocks. Snapping outright would move every far tree by that difference at every
+value of the knob, zero included. Adding the offset moves a tree by exactly what
+the ground under it moved, and by nothing at 0.
+
+**And the shape is on the knob too**, which the plan did not say and hard rule 1
+requires. `far_terrace 0.0` has to give the whole old picture back, and stepped
+trees standing on smooth ground would be the worst of both - exactly the
+confusion the knob exists to resolve. A mesh cannot lerp, so this is the one
+threshold in an epic of blends: at 0 `for_species()` returns the six-sided cone
+and the octahedron unchanged, above 0 the stacks. Both are cached, so flipping
+back and forth rebuilds nothing, and `FarTrees._apply` re-reads the mesh every
+rebuild so the swap lands without an F7.
+
+### Cost
+
+`ganymede, single run`, seed 42, spawn, `--view high`. The triangle count is new:
+nothing in the project reported it, and Stage 5's gate is a ratio.
+
+| | cones (`far_terrace 0`) | stacks (`1.0`) | |
+| --- | --- | --- | --- |
+| impostors | **580** | **580** | identical, hard rule 8 |
+| triangles | 6,764 | **17,700** | **2.62x** |
+| ring rebuild | 817 ms | 912 ms | +11.6% |
+
+Per mesh: spruce and larch 12 -> **32** triangles, krummholz 12 -> 22, broadleaf
+12 -> 34, snag 8 -> 8. **The plan said "around 20" and three tiers is 32**, which
+is recorded rather than trimmed: the exposed step between two tiers is the whole
+point when the ring is seen from above, and the full square cap that makes it is
+already the cheap choice - the annulus between two tiers is four quads, two
+triangles more than covering the whole square and letting the tier above hide
+the middle.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| 852 impostors at the shot's vantage | **580 at spawn on ganymede**, identical at both knob settings. The plan's 852 is Marcel's own vantage at `pos -71.9 36.5 -122.2` on his box; the number that matters here is that terracing does not change it, and it does not |
+| none floating, none buried | **MET by eye** - `build/tour/n1-t1/16-spawn-postcard.png` and `5-lake.png`, Forward+ on the RTX 3070 Ti. The far treeline sits on the terrace tops |
+| a far forest at 500 m reads as stepped trees on stepped ground | **MET** - `16-spawn-postcard` is the shot. At `far_terrace 0` the treeline is a row of green triangles against blocky near trees; at 1.0 it is a row of chunky trees on chunky ground, and it stops arguing with the real spruce in the right foreground |
+| triangle count for the impostor ring under 4x baseline | **MET at 2.62x** - 6,764 -> 17,700 |
+| hard rule 1 | **MET** - far probe at 0.0 identical to Stage 4's on every geometry row; at 0.0 the ring is cones and octahedra, byte for byte |
+| self-tests | green |
