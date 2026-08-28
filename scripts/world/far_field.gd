@@ -46,6 +46,10 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	# field together with the voxels instead of breaking the batch at the
 	# horizon.
 	material_override = ChunkMesher.get_material()
+	# DISTANCE V2 STAGE 0. Remember what the far-only knobs are worth NOW, so
+	# the first turn of a spinbox after the world loads is seen as a change
+	# rather than as the value the snapshot happened to be seeded with.
+	_snapshot_knobs(config)
 
 
 ## Ask for a rebuild centred on this block position. Safe to call every time
@@ -136,3 +140,106 @@ func drain() -> void:
 
 func _exit_tree() -> void:
 	drain()
+
+
+# --- THE KNOB THAT DOES NOT NEED F7, distance v2 Stage 0 ----------------------
+#
+# `far_terrace` is how Marcel judges this whole epic: stand still, move one
+# number, and see the far country redraw. Today _on_config_changed() in game.gd
+# applies MSAA, sky, flora and Look immediately and then says "config changed -
+# press F7 to rebuild terrain". F7 is a full reroll - 3,276 voxel chunks in
+# 39,023 ms on Marcel's box - with the world streaming back in around you.
+# Forty seconds per flip is not an A/B a person can judge with their eyes.
+#
+# None of the knobs below touches a voxel chunk. They change the far mesh and
+# the impostor ring, both of which already rebuild on a worker with the old one
+# left on screen. So on a change to one of them: rebuild those two in place and
+# say so, instead of falling through to the F7 message.
+#
+# WHY THE LIST IS WIDER THAN THIS EPIC. distance v1's four geometry knobs have
+# always needed a full reroll to see, for no reason other than that nothing
+# ever wired them up. The plan calls that "a welcome side effect and not a
+# reason to widen the stage", so they are here.
+#
+# WHY IT IS A SNAPSHOT AND NOT A SIGNAL ARGUMENT. debug_hud's config_changed
+# carries no property name, and debug_hud is APPEND-ONLY in this epic - a new
+# signal is not an append to an existing list. Comparing values costs one
+# dictionary walk over a dozen floats on a UI event and needs nothing from the
+# other lane's files.
+
+## Every LOCAL knob that changes only the far mesh or the impostor ring.
+const FAR_ONLY_PROPERTIES: PackedStringArray = [
+	"far_terrace", "far_riser_shade",
+	"far_filter_bias", "far_peak_gain", "far_normal_m", "far_level_ref_m",
+	"far_band_m", "far_band_step", "far_zone_cell_m", "far_zone_cell_ratio",
+	"far_tree_tint",
+]
+
+static var _knobs := {}
+
+
+static func _snapshot_knobs(config: WorldgenConfig) -> void:
+	if config == null:
+		return
+	for key in FAR_ONLY_PROPERTIES:
+		_knobs[key] = float(config.get(key))
+
+
+## Which of the far-only knobs have moved since the last call. Empty means
+## nothing this can act on changed, so the caller keeps its own message.
+static func _moved_knobs(config: WorldgenConfig) -> PackedStringArray:
+	var out := PackedStringArray()
+	if config == null:
+		return out
+	for key in FAR_ONLY_PROPERTIES:
+		var v := float(config.get(key))
+		if _knobs.has(key) and _knobs[key] != v:
+			out.append(key)
+		_knobs[key] = v
+	return out
+
+
+## THE ONE LINE game.gd IS ALLOWED IN THIS EPIC, and everything behind it.
+##
+## Returns the status text to show: the far-field message when one of the knobs
+## above moved and the rebuild was actually started, and `fallback` - the
+## caller's own "press F7" line - otherwise. Returning the text rather than
+## setting it keeps the UI entirely on the caller's side of the seam.
+##
+## `world` is asked for its FarField by node name rather than through an
+## accessor because `scripts/world/world.gd` is another lane's file this epic
+## does not touch - the same reason debug_hud reaches for it that way.
+static func apply_far_knobs(world: Node, far_trees: Node,
+		config: WorldgenConfig, fallback: String) -> String:
+	var moved := _moved_knobs(config)
+	if moved.is_empty():
+		return fallback
+	var far_field: Node = world.get_node_or_null("FarField") if world != null else null
+	if far_field == null or not far_field.has_method("rebuild_in_place"):
+		return fallback
+	if not far_field.rebuild_in_place():
+		return fallback
+	# The ring is rebuilt too: far_terrace moves the shelf every impostor
+	# stands on (Stage 5) and far_tree_tint moves its colour. Cheap to ask for
+	# either way - FarTrees drops the request if it is already building.
+	if far_trees != null and far_trees.has_method("force_rebuild"):
+		far_trees.force_rebuild()
+	return "%s changed - far country redrawing, no reroll needed" % \
+		String(", ").join(moved)
+
+
+## Rebuild at the SAME centre and frontier the last request used.
+##
+## Not "rebuild around the player": the player has not moved, and re-deriving
+## the centre here would mean re-deriving World's chunk snapping in a second
+## place. _pending_center and _pending_frontier still hold what World last
+## asked for, which is exactly the mesh that is on screen.
+##
+## False when there is nothing to rebuild yet - before the first setup(), or on
+## a client whose world has not arrived.
+func rebuild_in_place() -> bool:
+	if _generator == null:
+		return false
+	_has_pending = true
+	_start_if_idle()
+	return true

@@ -960,6 +960,44 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## HOW MUCH THE FAR COUNTRY IS MADE OF BLOCKS, distance v2 Stage 0.
+##
+## THE KNOB THIS WHOLE EPIC IS JUDGED BY. 0.0 is the smooth bilinear far mesh
+## exactly as `f23c3f0` drew it - byte for byte, hard rule 1, and it is the way
+## back if the idea reads badly. 1.0 quantises every far cell's height to that
+## ring's own cell width (4, 8 and 16 m) and turns the difference to its
+## neighbours into vertical risers, so a mountain at 600 m is drawn out of
+## sixteen-metre blocks instead of out of a smooth surface with contour bands
+## painted on it.
+##
+## Values in between blend the quantised height towards the true one, which is
+## what makes the seam fade (Stage 8) a multiply rather than a special case:
+## inside the seam band the far mesh computes the same surface the voxels do,
+## and terracing there would break the agreement that band exists to create.
+##
+## THE COMPLAINT IT ANSWERS, in Marcel's words on 2026-08-28: "it feels like
+## two separate, same art style game, but one is a cube based game, and the
+## other one is just sort of an edge based vector game." The far field was
+## built to match the near field's SILHOUETTE and never its SURFACE.
+##
+## LOOK, NOT SHAPE, so LOCAL and unhashed like every other knob distance v1
+## added. Nothing about what the world IS reads it - the heightmap hash is
+## untouched at every value.
+@export var far_terrace := 0.0
+
+## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
+## v2 Stage 3.
+##
+## A riser already carries its own HORIZONTAL normal - _push_quad derives it
+## from the winding - so the lighting ramp lits or shades it exactly as it does
+## a voxel's side face, which is the whole "one lighting language, both halves"
+## of decision 8. This is the extra albedo margin on top, and it starts at
+## SKIRT_SHADE's 0.7 because a skirt is the same kind of surface and 0.7 is
+## what the far mesh has always drawn one at.
+##
+## 1.0 is "the ramp alone, no margin". LOCAL and unhashed.
+@export var far_riser_shade := 0.7
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -1207,6 +1245,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
+	"far_terrace", "far_riser_shade",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

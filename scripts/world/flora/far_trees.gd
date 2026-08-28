@@ -218,6 +218,18 @@ func stats() -> Dictionary:
 	return {"impostors": _count, "rebuild_ms": _last_ms}
 
 
+## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even
+## though the player has not moved. Distance v2 Stage 0.
+##
+## update() is called every frame and returns immediately until the centre has
+## moved REBUILD_STEP_M. That is right for walking and wrong for a knob: the
+## whole judging method for this epic is standing still and turning far_terrace
+## from 0 to 1, and an impostor's footing is on the shelf its cell was
+## quantised to (Stage 5), so the ring is as stale as the mesh is.
+func force_rebuild() -> void:
+	_last_center_m = Vector3(INF, INF, INF)
+
+
 func drain() -> void:
 	if _task != -1:
 		WorkerThreadPool.wait_for_task_completion(_task)

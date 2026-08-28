@@ -354,8 +354,8 @@ func _report() -> void:
 		_world.last_timings().get("cached_chunks", 0),
 		float(Performance.get_monitor(Performance.MEMORY_STATIC)) / 1048576.0])
 	var verdict := "PASS" if not _failed() else "FAIL"
-	print("[StreamProbe] holes %d, frames over 33 ms %d: %s" % [
-		_total_holes(), _total_over_33(), verdict])
+	print("[StreamProbe] holes %d, frames over 33 ms %d (strict allows %d): %s" % [
+		_total_holes(), _total_over_33(), LONG_FRAMES_ALLOWED, verdict])
 
 
 func _total_holes() -> int:
@@ -372,11 +372,28 @@ func _total_over_33() -> int:
 	return n
 
 
+## MORE THAN ONE LONG FRAME, distance v2 Stage 0 and decision 11 - it used to
+## be more than zero.
+##
+## This is a STANDARD, not a measurement, and the measurement behind it is
+## settled: twelve `--view High --strict` runs on ganymede across three
+## interleaved ABAB batches gave 0 or 1 frames over 33 ms EVERY time, on both
+## sides of two nights of far-field work (docs/status/distance-v1.md, carried
+## item 6). So the old rule exited 1 on about half of all clean runs, which
+## makes a gate a coin flip rather than a signal - exactly what this file's own
+## note at the top says a threshold count does to a drifting quantity.
+##
+## One long frame in a three-minute sprint is a hitch nobody reports. Two is a
+## pattern. Holes stay at zero: that one is hard rule S1 and is not a
+## threshold, it is a property.
+const LONG_FRAMES_ALLOWED := 1
+
+
 ## What --strict fails on. The plan turns each half on at the stage that is
 ## meant to fix it: holes from Stage 3, the frame budget from Stage 4. Before
 ## those the baseline is EXPECTED to fail, and that is the point of it.
 func _failed() -> bool:
-	return _total_holes() > 0 or _total_over_33() > 0
+	return _total_holes() > 0 or _total_over_33() > LONG_FRAMES_ALLOWED
 
 
 func _strict() -> bool:
