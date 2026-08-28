@@ -72,6 +72,20 @@ extends Node
 ## is 16 m. See the note above on why it is a multiple of every ring's step.
 const FIZZ_OFFSET_BLOCKS := 32
 
+## SHELF STABILITY: the same measurement over a 200 m WALK rather than a 16 m
+## step. Blocks. Distance v2 Stage 1.
+##
+## The gate that stage is written against is "walk 200 m and back; a named shelf
+## does not change height", and that is a different question from fizz. Fizz
+## isolates the LOD boundary sliding past a mountain over one rebuild's worth of
+## walking. This asks whether the quantisation itself is world-absolute: a
+## terrace grid with any player term in it would slide the whole far country by
+## up to half a step here, and 400 blocks is a multiple of every ring's step
+## (8, 16, 32) for exactly the reason FIZZ_OFFSET_BLOCKS is, so a ring's lattice
+## still lands on the same world positions in both builds and the quantisation
+## is the only thing left that can differ.
+const SHELF_OFFSET_BLOCKS := 400
+
 ## FIZZ: the sampling lattice, in blocks. Anchored to the WORLD, not to the
 ## centre, so the sample set does not move when the centre does.
 ##
@@ -206,7 +220,14 @@ func _measure() -> PackedStringArray:
 	var edge_max := PackedFloat32Array()
 	edge_max.resize(FarFieldJob.RING_OUTER_M.size())
 	edge_max.fill(0.0)
+	var edge_sum := PackedFloat64Array()
+	edge_sum.resize(edge_max.size())
+	edge_sum.fill(0.0)
+	var edge_count := PackedInt32Array()
+	edge_count.resize(edge_max.size())
+	edge_count.fill(0)
 	var terrace := PackedStringArray()
+	var shelf_rows := PackedStringArray()
 
 	for v in vantages:
 		var centre: Vector2i = v["centre"]
@@ -214,14 +235,24 @@ func _measure() -> PackedStringArray:
 		var b: Surface = await _surface(centre + Vector2i(FIZZ_OFFSET_BLOCKS, 0))
 		var fizz := _fizz(a, b, centre)
 		var rough := _roughness(a, centre)
+		# THE 200 m WALK, Stage 1's gate. Compared against the SAME first
+		# surface, so the only difference is where the second one was centred.
+		var walked: Surface = await _surface(centre + Vector2i(SHELF_OFFSET_BLOCKS, 0))
+		var shelf := _fizz(a, walked, centre)
+		shelf_rows.append("[FarProbe] %-14s rms %7.3f  max %7.3f  over %d samples" % [
+			v["name"], float(shelf["rms"]), float(shelf["max"]), int(shelf["n"])])
 		fizz_sq += float(fizz["sum_sq"])
 		fizz_n += int(fizz["n"])
 		fizz_max = maxf(fizz_max, float(fizz["max"]))
 		rough_sum += float(rough["sum"])
 		rough_n += int(rough["n"])
 		var edges: PackedFloat32Array = fizz["edges"]
+		var e_sq: PackedFloat64Array = fizz["edge_sq"]
+		var e_n: PackedInt32Array = fizz["edge_n"]
 		for i in edge_max.size():
 			edge_max[i] = maxf(edge_max[i], edges[i])
+			edge_sum[i] += e_sq[i]
+			edge_count[i] += e_n[i]
 		out.append("[FarProbe] %-14s %9.3f %9.3f %10.4f %s" % [
 			v["name"], float(fizz["rms"]), float(fizz["max"]), float(rough["mean"]),
 			fizz["bands"]])
@@ -239,13 +270,20 @@ func _measure() -> PackedStringArray:
 	# straddles it rather than read off whichever 100 m bin it fell in.
 	var edge_parts := PackedStringArray()
 	for i in FarFieldJob.RING_OUTER_M.size():
-		edge_parts.append("%.0f m: %.2f" % [FarFieldJob.RING_OUTER_M[i], edge_max[i]])
+		edge_parts.append("%.0f m: max %.2f rms %.3f over %d" % [
+			FarFieldJob.RING_OUTER_M[i], edge_max[i],
+			sqrt(edge_sum[i] / maxf(float(edge_count[i]), 1.0)), edge_count[i]])
 	out.append("[FarProbe] ring boundary max fizz (+/- %.0f m) - %s" % [
 		BOUNDARY_HALF_M, String("   ").join(edge_parts)])
 
 	# TERRACE COMPLIANCE, Stage 1's gate as a number rather than as a promise.
 	out.append("[FarProbe] terrace: ground-quad corners on their ring's step grid")
 	out.append_array(terrace)
+
+	# AND THE SHELF HELD STILL OVER A 200 m WALK - the other half of that gate.
+	out.append("[FarProbe] shelf stability over a %d m walk (drawn height, blocks)" % [
+		int(float(SHELF_OFFSET_BLOCKS) * _config.block_size)])
+	out.append_array(shelf_rows)
 
 	# --- PEAK LOSS, and its mirror --------------------------------------------
 	out.append_array(await _extrema_rows(1, "peak loss",
@@ -432,6 +470,15 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 	var edges := PackedFloat32Array()
 	edges.resize(FarFieldJob.RING_OUTER_M.size())
 	edges.fill(0.0)
+	# AND THE RMS IN THE SAME WINDOW. A max is one sample, and "the boundary got
+	# three times worse" is a different claim from "one quad at the boundary got
+	# three times worse". Stage 9 needs both.
+	var edge_sq := PackedFloat64Array()
+	edge_sq.resize(edges.size())
+	edge_sq.fill(0.0)
+	var edge_n := PackedInt32Array()
+	edge_n.resize(edges.size())
+	edge_n.fill(0)
 
 	var sum_sq := 0.0
 	var n := 0
@@ -458,6 +505,8 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 			for e in edges.size():
 				if absf(dist_m - FarFieldJob.RING_OUTER_M[e]) <= BOUNDARY_HALF_M:
 					edges[e] = maxf(edges[e], d)
+					edge_sq[e] += float(d) * float(d)
+					edge_n[e] += 1
 			bx += FIZZ_STEP_BLOCKS
 		bz += FIZZ_STEP_BLOCKS
 
@@ -471,6 +520,8 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 		"n": n,
 		"bands": String(" ").join(parts),
 		"edges": edges,
+		"edge_sq": edge_sq,
+		"edge_n": edge_n,
 	}
 
 
@@ -527,7 +578,12 @@ func _terrace_row(s: Surface) -> String:
 		var step := float(s.qstep[i])
 		var cx := float(s.qx[i]) + step * 0.5 - float(s.centre.x)
 		var cz := float(s.qz[i]) + step * 0.5 - float(s.centre.y)
-		if sqrt(cx * cx + cz * cz) <= s.seam_end_blocks:
+		# ONE CELL OF MARGIN. The terrace strength is decided at the cell CENTRE
+		# and the seam's detail blend is applied at each CORNER, so a quad whose
+		# centre has just left the band can still have two corners inside it -
+		# 112 quads of ring 0 at spawn, all of them correct and none of them on
+		# the step grid. Excluding by centre alone measured them as failures.
+		if sqrt(cx * cx + cz * cz) <= s.seam_end_blocks + step:
 			continue
 		if not per_step.has(step):
 			per_step[step] = [0, 0, 0.0]   # on grid, total, worst deviation

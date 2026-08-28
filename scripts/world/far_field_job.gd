@@ -116,6 +116,33 @@ const VOXEL_TOP_BIAS_BLOCKS := 0.5
 ## there to hide.
 const SKIRT_SHADE := 0.7
 
+## WHICH RING'S CELL SIZE THE TERRACE IS CUT AT - for every ring, not just for
+## that one. Distance v2 Stage 1; see _t_level for why it is one level and not
+## one per ring.
+##
+## An index into RING_STEP_MULTIPLE, so 0 means "the finest ring's 4 m cell" -
+## level 2 at the default far_step and far_filter_bias.
+##
+## MEASURED, NOT PICKED. All three values were run through the far probe at
+## far_terrace 1.0, seed 42, on ganymede; the table is in the status doc. The
+## coarsest looks like the safe choice - every ring would then quantise a
+## surface smoother than its own cells - and it is the worst of the three on the
+## two things that can be seen:
+##
+##   * PEAK LOSS at 600 m. Level 2 draws +29.40 blocks against f23c3f0's
+##     +55.28; level 4 draws +56.60, which fails Stage 4's gate before Stage 4
+##     starts. A terrace cut from a heavily filtered surface is a terrace cut
+##     from a mountain that is already too short.
+##   * THE SEAM. The terrace fades in over four cells at the voxel boundary, and
+##     what it fades TOWARDS is this level. The further that is from the surface
+##     the voxels actually have, the deeper the dip in the middle of the fade.
+##     Standing on the world's highest summit, the 0-100 m band measures 19.4
+##     blocks of fizz at level 2, 45.6 at level 3 and 98.2 at level 4.
+##
+## What it costs is the 400 m ring boundary - 80 blocks against 64 at the two
+## coarser levels - and that boundary is Stage 9's subject, measured there.
+const TERRACE_LEVEL_RING := 0
+
 var heightmap: Heightmap = null
 var generator: TerrainGenerator = null
 var config: WorldgenConfig = null
@@ -173,6 +200,114 @@ var frontier := PackedInt32Array()
 ## frontier, converted to blocks with the overlap already taken off. Built once
 ## per job in run().
 var _sector_exclude := PackedFloat32Array()
+
+# --- THE TERRACE, distance v2 Stages 1 and 2 ---------------------------------
+#
+# THE FAR WORLD IS MADE OF BLOCKS TOO, JUST BIGGER BLOCKS THE FURTHER AWAY YOU
+# GO. A near tree is a staircase of leaf voxels and near terrain is cubes; the
+# far field was built to match their SILHOUETTE and never their SURFACE, which
+# is what Marcel could feel and could not name - "one is a cube based game, and
+# the other one is just sort of an edge based vector game".
+#
+# So: one height per cell, quantised to that ring's own cell width, and the
+# difference to a lower neighbour drawn as a vertical riser. Ring 0's cells are
+# 4 m, ring 1's are 8 and ring 2's are 16, and the STEP HEIGHT EQUALS THE CELL
+# WIDTH - decision 4, the cubic lock. A shelf wider than it is tall is a rice
+# terrace, not a block.
+#
+# THE HEIGHTS ARE POWERS OF TWO AND THAT IS LOAD-BEARING. Every 16 m shelf is
+# also an 8 m shelf and a 4 m one, so the coarse levels are a SUBSET of the fine
+# ones - the same property _build_ring already relies on for its XZ grids,
+# extended to Y. Crossing a ring boundary therefore SUBDIVIDES a mountain's
+# shelves instead of moving them: nothing that was drawn goes away, intermediate
+# shelves appear between the ones already there. Stage 9 measures whether that
+# removed the 400 m re-cut on its own.
+#
+# THERE IS NO PLAYER TERM IN THE QUANTISATION. `round(h / step) * step`, on the
+# world's own altitudes, exactly as _build_ring already snaps its XZ centre to
+# the ring's grid and for exactly the same reason - "so its vertices land on the
+# same world positions every rebuild and the mesh does not shimmer as the player
+# walks". A shelf at 112 m is at 112 m from every vantage, on every rebuild, in
+# every ring. Get this wrong and the terraces swim, which is the failure
+# distance v1 already learned once with the mip level.
+#
+# AND AT far_terrace 0.0 NOTHING BELOW RUNS AT ALL. Not the cache, not a single
+# extra _filtered() call, not one riser. Hard rule 1: 0.0 is the mesh f23c3f0
+# drew, byte for byte, and it is the way back.
+
+## config.far_terrace, read once per job. 0 disables every line below.
+var _t_amount := 0.0
+
+## The ring being built, for the cell cache: its step and seam band in blocks.
+var _t_step := 0
+var _t_band := 0.0
+
+## THE PYRAMID LEVEL THE TERRACE IS CUT FROM. One level for the WHOLE JOB, and
+## both halves of that sentence were bought with a measurement. Distance v2
+## Stage 1.
+##
+## WHY NOT `_filtered()`, WHICH IS WHAT THE SMOOTH MESH DRAWS. That expression
+## has no player term in it, which is what hard rule 2 asks for on its face. Its
+## INPUT does: `_level_at` is log2(distance from the player), so the height
+## being quantised breathes as you walk, and quantising a breathing number turns
+## a half-block breath into a WHOLE STEP jump. Measured on ganymede at seed 42:
+## over a 200 m walk the drawn far height moved by rms 9.8-13.6 blocks and up to
+## 96, against 0.4 for the smooth mesh. The terraces swam exactly as the rule
+## warns, and the rule's letter was satisfied throughout.
+##
+## WHY NOT ONE LEVEL PER RING, WHICH FIXES THAT. It does - within a ring `hq`
+## becomes a pure function of world position and the fizz past 500 m falls to
+## EXACTLY zero. But it breaks the property the whole plan leans on:
+##
+##     every 16 m shelf is also an 8 m shelf, so crossing 400 m makes a
+##     mountain's shelves SUBDIVIDE rather than move
+##
+## which is only true if the two rings quantise THE SAME height function. With a
+## level per ring they do not, and the 400 m boundary measured 144 blocks of
+## fizz against f23c3f0's 21.6. Recorded in docs/status/distance-v2.md; it is
+## the most useful wrong turn in this epic.
+##
+## So: one level, for every ring, chosen by TERRACE_LEVEL_RING below.
+##
+##     level = log2(that ring's step / heightmap step) + far_filter_bias
+##
+## `hq` is then a pure function of world position full stop - the same number in
+## every ring, on every rebuild, from every vantage - and the three rings
+## quantise it at 8, 16 and 32 blocks, which are powers of two of each other by
+## construction. That is the subset property, exactly as written.
+var _t_level := 0.0
+
+## THE CELL CACHE, one entry per cell of the ring currently being built.
+##
+## A cell needs its own quantised height and its four neighbours', so the naive
+## form costs five extra pyramid reads per quad on a job whose whole cost is
+## pyramid reads. Cached, each cell is computed once however many neighbours ask
+## for it, which brings the extra back to about one read per quad.
+##
+## _t_h is the raw filtered height at the cell CENTRE and is separate from _t_hq
+## on purpose: Stage 4's ridge test reads the four neighbours' RAW heights, and
+## a cache that only held quantised ones would have to recurse to answer it.
+##
+## NAN means "not computed yet". Indexed (i + _t_off) + (j + _t_off) * _t_w over
+## i, j in [-span-1, span] - one cell of margin, because the outermost quad in
+## the loop still asks about a neighbour outside it.
+var _t_h := PackedFloat32Array()
+var _t_hq := PackedFloat32Array()
+var _t_t := PackedFloat32Array()
+var _t_off := 0
+var _t_w := 0
+
+## TRUE WHEN EVERY CELL OF THIS RING IS TERRACED ALL THE WAY - far_terrace 1.0
+## and no seam band, which is rings 1 and 2 at the shipped value.
+##
+## It is a COST path, and it makes terracing cheaper than not terracing rather
+## than dearer. A fully terraced cell's four corners are all the same number, so
+## the four bilinear corner samples that produced them are not needed at all:
+## one cached centre sample replaces four pyramid reads, and the riser depths
+## are the difference of two quantised heights with the raw samples cancelling
+## out of the arithmetic. Ring 0 always has a seam band and always pays full
+## price, which is right - it is also the ring that is barely terraced.
+var _t_full := false
 ## The band the treeline falls in, read once per job from the generator's own
 ## zone thresholds rather than re-derived - the bands have to agree with where
 ## the forest actually stops or the backdrop contradicts the world in front of
@@ -193,6 +328,18 @@ func run() -> void:
 	# forest zone in BLOCKS; _band_color works in metres.
 	_band_treeline = treeline_band(generator, config)
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
+	# DISTANCE V2 STAGE 0. Read once per job rather than per quad: it is a knob
+	# on a shared config that the main thread can write while this worker runs,
+	# and a value that changed half way through a build would terrace half a
+	# mesh.
+	_t_amount = clampf(config.far_terrace, 0.0, 1.0)
+	# ONE LEVEL FOR THE WHOLE JOB - see _t_level. heightmap.step is 4 blocks, so
+	# at the default far_step of 8 the three rings' cells are 8, 16 and 32 blocks
+	# and this picks 32: log2(32/4) + far_filter_bias = 4.
+	_t_level = clampf(log(float(base_step
+		* RING_STEP_MULTIPLE[clampi(TERRACE_LEVEL_RING, 0, RING_STEP_MULTIPLE.size() - 1)])
+		/ float(heightmap.step)) * INV_LN2 + config.far_filter_bias,
+		0.0, float(Heightmap.MAX_LEVEL))
 
 	# Where the voxels take over. Quads well inside this are skipped - the
 	# voxel terrain is drawn there instead, and drawing both is overdraw.
@@ -285,6 +432,23 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# coarse height with one comparison.
 	var band := float(step) * SEAM_BAND_CELLS if ring == 0 else 0.0
 
+	# THE CELL CACHE FOR THIS RING. Allocated per ring rather than per job
+	# because every index in it is in the ring's own cell units, and skipped
+	# entirely at far_terrace 0 - hard rule 1 is also a cost rule.
+	_t_step = step
+	_t_band = band
+	_t_full = _t_amount >= 1.0 and band <= 0.0
+	if _t_amount > 0.0:
+		_t_off = span + 1
+		_t_w = 2 * span + 3
+		var cells := _t_w * _t_w
+		_t_h.resize(cells)
+		_t_h.fill(NAN)
+		_t_hq.resize(cells)
+		_t_hq.fill(NAN)
+		_t_t.resize(cells)
+		_t_t.fill(0.0)
+
 	for j in range(-span, span):
 		for i in range(-span, span):
 			var bx0 := cx + i * step
@@ -297,10 +461,54 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
 
-			var h00 := _filtered(bx0, bz0, band)
-			var h10 := _filtered(bx1, bz0, band)
-			var h11 := _filtered(bx1, bz1, band)
-			var h01 := _filtered(bx0, bz1, band)
+			# THE TERRACE, Stage 2. One height for the whole cell, quantised to
+			# the ring's step, blended in from the true bilinear corners by
+			# far_terrace. At 1.0 all four corners are the same number and the
+			# top quad is FLAT - which is a block's top face, at sixteen metres
+			# instead of half of one, in the same winding _build_ring has emitted
+			# since terrain v1.
+			#
+			# The raw corner heights are kept on the blended path because the
+			# risers need them: a riser's depth is the gap between MY blended
+			# corner and my neighbour's blended corner at the same world
+			# position, and the two blends start from the same raw sample. On the
+			# fully-terraced path they cancel out of that subtraction and the
+			# four samples are never taken - see _t_full.
+			var h00: float
+			var h10: float
+			var h11: float
+			var h01: float
+			var r00 := 0.0
+			var r10 := 0.0
+			var r11 := 0.0
+			var r01 := 0.0
+			var terr := 0.0
+			var hq := 0.0
+			if _t_full:
+				hq = _t_hq[_cell(i, j)]
+				terr = 1.0
+				h00 = hq
+				h10 = hq
+				h11 = hq
+				h01 = hq
+			else:
+				h00 = _filtered(bx0, bz0, band)
+				h10 = _filtered(bx1, bz0, band)
+				h11 = _filtered(bx1, bz1, band)
+				h01 = _filtered(bx0, bz1, band)
+				r00 = h00
+				r10 = h10
+				r11 = h11
+				r01 = h01
+				if _t_amount > 0.0:
+					var at := _cell(i, j)
+					terr = _t_t[at]
+					hq = _t_hq[at]
+					if terr > 0.0:
+						h00 = lerpf(h00, hq, terr)
+						h10 = lerpf(h10, hq, terr)
+						h11 = lerpf(h11, hq, terr)
+						h01 = lerpf(h01, hq, terr)
 
 			# Corner order is the +Y face order from ChunkMesher, which is
 			# clockwise seen from above - the same winding the voxels use, so
@@ -542,6 +750,78 @@ func _corner_y(bx: int, bz: int, coarse: float, band: float, y_offset: float) ->
 	# not know about. Where it does know about it, there is nothing to hide
 	# from and the offset would reintroduce the step it was covering.
 	return h * bs + y_offset * (1.0 - blend)
+
+
+## THE QUANTISED HEIGHT OF ONE CELL, and the terrace strength there. Returns
+## the cache index, so the caller reads _t_hq and _t_t without a second lookup.
+##
+## Stage 1, and the one expression this whole epic rests on:
+##
+##     hq = round(h / step) * step,  step = the ring's cell width in BLOCKS
+##
+## In blocks rather than in metres because the ring's step IS its cell width in
+## blocks - 8, 16 and 32 - so quantising to it is the cubic lock (decision 4)
+## written directly, and the three of them are powers of two of each other by
+## construction rather than by arithmetic that could round.
+func _cell(i: int, j: int) -> int:
+	var at := (i + _t_off) + (j + _t_off) * _t_w
+	if not is_nan(_t_hq[at]):
+		return at
+	var step := float(_t_step)
+	_t_hq[at] = round(_cell_h(i, j) / step) * step
+	_t_t[at] = _terrace_at(i, j)
+	return at
+
+
+## The raw filtered height at one cell's CENTRE, cached.
+##
+## The centre and not a corner: a cell gets ONE height and a corner belongs to
+## four cells, so sampling at a corner would make the cell's height depend on
+## which of its corners was picked. The centre is the only point the cell owns.
+##
+## Read at _t_level, NOT through _filtered() - see the note on _t_level for the
+## measurement that decided that. The peak gain is applied here for the same
+## reason _filtered applies it: the terrace is cut from the surface the far mesh
+## draws, and distance v1's dilation is part of that surface.
+func _cell_h(i: int, j: int) -> float:
+	var at := (i + _t_off) + (j + _t_off) * _t_w
+	var v := _t_h[at]
+	if not is_nan(v):
+		return v
+	var half := _t_step / 2
+	var bx := float(_ring_cx + i * _t_step + half)
+	var bz := float(_ring_cz + j * _t_step + half)
+	v = heightmap.height_filtered(bx, bz, _t_level)
+	var gain: float = config.far_peak_gain
+	if gain > 0.0:
+		v = lerpf(v, heightmap.height_max_filtered(bx, bz, _t_level), gain)
+	_t_h[at] = v
+	return v
+
+
+## HOW TERRACED ONE CELL IS: far_terrace, faded to zero across the seam band.
+##
+## Decision 5, and Stage 8's whole content - never both fixes on the same
+## ground. Inside SEAM_BAND_CELLS of the voxel boundary _corner_y() is already
+## blending the far mesh onto the voxel surface, because there the far mesh
+## computes the same surface the voxels do and there is nothing to disagree
+## about. Terracing there would break the agreement that band exists to create,
+## and would put a step INSIDE the voxel radius. So the steps fade in over
+## exactly the band the detail fades out over: one multiply, because the knob
+## already takes a continuous value.
+##
+## PER CELL, NOT PER CORNER. A cell has one height, so it has one terrace
+## strength; a corner shared by two cells at different strengths is exactly the
+## gap a riser is for.
+func _terrace_at(i: int, j: int) -> float:
+	if _t_band <= 0.0:
+		return _t_amount
+	var half := _t_step / 2
+	var dx := float(_ring_cx + i * _t_step + half - center.x)
+	var dz := float(_ring_cz + j * _t_step + half - center.y)
+	var blend := clampf(
+		1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / _t_band, 0.0, 1.0)
+	return _t_amount * (1.0 - blend)
 
 
 ## Is the quad whose corner is (bx0, bz0) part of this ring?
