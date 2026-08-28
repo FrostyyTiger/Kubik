@@ -109,6 +109,14 @@ across every hair and beard option the worst pair is **0.928**. Fifteen of the
 94 cross-race variant pairs are over the 0.70 target and every one of them is
 that pair.
 
+> **Corrected 2026-08-28, tech plan Stage 0.** The 0.868 in the paragraph above
+> was carried over from the llvmpipe status doc rather than re-measured; the
+> GPU number is **0.913**, and the three-quarter view that the status doc
+> offered as a way out is **0.759**, not 0.619, and therefore also over target.
+> The 0.928 worst-variant figure and the 15-of-94 count are correct. Nothing in
+> the argument below changes - it gets stronger. Working:
+> `docs/status/character-v2.md`.
+
 The status doc is honest about why - the lizardfolk's body *is* the human's
 body, same torso, same legs, deliberately, so the test could tell which feature
 was doing the work. Fine as an experiment. It is now the thing to fix. Put the

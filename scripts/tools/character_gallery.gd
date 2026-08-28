@@ -138,6 +138,7 @@ func _sheets() -> Dictionary:
 		"study": _sheet_study,
 		"silhouettes": _sheet_silhouettes,
 		"masks-40": _sheet_masks_40,
+		"outline": _sheet_outline,
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
 		"gear": _sheet_gear,
@@ -778,6 +779,26 @@ func _make_subject(def) -> Node3D:
 		return holder
 	var view := CharacterView.new()
 	view.build(def)
+	# FROZEN THE MOMENT IT IS BUILT, for the same reason `_freeze_pose` freezes
+	# a strip: the pose in the picture must be the pose that was asked for.
+	#
+	# A live CharacterView breathes on wall-clock `time` and blinks on real
+	# randomness - deliberately, both of them, because a character that blinks
+	# on a schedule reads as a scripted event rather than as life. That is
+	# right in the game and wrong in a gallery, where a still sheet that
+	# happens to catch an eyelid is a sheet nobody can compare to yesterday's.
+	# It does not fire today: a sheet is shot four process frames after its
+	# subjects are built, and the blink timer starts at 3 to 6 seconds. It
+	# fires the moment anything makes a sheet slower, which the 96-voxel grid
+	# will.
+	#
+	# HONEST NOTE, because this line was added on a hypothesis the measurement
+	# then refuted: this is NOT why two runs of the gallery differ. They differ
+	# anyway, and character v2's Stage 0 measured why - see the status doc.
+	# Freezing the subject fixed none of it. It is kept because a still sheet
+	# catching a blink is a real hazard that costs one line to remove, not
+	# because it made anything reproducible.
+	view.set_process(false)
 	return view
 
 
@@ -923,8 +944,8 @@ func _sheet_budget() -> void:
 	# renderer needs a frame with nothing on the pad to tell us what that is.
 	var empty := await _primitives()
 	print("[Gallery] triangle budget, %d per character with hair and beard:" % CharacterConfig.TRIANGLE_BUDGET)
-	print("[Gallery]   %-22s %8s %8s   (drawn = mesh x 2, the shadow pass)" % [
-		"", "mesh", "drawn"])
+	print("[Gallery]   %-22s %8s %8s %9s %8s   (drawn = mesh x 2, the shadow pass)" % [
+		"", "mesh", "drawn", "voxels", "KB"])
 	print("[Gallery]   %-22s %8s %8d" % ["(pad and sky alone)", "-", empty])
 
 	var worst := 0
@@ -937,7 +958,19 @@ func _sheet_budget() -> void:
 			var drawn := await _primitives()
 			var mesh_tris := view.triangle_count()
 			var label := "%s%s" % [_mask_name(def), " + gear" if gear else ""]
-			print("[Gallery]   %-22s %8d %8d%s" % [label, mesh_tris, drawn - empty,
+			# THE RETAINED VOXEL LIST, which nobody has ever looked at.
+			#
+			# Rig keeps `{"voxels": Array, "anchor": Vector3}` per bone after
+			# meshing, because the gear overlap check has to ask "is there a
+			# voxel here" and a mesh cannot answer. Each voxel is a Vector4i in
+			# a GDScript Array, so a Variant, so 24 bytes. It is free at 64
+			# voxels and it is the number the resolution raise multiplies by
+			# 3.375 - so it stops being free somewhere, and the only way to
+			# know where is to print it before and after. See the tech plan's
+			# item 5: measure, then choose.
+			var voxels := _retained_voxels(view.rig)
+			print("[Gallery]   %-22s %8d %8d %9d %7dK%s" % [
+				label, mesh_tris, drawn - empty, voxels, voxels * 24 / 1024,
 				"   OVER" if mesh_tris > CharacterConfig.TRIANGLE_BUDGET else ""])
 			if not gear and mesh_tris > worst:
 				worst = mesh_tris
@@ -960,6 +993,14 @@ func _sheet_budget() -> void:
 
 	print("[Gallery]   worst character: %s at %d triangles, budget %d" % [
 		worst_name, worst, CharacterConfig.TRIANGLE_BUDGET])
+
+
+## Every voxel Rig is still holding on to after meshing, bones and sockets.
+static func _retained_voxels(rig: Rig) -> int:
+	var total := 0
+	for key in rig.part_voxels:
+		total += (rig.part_voxels[key]["voxels"] as Array).size()
+	return total
 
 
 ## Triangles the renderer drew this frame. Needs a real frame to have happened,
@@ -1189,6 +1230,165 @@ func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> 
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
+
+
+# --- The outline-event metric --------------------------------------------------
+#
+# THE GATE THE WHOLE ARMOUR TIER LADDER IS DEFINED IN TERMS OF, so it exists
+# before there is any armour for it to judge. See docs/plans/character-v2-tech.md
+# Stage 0.
+#
+# WHY THIS METRIC EXISTS AT ALL. With flat vertex colour and no textures,
+# surface detail is free to author and invisible at range: the outline is the
+# only currency an armour piece has. So an armour tier is a ladder of OUTLINE
+# EVENTS - places where the silhouette's width profile has a local maximum the
+# naked body does not have - and the design doc's ladder is 0 / 1 / 1 / 3 / 5.
+# That is a countable claim, and this counts it.
+#
+# WHY 3 m AND NOT 15 m, which is where the ladder is JUDGED. At 1280 x 720 a
+# 2 m character is 313 px at 3 m and 62 px at 15 m. The smallest legal feature
+# is 2 voxels per side, which is 6-7 px at 3 m and about 1 px at 15 m. The
+# picture is judged at 15 m by a person; the count is taken where a voxel is
+# still a thing that exists. A count taken at 15 m would be measuring the
+# antialiaser.
+#
+# THE REFERENCE IS THE NAKED BODY, not tier 1. That is what makes "tier 1 has
+# zero outline events" a measurement rather than a tautology, and a starting
+# tunic that quietly widens a shoulder is exactly what it catches.
+
+## Where the count is taken. Not MASK_DISTANCE, and it shares no constants with
+## it: the IoU metric's 40 m and 1280 x 720 are load-bearing for every number
+## this project has ever recorded and must not move.
+const OUTLINE_DISTANCE := 3.0
+
+## An event has to be at least this much wider than the bare body, in model
+## voxels, TOTAL across both sides. The Kimi research lane's floor: a chest
+## piece that does not change the shoulder outline by at least 2 voxels per
+## side will not read as armour.
+const OUTLINE_MIN_WIDTH_VOX := 4
+
+## And it has to be at least this tall, in model voxels. Also the research
+## lane's: nothing smaller than about 3 x 3 voxels matters at gameplay
+## distance, so a one-row bulge is not an event, it is a rounding error.
+const OUTLINE_MIN_RUN_VOX := 3
+
+
+## Count outline events for every race, worn against bare.
+##
+## Until the armour system exists there is nothing to wear, so this also shoots
+## every race with the Stage 10 GEAR PLACEHOLDERS on - which is not armour and
+## is not judged, but which is a real change to a real outline and is therefore
+## the only way to prove the metric can see anything at all. A metric whose
+## only test is that it returns zero has not been tested.
+func _sheet_outline() -> void:
+	print("[Gallery] --- outline events, measured at %.0f m ---" % OUTLINE_DISTANCE)
+	print("[Gallery] an event is >= %d voxels wider than bare, over >= %d voxels of height" % [
+		OUTLINE_MIN_WIDTH_VOX, OUTLINE_MIN_RUN_VOX])
+	print("[Gallery]   %-34s %6s %6s %6s %6s %7s" % [
+		"subject", "front", "up", "prof", "prof-up", "total"])
+	for def: CharacterDef in _lineup_defs():
+		var bare_front := await _outline_mask(def, 0.0, false)
+		var bare_prof := await _outline_mask(def, 90.0, false)
+		for gear in [false, true]:
+			var m_front := bare_front if not gear else await _outline_mask(def, 0.0, true)
+			var m_prof := bare_prof if not gear else await _outline_mask(def, 90.0, true)
+			var f := _outline_events(m_front, bare_front)
+			var p := _outline_events(m_prof, bare_prof)
+			print("[Gallery]   %-34s %6d %6d %6d %6d %7d" % [
+				_mask_name(def) + (" + placeholders" if gear else " (bare)"),
+				f["width"], f["vertical"], p["width"], p["vertical"],
+				f["width"] + f["vertical"] + p["width"] + p["vertical"]])
+
+
+## One subject as a mask at the outline distance, optionally wearing something.
+func _outline_mask(def, yaw_deg: float, gear: bool) -> Dictionary:
+	_enter_mask_mode()
+	_set_lineup([def])
+	if gear:
+		for child in _subjects_root.get_children():
+			if child is CharacterView:
+				(child as CharacterView).set_gear_placeholders(true)
+				_paint_mask(child)
+	if yaw_deg != 0.0:
+		_face(FACING_CAMERA + deg_to_rad(yaw_deg))
+	var eye := _lineup_chest_height()
+	_camera.global_position = Vector3(0.0, eye, SUBJECT_Z + OUTLINE_DISTANCE)
+	_camera.look_at(Vector3(0.0, eye, SUBJECT_Z), Vector3.UP)
+	var image := await _capture()
+	_leave_mask_mode()
+	return _crop_mask(image)
+
+
+## Pixels per model voxel at the outline distance.
+##
+## DERIVED FROM THE CAMERA, not measured off the mask. Godot's `fov` is
+## VERTICAL and `keep_aspect` is KEEP_HEIGHT, so the vertical extent at a
+## distance is exactly `2 d tan(fov/2)` and this is arithmetic rather than an
+## estimate. Measuring it off the mask would fold the subject's own hair into
+## the scale factor, and then a race with a taller crest would be measured in
+## different units from one without.
+func _outline_px_per_voxel() -> float:
+	var extent_m := 2.0 * OUTLINE_DISTANCE * tan(deg_to_rad(FOV) * 0.5)
+	return (float(get_viewport().size.y) / extent_m) * VoxelModel.VOXEL_M
+
+
+## The outline's width per row, in pixels, indexed from the BOTTOM row up.
+##
+## The OUTLINE's width - rightmost minus leftmost - and not the count of set
+## pixels, so a gap inside the shape is not an event. An arm held away from the
+## body is one outline; the daylight under it is not a second one.
+func _width_profile(mask: Dictionary) -> PackedInt32Array:
+	var w: int = mask["w"]
+	var h: int = mask["h"]
+	var bits: PackedByteArray = mask["bits"]
+	var out := PackedInt32Array()
+	out.resize(h)
+	for y in h:
+		var lo := -1
+		var hi := -1
+		for x in w:
+			if bits[x + y * w] != 0:
+				if lo < 0:
+					lo = x
+				hi = x
+		# Bottom row first: the two masks are compared bottom-aligned, for the
+		# same reason _mask_iou aligns them there - two characters standing in
+		# the world are standing on the same ground.
+		out[h - 1 - y] = 0 if lo < 0 else hi - lo + 1
+	return out
+
+
+## Width events and vertical events of `worn` against `bare`.
+func _outline_events(worn: Dictionary, bare: Dictionary) -> Dictionary:
+	if int(worn["w"]) == 0 or int(bare["w"]) == 0:
+		return {"width": 0, "vertical": 0}
+	var px := _outline_px_per_voxel()
+	var min_width := int(round(float(OUTLINE_MIN_WIDTH_VOX) * px))
+	var min_run := maxi(1, int(round(float(OUTLINE_MIN_RUN_VOX) * px)))
+
+	var pw := _width_profile(worn)
+	var pb := _width_profile(bare)
+
+	var width_events := 0
+	var run := 0
+	for i in mini(pw.size(), pb.size()):
+		if pw[i] - pb[i] >= min_width:
+			run += 1
+		else:
+			if run >= min_run:
+				width_events += 1
+			run = 0
+	if run >= min_run:
+		width_events += 1
+
+	# Anything standing above the bare body's crown: a crest, a helm spike, the
+	# vertical element tier 5 is allowed. At most one per view - two spikes on
+	# one helmet are one idea, not two.
+	var above := 0
+	for i in range(pb.size(), pw.size()):
+		if pw[i] > 0:
+			above += 1
+	return {"width": width_events, "vertical": 1 if above >= min_run else 0}
 
 
 ## THE WORST CASE ACROSS HAIR AND BEARD OPTIONS.

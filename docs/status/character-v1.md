@@ -195,6 +195,39 @@ of the leaning body. Within one voxel, which is what the test allows.
 
 ### The silhouette metric
 
+> **VOID AS A BASELINE — re-measured on the GPU, 2026-08-28.** Every IoU number
+> in this section was measured on Mesa llvmpipe in Compatibility, because that
+> is all this box had. Ganymede acquired a working Vulkan ICD on 2026-08-27, and
+> character v2's Stage 0 re-measured all of it on `Vulkan 1.4.329 - Forward+ -
+> NVIDIA GeForce RTX 3070 Ti`, three runs, identical to the thousandth each time.
+> **The numbers below are not reproducible on the renderer the game ships on and
+> must not be compared against.** They are kept because they are what was
+> measured and because the reasoning built on them is still worth reading.
+>
+> What actually changed, and it is not small:
+>
+> | pair, front on | GPU | below | |
+> | --- | --- | --- | --- |
+> | human / elf | 0.530 | 0.608 | |
+> | human / dwarf | 0.561 | 0.561 | |
+> | **human / lizardfolk** | **0.913** | 0.868 | **worse than recorded** |
+> | elf / dwarf | 0.357 | 0.372 | |
+> | elf / lizardfolk | 0.534 | 0.580 | |
+> | dwarf / lizardfolk | 0.566 | 0.593 | |
+> | **human / lizardfolk, three-quarter** | **0.759** | 0.619 | **over target** |
+>
+> The option sweep is unchanged: 94 cross-race variant pairs, 15 over 0.70,
+> worst 0.928. So the sweep is stable across renderers and the default pair is
+> not.
+>
+> **This retires option 3 below.** "Judge the metric three-quarter on" rested on
+> that view being 0.619 and comfortably under target. It is 0.759 and over it.
+> There was never a view in which the human and the lizardfolk separated, which
+> makes option 2 — give the lizardfolk its own body, settled by Marcel on
+> 2026-08-27 — the only one of the three that was ever available.
+>
+> Full working: `docs/status/character-v2.md`, Stage 0.
+
 Unshaded black on white at 40 m, each subject cropped to its own bounding box
 and aligned bottom-centre. **Target: every RACE pair under 0.70.**
 
