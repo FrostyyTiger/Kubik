@@ -317,3 +317,64 @@ and `git status --porcelain` clean.
 - **Nothing was done about `scripts/world/`, `scripts/ui/` or `game.gd`**, which
   carry their own stale lines. Hard rule 1 said so; whoever owns those files next
   inherits the same grep and the same method.
+
+---
+
+## What happened, 2026-08-29
+
+Run on `ganymede` against `main` at `93b32bd`, Godot `4.7.2.stable.official`.
+All seven stages as written, one deviation, noted below.
+
+**Stage 0.** `python3 -m tools.parts_author` left
+`git status --porcelain scripts/character/parts/` empty across all eight
+files, and the baseline self-test was **35 tests, all passed**. Finding 1
+held on the day: no hand-edits to fold back.
+
+**Stage 1** (`67e86ce`). `Part.json_obj()` beside `Part.gd()`,
+`voxlib.json_file()` beside `gd_file()`, and every `render()` returning both
+texts from one set of `Part` objects. Eight `.json` written alongside a
+byte-identical `.gd`; **101 parts**; `--import` exit 0; 35 tests.
+
+**Stage 2** (`9e0df62`). `PartsData`, and test 36. **36 tests, all passed**,
+and the eight hashes:
+
+    human d01be863   elf 35acfb4e   dwarf 0d725c10   lizardfolk 00e17bec
+    hair f389b6d9    gear afd2b79c  armour ff9a7ff7  critter 5ca6453b
+
+**Stage 3** (`8ffdf9a`). The consumers moved and `parts_{hair,gear,critter}.gd`
+were rewritten by hand - 61, 29 and 81 lines, no ASCII. 36 tests, all
+passed, all eight hashes unchanged. The gallery was run under `Xvfb`, this
+box being headless, and drew four dressed races and the critter into
+`build/character/parts-data-s3/`.
+
+**Stage 4** (`827d2ac`). The five generated `.gd` and their `.uid` deleted;
+`gd_file()`, `Part.gd()` and `_fmt()` deleted; the hashes frozen in the test;
+three lines in `build.yml`. **33,158 lines under `scripts/character/parts/`
+became 171**, and 1,829,020 bytes of JSON now live under `assets/`. The
+`git grep` for the five class names is empty and a regeneration leaves the
+tree clean.
+
+**Stage 5** (`5856eee`). Eighteen grep hits, **three false**:
+`player.gd:12-16` and `README.md:497` (both made false by `af45e3f`, world
+feel v1 Stage 10b) and `locomotion.gd:8` (by `322a10d`, which struck the
+README entry through and left the present tense behind). Fifteen left alone,
+listed in that commit message.
+
+**Stage 6.** These docs, and both suites cold.
+
+### The one deviation
+
+The plan's Stage 1 specifies `assets/characters/parts/<module>.json` and its
+Stage 4 greps the pck for `assets/characters/parts/parts_armour.json`. The
+files are named per Stage 1 - `armour.json`, no stutter under a directory
+already called `parts` - so the CI check greps for `armour.json`. Same check,
+same intent, and it is the only thing between finding 3 being wrong and a
+release build with no characters in it.
+
+### Still open
+
+Everything under "What this leaves open" above, unchanged. Worth repeating
+one of them: `PartsHair.HAIR` and `BEARD` are hand-written GDScript now
+rather than generated GDScript, which is one address better and is not yet
+data. When hair becomes something a director or an item hands out, those two
+tables follow the parts into JSON.

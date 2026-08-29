@@ -1,21 +1,27 @@
 # Character art drop-ins
 
-**This directory ships empty on purpose.** A `.vox` committed here would
-silently override an ASCII part for everyone, which is exactly the surprise the
-drop-in rule exists to make convenient rather than to inflict.
+**No `.vox` ships here, on purpose.** A model committed here would silently
+override a part for everyone, which is exactly the surprise the drop-in rule
+exists to make convenient rather than to inflict. The one thing that does ship
+under this directory is `parts/`, which is the ASCII a drop-in stands in front
+of - see `parts/README.md`.
 
 ## The rule
 
 If `assets/characters/<race>/<part>.vox` exists, it replaces the ASCII part of
 that name at load. No code change to swap art.
 
-    assets/characters/human/head.vox        replaces PartsHuman.HEAD
+    assets/characters/human/head.vox        replaces the human's `head`
     assets/characters/dwarf/beard.vox       replaces the dwarf's chosen beard
     assets/characters/lizardfolk/tail_2.vox replaces the middle tail segment
 
-Part names are the keys of the race's part set: `head`, `torso`, `pelvis`,
-`leg`, `arm`, `hair`, `beard`, and `tail_1..3` for the lizardfolk. `leg` and
-`arm` are authored once and mirrored, so replacing one replaces both.
+**What it replaces is a part loaded from JSON.** Since parts-data v1 the ASCII
+lives in `parts/` next door, one file a module, and `PartsData` reads it; the
+drop-in rule is unchanged and now stands in front of that. Part names are the
+keys in that JSON's `parts` object, which are the keys of the race's part set:
+`head`, `torso`, `pelvis`, `leg`, `arm`, `hair`, `beard`, and `tail_1..3` for
+the lizardfolk. `leg` and `arm` are authored once and mirrored, so replacing
+one replaces both.
 
 ## Authoring rules
 

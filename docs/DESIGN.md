@@ -551,7 +551,8 @@ see `IDEAS.md`.
 Creatures follow the poster art direction (see Art direction, above):
 silhouette-first, readable as flat bold shapes at distance, restricted
 palette, and the same voxel-part modularity as characters where possible -
-the critter rig and `tools/parts_author`.
+the critter rig, `tools/parts_author`, and the part data it writes to
+`assets/characters/parts/` for `PartsData` to load.
 
 ### Behaviour: the technical stance
 
