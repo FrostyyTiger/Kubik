@@ -494,8 +494,6 @@ the point where they need replacing.
 
 ## Roadmap
 
-- Host-authoritative player input (the player exists; the host does not yet
-  simulate it)
 - Block interaction: voxel raycast, break and place, through the existing
   request path
 - Threaded chunk generation
@@ -504,6 +502,9 @@ the point where they need replacing.
 
 Done in terrain v1: the real player and collision, chunk streaming, greedy
 meshing and threaded mesh building.
+
+Done in world feel v1: host-authoritative player input — the client sends
+input, the host simulates, the host broadcasts the position.
 
 ## Licence
 

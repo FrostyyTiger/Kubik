@@ -9,11 +9,15 @@ extends CharacterBody3D
 ## hides exactly the thing worth looking at. There is no first-person mode and
 ## there is not going to be one.
 ##
-## PHYSICS IS LOCAL, FOR NOW. The host does not simulate this yet. Clients
-## still report their POSITION rather than their input, exactly as the debug
-## camera did - see the provisional note in Game. Turning that into
-## "client sends input, host simulates, host broadcasts position" is a carried
-## ticket, and the shape of the existing channel is already right for it.
+## PHYSICS IS PREDICTED HERE AND OWNED BY THE HOST. Since world feel v1
+## Stage 10 a client sends its INPUT and the host simulates every body; this
+## body predicts with `Locomotion.step`, which is the same step the host runs,
+## and the host's position for it comes back and is eased or snapped to.
+##
+## What is still provisional is the correction, not the authority: it does not
+## replay the inputs the host had not processed when it sent that position, so
+## a correction lands where the player was rather than where they will be. See
+## the "no rollback on the client" entry in README.md.
 
 ## Metres per second on flat ground. Blocks are 0.5 m, so this is faster in
 ## blocks than it looks: 5 m/s is 10 blocks a second.

@@ -5,8 +5,8 @@ class_name Locomotion
 ##
 ## WHY THIS EXISTS, AND IT IS THE WHOLE OF STAGE 10. Until world feel v1 the
 ## client simulated its own body and told the host where it had ended up
-## (`_srv_report_state`), which `README.md` calls the largest provisional bit in
-## the codebase and which every combat and creature plan is queued behind: a
+## (`_srv_report_state`), which `README.md` called the largest provisional bit
+## in the codebase and which every combat and creature plan was queued behind: a
 ## client that reports its own position can report any position it likes.
 ##
 ## The fix is the carried ticket - the client sends INPUT and the host
