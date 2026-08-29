@@ -14,7 +14,7 @@ notched in steps, crests as fans of steps. Stepped masses, not textures -
 rule 4 of the look plan.
 """
 
-from .voxlib import Frame, Part, gd_file, octagon, H
+from .voxlib import Frame, Part, gd_file, json_file, octagon, H
 from . import human, elf, dwarf, lizardfolk
 
 
@@ -390,26 +390,34 @@ static func _lookup(table: Array, race: int, index: int):
 """
 
 
-def render() -> str:
-    blocks = [
-        human_hair_short().gd("HUMAN_HAIR_SHORT", HUMAN_COMMENT + "\n\nA cap wrapping the stepped crown, and a fringe."),
-        human_hair_long().gd("HUMAN_HAIR_LONG", "The bob: the cap, the fringe, and a flat-bottomed mass to the jaw."),
-        human_hair_tied().gd("HUMAN_HAIR_TIED", "The cap and fringe, with a stepped bun at the back."),
-        human_beard_short().gd("HUMAN_BEARD_SHORT", "Short beard: chin and jaw, stepping in below the chin, stopping below the mouth."),
-        human_beard_full().gd("HUMAN_BEARD_FULL", "Full beard: up the cheeks and down to the chest in three steps."),
-        elf_hair_short().gd("ELF_HAIR_SHORT", ELF_COMMENT),
-        elf_hair_long().gd("ELF_HAIR_LONG", "The cap and fringe, sides behind the ears, and a curtain to the shoulders."),
-        elf_hair_braided().gd("ELF_HAIR_BRAIDED", "One thick braid straight down the back, notched in two-row steps so it\nreads as plaited rather than as a plank."),
-        dwarf_hair_short().gd("DWARF_HAIR_SHORT", DWARF_COMMENT),
-        dwarf_hair_long().gd("DWARF_HAIR_LONG", "The bob, to the jaw."),
-        dwarf_hair_braided().gd("DWARF_HAIR_BRAIDED", "Two notched braids down the back, one behind each shoulder."),
-        dwarf_beard_short().gd("DWARF_BEARD_SHORT", "Short: chin to the top of the chest, three voxels in front of the face."),
-        dwarf_beard_full().gd("DWARF_BEARD_FULL", "Full: to the belt in three steps, and up the cheeks."),
-        dwarf_beard_forked().gd("DWARF_BEARD_FORKED", "Forked: full length, split into two prongs below the chin."),
-        lizard_crest_low().gd("LIZARD_CREST_LOW", LIZARD_COMMENT + "\n\nA fin six wide, fourteen tall, raking backward in steps."),
-        lizard_crest_tall().gd("LIZARD_CREST_TALL", "A sunburst: six wide at the base and sixteen at the top, twenty-two\ntall, raking back past the skull."),
-        lizard_frill().gd("LIZARD_FRILL", "A fan behind the head rather than a fin on top of it: twenty-four across\nand four thick, stepped, which is a completely different outline from either\ncrest."),
+def render() -> tuple[str, str]:
+    # HAIR HAS NO `PARTS` MAP to take keys from - the option tables below are
+    # the index, and they are positional. So the JSON key is the constant's
+    # own name, lowercased, and the pairs are written once here rather than
+    # twice.
+    built = [
+        ("HUMAN_HAIR_SHORT", human_hair_short(), HUMAN_COMMENT + "\n\nA cap wrapping the stepped crown, and a fringe."),
+        ("HUMAN_HAIR_LONG", human_hair_long(), "The bob: the cap, the fringe, and a flat-bottomed mass to the jaw."),
+        ("HUMAN_HAIR_TIED", human_hair_tied(), "The cap and fringe, with a stepped bun at the back."),
+        ("HUMAN_BEARD_SHORT", human_beard_short(), "Short beard: chin and jaw, stepping in below the chin, stopping below the mouth."),
+        ("HUMAN_BEARD_FULL", human_beard_full(), "Full beard: up the cheeks and down to the chest in three steps."),
+        ("ELF_HAIR_SHORT", elf_hair_short(), ELF_COMMENT),
+        ("ELF_HAIR_LONG", elf_hair_long(), "The cap and fringe, sides behind the ears, and a curtain to the shoulders."),
+        ("ELF_HAIR_BRAIDED", elf_hair_braided(), "One thick braid straight down the back, notched in two-row steps so it\nreads as plaited rather than as a plank."),
+        ("DWARF_HAIR_SHORT", dwarf_hair_short(), DWARF_COMMENT),
+        ("DWARF_HAIR_LONG", dwarf_hair_long(), "The bob, to the jaw."),
+        ("DWARF_HAIR_BRAIDED", dwarf_hair_braided(), "Two notched braids down the back, one behind each shoulder."),
+        ("DWARF_BEARD_SHORT", dwarf_beard_short(), "Short: chin to the top of the chest, three voxels in front of the face."),
+        ("DWARF_BEARD_FULL", dwarf_beard_full(), "Full: to the belt in three steps, and up the cheeks."),
+        ("DWARF_BEARD_FORKED", dwarf_beard_forked(), "Forked: full length, split into two prongs below the chin."),
+        ("LIZARD_CREST_LOW", lizard_crest_low(), LIZARD_COMMENT + "\n\nA fin six wide, fourteen tall, raking backward in steps."),
+        ("LIZARD_CREST_TALL", lizard_crest_tall(), "A sunburst: six wide at the base and sixteen at the top, twenty-two\ntall, raking back past the skull."),
+        ("LIZARD_FRILL", lizard_frill(), "A fan behind the head rather than a fin on top of it: twenty-four across\nand four thick, stepped, which is a completely different outline from either\ncrest."),
     ]
+    blocks = [part.gd(const, comment) for const, part, comment in built]
+    parts = {const.lower(): part for const, part, _c in built}
+    comments = {const.lower(): comment for const, _p, comment in built}
+
     out = ["class_name PartsHair", ""]
     for line in DOC.strip("\n").split("\n"):
         out.append(("## " + line).rstrip())
@@ -426,4 +434,4 @@ def render() -> str:
     out.append("")
     out.append(LOOKUP.rstrip("\n"))
     out.append("")
-    return "\n".join(out)
+    return ("\n".join(out), json_file("hair.py", DOC, parts, comments))

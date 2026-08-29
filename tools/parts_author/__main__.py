@@ -3,9 +3,16 @@
     python -m tools.parts_author            # from the repo root
     python -m tools.parts_author --res 96   # on the character v2 grid
 
-Each module renders one file under scripts/character/parts/. The runtime
-never imports Python; it parses the ASCII these write, exactly as it parsed
-the ASCII that used to be typed.
+Each module renders TWO files from one set of in-memory parts: the ASCII
+data at assets/characters/parts/<module>.json, which is what the game loads
+through `PartsData`, and - for now - the GDScript constants under
+scripts/character/parts/ that the data is replacing. The runtime never
+imports Python; it parses the same ASCII rows either way.
+
+THE TWO EMITTERS SHARE THEIR `Part` OBJECTS, one call, one build. That is
+the only reason a byte-identical `.gd` says anything at all about whether
+the JSON drifted: if they were built separately the gate below would be
+comparing a generator against itself.
 
 `--res` is the whole point of character v2 Stage 2: every generator is
 written against the 64 grid and knows nothing about the flag, and `voxlib`
@@ -28,16 +35,17 @@ from . import human, elf, dwarf, lizardfolk, hair, gear, critter, armour, voxlib
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "scripts" / "character" / "parts"
+OUT_JSON = ROOT / "assets" / "characters" / "parts"
 
-FILES = {
-    "parts_human.gd": human.render,
-    "parts_elf.gd": elf.render,
-    "parts_dwarf.gd": dwarf.render,
-    "parts_lizardfolk.gd": lizardfolk.render,
-    "parts_hair.gd": hair.render,
-    "parts_gear.gd": gear.render,
-    "parts_armour.gd": armour.render,
-    "parts_critter.gd": critter.render,
+MODULES = {
+    "human": human.render,
+    "elf": elf.render,
+    "dwarf": dwarf.render,
+    "lizardfolk": lizardfolk.render,
+    "hair": hair.render,
+    "gear": gear.render,
+    "armour": armour.render,
+    "critter": critter.render,
 }
 
 
@@ -57,11 +65,13 @@ def main() -> None:
     # Before anything is written: the slot legend here and the one in
     # voxel_model.gd have to be the same set. See voxlib.check_slots_match.
     voxlib.check_slots_match(ROOT)
-    for name, render in FILES.items():
-        text = render()
-        path = OUT / name
-        path.write_text(text, encoding="utf-8", newline="\n")
-        print("wrote %s (%d lines)" % (path.relative_to(ROOT), text.count("\n")))
+    OUT_JSON.mkdir(parents=True, exist_ok=True)
+    for name, render in MODULES.items():
+        gd_text, json_text = render()
+        for path, text in ((OUT / ("parts_%s.gd" % name), gd_text),
+                           (OUT_JSON / ("%s.json" % name), json_text)):
+            path.write_text(text, encoding="utf-8", newline="\n")
+            print("wrote %s (%d lines)" % (path.relative_to(ROOT), text.count("\n")))
 
 
 if __name__ == "__main__":

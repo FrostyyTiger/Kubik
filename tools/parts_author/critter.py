@@ -184,14 +184,19 @@ static func palette() -> Dictionary:
 	}"""
 
 
-def render() -> str:
-    from .voxlib import gd_file
-    blocks = [
-        scaled("BODY").gd("BODY", BODY_COMMENT),
-        scaled("HEAD").gd("HEAD", HEAD_COMMENT),
-        scaled("LEG").gd("LEG", LEG_COMMENT),
-        scaled("TAIL_1").gd("TAIL_1", TAIL_COMMENT),
-        scaled("TAIL_2").gd("TAIL_2"),
+def render() -> tuple[str, str]:
+    from .voxlib import gd_file, json_file
+    built = [
+        ("body", "BODY", scaled("BODY"), BODY_COMMENT),
+        ("head", "HEAD", scaled("HEAD"), HEAD_COMMENT),
+        ("leg", "LEG", scaled("LEG"), LEG_COMMENT),
+        ("tail_1", "TAIL_1", scaled("TAIL_1"), TAIL_COMMENT),
+        ("tail_2", "TAIL_2", scaled("TAIL_2"), ""),
     ]
-    parts = {"body": "BODY", "head": "HEAD", "leg": "LEG", "tail_1": "TAIL_1", "tail_2": "TAIL_2"}
-    return gd_file("PartsCritter", DOC, blocks, parts, "critter.py", extra=EXTRA)
+    blocks = [part.gd(const, comment) for _k, const, part, comment in built]
+    parts = {key: part for key, _c, part, _cm in built}
+    comments = {key: comment for key, _c, _p, comment in built}
+    return (gd_file("PartsCritter", DOC, blocks,
+                    {key: const for key, const, _p, _cm in built},
+                    "critter.py", extra=EXTRA),
+            json_file("critter.py", DOC, parts, comments))

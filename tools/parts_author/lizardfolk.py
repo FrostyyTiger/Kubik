@@ -9,7 +9,7 @@ The stack, in model voxels:
     head   [42, 60) 18
 """
 
-from .voxlib import (split_limb, Part, gd_file, solid_eyes, k, v,
+from .voxlib import (split_limb, Part, gd_file, json_file, solid_eyes, k, v,
                      S, s, M, E, W, C, c, B, X, T)
 
 HEAD_SIZE = (16, 16, 24)
@@ -274,7 +274,7 @@ FOOT_SPLIT = 6
 ARM_SPLIT = 10
 
 
-def render() -> str:
+def render() -> tuple[str, str]:
     # THREE SEGMENTS, so the limb is cut twice: thigh off the top, then the
     # remainder cut again into shin and foot. `split_limb` takes the same
     # shape both times and neither call knows the other happened.
@@ -303,19 +303,11 @@ def render() -> str:
         "tail_3": tail("TAIL_3", (4, 4, 7), (2, -1, 0), 4),
         "tail_4": tail("TAIL_4", (3, 3, 5), (1.5, -1, 0), 3),
     }
-    blocks = [
-        parts["head"].gd("HEAD", HEAD_COMMENT),
-        parts["torso"].gd("TORSO", TORSO_COMMENT),
-        parts["pelvis"].gd("PELVIS", PELVIS_COMMENT),
-        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
-        parts["leg_lower"].gd("LEG_LOWER"),
-        parts["leg_foot"].gd("LEG_FOOT"),
-        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
-        parts["arm_lower"].gd("ARM_LOWER"),
-        parts["tail_1"].gd("TAIL_1", TAIL_COMMENT),
-        parts["tail_2"].gd("TAIL_2"),
-        parts["tail_3"].gd("TAIL_3"),
-        parts["tail_4"].gd("TAIL_4"),
-    ]
-    return gd_file("PartsLizardfolk", DOC, blocks,
-                   {k: k.upper() for k in parts}, "lizardfolk.py")
+    comments = {"head": HEAD_COMMENT, "torso": TORSO_COMMENT,
+                "pelvis": PELVIS_COMMENT, "leg_upper": LEG_COMMENT,
+                "arm_upper": ARM_COMMENT, "tail_1": TAIL_COMMENT}
+    blocks = [p.gd(name.upper(), comments.get(name, ""))
+              for name, p in parts.items()]
+    return (gd_file("PartsLizardfolk", DOC, blocks,
+                    {k: k.upper() for k in parts}, "lizardfolk.py"),
+            json_file("lizardfolk.py", DOC, parts, comments))

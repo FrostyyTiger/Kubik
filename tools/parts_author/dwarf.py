@@ -7,7 +7,7 @@ The stack, in model voxels:
     head   [28, 48) 20
 """
 
-from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow, k,
+from .voxlib import (split_limb, Part, gd_file, json_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 HEAD_SIZE = (20, 20, 17)
@@ -186,7 +186,7 @@ LEG_SPLIT = 5
 ARM_SPLIT = 8
 
 
-def render() -> str:
+def render() -> tuple[str, str]:
     leg_upper, leg_lower = split_limb(
         leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
     arm_upper, arm_lower = split_limb(
@@ -199,12 +199,9 @@ def render() -> str:
         "arm_upper": arm_upper,
         "arm_lower": arm_lower,
     }
-    blocks = [
-        parts["head"].gd("HEAD", HEAD_COMMENT),
-        parts["torso"].gd("TORSO", TORSO_COMMENT),
-        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
-        parts["leg_lower"].gd("LEG_LOWER"),
-        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
-        parts["arm_lower"].gd("ARM_LOWER"),
-    ]
-    return gd_file("PartsDwarf", DOC, blocks, {k: k.upper() for k in parts}, "dwarf.py")
+    comments = {"head": HEAD_COMMENT, "torso": TORSO_COMMENT,
+                "leg_upper": LEG_COMMENT, "arm_upper": ARM_COMMENT}
+    blocks = [p.gd(name.upper(), comments.get(name, ""))
+              for name, p in parts.items()]
+    return (gd_file("PartsDwarf", DOC, blocks, {k: k.upper() for k in parts}, "dwarf.py"),
+            json_file("dwarf.py", DOC, parts, comments))

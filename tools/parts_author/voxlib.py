@@ -29,6 +29,7 @@ Two ways to author:
 
 from __future__ import annotations
 
+import json
 import math
 
 # --- The grid ----------------------------------------------------------------
@@ -397,6 +398,32 @@ class Part(Cells):
         lines.append("}")
         return "\n".join(lines)
 
+    def json_obj(self, comment: str = "") -> dict:
+        """The same part as a JSON-able object, from the same cells.
+
+        THE .gd AND THE .json ARE BUILT FROM ONE Part, in one call, which is
+        the only reason the byte-identical `.gd` is evidence about the JSON at
+        all. `size`, `anchor` and `slices` are the three keys the runtime
+        reads and they come from the same three methods `gd()` uses; `doc` and
+        `notes` carry the prose `gd()` writes as comments, because the ASCII's
+        only documentation is the sentence next to it and it is not worth
+        losing to a change of file format.
+        """
+        note_at = {}
+        for a in range(self.h):
+            if a in self.notes:
+                note_at[str(U(a))] = self.notes[a]
+        doc = []
+        if comment:
+            doc = comment.rstrip("\n").split("\n")
+        return {
+            "size": list(self.size_out()),
+            "anchor": [float(a) for a in self.anchor_out()],
+            "notes": note_at,
+            "doc": doc,
+            "slices": self.slices(),
+        }
+
 
 class Frame(Cells):
     """Cells authored in the frame of another part - a head, a socket. The
@@ -533,6 +560,84 @@ def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
         out.append(extra.rstrip("\n"))
     out.append("")
     return "\n".join(out)
+
+
+def json_file(generator: str, doc: str, parts: dict, comments: dict = None) -> str:
+    """Assemble a parts file as JSON, from the same `Part` objects `gd_file`
+    was handed.
+
+    THE FORMAT IS CHOSEN FOR A HUMAN READING A DIFF, not for a parser. The
+    ASCII rows *are* the art, and the only review this art gets is somebody
+    looking at a `+`/`-` in a pull request - so a row is a string, one row is
+    never merged with the next, and rows are wrapped to the same line width
+    the `.gd` used. A `json.dumps(indent=...)` would be valid and would put
+    every row on its own line; this keeps the shape the authors have been
+    reading since the ASCII was typed by hand.
+
+    `doc` and `notes` are prose, and the loader ignores both. They are here
+    because the sentence above a part - "18 wide, 22 tall, 16 deep PLUS ONE
+    for the nose" - is the whole of this art's documentation, and a change of
+    address is not a reason to lose it.
+
+    `parts` maps the key a bone table refers to a part with to the `Part`;
+    `comments` maps the same key to the prose that went above its constant.
+    """
+    comments = comments or {}
+    out = ["{"]
+    out.append('\t"schema": 1,')
+    out.append('\t"generator": %s,' % json.dumps("tools/parts_author/" + generator))
+    out.append('\t"res": %d,' % RES)
+    out.append('\t"doc": [')
+    _json_strings(out, doc.strip("\n").split("\n"), "\t\t")
+    out.append("\t],")
+    out.append('\t"parts": {')
+    keys = list(parts.keys())
+    for i, key in enumerate(keys):
+        obj = parts[key].json_obj(comments.get(key, ""))
+        _json_part(out, key, obj, last=(i == len(keys) - 1))
+    out.append("\t}")
+    out.append("}")
+    out.append("")
+    return "\n".join(out)
+
+
+def _json_strings(out: list, items: list, indent: str) -> None:
+    """One string per line, comma-separated, JSON-escaped."""
+    for i, text in enumerate(items):
+        tail = "" if i == len(items) - 1 else ","
+        out.append(indent + json.dumps(text) + tail)
+
+
+def _json_part(out: list, key: str, obj: dict, last: bool) -> None:
+    w_out = obj["size"][0]
+    out.append('\t\t%s: {' % json.dumps(key))
+    out.append('\t\t\t"size": [%d, %d, %d],' % tuple(obj["size"]))
+    out.append('\t\t\t"anchor": [%s, %s, %s],' % tuple(
+        repr(float(a)) for a in obj["anchor"]))
+    notes = obj["notes"]
+    out.append('\t\t\t"notes": {%s},' % ", ".join(
+        "%s: %s" % (json.dumps(k), json.dumps(v)) for k, v in notes.items()))
+    if obj["doc"]:
+        out.append('\t\t\t"doc": [')
+        _json_strings(out, obj["doc"], "\t\t\t\t")
+        out.append("\t\t\t],")
+    else:
+        out.append('\t\t\t"doc": [],')
+    out.append('\t\t\t"slices": [')
+    per_line = max(1, (76 - 3) // (w_out + 4))
+    slices = obj["slices"]
+    for y, rows in enumerate(slices):
+        quoted = [json.dumps(r) for r in rows]
+        chunks = [quoted[i:i + per_line] for i in range(0, len(quoted), per_line)]
+        for i, chunk in enumerate(chunks):
+            head = "\t\t\t\t[" if i == 0 else "\t\t\t\t "
+            if i == len(chunks) - 1:
+                tail = "]" if y == len(slices) - 1 else "],"
+            else:
+                tail = ","
+            out.append(head + ", ".join(chunk) + tail)
+    out.append("\t\t\t]")
+    out.append("\t\t}" + ("" if last else ","))
 
 
 # --- Look v2 Stage 5: the face -----------------------------------------------

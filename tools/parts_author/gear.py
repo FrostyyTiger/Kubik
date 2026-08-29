@@ -1,6 +1,6 @@
 """Three gear placeholders, authored in the frame of the socket each hangs on."""
 
-from .voxlib import Frame, Part, X, D, c, C, B
+from .voxlib import Frame, Part, json_file, X, D, c, C, B
 
 
 def sword() -> Part:
@@ -114,12 +114,18 @@ const PLACEHOLDERS := {
 }"""
 
 
-def render() -> str:
-    blocks = [
-        sword().gd("SWORD", SWORD_COMMENT),
-        tunic().gd("TUNIC", TUNIC_COMMENT),
-        pendant().gd("PENDANT", PENDANT_COMMENT),
+def render() -> tuple[str, str]:
+    # THE KEY IS THE SOCKET, because `PLACEHOLDERS` is the only index these
+    # three have ever had and a placeholder exists to prove one socket.
+    built = [
+        ("hand_r", "SWORD", sword(), SWORD_COMMENT),
+        ("chest", "TUNIC", tunic(), TUNIC_COMMENT),
+        ("neck", "PENDANT", pendant(), PENDANT_COMMENT),
     ]
+    blocks = [part.gd(const, comment) for _k, const, part, comment in built]
+    parts = {key: part for key, _c, part, _cm in built}
+    comments = {key: comment for key, _c, _p, comment in built}
+
     out = ["class_name PartsGear", ""]
     for line in DOC.strip("\n").split("\n"):
         out.append(("## " + line).rstrip())
@@ -136,4 +142,4 @@ def render() -> str:
     out.append("")
     out.append(TAIL)
     out.append("")
-    return "\n".join(out)
+    return ("\n".join(out), json_file("gear.py", DOC, parts, comments))

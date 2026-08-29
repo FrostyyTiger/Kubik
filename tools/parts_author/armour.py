@@ -33,7 +33,7 @@ answer is variants everywhere.
 from __future__ import annotations
 
 from . import human, elf, dwarf, lizardfolk
-from .voxlib import Part, gd_file, X, R, x, L, C, c, k, A, a, G
+from .voxlib import Part, gd_file, json_file, X, R, x, L, C, c, k, A, a, G
 
 ## Thicknesses, in AUTHOR voxels, the same on every race. The whole point of the
 ## fitting rule - these are the numbers that must NOT scale with the wearer.
@@ -492,11 +492,12 @@ about what grants a tier, no stats. See Armour and, for the same sentence
 written for the same reason, PartsGear."""
 
 
-def render() -> str:
+def render() -> tuple[str, str]:
     parts: dict[str, Part] = {}
     for race, module in RACES.items():
         for piece, build in PIECE_BUILDERS.items():
             parts["%s_%s" % (piece, race)] = build(module, race)
     blocks = [p.gd(name.upper()) for name, p in parts.items()]
-    return gd_file("PartsArmour", DOC, blocks,
-                   {k: k.upper() for k in parts}, "armour.py")
+    return (gd_file("PartsArmour", DOC, blocks,
+                    {k: k.upper() for k in parts}, "armour.py"),
+            json_file("armour.py", DOC, parts))
