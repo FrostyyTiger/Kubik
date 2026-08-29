@@ -883,3 +883,85 @@ say so.
 **Night 1 ends here.** Four races, four bodies, two-segment limbs and a
 three-segment one, a palette with a liner in it, no armour. 30 character tests,
 world suite green, heightmap `76cccdb6`, spawn `(-44, -124)`.
+
+---
+
+# Night 2 — armour, animation, and the record
+
+## Stage 7 — `CharacterDef` version 2
+
+Committed as `feat(character): stage 7 - ...`. Eight bytes to twenty, and a
+version-1 payload still parses.
+
+**The layout.** Bytes 0-7 are byte-for-byte version 1, which is why the bump
+could be an *append* rather than a re-layout. Bytes 8-13 are the piece per
+slot, 14-19 the tier per slot. One byte per field and not packed: the
+appearance rides its own reliable RPC once per join, not the
+twenty-times-a-second state table, so twelve bytes buys nothing and costs the
+file its one-byte-per-field readability.
+
+**`from_bytes` dispatches on the version byte, then checks the length against
+what that version declares** — `WIRE_LENGTHS := {1: 8, 2: 20}`. Guessing the
+version from the length works today and misreads the first pair of layouts that
+happen to be the same size, and misreading is worse than refusing.
+
+**A version-1 payload is a real character wearing nothing, not a stranger.**
+Falling back to the default human on an unrecognised length would silently
+change a friend's *race*, and the symptom is a friend who looks wrong rather
+than an error anyone can see. The literal old byte array is in the test.
+
+**Six slots, two with no geometry.** `legs` and `hands` are declared in the wire
+format now precisely so that filling them later costs geometry and no version
+bump.
+
+### The one disagreement with the design doc, implemented
+
+Item 4 puts armour on `CharacterDef` and it is right — one announce path, one
+rebuild path, one validate path. But `CharacterDef` is also
+`user://character.tres`, the player's chosen *appearance*, and `DESIGN.md` is
+explicit that gear is world state living in the host's save. So **`to_dict()`
+and `from_dict()` do not carry armour**, and `_test_v1_payload_still_parses`
+asserts a round trip through the dictionary comes back at tier 0 — because the
+obvious "improvement" of adding two lines there would give a player their old
+world's plate in a new one.
+
+`randomise_from()` does not draw armour either: `--look 7` is an appearance, and
+a deterministic random character arriving in tier-4 plate would quietly change
+what every headless comparison run is looking at.
+
+**The compatibility is one-way and the docstring says so** rather than implying
+the wire is symmetric. An old build reading a version-2 payload sees a version
+it does not know and falls back with a warning. That fails safe, and there is
+no way to make it fail better without the old build having been written to
+expect this one.
+
+### `scripts/character/armour.gd`
+
+The table, and it is data: the five tiers with their outline-event counts, the
+six slots with what each hangs on, and the fitting rule. It says in its own
+header that it is **not an item system** for the same reason `parts_gear.gd`
+does — no item table, no inventory, no drops, no rule about what grants a tier,
+no stats. Items v1 owns all of it.
+
+It also writes down the distinction someone will ask about in six months: an
+**overlay** is a second mesh on an existing bone, which is what a layer over a
+body part wants (a pauldron *is* the shoulder seen from outside, and it swings
+with the arm); a **socket** is a point to hang a carried object from, which is
+what a cloak is.
+
+### Two peers, with the new format
+
+```
+host:   [Game] appearance for peer …: elf "Friend"
+        [RemotePlayer] peer … (Friend) is a stocky elf
+client: [RemotePlayer] peer 1 (Marcel) is a stocky dwarf
+```
+
+Zero script errors on the host. **One on the client, and it is not this
+branch's**: `Invalid access to property or key 'voxel_radius_chunks' on a base
+object of type 'Nil'` from `world.gd` during shutdown. Checked rather than
+assumed — `git diff --stat b163ab5 HEAD -- scripts/world/ scripts/net/
+scripts/player/ scripts/game/` is empty, so this branch has not touched a line
+of it. Recorded here so the next run does not spend an hour on it.
+
+Green: 31 character tests, world suite passed.

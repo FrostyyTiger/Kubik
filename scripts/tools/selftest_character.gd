@@ -34,6 +34,7 @@ func _ready() -> void:
 		"character height": _test_character_height,
 		"def round trip": _test_def_round_trip,
 		"def from strangers": _test_def_from_strangers,
+		"a v1 payload still parses": _test_v1_payload_still_parses,
 		"pose is finite": _test_pose_finite,
 		"phase by distance": _test_phase_by_distance,
 		"idle converges": _test_idle_converges,
@@ -388,6 +389,77 @@ func _test_part_parsing():
 ## model built back-to-front would have looked exactly like a correct one and
 ## the bug would have surfaced as "the new character walks backwards".
 ##
+
+
+## A VERSION 1 PAYLOAD IS A REAL CHARACTER WEARING NOTHING.
+##
+## `CharacterDef` went to eight bytes plus twelve of armour in character v2
+## Stage 7. Every save file written before that and every peer on an older
+## build is describing the character it always described - only the armour is
+## absent, and absent armour is tier 0, which the game already has a word for.
+##
+## THE FAILURE THIS GUARDS AGAINST IS SILENT AND NASTY: falling back to the
+## default human on an unrecognised length would change a friend's RACE, and
+## the symptom is a friend who looks wrong rather than an error anyone can see.
+## So the literal old byte array is in the test, and it stays there.
+func _test_v1_payload_still_parses():
+	var bad := 0
+
+	# race 2 (dwarf), build 0, skin 3, hair colour 1, eyes 2, hair 1, beard 2.
+	var v1 := PackedByteArray([1, 2, 0, 3, 1, 2, 1, 2])
+	var def := CharacterDef.from_bytes(v1)
+	if def.race != Races.DWARF:
+		print("  a v1 payload came back as %s, not a dwarf" % Races.name_of(def.race))
+		bad += 1
+	for pair in [["skin", def.skin, 3], ["hair_color", def.hair_color, 1],
+			["eyes", def.eyes, 2], ["hair", def.hair, 1], ["beard", def.beard, 2]]:
+		if pair[1] != pair[2]:
+			print("  a v1 payload's %s came back %d, wanted %d" % pair)
+			bad += 1
+	for i in CharacterDef.ARMOUR_SLOTS:
+		if def.armour_tier[i] != 0 or def.armour_item[i] != 0:
+			print("  a v1 payload arrived wearing something in slot %d" % i)
+			bad += 1
+
+	# A version 2 payload round trips with its armour.
+	var worn := CharacterDef.new()
+	worn.race = Races.ELF
+	worn.armour_tier[CharacterDef.SLOT_TORSO] = 4
+	worn.armour_tier[CharacterDef.SLOT_BACK] = 5
+	worn.validate()
+	var back := CharacterDef.from_bytes(worn.to_bytes())
+	if back.armour_tier[CharacterDef.SLOT_TORSO] != 4 \
+			or back.armour_tier[CharacterDef.SLOT_BACK] != 5:
+		print("  a v2 payload lost its armour tiers on the wire")
+		bad += 1
+	if back.race != Races.ELF:
+		print("  a v2 payload lost its race on the wire")
+		bad += 1
+
+	# THE SAVE FILE DOES NOT CARRY ARMOUR, and this is the assertion that stops
+	# someone helpfully "fixing" that. See CharacterDef.to_dict.
+	var through_dict := CharacterDef.new()
+	through_dict.from_dict(worn.to_dict())
+	if Armour.highest_tier(through_dict) != 0:
+		print("  armour survived a round trip through the save dictionary - it must not")
+		bad += 1
+	if through_dict.race != Races.ELF:
+		print("  the save dictionary lost the race")
+		bad += 1
+
+	# A version nobody knows is the default human with a warning, not a crash.
+	var future := PackedByteArray([99, 1, 0, 0, 0, 0, 0, 0])
+	if CharacterDef.from_bytes(future).race != Races.HUMAN:
+		print("  an unknown wire version did not fall back to the default human")
+		bad += 1
+	# And a length that disagrees with its own version byte.
+	var lying := PackedByteArray([2, 1, 0, 0, 0, 0, 0, 0])
+	if CharacterDef.from_bytes(lying).race != Races.HUMAN:
+		print("  a payload claiming v2 at 8 bytes was believed")
+		bad += 1
+
+	print("a v1 payload still parses: v1 dwarf intact, v2 round trip, dict drops armour, %d checks failed" % bad)
+	return 1 if bad > 0 else 0
 
 ## A KNEE BENDS ONE WAY, AND SO DOES AN ELBOW.
 ##
