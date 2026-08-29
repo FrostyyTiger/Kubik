@@ -116,87 +116,21 @@ Two segments on the SAME generic chain rule the lizardfolk uses. That is half
 the point of building this animal: if the chain rule had quietly assumed
 three links or a humanoid parent, this is where it would show."""
 
-EXTRA = """## Model voxels, for the tables below.
-const V := VoxelModel.VOXEL_M
-
-
-## The critter's dimension table, in the shape Races.dims() returns.
-##
-## `gait` is the only field that is not a measurement, and it is the field this
-## whole animal exists to exercise: it names an entry in Animator.RIG_SHAPES,
-## which says which bones are legs and which of them share a phase.
-const DIMS := {
-	"name": "critter",
-	"total": 22, "legs": 10, "torso": 12, "head": 12,
-	"torso_w": 12, "torso_d": 12, "head_w": 12, "head_d": 18,
-	"leg_w": 4, "arm_len": 0, "arm_w": 0,
-	"gait": "trot",
-	"lean_deg": 0.0,
-	"silhouette": "long, low and four-legged",
-}
-
-
-## Bones and sockets, in the shape Races.bone_table() returns.
-##
-## NO `torso`, NO `hips`, NO ARMS. Written out rather than derived, because
-## Races.bone_table() derives a HUMANOID from a race table and this is the
-## thing that proves it does not have to be the only shape - a quadruped whose
-## bone table came out of the same generator would not be evidence of anything.
-static func bone_table() -> Array:
-	var leg_x := 3.0
-	var leg_z := 10.0
-	return [
-		{"name": "body", "parent": "", "rest": Vector3(0, 10, 0) * V, "part": "body"},
-		{"name": "head", "parent": "body", "rest": Vector3(0, 4, -14) * V, "part": "head"},
-		{"name": "leg_fr", "parent": "body", "rest": Vector3(leg_x, 0, -leg_z) * V, "part": "leg"},
-		{"name": "leg_fl", "parent": "body", "rest": Vector3(-leg_x, 0, -leg_z) * V,
-			"part": "leg", "mirror": true},
-		{"name": "leg_br", "parent": "body", "rest": Vector3(leg_x, 0, leg_z) * V, "part": "leg"},
-		{"name": "leg_bl", "parent": "body", "rest": Vector3(-leg_x, 0, leg_z) * V,
-			"part": "leg", "mirror": true},
-		{"name": "tail_1", "parent": "body", "rest": Vector3(0, 8, 14) * V, "part": "tail_1"},
-		{"name": "tail_2", "parent": "tail_1", "rest": Vector3(0, 0, 8) * V, "part": "tail_2"},
-		# One socket, because the rule is that sockets are not a humanoid idea.
-		# A pack, a saddle, a collar: whatever the first-enemy plan wants, the
-		# machinery is the same machinery.
-		{"name": "back", "parent": "body", "rest": Vector3(0, 12, 0) * V, "socket": true},
-	]
-
-
-## A palette for it. Not a race, so it has no entry in Races - and that is the
-## point: the mesher takes any slot table at all.
-static func palette() -> Dictionary:
-	var hide := Color.html("#6B5B45").srgb_to_linear()
-	return {
-		VoxelModel.SKIN: hide,
-		VoxelModel.SKIN_SHADED: Color(hide.r * 0.8, hide.g * 0.8, hide.b * 0.8),
-		VoxelModel.HAIR: Color.html("#3A3028").srgb_to_linear(),
-		VoxelModel.IRIS: Color.html("#C9A227").srgb_to_linear(),
-		VoxelModel.EYE_WHITE: Color.html("#F4F0E8").srgb_to_linear(),
-		VoxelModel.MOUTH: Color.html("#3A2A22").srgb_to_linear(),
-		VoxelModel.CLOTH: hide,
-		VoxelModel.CLOTH_DARK: hide,
-		VoxelModel.LEATHER: Color.html("#3A2A1E").srgb_to_linear(),
-		VoxelModel.BELT: Color.html("#5A4632").srgb_to_linear(),
-		VoxelModel.TOOTH: Color.html("#EDE6D4").srgb_to_linear(),
-		VoxelModel.METAL: Color.html("#9A9FA6").srgb_to_linear(),
-		VoxelModel.WOOD: Color.html("#7A5230").srgb_to_linear(),
-	}"""
 
 
 def render() -> tuple[str, str]:
-    from .voxlib import gd_file, json_file
+    # NO GDSCRIPT. `parts_critter.gd` is hand-written and permanent since
+    # parts-data v1: `DIMS`, `bone_table()` and `palette()` are GDScript no
+    # JSON can hold, and they stopped being written by a Python string the
+    # moment they no longer had to share a file with the ASCII.
+    from .voxlib import json_file
     built = [
-        ("body", "BODY", scaled("BODY"), BODY_COMMENT),
-        ("head", "HEAD", scaled("HEAD"), HEAD_COMMENT),
-        ("leg", "LEG", scaled("LEG"), LEG_COMMENT),
-        ("tail_1", "TAIL_1", scaled("TAIL_1"), TAIL_COMMENT),
-        ("tail_2", "TAIL_2", scaled("TAIL_2"), ""),
+        ("body", scaled("BODY"), BODY_COMMENT),
+        ("head", scaled("HEAD"), HEAD_COMMENT),
+        ("leg", scaled("LEG"), LEG_COMMENT),
+        ("tail_1", scaled("TAIL_1"), TAIL_COMMENT),
+        ("tail_2", scaled("TAIL_2"), ""),
     ]
-    blocks = [part.gd(const, comment) for _k, const, part, comment in built]
-    parts = {key: part for key, _c, part, _cm in built}
-    comments = {key: comment for key, _c, _p, comment in built}
-    return (gd_file("PartsCritter", DOC, blocks,
-                    {key: const for key, const, _p, _cm in built},
-                    "critter.py", extra=EXTRA),
-            json_file("critter.py", DOC, parts, comments))
+    parts = {key: part for key, part, _cm in built}
+    comments = {key: comment for key, _p, comment in built}
+    return (None, json_file("critter.py", DOC, parts, comments))

@@ -98,6 +98,11 @@ func apply_armour() -> void:
 	for slot in CharacterDef.ARMOUR_SLOTS:
 		if def.armour_tier[slot] <= 0:
 			continue
+		# INSIDE THE LOOP, PAST THE `continue`, deliberately: a character
+		# wearing nothing never asks for the armour module, and the armour
+		# module is the megabyte. Past the first ask it is a cached
+		# dictionary, so asking once a slot costs nothing.
+		var armour_parts := PartsData.module("armour")
 		var where := Armour.attach_points(slot)
 		var bones: Array = where.get("bones", [])
 		for i in bones.size():
@@ -109,15 +114,15 @@ func apply_armour() -> void:
 			# the body's own limbs do - Rig knows which bones were built
 			# mirrored and mirrors the overlay to match.
 			var piece := Armour.part_name_for(slot, def.armour_tier[slot], def.race, i)
-			if piece.is_empty() or not PartsArmour.PARTS.has(piece):
+			if piece.is_empty() or not armour_parts.has(piece):
 				continue
-			rig.attach_overlay(bones[i], PartsArmour.PARTS[piece], piece,
+			rig.attach_overlay(bones[i], armour_parts[piece], piece,
 				palette, _config.ao_strength)
 		var carried := Armour.part_name(slot, def.armour_tier[slot], def.race)
-		if carried.is_empty() or not PartsArmour.PARTS.has(carried):
+		if carried.is_empty() or not armour_parts.has(carried):
 			continue
 		for socket in where.get("sockets", []):
-			rig.attach_to_socket(socket, PartsArmour.PARTS[carried], carried,
+			rig.attach_to_socket(socket, armour_parts[carried], carried,
 				palette, _config.ao_strength)
 
 
@@ -181,8 +186,11 @@ func set_gear_placeholders(on: bool) -> void:
 	if not on:
 		return
 	var palette := Races.palette(def.race, def.skin, def.hair_color, def.eyes)
+	# `PLACEHOLDERS` names a part; the part itself comes from the data, which
+	# is the one lookup this stage cost anybody.
+	var gear_parts := PartsData.module("gear")
 	for socket_name in PartsGear.PLACEHOLDERS:
-		rig.attach_to_socket(socket_name, PartsGear.PLACEHOLDERS[socket_name],
+		rig.attach_to_socket(socket_name, gear_parts[PartsGear.PLACEHOLDERS[socket_name]],
 			socket_name, palette, _config.ao_strength)
 
 

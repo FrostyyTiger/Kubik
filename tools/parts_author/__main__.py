@@ -68,8 +68,13 @@ def main() -> None:
     OUT_JSON.mkdir(parents=True, exist_ok=True)
     for name, render in MODULES.items():
         gd_text, json_text = render()
-        for path, text in ((OUT / ("parts_%s.gd" % name), gd_text),
-                           (OUT_JSON / ("%s.json" % name), json_text)):
+        # A `None` for the GDScript means that module's `.gd` is HAND-WRITTEN
+        # and permanent - hair, gear and critter, whose files kept the tables
+        # and lookups no JSON can hold and lost the ASCII. Never overwrite one.
+        written = [(OUT_JSON / ("%s.json" % name), json_text)]
+        if gd_text is not None:
+            written.insert(0, (OUT / ("parts_%s.gd" % name), gd_text))
+        for path, text in written:
             path.write_text(text, encoding="utf-8", newline="\n")
             print("wrote %s (%d lines)" % (path.relative_to(ROOT), text.count("\n")))
 

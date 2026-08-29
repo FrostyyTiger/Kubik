@@ -765,16 +765,20 @@ static func has_part_set(race: int) -> bool:
 
 
 ## The part set for a race. `build` is accepted and ignored, as in dims().
+##
+## THE ASCII LIVES IN `assets/characters/parts/` since parts-data v1, and
+## `PartsData` loads a module the first time one is asked for. This function
+## is the same table it was; only the address of the parts changed.
 static func part_set(race: int, _build := STOCKY) -> Dictionary:
 	match valid_race(race):
 		ELF:
-			return PartsElf.PARTS
+			return PartsData.module("elf")
 		DWARF:
-			return PartsDwarf.PARTS
+			return PartsData.module("dwarf")
 		LIZARDFOLK:
-			return PartsLizardfolk.PARTS
+			return PartsData.module("lizardfolk")
 		_:
-			return PartsHuman.PARTS
+			return PartsData.module("human")
 
 
 ## The part set for one CHARACTER, with its chosen hair and beard resolved in.

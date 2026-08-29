@@ -985,7 +985,7 @@ func _sheet_budget() -> void:
 	for child in _subjects_root.get_children():
 		child.free()
 	var rig := Rig.new()
-	rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+	rig.build(PartsCritter.bone_table(), PartsData.module("critter"),
 		PartsCritter.palette(), CharacterConfig.load_or_default().ao_strength)
 	var holder := Node3D.new()
 	holder.add_child(rig)
@@ -1082,7 +1082,7 @@ func _sheet_critter() -> void:
 	for k in STRIP_STEPS:
 		var holder := Node3D.new()
 		var rig := Rig.new()
-		rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+		rig.build(PartsCritter.bone_table(), PartsData.module("critter"),
 			PartsCritter.palette(), config.ao_strength)
 		var st := LocomotionState.new()
 		st.speed = 4.0

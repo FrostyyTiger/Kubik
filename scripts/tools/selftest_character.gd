@@ -1650,7 +1650,7 @@ func _test_blink_rhythm():
 ## leaves nothing behind, and that the rig actually built the variant.
 func _test_eyes_closed_variant():
 	var bad := 0
-	var open_voxels := VoxelModel.parse(PartsHuman.HEAD, "head")
+	var open_voxels := VoxelModel.parse(PartsData.module("human")["head"], "head")
 	var closed := VoxelModel.remap_slots(open_voxels, {
 		VoxelModel.IRIS: VoxelModel.SKIN,
 		VoxelModel.EYE_WHITE: VoxelModel.SKIN,
@@ -2228,7 +2228,7 @@ func _lying_vox() -> PackedByteArray:
 func _test_critter():
 	var bad := 0
 	var rig := Rig.new()
-	rig.build(PartsCritter.bone_table(), PartsCritter.PARTS,
+	rig.build(PartsCritter.bone_table(), PartsData.module("critter"),
 		PartsCritter.palette(), 0.35)
 
 	# The bones a person has and this animal does not.
@@ -2352,12 +2352,16 @@ func _test_json_is_the_consts():
 	var report := []
 	var total := 0
 	for module in PartsData.MODULES:
-		var consts := _const_parts(module)
 		var data := PartsData.module(module)
 		if data.is_empty():
 			print("  %s loaded no parts at all" % module)
 			bad += 1
 			continue
+		total += data.size()
+		report.append("%s %08x" % [module, _module_hash(data)])
+		if not COMPARED.has(module):
+			continue
+		var consts := _const_parts(module)
 		if consts.size() != data.size():
 			print("  %s: %d parts in the consts, %d in the json" % [
 				module, consts.size(), data.size()])
@@ -2386,8 +2390,6 @@ func _test_json_is_the_consts():
 				print("  %s '%s': %d voxels in the const, %d in the json, and they differ" % [
 					module, key, before.size(), after.size()])
 				bad += 1
-		total += data.size()
-		report.append("%s %08x" % [module, _module_hash(data)])
 	if total != 101:
 		print("  %d parts in total, wanted 101" % total)
 		bad += 1
@@ -2396,13 +2398,20 @@ func _test_json_is_the_consts():
 	return 1 if bad > 0 else 0
 
 
+## The modules that still have generated GDScript to be compared against.
+##
+## Stage 3 of parts-data v1 rewrote `parts_{hair,gear,critter}.gd` by hand -
+## they kept the option tables, the socket index and the critter's dimension
+## and bone tables, and lost every voxel - so those three have no const side
+## left. They are still counted and still hashed; there is simply nothing on
+## the other side of the equals sign. Stage 4 empties this list.
+const COMPARED := ["human", "elf", "dwarf", "lizardfolk", "armour"]
+
+
 ## The GDScript side of the comparison, one module at a time.
 ##
-## Every module but hair has a map from the key a bone table uses to the
-## constant - `PARTS`, or `PLACEHOLDERS` for the gear placeholders, whose
-## index has always been the socket they hang on. Hair has no such map at all
-## (its options are positional, in `HAIR` and `BEARD`), so its keys are the
-## constants' own names, lowercased, which is what the generator writes.
+## Every module here has a `PARTS` map from the key a bone table uses to the
+## constant, which is the same key the JSON is written under.
 func _const_parts(module: String) -> Dictionary:
 	match module:
 		"human":
@@ -2415,17 +2424,6 @@ func _const_parts(module: String) -> Dictionary:
 			return PartsLizardfolk.PARTS
 		"armour":
 			return PartsArmour.PARTS
-		"critter":
-			return PartsCritter.PARTS
-		"gear":
-			return PartsGear.PLACEHOLDERS
-		"hair":
-			var out := {}
-			for name in (PartsHair as GDScript).get_script_constant_map():
-				var value = (PartsHair as GDScript).get_script_constant_map()[name]
-				if value is Dictionary and (value as Dictionary).has("slices"):
-					out[String(name).to_lower()] = value
-			return out
 	print("  no const table is known for module '%s'" % module)
 	return {}
 
