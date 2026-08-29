@@ -93,21 +93,45 @@ const SLOTS := [
 ## the wire format reserved six slots rather than four. Filling `legs` and
 ## `hands` later costs geometry and no version bump.
 static func piece_count(slot: int) -> int:
-	if slot < 0 or slot >= CharacterDef.ARMOUR_SLOTS:
-		return 1
-	return PIECES[slot].size()
+	return VARIANTS
 
 
-## Piece 0 of every slot is EMPTY, so "wearing nothing" needs no special case
-## anywhere. Stage 9 fills these in; Stage 8 proves the plumbing with one.
+## WHAT EACH SLOT WEARS AT EACH TIER, indexed by tier. "" is nothing.
+##
+## THE TIER SELECTS THE PIECE, which is what makes the ladder a ladder rather
+## than a set of independent choices. `armour_item` stays on the wire beside it
+## as the VARIANT within a tier - two different tier-4 breastplates - and Items
+## v1 owns what fills it; today every slot has one variant and the byte is
+## always zero.
+##
+## Read down a column and you get the ladder the design doc argues for:
+##
+##   tier 1 cloth   0 events   what you start in. The four races have to be
+##                             identifiable in NOTHING, so starting gear that
+##                             changed the silhouette would mean the naked
+##                             character is not the design.
+##   tier 2 hide    1 event    a shoulder cap. You killed something.
+##   tier 3 mail    1 event    a raised collar, and a 1-voxel checker over
+##                             cloth. Mail DRAPES - it does nothing to the
+##                             outline and everything to the surface - which is
+##                             where a player learns armour is not
+##                             monotonically bigger.
+##   tier 4 plate   3 events   pauldrons past the arm line, the gorget, and
+##                             faulds below the belt.
+##   tier 5 named   5 events   the three above, plus a cloak and one vertical
+##                             element above the head.
 const PIECES := [
-	["none", "plate"],      # torso
-	["none", "pauldron"],   # shoulders
-	["none", "cloak"],      # back
-	["none", "helm"],       # head
-	["none"],               # legs - declared, no geometry
-	["none"],               # hands - declared, Items v1 fills it
+	["", "jerkin", "hide", "mail", "plate", "plate"],       # torso
+	["", "", "cap", "", "pauldron", "pauldron"],            # shoulders
+	["", "", "", "", "", "cloak"],                          # back
+	["", "", "", "gorget", "helm", "helm_crowned"],         # head
+	["", "", "", "", "", ""],                               # legs - declared
+	["", "", "", "", "", ""],                               # hands - declared
 ]
+
+## Variants within a tier. One each for now; the byte exists so Items v1 can
+## add a second tier-4 breastplate without another wire version.
+const VARIANTS := 1
 
 
 ## The part name for a piece on a race, or "" for nothing worn.
@@ -116,13 +140,16 @@ const PIECES := [
 ## That is the fitting rule at the seam: `armour.py` stamps one normalised
 ## description into four sets of real dimensions, so there are four parts and
 ## one design, rather than four designs or one part that fits nobody.
-static func part_name(slot: int, piece: int, race: int) -> String:
+static func part_name(slot: int, tier: int, race: int) -> String:
 	if slot < 0 or slot >= PIECES.size():
 		return ""
 	var names: Array = PIECES[slot]
-	if piece <= 0 or piece >= names.size():
+	if tier <= 0 or tier >= names.size():
 		return ""
-	return "%s_%s" % [names[piece], Races.name_of(race)]
+	var piece: String = names[tier]
+	if piece.is_empty():
+		return ""
+	return "%s_%s" % [piece, Races.name_of(race)]
 
 
 ## Where a slot hangs: `{"bones": [...]}` for an overlay, `{"sockets": [...]}`
@@ -166,3 +193,39 @@ static func highest_tier(def: CharacterDef) -> int:
 static func expected_events(def: CharacterDef) -> int:
 	var tier := highest_tier(def)
 	return int(TIERS[clampi(tier, 0, TIERS.size() - 1)]["events"])
+
+
+# --- Two exercises left open, on purpose --------------------------------------
+
+
+## TODO(marcel): make the dwarf's beard rings track the armour.
+##
+## The beard supports rings and this returns 1 at every tier, so every dwarf
+## wears exactly one ring forever. It is a working fallback: a dwarf with one
+## ring looks like a dwarf.
+##
+##   Hint: it is not linear - the design doc's ladder is one ring at tier 1 and
+##   three by tier 4, which is a curve rather than a slope. The interesting
+##   question is the other one: should rings track the TORSO's tier, or
+##   `highest_tier()`? One says "this is what I paid for my armour" and the
+##   other says "this is what I have become", and they are different characters.
+##   `Armour.tier_of(def, CharacterDef.SLOT_TORSO)` and `highest_tier(def)` are
+##   both one call away.
+static func beard_rings_for(def: CharacterDef) -> int:
+	return 1
+
+
+## TODO(marcel): per-race armour trim.
+##
+## Returns steel for everyone, which is correct and dull: one authored set that
+## reads the same on all four races.
+##
+##   Hint: the same set reads as dwarven in bronze, elven in pewter and human in
+##   brass for the price of one hex per race, and `Races.tier_hex(race,
+##   "accent")` already has a per-race colour sitting there. The interesting
+##   question is whether trim follows the WEARER or the ITEM - a dwarven axe
+##   carried by an elf is a different story from an elf's axe, and armour is
+##   the same question with more surface area. Answering "the item" needs a
+##   field on the piece; answering "the wearer" needs nothing but this function.
+static func trim_hex_for(race: int, _slot: int) -> String:
+	return Races.TRIM_BRIGHT_HEX

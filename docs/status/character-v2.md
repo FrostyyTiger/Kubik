@@ -1055,3 +1055,89 @@ this stage was for.
 
 Green: 32 character tests, world suite passed, silhouette unchanged at 0.664
 with 0 pairs over, triangles 44,936 against a 48,000 budget.
+
+---
+
+## Stage 9 — the tier ladder, and where it does not yet hold
+
+Committed as `feat(character): stage 9 - ...`. **The ladder is exact on the
+dwarf and off on 6 of 24 rows.** This stage does not fully meet its own gate,
+and the gate is not being weakened to make it.
+
+### The structure
+
+**The tier selects the piece.** `Armour.PIECES[slot]` is indexed by tier, which
+is what makes the ladder a ladder rather than six independent choices.
+`armour_item` stays on the wire beside it as the *variant within a tier*; Items
+v1 owns what fills it, and today it is always zero.
+
+Nine pieces authored: `jerkin`, `hide`, `cap`, `mail`, `gorget`, `plate`,
+`pauldron`, `helm`, `helm_crowned`, each stamped into four bodies.
+
+### What the metric measures, and two corrections to it
+
+Both corrections were forced by the ladder disagreeing with itself, and both
+make the metric a better description of what an outline event is.
+
+1. **Bands, not per-view counts.** An outline event is a *feature*, and a
+   feature can be seen from more than one side. Counting the front and profile
+   views separately made one gorget into two events. Events are now recorded as
+   the **height band** they occupy, normalised to the body's height so a
+   1.5 m dwarf and a 2.25 m elf are comparable, and merged across views.
+2. **Merge by the LONGER band, not the shorter.** This decides whether a cloak
+   can ever be an event at all. Two sightings of one feature have similar
+   extents; two different features do not. Against the *shorter* band, a
+   cloak's overlap with a pauldron is the pauldron's whole length — so the
+   cloak swallowed it and tier 5 measured four however big the cloak got.
+
+### The ladder as measured
+
+| race | t2 | t3 | t4 | t5 |
+| --- | --- | --- | --- | --- |
+| wanted | 1 | 1 | 3 | 5 |
+| human | 1 | 1 | **3** | 4 |
+| elf | 1 | 1 | 2 | 3 |
+| **dwarf** | **1** | **1** | **3** | **5** |
+| lizardfolk | 1 | 2 | 5 | 6 |
+
+Tiers 0 and 1 are **0 on every race**, which is the one row that matters most:
+tier 1 having zero events is what keeps the naked character the design rather
+than the starting gear.
+
+**What is off, and why, so the next run does not start from scratch:**
+
+- **The elf is under.** Its torso is 18 voxels wide and the faulds flare a
+  fixed 4 author voxels a side; on the narrowest race in the game that is
+  proportionally the largest flare and it still does not clear the arms enough
+  to register as its own band. The flare wants to be a fraction of the wearer
+  with an absolute floor, which is the fitting rule applied to a dimension I
+  treated as purely absolute.
+- **The human's tier 5 is one short.** The cloak is not registering as its own
+  feature even under the corrected merge. Its band and the faulds' band are
+  adjacent and similar in extent, which is exactly the case the merge cannot
+  distinguish from two views of one thing.
+- **The lizardfolk is over on three rows.** Its 26° lean and its split cloak
+  produce genuine extra bands in profile. Some of those are real features and
+  some are the lean making one feature look like two at different heights.
+
+None of this is a plumbing failure — every piece fits every body and the
+overlap test is clean. It is armour geometry that wants another pass with the
+metric open beside it, which is a design afternoon rather than a fix.
+
+### And the sheet
+
+`--sheet tiers`: one race, six tiers, at 3 m, 15 m and 40 m, at noon and dusk.
+At 15 m the row does read left to right — the last two are visibly bulkier.
+`--sheet armour` shoots all four races at tier 4 at the same three distances.
+
+### The two exercises, left open with working fallbacks
+
+- **`Armour.beard_rings_for()`** returns 1. Every dwarf wears one ring forever,
+  which looks like a dwarf. The hint names the real question: rings tracking
+  the *torso's* tier says "this is what I paid for my armour"; rings tracking
+  `highest_tier()` says "this is what I have become".
+- **`Armour.trim_hex_for()`** returns steel for everyone. The hint names the
+  interesting half: whether trim follows the **wearer** or the **item** — a
+  dwarven axe carried by an elf is a different story from an elf's axe.
+
+Green: 32 character tests, world suite passed.

@@ -143,6 +143,7 @@ func _sheets() -> Dictionary:
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
 		"armour": _sheet_armour,
+		"tiers": _sheet_tiers,
 		"gear": _sheet_gear,
 		"critter": _sheet_critter,
 		"budget": _sheet_budget,
@@ -1257,6 +1258,32 @@ func _sheet_armour() -> void:
 			await _shoot("armour-%dm-%s" % [int(distance), entry["name"]], distance)
 
 
+## One race, every tier, side by side, at three distances and two hours.
+##
+## THE SHEET MARCEL ORDERS THE LADDER FROM. The count is taken at 3 m by
+## `--sheet outline`, where a voxel exists; this is the picture, and the claim
+## it has to support is that a viewer who has never seen the game puts the six
+## in the right order without being told what the order is.
+func _sheet_tiers() -> void:
+	var base := CharacterDef.new()
+	base.race = Races.HUMAN
+	base.validate()
+	var row := []
+	for tier in range(0, CharacterDef.TIER_MAX + 1):
+		var v: CharacterDef = base.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = tier
+		v.validate()
+		row.append(v)
+	for time_entry in [{"t": 0.5, "name": "noon"}, {"t": 0.82, "name": "dusk"}]:
+		_set_time(time_entry["t"])
+		for distance in [3.0, 15.0, 40.0]:
+			_set_lineup(row)
+			_face(FACING_CAMERA + deg_to_rad(20.0))
+			await _shoot("tiers-%s-%dm" % [time_entry["name"], int(distance)], distance)
+	_set_time(-1.0)
+
+
 # --- The value tiers -----------------------------------------------------------
 #
 # CHARACTER V2 STAGE 1'S GATE, and the reason a data-only stage has one.
@@ -1440,42 +1467,55 @@ const OUTLINE_MIN_WIDTH_VOX := 4
 const OUTLINE_MIN_RUN_VOX := 3
 
 
-## Count outline events for every race, worn against bare.
+## Count outline events for every race at every tier, against the naked body.
 ##
-## Until the armour system exists there is nothing to wear, so this also shoots
-## every race with the Stage 10 GEAR PLACEHOLDERS on - which is not armour and
-## is not judged, but which is a real change to a real outline and is therefore
-## the only way to prove the metric can see anything at all. A metric whose
-## only test is that it returns zero has not been tested.
+## THE LADDER IS 0 / 0 / 1 / 1 / 3 / 5 and this is the gate on it. Anything that
+## disagrees is reported with what was wanted, because "tier 4 produced two
+## events" is a sentence someone can act on and "the ladder is wrong" is not.
 func _sheet_outline() -> void:
 	print("[Gallery] --- outline events, measured at %.0f m ---" % OUTLINE_DISTANCE)
 	print("[Gallery] an event is >= %d voxels wider than bare, over >= %d voxels of height" % [
 		OUTLINE_MIN_WIDTH_VOX, OUTLINE_MIN_RUN_VOX])
 	print("[Gallery]   %-34s %6s %6s %6s %6s %7s" % [
-		"subject", "front", "up", "prof", "prof-up", "total"])
+		"subject", "front", "prof", "merged", "up", "total"])
+	var over := 0
 	for def: CharacterDef in _lineup_defs():
-		var bare_front := await _outline_mask(def, 0.0, false)
-		var bare_prof := await _outline_mask(def, 90.0, false)
-		for gear in [false, true]:
-			var m_front := bare_front if not gear else await _outline_mask(def, 0.0, true)
-			var m_prof := bare_prof if not gear else await _outline_mask(def, 90.0, true)
-			var f := _outline_events(m_front, bare_front)
-			var p := _outline_events(m_prof, bare_prof)
-			print("[Gallery]   %-34s %6d %6d %6d %6d %7d" % [
-				_mask_name(def) + (" + placeholders" if gear else " (bare)"),
-				f["width"], f["vertical"], p["width"], p["vertical"],
-				f["width"] + f["vertical"] + p["width"] + p["vertical"]])
+		var bare_front := await _outline_mask(def, 0.0, 0)
+		var bare_prof := await _outline_mask(def, 90.0, 0)
+		for tier in range(0, CharacterDef.TIER_MAX + 1):
+			var m_front := bare_front if tier == 0 else await _outline_mask(def, 0.0, tier)
+			var m_prof := bare_prof if tier == 0 else await _outline_mask(def, 90.0, tier)
+			var f := _outline_bands(m_front, bare_front)
+			var p := _outline_bands(m_prof, bare_prof)
+			var widths := _merge_bands(f["bands"], p["bands"])
+			# A vertical element above the head is one feature however many
+			# views can see it.
+			var vertical: int = maxi(int(f["vertical"]), int(p["vertical"]))
+			var total: int = widths + vertical
+			var want: int = int(Armour.TIERS[tier]["events"])
+			var flag := ""
+			if total != want:
+				flag = "   WANTED %d" % want
+				over += 1
+			print("[Gallery]   %-34s %6d %6d %6d %6d %7d%s" % [
+				"%s tier %d %s" % [_mask_name(def), tier, Armour.TIERS[tier]["name"]],
+				(f["bands"] as Array).size(), (p["bands"] as Array).size(),
+				widths, vertical, total, flag])
+	print("[Gallery]   the ladder is %s: %d of %d rows off" % [
+		"CORRECT" if over == 0 else "WRONG", over,
+		Races.RACE_COUNT * (CharacterDef.TIER_MAX + 1)])
 
 
 ## One subject as a mask at the outline distance, optionally wearing something.
-func _outline_mask(def, yaw_deg: float, gear: bool) -> Dictionary:
+func _outline_mask(def, yaw_deg: float, tier: int) -> Dictionary:
+	var worn = def
+	if def != null and tier > 0:
+		worn = (def as CharacterDef).duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			worn.armour_tier[slot] = tier
+		worn.validate()
 	_enter_mask_mode()
-	_set_lineup([def])
-	if gear:
-		for child in _subjects_root.get_children():
-			if child is CharacterView:
-				(child as CharacterView).set_gear_placeholders(true)
-				_paint_mask(child)
+	_set_lineup([worn])
 	if yaw_deg != 0.0:
 		_face(FACING_CAMERA + deg_to_rad(yaw_deg))
 	var eye := _lineup_chest_height()
@@ -1525,10 +1565,18 @@ func _width_profile(mask: Dictionary) -> PackedInt32Array:
 	return out
 
 
-## Width events and vertical events of `worn` against `bare`.
-func _outline_events(worn: Dictionary, bare: Dictionary) -> Dictionary:
+## The HEIGHT BANDS at which `worn` is wider than `bare`, plus a vertical flag.
+##
+## BANDS RATHER THAN A COUNT, because an outline event is a FEATURE and a
+## feature can be seen from more than one side. A gorget shows in the front
+## view and in profile; counting each view separately made one collar into two
+## events, and the ladder disagreed with itself on three of four races. Merging
+## by the height a feature sits at is what turns two sightings of one thing back
+## into one thing - and it is also just a better description of what an outline
+## event is.
+func _outline_bands(worn: Dictionary, bare: Dictionary) -> Dictionary:
 	if int(worn["w"]) == 0 or int(bare["w"]) == 0:
-		return {"width": 0, "vertical": 0}
+		return {"bands": [], "vertical": 0}
 	var px := _outline_px_per_voxel()
 	var min_width := int(round(float(OUTLINE_MIN_WIDTH_VOX) * px))
 	var min_run := maxi(1, int(round(float(OUTLINE_MIN_RUN_VOX) * px)))
@@ -1536,17 +1584,21 @@ func _outline_events(worn: Dictionary, bare: Dictionary) -> Dictionary:
 	var pw := _width_profile(worn)
 	var pb := _width_profile(bare)
 
-	var width_events := 0
+	var bands := []
 	var run := 0
-	for i in mini(pw.size(), pb.size()):
-		if pw[i] - pb[i] >= min_width:
+	var limit := mini(pw.size(), pb.size())
+	for i in limit + 1:
+		var wide := i < limit and pw[i] - pb[i] >= min_width
+		if wide:
 			run += 1
-		else:
-			if run >= min_run:
-				width_events += 1
-			run = 0
-	if run >= min_run:
-		width_events += 1
+			continue
+		if run >= min_run:
+			# Normalised to a fraction of the body's height, so a band on a
+			# 1.5 m dwarf and a band on a 2.25 m elf can be compared - and so
+			# the front and profile views, whose masks are different heights,
+			# agree about where a thing is.
+			bands.append([float(i - run) / float(limit), float(i) / float(limit)])
+		run = 0
 
 	# Anything standing above the bare body's crown: a crest, a helm spike, the
 	# vertical element tier 5 is allowed. At most one per view - two spikes on
@@ -1555,7 +1607,38 @@ func _outline_events(worn: Dictionary, bare: Dictionary) -> Dictionary:
 	for i in range(pb.size(), pw.size()):
 		if pw[i] > 0:
 			above += 1
-	return {"width": width_events, "vertical": 1 if above >= min_run else 0}
+	return {"bands": bands, "vertical": 1 if above >= min_run else 0}
+
+
+## Two views' bands, merged into one count of FEATURES.
+##
+## Two bands are the same feature when they overlap by more than half of the
+## LONGER one - not the shorter.
+##
+## The difference decides whether a cloak can ever be an event. Two sightings of
+## one feature have similar extents and overlap almost entirely, so either rule
+## merges them. Two DIFFERENT features do not: a cloak's band runs most of the
+## body and a pauldron's is a tenth of it, and against the shorter one the
+## overlap is the pauldron's whole length - so the cloak swallowed it and tier 5
+## measured four events instead of five however big the cloak was. Against the
+## longer, a short band inside a long one stays its own feature, which is what
+## a pauldron under a cloak actually is.
+static func _merge_bands(a: Array, b: Array) -> int:
+	var all := a.duplicate()
+	for band in b:
+		var merged := false
+		for other in all:
+			var lo: float = maxf(band[0], other[0])
+			var hi: float = minf(band[1], other[1])
+			var longer: float = maxf(band[1] - band[0], other[1] - other[0])
+			if longer > 0.0 and (hi - lo) > longer * 0.5:
+				other[0] = minf(other[0], band[0])
+				other[1] = maxf(other[1], band[1])
+				merged = true
+				break
+		if not merged:
+			all.append(band)
+	return all.size()
 
 
 ## THE WORST CASE ACROSS HAIR AND BEARD OPTIONS.

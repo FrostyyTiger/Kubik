@@ -45,6 +45,10 @@ from .voxlib import Part, gd_file, X, R, x, L, C, c, k, A, a
 ## which is how it was found. `U_len` is for code that has already crossed into
 ## output space, and nothing in this file has.
 PLATE = 2
+## How far faulds flare past the hips, in author voxels. They have to exceed
+## the torso's own width or they are a skirt rather than an outline event, so
+## the plate's part is wider than the body it is worn on by this much a side.
+FLARE = 4
 ## A helm's shell. TWO and not one: the heads are chamfered, so a one-voxel
 ## shell touches the skull at every cut corner - measured, 180 voxels of it on
 ## the human. Two clears every race, and it is the same thickness as a plate,
@@ -128,9 +132,11 @@ def breastplate(module, race: str) -> Part:
     # way and drawn at z 0..PLATE lands INSIDE that face. Anchoring at
     # `d * 0.5 + PLATE` puts the plate's back against the torso's front and the
     # rest of it proud, which is what wearing something means.
-    p = Part("PLATE_%s" % race.upper(), (w, h, d + PLATE),
-             (anchor[0], anchor[1], anchor[2] + PLATE))
+    p = Part("PLATE_%s" % race.upper(), (w + FLARE * 2, h, d + PLATE),
+             (anchor[0] + FLARE, anchor[1], anchor[2] + PLATE))
     x0, x1 = _span(0.12, 0.88, w)
+    x0 += FLARE
+    x1 += FLARE
     y0, y1 = _span(0.18, 0.86, h)
     # The plate itself, proud of the front face. `z` runs front to back and the
     # body starts at PLATE, so the plate occupies [0, PLATE).
@@ -148,8 +154,28 @@ def breastplate(module, race: str) -> Part:
     # HERALDRY. A block of the race's accent on the chest - cheap, reads at
     # 15 m, and in a four-player co-op game it is how you find your friends.
     hx0, hx1 = _span(0.36, 0.64, w)
+    hx0 += FLARE
+    hx1 += FLARE
     hy0, hy1 = _span(0.42, 0.66, h)
     p.box((hx0, hx1), (hy0, hy1), (0, 1), C)
+
+    # FAULDS - the plates that flare below the belt, and the third of tier 4's
+    # three outline events. This is the one that has to grow the outline
+    # SIDEWAYS at the hips, where the naked body is narrowing, so it registers
+    # as a band the bare silhouette does not have.
+    # Starting a little above the belt rather than at it: at 0.02 the faulds
+    # sit exactly where the pelvis begins, and on the narrow-torsoed lizardfolk
+    # they clipped it. Faulds hang FROM the waist, so this is also just where
+    # they go.
+    fy0, fy1 = _span(0.08, 0.26, h)
+    rows = fy1 - fy0
+    for i, yy in enumerate(range(fy1 - 1, fy0 - 1, -1)):
+        # Flaring: each row down is wider than the one above, which is what
+        # makes it a flare rather than a skirt - and what makes it a band the
+        # naked silhouette does not have, at the point where a body narrows.
+        grow = int(FLARE * (i + 1) / max(1, rows) + 0.5)
+        p.box((FLARE - grow, FLARE + w + grow), (yy, yy + 1), (0, PLATE), x)
+    p.box((0, w + FLARE * 2), (fy0, fy0 + 1), (0, PLATE), R)
     return p
 
 
@@ -248,7 +274,7 @@ def cloak(module, race: str) -> Part:
     return p
 
 
-def helm(module, race: str) -> Part:
+def helm(module, race: str, crest: bool = False) -> Part:
     """A helm that leaves its wearer's identity feature intact.
 
     THE HEAD SLOT IS WHERE RACE IDENTITY GOES TO DIE. A full helm erases the
@@ -267,7 +293,8 @@ def helm(module, race: str) -> Part:
     w, h, d, anchor = _frame(module, "head")
     out = SHELL
     pw, pd = w + out * 2, d + out * 2
-    p = Part("HELM_%s" % race.upper(), (pw, h, pd),
+    p = Part("HELM_%s%s" % ("CROWNED_" if crest else "", race.upper()),
+             (pw, h + (9 if crest else 0), pd),
              (anchor[0] + out, anchor[1], anchor[2] + out))
 
     # The skull cap: the top of the head, and how far down it comes is the
@@ -300,14 +327,136 @@ def helm(module, race: str) -> Part:
         # BEHIND THE BROW RIDGE. The snout is the front of this head and the
         # helm simply does not go there - `top` at 0.74 keeps it clear.
         pass
+
+    # ONE VERTICAL ELEMENT ABOVE THE HEAD, and it is RESERVED FOR TIER 5 on
+    # three of the four races - the dwarf gets its horns at tier 4 instead,
+    # because the dwarf is the one race whose silhouette has the width to carry
+    # something above the shoulders without becoming ambiguous with anything
+    # else in the cast.
+    #
+    # It is the fifth of tier 5's five events and it is deliberately the last
+    # one on the ladder: verticality above the head is the loudest thing a
+    # silhouette can do, so it is what "you did something" is allowed to spend.
+    if crest:
+        cx = pw // 2
+        for i in range(9):
+            p.box((cx - 1, cx + 1), (y1 + i, y1 + i + 1), (pd // 2 - 1, pd // 2 + 2), R)
+    return p
+
+
+def jerkin(module, race: str) -> Part:
+    """Tier 1. Cloth, and ZERO OUTLINE EVENTS ON PURPOSE.
+
+    If starting gear changed the silhouette then the naked character is not the
+    design, the starting gear is - and the acceptance test is four races
+    identifiable in nothing. So this is one voxel of cloth over the chest with
+    a liner hem, and it does not reach past any edge the body already had.
+    """
+    w, h, d, anchor = _frame(module, "torso")
+    p = Part("JERKIN_%s" % race.upper(), (w, h, d + 1),
+             (anchor[0], anchor[1], anchor[2] + 1))
+    x0, x1 = _span(0.10, 0.90, w)
+    y0, y1 = _span(0.14, 0.80, h)
+    p.box((x0, x1), (y0, y1), (0, 1), c)
+    p.box((x0, x1), (y0, y0 + 1), (0, 1), k)
+    return p
+
+
+def hide(module, race: str) -> Part:
+    """Tier 2's torso. Leather over cloth, and the accent appears.
+
+    The outline event at this tier is the shoulder CAP, not this - a hide
+    jerkin drapes exactly as cloth does. What changes is the material and the
+    fact that there is now something worth putting an accent on.
+    """
+    w, h, d, anchor = _frame(module, "torso")
+    p = Part("HIDE_%s" % race.upper(), (w, h, d + 1),
+             (anchor[0], anchor[1], anchor[2] + 1))
+    x0, x1 = _span(0.08, 0.92, w)
+    y0, y1 = _span(0.14, 0.82, h)
+    p.box((x0, x1), (y0, y1), (0, 1), L)
+    # A 1-voxel stitch line in liner along every edge: the tell for leather in
+    # the material table, and the thing that stops hide reading as flat cloth.
+    p.box((x0, x1), (y1 - 1, y1), (0, 1), k)
+    p.box((x0, x1), (y0, y0 + 1), (0, 1), k)
+    p.box((x0, x0 + 1), (y0, y1), (0, 1), k)
+    p.box((x1 - 1, x1), (y0, y1), (0, 1), k)
+    return p
+
+
+def cap(module, race: str) -> Part:
+    """Tier 2's ONE outline event: a shoulder cap.
+
+    The shoulders are the only slot that grows the outline outward at the
+    widest point the character has, which makes a cap the cheapest event on the
+    ladder and the right one to spend first.
+    """
+    w, h, d, anchor = _frame(module, "arm")
+    out = CAP - 1
+    p = Part("CAP_%s" % race.upper(), (w + out, h, d), anchor)
+    y0, y1 = _span(0.86, 1.0, h)
+    p.box((0, w + out), (y0, y1), (0, d), L)
+    p.box((0, w + out), (y0, y0 + 1), (0, d), k)
+    _hollow(p, (0, w), (y0, y1), (0, d))
+    return p
+
+
+def mail(module, race: str) -> Part:
+    """Tier 3. THE CHECKER, and no outline event at all from this piece.
+
+    Mail's whole character is that it DRAPES. It does nothing to the outline
+    and everything to the surface, which is correct and is where a player
+    learns that armour is not monotonically bigger.
+
+    THE 1-VOXEL CHECKER IS FREE LOD, and it is the one place in this game where
+    a value pattern is right: at 5 m you see individual scales, and at 15 m the
+    two adjacent values average to one flat mid-tone - which is exactly what
+    mail looks like from across a field.
+    """
+    w, h, d, anchor = _frame(module, "torso")
+    p = Part("MAIL_%s" % race.upper(), (w, h, d + 1),
+             (anchor[0], anchor[1], anchor[2] + 1))
+    x0, x1 = _span(0.06, 0.94, w)
+    y0, y1 = _span(0.12, 0.84, h)
+    for yy in range(y0, y1):
+        for xx in range(x0, x1):
+            p.box((xx, xx + 1), (yy, yy + 1), (0, 1), A if (xx + yy) % 2 == 0 else a)
+    p.box((x0, x1), (y0, y0 + 1), (0, 1), k)
+    return p
+
+
+def gorget(module, race: str) -> Part:
+    """Tier 3's ONE outline event: a raised collar.
+
+    On the HEAD slot rather than the torso, so it rises with the head bone and
+    a head-look does not tear it off the neck - which is the failure Veloren
+    documents and the reason its chest pieces carry neck detail.
+    """
+    w, h, d, anchor = _frame(module, "head")
+    out = SHELL
+    pw, pd = w + out * 2, d + out * 2
+    p = Part("GORGET_%s" % race.upper(), (pw, h, pd),
+             (anchor[0] + out, anchor[1], anchor[2] + out))
+    y0, y1 = _span(0.0, 0.16, h)
+    if y1 <= y0 + 1:
+        y1 = y0 + 2
+    p.box((0, pw), (y0, y1), (0, pd), x)
+    p.box((0, pw), (y1 - 1, y1), (0, pd), R)
+    _hollow(p, (out, out + w), (y0, y1), (out, out + d))
     return p
 
 
 PIECE_BUILDERS = {
+    "jerkin": jerkin,
+    "hide": hide,
+    "cap": cap,
+    "mail": mail,
+    "gorget": gorget,
     "plate": breastplate,
     "pauldron": pauldron,
     "cloak": cloak,
     "helm": helm,
+    "helm_crowned": lambda module, race: helm(module, race, crest=True),
 }
 
 DOC = """Armour, authored once in a normalised frame and stamped into four bodies.

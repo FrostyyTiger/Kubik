@@ -98,7 +98,7 @@ func apply_armour() -> void:
 	for slot in CharacterDef.ARMOUR_SLOTS:
 		if def.armour_tier[slot] <= 0:
 			continue
-		var piece := Armour.part_name(slot, def.armour_item[slot], def.race)
+		var piece := Armour.part_name(slot, def.armour_tier[slot], def.race)
 		if piece.is_empty() or not PartsArmour.PARTS.has(piece):
 			continue
 		var part: Dictionary = PartsArmour.PARTS[piece]
