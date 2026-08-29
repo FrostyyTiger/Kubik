@@ -33,8 +33,8 @@ class_name Armour
 ## So a piece is authored once in a NORMALISED SLOT FRAME - 0..1 across the
 ## attachment's width, height and depth - and stamped into the race's actual
 ## dimensions by the generator. Its SHAPE is the same fraction of every
-## shoulder; its PLATE is 3 voxels thick on every race, because 3 voxels is what
-## plate looks like. Get that backwards and dwarf armour looks like foam rubber
+## shoulder; its PLATE is the same THICKNESS on every race - 2 author voxels,
+## which is 3 on the 96 grid - because a plate is a plate whoever wears it. Get that backwards and dwarf armour looks like foam rubber
 ## while elf armour looks like it was cut from sheet tin.
 
 ## The five tiers, and what each one is allowed to do to the outline. The count
@@ -101,13 +101,45 @@ static func piece_count(slot: int) -> int:
 ## Piece 0 of every slot is EMPTY, so "wearing nothing" needs no special case
 ## anywhere. Stage 9 fills these in; Stage 8 proves the plumbing with one.
 const PIECES := [
-	["none"],   # torso
-	["none"],   # shoulders
-	["none"],   # back
-	["none"],   # head
-	["none"],   # legs - declared, no geometry
-	["none"],   # hands - declared, Items v1 fills it
+	["none", "plate"],      # torso
+	["none", "pauldron"],   # shoulders
+	["none", "cloak"],      # back
+	["none", "helm"],       # head
+	["none"],               # legs - declared, no geometry
+	["none"],               # hands - declared, Items v1 fills it
 ]
+
+
+## The part name for a piece on a race, or "" for nothing worn.
+##
+## EVERY PIECE IS PER-RACE IN THE PART FILE and authored once in the generator.
+## That is the fitting rule at the seam: `armour.py` stamps one normalised
+## description into four sets of real dimensions, so there are four parts and
+## one design, rather than four designs or one part that fits nobody.
+static func part_name(slot: int, piece: int, race: int) -> String:
+	if slot < 0 or slot >= PIECES.size():
+		return ""
+	var names: Array = PIECES[slot]
+	if piece <= 0 or piece >= names.size():
+		return ""
+	return "%s_%s" % [names[piece], Races.name_of(race)]
+
+
+## Where a slot hangs: `{"bones": [...]}` for an overlay, `{"sockets": [...]}`
+## for a carried thing. One shape so the caller does not branch per slot.
+static func attach_points(slot: int) -> Dictionary:
+	for entry in SLOTS:
+		if int(entry["slot"]) != slot:
+			continue
+		if entry.has("bone"):
+			return {"bones": [entry["bone"]]}
+		if entry.has("bones"):
+			return {"bones": entry["bones"]}
+		if entry.has("socket"):
+			return {"sockets": [entry["socket"]]}
+		if entry.has("sockets"):
+			return {"sockets": entry["sockets"]}
+	return {}
 
 
 ## The tier a slot is worn at, clamped. Convenience for the gallery and the

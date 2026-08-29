@@ -142,6 +142,7 @@ func _sheets() -> Dictionary:
 		"outline": _sheet_outline,
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
+		"armour": _sheet_armour,
 		"gear": _sheet_gear,
 		"critter": _sheet_critter,
 		"budget": _sheet_budget,
@@ -1231,6 +1232,29 @@ func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> 
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
+
+
+## Every race wearing everything that has geometry, at three distances.
+##
+## THREE DISTANCES BECAUSE THE PIECE IS DIFFERENT AT EACH. At 3 m you are
+## judging whether a plate looks like a plate; at 15 m whether the tier reads;
+## at 40 m whether any of it survives at the distance the game is mostly played
+## at. A sheet at one distance answers one of those and quietly implies the
+## other two.
+func _sheet_armour() -> void:
+	var worn := []
+	for def: CharacterDef in _lineup_defs():
+		var v: CharacterDef = def.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = 4
+			v.armour_item[slot] = maxi(Armour.piece_count(slot) - 1, 0)
+		v.validate()
+		worn.append(v)
+	for entry in [{"deg": 0.0, "name": "front"}, {"deg": 35.0, "name": "three-quarter"}]:
+		for distance in [3.0, 15.0, 40.0]:
+			_set_lineup(worn)
+			_face(FACING_CAMERA + deg_to_rad(entry["deg"]))
+			await _shoot("armour-%dm-%s" % [int(distance), entry["name"]], distance)
 
 
 # --- The value tiers -----------------------------------------------------------

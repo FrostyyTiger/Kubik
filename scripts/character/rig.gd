@@ -92,6 +92,7 @@ func build(bone_table: Array, part_set: Dictionary, palette: Dictionary,
 			node.rotation = entry["rest_rot"]
 		bones[bone_name] = node
 		rest[bone_name] = node.transform
+		mirrored[bone_name] = bool(entry.get("mirror", false))
 		if entry.get("socket", false):
 			sockets[bone_name] = node
 			continue
@@ -147,6 +148,8 @@ func clear() -> void:
 	blink_meshes.clear()
 	part_voxels.clear()
 	attachments.clear()
+	overlays.clear()
+	mirrored.clear()
 	lean_bone = ""
 
 
@@ -370,6 +373,67 @@ func attach_to_socket(socket_name: String, part: Dictionary, part_name: String,
 	part_voxels["socket:" + socket_name] = {"voxels": voxels, "anchor": anchor}
 
 
+## Hang a second mesh on an EXISTING bone - armour, worn over a body part.
+##
+## AN OVERLAY IS NOT A SOCKET, and the difference is the reason both exist.
+## A socket is a point to hang a CARRIED object from: a sword, a pendant, a
+## cloak. An overlay is a LAYER over a body part, and it wants to move with
+## that part exactly rather than from a point on it - a pauldron is the
+## shoulder seen from outside, and it swings with the arm because it is a
+## child of the same bone the arm is drawn on.
+##
+## The part is authored in the BONE's own frame, so a piece stamped from that
+## bone's part lands where that part is, on any race.
+func attach_overlay(bone_name: String, part: Dictionary, part_name: String,
+		palette: Dictionary, ao_strength: float) -> void:
+	if not bones.has(bone_name):
+		push_warning("[Rig] no bone named %s to overlay %s onto" % [bone_name, part_name])
+		return
+	var voxels := VoxelModel.parse(part, part_name)
+	if voxels.is_empty():
+		return
+	var anchor: Vector3 = part.get("anchor", Vector3.ZERO)
+	if mirrored.get(bone_name, false):
+		var size: Vector3i = part["size"]
+		voxels = VoxelModel.mirror_x(voxels, size.x)
+		anchor = VoxelModel.mirror_anchor_x(anchor, size.x)
+	var mesh := VoxelModel.build_mesh(voxels, palette, anchor, ao_strength)
+	if mesh == null:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Overlay_" + part_name
+	mi.mesh = mesh
+	(bones[bone_name] as Node3D).add_child(mi)
+	overlays[bone_name] = mi
+	# Kept for the same reason a part's voxels are: the overlap check has to
+	# ask "is there a voxel here" and a mesh cannot answer.
+	part_voxels["overlay:" + bone_name] = {"voxels": voxels, "anchor": anchor}
+
+
+## bone name -> the armour mesh worn over it.
+var overlays := {}
+
+## Which bones the bone table built MIRRORED. Recorded rather than inferred
+## from the name, so an overlay lands the same way round as the limb it is
+## worn on without anything having to know that `_l` means left. Getting this
+## wrong is not subtle and is not obvious either: the left pauldron grew
+## inboard into the torso, four hundred voxels of it, while the right one was
+## perfect.
+var mirrored := {}
+
+
+## Every voxel centre of an overlay, in rig space and in metres.
+func overlay_voxel_centres_in_rig(bone_name: String) -> PackedVector3Array:
+	return _centres("overlay:" + bone_name, overlays.get(bone_name))
+
+
+func clear_overlays() -> void:
+	for bone_name in overlays:
+		(overlays[bone_name] as MeshInstance3D).queue_free()
+		part_voxels.erase("overlay:" + bone_name)
+	overlays.clear()
+
+
 func clear_attachments() -> void:
 	for socket_name in attachments:
 		(attachments[socket_name] as MeshInstance3D).queue_free()
@@ -379,13 +443,21 @@ func clear_attachments() -> void:
 
 ## The same voxel-centre question, for something hanging on a socket.
 func socket_voxel_centres_in_rig(socket_name: String) -> PackedVector3Array:
+	return _centres("socket:" + socket_name, attachments.get(socket_name))
+
+
+## Voxel centres of whatever is under `key`, placed by `node`'s transform.
+##
+## Shared by parts, sockets and overlays because the question is the same one
+## three times, and three copies of it would be three places for the half-voxel
+## offset to be wrong.
+func _centres(key: String, node) -> PackedVector3Array:
 	var out := PackedVector3Array()
-	var key := "socket:" + socket_name
-	if not part_voxels.has(key) or not attachments.has(socket_name):
+	if not part_voxels.has(key) or node == null:
 		return out
 	var entry: Dictionary = part_voxels[key]
 	var anchor: Vector3 = entry["anchor"]
-	var to_rig := transform_to_rig(attachments[socket_name])
+	var to_rig := transform_to_rig(node)
 	for v in (entry["voxels"] as Array):
 		var centre := (Vector3(v.x, v.y, v.z) + Vector3(0.5, 0.5, 0.5) - anchor) * VoxelModel.VOXEL_M
 		out.push_back(to_rig * centre)

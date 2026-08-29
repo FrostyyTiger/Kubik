@@ -50,6 +50,7 @@ func _ready() -> void:
 		"every combination": _test_every_combination,
 		"option tables agree": _test_option_tables,
 		"gear sockets": _test_gear_sockets,
+		"armour is not inside a body": _test_armour_not_inside_a_body,
 		"vox fixture": _test_vox_fixture,
 		"vox garbage": _test_vox_garbage,
 		"critter": _test_critter,
@@ -390,6 +391,88 @@ func _test_part_parsing():
 ## the bug would have surfaced as "the new character walks backwards".
 ##
 
+
+
+## ARMOUR SITS ON A BODY. IT DOES NOT SIT INSIDE ONE.
+##
+## The fitting rule - proportions relative, thicknesses absolute - is what makes
+## one authored set work across four bodies that differ by more than a factor of
+## two in width. The way it fails is not dramatic: a piece stamped from the
+## wrong fraction does not vanish or error, it sinks into the wearer, and on
+## three of four races it looks fine. So it is checked voxel by voxel on every
+## race rather than by eye on the one that happens to be on screen.
+##
+## Voxel CENTRES with a half-voxel tolerance, not mesh vertices or AABBs, for
+## the reason character v1 wrote down: two parts authored on lattices half a
+## voxel apart share no vertex even when they occupy the same space, and an
+## AABB comparison cannot tell a dwarf's 21-deep torso from an elf's 12.
+func _test_armour_not_inside_a_body():
+	var bad := 0
+	var report := PackedStringArray()
+
+	for race in Races.RACE_COUNT:
+		var def := CharacterDef.new()
+		def.race = race
+		# Everything on at once, which is the worst case and the only case
+		# worth checking: pieces that clear a body one at a time can still
+		# arrive on top of each other.
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			def.armour_tier[slot] = 4
+			def.armour_item[slot] = maxi(Armour.piece_count(slot) - 1, 0)
+		def.validate()
+
+		var view := CharacterView.new()
+		view.build(def)
+		var rig: Rig = view.rig
+
+		# Every BODY voxel, as a set of cells. Hair and beards are excluded,
+		# and the exclusion is the interesting part: a helm through hair and a
+		# breastplate through a beard are real questions, but they are DESIGN
+		# questions with per-race answers - the dwarf's helm has its beard
+		# emerging below, the elf's is open at the sides - and not the fitting
+		# failure this test is looking for. Rolling them together would mean a
+		# single number that cannot distinguish "the plate is inside the ribs"
+		# from "the helmet touches the fringe".
+		var body := {}
+		for bone_name in rig.meshes:
+			if bone_name in Rig.ORNAMENT_BONES:
+				continue
+			for centre in rig.voxel_centres_in_rig(bone_name):
+				body[_cell(centre)] = true
+
+		var worn := 0
+		var inside := 0
+		for bone_name in rig.overlays:
+			worn += 1
+			for centre in rig.overlay_voxel_centres_in_rig(bone_name):
+				if body.has(_cell(centre)):
+					inside += 1
+		for socket_name in rig.attachments:
+			worn += 1
+			for centre in rig.socket_voxel_centres_in_rig(socket_name):
+				if body.has(_cell(centre)):
+					inside += 1
+
+		if worn == 0:
+			print("  the %s wore nothing at tier 4 - the armour never attached" % Races.name_of(race))
+			bad += 1
+		if inside > 0:
+			print("  %s: %d armour voxels are INSIDE the body" % [Races.name_of(race), inside])
+			bad += 1
+		report.append("%s %dp/%di" % [Races.name_of(race), worn, inside])
+		view.free()
+
+	print("armour is not inside a body: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+
+## A voxel centre in rig space to the integer cell it falls in. Half a voxel of
+## tolerance falls out of the rounding, which is what the question needs: does
+## a voxel of this occupy the same cell as a voxel of that.
+static func _cell(p: Vector3) -> Vector3i:
+	var v := VoxelModel.VOXEL_M
+	return Vector3i(roundi(p.x / v), roundi(p.y / v), roundi(p.z / v))
 
 ## A VERSION 1 PAYLOAD IS A REAL CHARACTER WEARING NOTHING.
 ##

@@ -131,9 +131,24 @@ static func _sized(values: Array) -> Array[int]:
 	return out
 
 
+## An in-memory copy, INCLUDING armour.
+##
+## It cannot go through `to_dict()` - that pair is the save file and
+## deliberately drops armour, so a copy made that way arrives naked. Which is
+## exactly what happened: `CharacterView.build()` copies the def it is handed,
+## so every character in the game wore nothing and the armour self-test
+## reported "the armour never attached" on all four races with the whole path
+## otherwise correct.
+##
+## Worth stating as a rule, because the two look interchangeable and are not:
+## **`to_dict` is persistence and `duplicate_def` is a copy.** A copy loses
+## nothing.
 func duplicate_def() -> CharacterDef:
 	var out := CharacterDef.new()
 	out.from_dict(to_dict())
+	out.armour_item = _sized(armour_item)
+	out.armour_tier = _sized(armour_tier)
+	out.validate()
 	return out
 
 

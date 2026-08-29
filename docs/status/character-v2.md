@@ -965,3 +965,93 @@ scripts/player/ scripts/game/` is empty, so this branch has not touched a line
 of it. Recorded here so the next run does not spend an hour on it.
 
 Green: 31 character tests, world suite passed.
+
+---
+
+## Stage 8 — the normalised slot frame, and four armour slots
+
+Committed as `feat(character): stage 8 - ...`. Four slots with geometry, two
+declared with none, and **zero armour voxels inside any of the four bodies**.
+
+### The fitting rule, and where the dimensions come from
+
+A piece is described in fractions of the attachment's own width, height and
+depth, and stamped into each race's real dimensions. Its shape is the same
+fraction of every shoulder; its plate is the same *thickness* on every body.
+
+**`armour.py` imports the race modules and asks them** rather than keeping a
+second copy of the race table: `human.torso()` knows how wide a human torso is
+because it just drew one, so a piece stamped from that cannot drift from the
+body it is worn on.
+
+### Five things it got wrong first, and each one was a rule
+
+The overlap self-test reported every one of them to the voxel. None of them
+errored, none of them looked wrong on the race that happened to be on screen,
+and all five would have shipped.
+
+1. **A copy that was not a copy.** `CharacterView.build()` copies the def it is
+   handed, and `duplicate_def()` round-trips through `to_dict()` — which Stage 7
+   deliberately made drop armour, because that pair is the *save file*. So every
+   character in the game wore nothing, with the whole path otherwise correct.
+   The rule, now in the file: **`to_dict` is persistence and `duplicate_def` is
+   a copy. A copy loses nothing.**
+2. **A plate level with the surface is a tattoo.** Anchoring a breastplate the
+   same way as the torso puts it *inside* the front face. It is anchored
+   `PLATE` further forward so its back is against the body and the rest is
+   proud.
+3. **A cap has to be a shell.** Filling a pauldron's box and forgetting to take
+   the arm back out put ten thousand voxels inside each body.
+4. **Placed against the wearer's anchor, not its own middle.** A piece centred
+   on its own bounding box is only centred on the body if the body's anchor is
+   the middle of its part — and the human head's is 9 in a part 17 deep, whose
+   middle is 8.5, because the nose is in front of the skull. Half a voxel of
+   disagreement put a whole face of helm inside a whole face of head.
+5. **Overlays have to mirror.** `Rig` now records which bones the bone table
+   built mirrored, rather than anything inferring it from `_l`. The right
+   pauldron was perfect while the left grew inboard into the torso.
+
+### And a units bug that reads as a hat
+
+`U_len()` converts an author length to an **output** length. Everything in
+`tools/parts_author/` is written on the 64 grid and `voxlib` scales at output,
+so calling it inside a generator applies the grid factor twice. The helm's
+one-voxel shell came out three voxels thick and read as a flat-brimmed hat.
+Thicknesses in that package are plain author integers now, and the docstring
+says why.
+
+The shell settled at **2** rather than 1: heads are chamfered, so a one-voxel
+shell touches the skull at every cut corner — 180 voxels of it on the human.
+Two clears every race and is the same thickness as a plate, which is what
+"thicknesses are absolute" was supposed to mean.
+
+### The first of the two named lizardfolk exceptions
+
+A cloak of the usual length hangs straight through the tail — 500 voxels. The
+cheap fix was to make the cloak short, and it was the wrong one: the cloak is
+the best value-per-voxel item in the game *precisely because it is big*.
+
+So it is **split into two panels either side of the tail's root**, which is what
+a cloak worn by something with a tail looks like, and it keeps its mass. A
+variant of one piece, not a per-race system — which is the distinction the
+design doc draws and the reason the research lane's "every armour piece needs a
+race-specific variant" is not taken.
+
+### What the overlap test deliberately does not ask
+
+Hair and beards are excluded from the body set. A helm through hair and a
+breastplate through a beard are real questions with **per-race design answers**
+— the dwarf's helm has its beard emerging below, the elf's is open at the sides
+so the ears pass through — and rolling them in would produce a single number
+that cannot tell "the plate is inside the ribs" from "the helmet touches the
+fringe".
+
+### Still crude, and named
+
+The helms read as caps rather than as helmets, and the elf's side openings are
+square holes rather than shaped ones. Stage 9 owns the tier ladder and is where
+the shapes get their pass. The plumbing, the fitting rule and the gate are what
+this stage was for.
+
+Green: 32 character tests, world suite passed, silhouette unchanged at 0.664
+with 0 pairs over, triangles 44,936 against a 48,000 budget.

@@ -76,6 +76,40 @@ func build(new_def: CharacterDef) -> void:
 	# the F8 panel would silently disarm the T key.
 	if _gear_on:
 		set_gear_placeholders(true)
+	# And whatever the character is wearing, which arrived in the def.
+	apply_armour()
+
+
+## Hang everything `def` says this character is wearing.
+##
+## THROUGH THE SAME ONE ENTRY POINT as everything else visual, which is the
+## whole design of this file: the local player, the friend across the network
+## and the creation screen's turntable can never disagree about what a dwarf in
+## plate looks like, because there is one function that turns a def into
+## geometry and this is part of it.
+##
+## Cheap enough to call on every rebuild - `build()` already tears the rig down
+## and puts it back on every click of the creation screen.
+func apply_armour() -> void:
+	if rig == null or def == null:
+		return
+	rig.clear_overlays()
+	var palette := Races.palette(def.race, def.skin, def.hair_color, def.eyes)
+	for slot in CharacterDef.ARMOUR_SLOTS:
+		if def.armour_tier[slot] <= 0:
+			continue
+		var piece := Armour.part_name(slot, def.armour_item[slot], def.race)
+		if piece.is_empty() or not PartsArmour.PARTS.has(piece):
+			continue
+		var part: Dictionary = PartsArmour.PARTS[piece]
+		var where := Armour.attach_points(slot)
+		for bone in where.get("bones", []):
+			# The left of a mirrored pair takes the mirrored part, exactly as
+			# the body's own limbs do - one authored side, two that cannot
+			# drift apart.
+			rig.attach_overlay(bone, part, piece, palette, _config.ao_strength)
+		for socket in where.get("sockets", []):
+			rig.attach_to_socket(socket, part, piece, palette, _config.ao_strength)
 
 
 ## What this character is doing. Called every physics frame by Player, and

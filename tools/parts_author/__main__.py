@@ -24,7 +24,7 @@ part-size self-tests are for, on the far side of the grid change.
 import sys
 from pathlib import Path
 
-from . import human, elf, dwarf, lizardfolk, hair, gear, critter, voxlib
+from . import human, elf, dwarf, lizardfolk, hair, gear, critter, armour, voxlib
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "scripts" / "character" / "parts"
@@ -36,6 +36,7 @@ FILES = {
     "parts_lizardfolk.gd": lizardfolk.render,
     "parts_hair.gd": hair.render,
     "parts_gear.gd": gear.render,
+    "parts_armour.gd": armour.render,
     "parts_critter.gd": critter.render,
 }
 
