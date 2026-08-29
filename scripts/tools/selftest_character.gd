@@ -58,6 +58,7 @@ func _ready() -> void:
 		"vox garbage": _test_vox_garbage,
 		"critter": _test_critter,
 		"unknown gait": _test_unknown_gait,
+		"the json is the consts": _test_json_is_the_consts,
 	}
 	var failures := 0
 	for name in tests:
@@ -2327,3 +2328,124 @@ func _test_unknown_gait():
 	print("unknown gait: fell back to the biped and posed %d bones, %d checks failed" % [
 		got.size(), bad])
 	return 1 if bad > 0 else 0
+
+
+# --- Parts data v1 -----------------------------------------------------------
+
+## THE JSON IS THE CONSTS, part for part and voxel for voxel.
+##
+## This is the whole of the argument that moving 33,158 lines of ASCII out of
+## `scripts/` and into `assets/` moved no art. Both sides are walked: for each
+## of the eight modules and each of the 101 parts, the `size`, the `anchor`
+## and the FULL parsed voxel array have to be equal between the GDScript
+## constant and what `PartsData` read off disk.
+##
+## It is at its strongest AFTER Stage 3, when the consts are dead code and the
+## data is what the game actually runs on - at that point this is a diff
+## between the thing that shipped yesterday and the thing that ships today.
+##
+## It prints a hash per module, and those eight numbers outlive the consts:
+## once the generated `.gd` files are deleted there is nothing left to compare
+## against, so Stage 4 freezes them here and this test keeps meaning something.
+func _test_json_is_the_consts():
+	var bad := 0
+	var report := []
+	var total := 0
+	for module in PartsData.MODULES:
+		var consts := _const_parts(module)
+		var data := PartsData.module(module)
+		if data.is_empty():
+			print("  %s loaded no parts at all" % module)
+			bad += 1
+			continue
+		if consts.size() != data.size():
+			print("  %s: %d parts in the consts, %d in the json" % [
+				module, consts.size(), data.size()])
+			bad += 1
+		for key in consts:
+			if not data.has(key):
+				print("  %s: the json has no part '%s'" % [module, key])
+				bad += 1
+				continue
+			var was: Dictionary = consts[key]
+			var now: Dictionary = data[key]
+			if was["size"] != now["size"]:
+				print("  %s '%s': size was %s, json says %s" % [
+					module, key, was["size"], now["size"]])
+				bad += 1
+			if was.get("anchor", Vector3.ZERO) != now.get("anchor", Vector3.ZERO):
+				print("  %s '%s': anchor was %s, json says %s" % [
+					module, key, was.get("anchor"), now.get("anchor")])
+				bad += 1
+			# The voxels, not the rows: a part could be reformatted, rewrapped
+			# or re-indented and still be the same art, and it is the art this
+			# is about.
+			var before := VoxelModel.parse(was, key)
+			var after := VoxelModel.parse(now, key)
+			if before != after:
+				print("  %s '%s': %d voxels in the const, %d in the json, and they differ" % [
+					module, key, before.size(), after.size()])
+				bad += 1
+		total += data.size()
+		report.append("%s %08x" % [module, _module_hash(data)])
+	if total != 101:
+		print("  %d parts in total, wanted 101" % total)
+		bad += 1
+	print("the json is the consts: %d parts, %d checks failed" % [total, bad])
+	print("  hashes: %s" % String("  ").join(report))
+	return 1 if bad > 0 else 0
+
+
+## The GDScript side of the comparison, one module at a time.
+##
+## Every module but hair has a map from the key a bone table uses to the
+## constant - `PARTS`, or `PLACEHOLDERS` for the gear placeholders, whose
+## index has always been the socket they hang on. Hair has no such map at all
+## (its options are positional, in `HAIR` and `BEARD`), so its keys are the
+## constants' own names, lowercased, which is what the generator writes.
+func _const_parts(module: String) -> Dictionary:
+	match module:
+		"human":
+			return PartsHuman.PARTS
+		"elf":
+			return PartsElf.PARTS
+		"dwarf":
+			return PartsDwarf.PARTS
+		"lizardfolk":
+			return PartsLizardfolk.PARTS
+		"armour":
+			return PartsArmour.PARTS
+		"critter":
+			return PartsCritter.PARTS
+		"gear":
+			return PartsGear.PLACEHOLDERS
+		"hair":
+			var out := {}
+			for name in (PartsHair as GDScript).get_script_constant_map():
+				var value = (PartsHair as GDScript).get_script_constant_map()[name]
+				if value is Dictionary and (value as Dictionary).has("slices"):
+					out[String(name).to_lower()] = value
+			return out
+	print("  no const table is known for module '%s'" % module)
+	return {}
+
+
+## A hash of every voxel in a module, and it has to survive the consts.
+##
+## FNV-1a over 32-bit words, written out rather than borrowed from
+## `Array.hash()`, because Stage 4 freezes these numbers in this file and a
+## number frozen against an engine internal is a test that fails on an engine
+## upgrade and calls it a moved voxel. Keys are sorted and hashed with their
+## voxels, so a RENAMED part trips it too.
+func _module_hash(parts: Dictionary) -> int:
+	var h := 2166136261
+	var keys := parts.keys()
+	keys.sort()
+	for key in keys:
+		for c in String(key).to_utf8_buffer():
+			h = ((h * 16777619) & 0xFFFFFFFF) ^ c
+		for v in VoxelModel.parse(parts[key], key):
+			var word: int = (v.x & 0xFF) | ((v.y & 0xFF) << 8) | (
+				(v.z & 0xFF) << 16) | ((v.w & 0xFF) << 24)
+			h = ((h * 16777619) & 0xFFFFFFFF) ^ word
+	return h & 0xFFFFFFFF
