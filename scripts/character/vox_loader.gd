@@ -205,14 +205,51 @@ static func drop_in_path(race_name: String, part_name: String) -> String:
 ## break the creation screen for anyone who used one. An artist who does not
 ## want the slot discipline can pass their own palette by loading the file
 ## directly; the automatic path is the one that keeps the game's rules.
-static func drop_in(race_name: String, part_name: String, anchor := Vector3.ZERO):
+static func drop_in(race_name: String, part_name: String, anchor := Vector3.ZERO,
+		replaces := Vector3i.ZERO):
 	var path := drop_in_path(race_name, part_name)
 	if not FileAccess.file_exists(path):
 		return null
 	var part = load_part(path, true, anchor)
 	if part != null:
 		print("[VoxLoader] %s/%s comes from %s" % [race_name, part_name, path])
+		_warn_if_wrong_grid(path, part, replaces)
 	return part
+
+
+## THE GRID CHANGED AND A `.vox` CANNOT KNOW. Character v2 Stage 3 took the
+## model voxel from 1/16 of a block to 1/24, so a file authored against the old
+## grid loads at two thirds of its intended size - silently, because the format
+## carries no scale and there is nothing to compare against but the part it is
+## standing in for.
+##
+## `assets/characters/` ships empty, so this break costs exactly nothing today
+## and would cost a re-export of every model on any later day. What is worth ten
+## lines is catching it when it happens: a replacement whose bounding box is
+## wildly different from the ASCII part it replaces is almost always a grid
+## mismatch, and 2/3 or 3/2 is the specific ratio to expect.
+##
+## A WARNING AND NOT A REJECTION. The art might genuinely be a different shape -
+## that is the whole point of a drop-in - so this says what it suspects and
+## loads the file anyway. Inventing a scale factor from a bounding box would be
+## worse: it would silently resize art that was correct.
+static func _warn_if_wrong_grid(path: String, part: Dictionary, replaces: Vector3i) -> void:
+	if replaces == Vector3i.ZERO or not part.has("voxels"):
+		return
+	var bounds := VoxelModel.bounds(part["voxels"])
+	var size: Vector3i = (bounds[1] - bounds[0]) + Vector3i.ONE
+	var biggest := 0.0
+	for axis in 3:
+		if replaces[axis] <= 0:
+			continue
+		biggest = maxf(biggest, absf(log(float(size[axis]) / float(replaces[axis]))))
+	# log(4/3) = 0.288, so this fires at about a third bigger or smaller and
+	# comfortably catches the 2/3 and 3/2 a grid change produces.
+	if biggest > 0.28:
+		push_warning(("[VoxLoader] %s is %s where the part it replaces is %s. " +
+			"Authored against the old 1/16 grid? One model voxel has been 1/24 " +
+			"of a block since character v2; see assets/characters/README.md.") % [
+			path, size, replaces])
 
 
 ## MagicaVoxel's built-in 256-colour palette, ABGR, index 0 unused.

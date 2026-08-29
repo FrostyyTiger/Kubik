@@ -38,20 +38,77 @@ const BUILD_NAMES := ["stocky", "lean"]
 
 # --- The stack ---------------------------------------------------------------
 #
-# ONE MODEL VOXEL IS 1/16 OF A BLOCK since look v1, and a human is 64 of them.
-# The look plan's Stage 6 table is the source of every number below; the
-# pelvis is what the stack does not otherwise spend, and it is the part the
-# root bone `hips` carries:
+# ONE MODEL VOXEL IS 1/24 OF A BLOCK since character v2, and a human is 96 of
+# them. See `VoxelModel.VOXEL_M` for why 96 and why not 128; the short version
+# is that a 16-voxel leg cannot have a knee and a 24-voxel one can.
 #
-#     legs   [0, 16)  16
-#     pelvis [16, 22)  6
-#     torso  [22, 42) 20
-#     head   [42, 64) 22
+#     legs   [0, 24)  24
+#     pelvis [24, 33)  9
+#     torso  [33, 63) 30
+#     head   [63, 96) 33
 #                     --
-#                      64
+#                      96
 #
 # Head a third of the height, big hands, big boots - the Cube World stack the
-# scheme is named after, one step finer than character v1 drew it.
+# scheme is named after.
+#
+# STAGE 3 MOVED THE GRID AND NOTHING ELSE. Every number in the table below is
+# its 64-grid value times 1.5, rounded, and no race's DESIGN changed here -
+# that is Stages 5 and 6. Isolating the two is the point: if a silhouette
+# number moves in this commit it is a bug, not a decision.
+#
+# THE PELVIS ABSORBS THE ROUNDING, and that is why it is derived rather than
+# tabled. `pelvis_height()` is `total - legs - torso - head - neck`, so the
+# stack sums to `total` by construction whatever 1.5x did to the parts. The elf
+# is the case that needs it: its neck and pelvis were 3 and 3, which are 4.5
+# and 4.5, and something has to give.
+#
+# EVERY HEIGHT IN METRES IS UNCHANGED - 2.00, 2.25, 1.50, 1.875 - because the
+# totals and the voxel size moved by reciprocal factors. So the capsule, the
+# camera pivot, MAX_STEP, the speed table and `player.gd` are untouched, and
+# hard rule 3 still holds: race is never a stat.
+#
+# THE DESIGN DOC'S HUMAN STACK SUMS TO 94, NOT 96. It writes "total 96, legs
+# 24, pelvis 8, torso 30, head 32". Since the pelvis is derived the code cannot
+# reproduce that error; with the doc's other three numbers the pelvis comes out
+# at 10. Stage 5 resolves it as a design question. This stage uses the
+# mechanical 1.5x, which puts the human at legs 24, torso 30, head 33,
+# pelvis 9. It is the same class of slip character v1 found in its own plan's
+# table, and it is why the height self-test measures the BUILT RIG rather than
+# summing the table - a height computed from the table would only prove the
+# table agrees with itself.
+
+# `torso_rise` IS HOW FAR THE TORSO PART RISES ABOVE ITS SLICE OF THE STACK.
+# Zero for the human and the lizardfolk. Five for the elf, whose standing
+# collar is a ring the neck comes up through; four for the dwarf, whose
+# shoulders carry straight past the point where the head bone sits so that the
+# head is set BETWEEN them rather than above them.
+#
+# It is a table field rather than a number inside a generator because two other
+# things need to know: `parts match the table` would otherwise report a torso
+# taller than the table says, and it is exactly the sort of per-race fact the
+# fourth pillar wants readable rather than buried in Python.
+#
+# It does NOT move the head bone. The head still sits at `torso`, which is what
+# keeps the stack summing and the height test honest; the rise is geometry
+# around the head, not a change to where the head is.
+
+# THE GAIT TABLE, in words, because a column of multipliers is not a design.
+#
+# The key is `gait_scale` and NOT `gait`, which was already taken: `dims["gait"]`
+# names the RIG SHAPE - "biped", "trot" - that Animator.rig_shape looks up, and
+# putting a dictionary there made every character in the game pose zero bones.
+# Two different things called the same obvious name, one of them four stages
+# older; the self-tests caught it in a minute and the collision is worth a
+# sentence so nobody re-introduces it.
+#
+#   the elf GLIDES and takes a long time to stop - long slow strides, the
+#   widest arm swing in the cast, and a settle a third longer than anyone's.
+#   the dwarf is a PISTON - short, quick, low bob, settles instantly, and
+#   fidgets constantly.
+#   the lizardfolk's power is in its SPINE, so its counter-rotation and its
+#   sprint lean are the highest in the cast and its arms do the least.
+#   the human is 1.00 everywhere, which is what being the reference means.
 
 ## Model voxels, for readability of the tables below.
 const V := VoxelModel.VOXEL_M
@@ -70,36 +127,71 @@ const TABLE := [
 	# the armpit. `head_d` is the skull; the nose is one more in front of it.
 	{
 		"name": "human",
-		"total": 64, "legs": 16, "torso": 20, "head": 22,
-		"torso_w": 20, "torso_d": 11, "head_w": 18, "head_d": 16,
-		"leg_w": 8, "arm_len": 20, "arm_w": 8,
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.00, "arm": 1.00, "twist": 1.00,
+			"bob": 1.00, "lean": 1.00, "settle": 1.00, "idle": 1.00},
+		"total": 96, "legs": 24, "torso": 30, "head": 32,
+		"torso_w": 30, "torso_d": 17, "head_w": 27, "head_d": 24,
+		"leg_w": 12, "arm_len": 30, "arm_w": 12,
 		"lean_deg": 0.0,
 		"silhouette": "the reference: square stepped shoulders",
 	},
 	{
 		"name": "elf",
-		"total": 72, "legs": 24, "torso": 20, "head": 22,
-		"torso_w": 12, "torso_d": 8, "head_w": 16, "head_d": 16,
-		"leg_w": 6, "arm_len": 24, "arm_w": 6,
-		"neck": 3, "ear_out": 6,
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 0.85, "arm": 1.35, "twist": 1.20,
+			"bob": 1.15, "lean": 0.80, "settle": 1.30, "idle": 0.70},
+		"total": 108, "legs": 36, "torso": 30, "head": 28, "torso_rise": 5,
+		"torso_w": 18, "torso_d": 12, "head_w": 24, "head_d": 24,
+		"leg_w": 9, "arm_len": 36, "arm_w": 9,
+		"neck": 5, "ear_out": 9,
 		"lean_deg": 0.0,
 		"silhouette": "tall and narrow, ears",
 	},
 	{
 		"name": "dwarf",
-		"total": 48, "legs": 10, "torso": 18, "head": 20,
-		"torso_w": 26, "torso_d": 14, "head_w": 20, "head_d": 16,
-		"leg_w": 10, "arm_len": 16, "arm_w": 10,
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.20, "arm": 0.65, "twist": 0.60,
+			"bob": 0.55, "lean": 1.10, "settle": 0.55, "idle": 1.40},
+		"total": 72, "legs": 15, "torso": 27, "head": 30, "torso_rise": 5,
+		"torso_w": 39, "torso_d": 21, "head_w": 30, "head_d": 24,
+		"leg_w": 15, "arm_len": 24, "arm_w": 15,
 		"lean_deg": 0.0,
 		"silhouette": "as wide as it is tall, beard",
 	},
 	{
 		"name": "lizardfolk",
-		"total": 60, "legs": 18, "torso": 20, "head": 18,
-		"torso_w": 20, "torso_d": 11, "head_w": 16, "head_d": 16,
-		"leg_w": 8, "arm_len": 20, "arm_w": 8,
-		"snout": 8, "tail_len": 28, "tail_segments": [10, 10, 8],
-		"lean_deg": 8.0,
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.10, "arm": 0.80, "twist": 1.40,
+			"bob": 0.70, "lean": 1.60, "settle": 0.90, "idle": 1.20},
+		"total": 90, "legs": 30, "torso": 30, "head": 24,
+		"torso_w": 21, "torso_d": 17, "head_w": 24, "head_d": 24,
+		"leg_w": 12, "arm_len": 30, "arm_w": 12,
+		"snout": 12, "tail_len": 42, "tail_segments": [12, 12, 10, 8],
+		"lean_deg": 26.0,
+		# The digitigrade stance, in degrees about X, matched by bone-name
+		# suffix. Thigh forward, shin back, foot forward onto the toes.
+		"leg_stance": {"leg_r": 10.0, "leg_l": 10.0,
+			"leg_r_lower": -22.0, "leg_l_lower": -22.0,
+			"leg_r_foot": 14.0, "leg_l_foot": 14.0,
+			"arm_r": 34.0, "arm_l": 34.0,
+			"arm_r_lower": 46.0, "arm_l_lower": 46.0},
 		"silhouette": "tail, crest, snout",
 	},
 ]
@@ -147,21 +239,91 @@ const CLOTH_HEX := "#7A6A4F"
 const LEATHER_HEX := "#3A2A1E"
 const BELT_HEX := "#5A4632"
 
-## Per-race tunic, where the race has one. Elf green, dwarf brown, human and
-## lizardfolk a warm near-black.
+# --- The liner, and the value tiers -------------------------------------------
+#
+# THE LOOK V2 TUNIC RULE IS RETIRED, character v2 Stage 1, and the reason it had
+# to go is arithmetic rather than taste.
+#
+# It asked that cloth and skin cross a value ratio of 0.5 or lower - one at most
+# half the other - for EVERY skin a player can pick. Each race's five skins span
+# most of the luminance range (the human's from 0.033 to 0.632), so a tunic
+# clears all five only by sitting below the darkest or above the lightest. Above
+# is impossible for every race but the lizardfolk. Below works, and it is the
+# only thing that works, so four races solved one constraint and arrived at the
+# same answer:
+#
+#     human #262119 Y 0.0157   elf #465C44 Y 0.0937
+#     dwarf #34271C Y 0.0226   lizardfolk #302A1F Y 0.0238
+#
+# Four hues, all under Y 0.10, against grass at Y 0.221. On screen that is four
+# black rectangles, and the elf's is nominally green and six times the human's
+# luminance and you cannot tell. The constraint had exactly one solution.
+#
+# THE FIX IS STRUCTURAL: put a fixed dark LINER between skin and cloth - one or
+# two voxels of a constant near-black at every boundary where skin meets cloth,
+# at the collar, the cuff, the waist and the boot top. The pair that has to
+# carry the contrast becomes skin/liner, and it holds BY CONSTRUCTION:
+#
+#     lightest elf  #F5E3D3   144.8x the liner
+#     darkest human #4A2C17     6.1x the liner   <- the worst case in the game
+#
+# 6.1:1 against the 2.1:1 the old rule scraped. And the cloth is then free: any
+# hue, any value above about Y 0.03, because it is no longer the thing doing the
+# separating. This is how comic inking works and it is why an inked figure can
+# wear any colour without dissolving.
+
+## The liner. ONE VALUE FOR EVERY RACE AND EVERY PALETTE, and never a player
+## pick - the moment it varies it stops being a constant the contrast can be
+## proved against.
+const LINER_HEX := "#14100C"
+
+## Every race spans at least three value tiers, and places them in the same
+## structural spots so the cast reads as one family. Grass is Y 0.221 and dusk
+## sky is Y 0.03 to 0.08: a character that is entirely mid-value dissolves into
+## the meadow and one that is entirely dark dissolves into dusk. The old cast
+## was entirely dark, which is why it was VISIBLE at both times of day and
+## IDENTIFIABLE at neither.
 ##
-## LOOK V2 STAGE 5 DARKENED ALL FOUR, and the reason is arithmetic rather than
-## taste. The plan asks that cloth and skin cross a value ratio of 0.5 or lower
-## - one at most half the other - for EVERY skin a player can pick. Each race's
-## five skins span a wide band of luminance (the human's from 0.033 to 0.632),
-## so a tunic clears all five only by sitting below the darkest or above the
-## lightest. Above is impossible for every race except the lizardfolk, and only
-## just. Below works for all four, and these are the values that do it: worst
-## ratio 0.47 / 0.47 / 0.48 / 0.48 against the darkest skin of each race.
+##     liner  0.005 - 0.012   every skin/cloth boundary, seams, boot tops
+##     deep   0.03  - 0.09    legs, the lower half, under-layer, shadowed cloth
+##     mid    0.15  - 0.30    the torso mass; the race's main hue lives here
+##     light  0.45  - 0.70    ONE element: hair, a collar, a beard, a belly
+##     accent any            saturated, under 10% of silhouette, the identity
 ##
-## Hue is each race's own, unchanged - the elf is still green and the dwarf
-## still brown; only the value moved.
-const TUNIC_HEX := ["#262119", "#465C44", "#34271C", "#302A1F"]
+## The light tier does a specific job: it is what stays visible when the whole
+## figure has gone to silhouette at dusk. The elf's white hair is already doing
+## it by accident and it is the only thing in `silhouettes-15.png` that works.
+##
+## Measured Y, in order human / elf / dwarf / lizardfolk.
+const DEEP_HEX := ["#4C5566", "#3E4550", "#7A2320", "#7A5A26"]    # .090 .059 .054 .116
+const MID_HEX := ["#6E7A8C", "#7C8794", "#A83A2E", "#B98A3A"]     # .191 .238 .116 .288
+const LIGHT_HEX := ["#D8D2C2", "#D8D2C2", "#D9C08A", "#C9B48E"]   # .646 .646 .543 .478
+const ACCENT_HEX := ["#B98A34", "#8C6FB0", "#B07A2A", "#9FB8C4"]  # .287 .201 .233 .456
+
+## Fixed material slots that are nobody's race in particular.
+##
+## A MATERIAL IS ONE BASE VALUE PLUS A HUE AND A SATURATION. Form comes from the
+## baked AO; contrast comes from putting two materials next to each other, never
+## from shading one of them. So metal looks like metal because a BRIGHT RIM sits
+## beside a DARK BODY across a real geometric edge that the mesher's own AO
+## darkens - `TRIM_BRIGHT` over `METAL_DARK`, 6.6x apart, with one voxel of
+## relief between them. Hand-painting a second shading on top of the baked AO
+## double-darkens every concave corner and produces mud; see the design doc's
+## argument against non-metallic-metal painting.
+const TRIM_BRIGHT_HEX := "#B9C0C9"   # Y 0.522, the steel rim
+const METAL_DARK_HEX := "#4A5058"    # Y 0.079, the body it sits on
+
+## The scale/mail checker, two ADJACENT values one step apart. Free LOD: at 5 m
+## you see individual scales, at 15 m the checker averages to a flat Y 0.10,
+## which is what mail looks like from across a field.
+const SCALE_A_HEX := "#47665A"       # Y 0.116
+const SCALE_B_HEX := "#3C574D"       # Y 0.083
+
+## The tier-5 rune. Cold and bright, and CAPPED AT 12 VOXELS by a self-test -
+## the cap is the design. A rune band on one pauldron is a story; a glowing
+## character is what every game does wrong, and the only thing between the two
+## is a number that somebody enforces.
+const GLOW_HEX := "#8FD8FF"
 
 
 # --- Options -----------------------------------------------------------------
@@ -301,8 +463,14 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 	var skin := _linear(SKIN_HEX[r][clampi(skin_index, 0, SKIN_HEX[r].size() - 1)])
 	var hair := _linear(HAIR_HEX[r][clampi(hair_index, 0, HAIR_HEX[r].size() - 1)])
 	var eyes := _linear(EYE_HEX[r][clampi(eye_index, 0, EYE_HEX[r].size() - 1)])
-	var cloth := _linear(TUNIC_HEX[r])
-	return {
+	var out := {}
+	# THE TORSO'S MID TIER IS THE CLOTH. Released from the look v2 rule: it is
+	# the race's main hue at its own value, because the liner is what separates
+	# it from skin now. `CLOTH_DARK` is the deep tier rather than a scale of the
+	# mid, so the two tiers are authored values rather than one value and a
+	# multiplier that drifts.
+	var cloth := _linear(MID_HEX[r])
+	out = {
 		VoxelModel.SKIN: skin,
 		# Derived rather than authored: a shaded skin that is not the skin
 		# times a constant drifts away from it the moment the skin is retuned.
@@ -312,13 +480,49 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 		VoxelModel.EYE_WHITE: _linear(EYE_WHITE_HEX),
 		VoxelModel.MOUTH: _scale(skin, 0.55),
 		VoxelModel.CLOTH: cloth,
-		VoxelModel.CLOTH_DARK: _scale(cloth, 0.75),
+		VoxelModel.CLOTH_DARK: _linear(DEEP_HEX[r]),
 		VoxelModel.LEATHER: _linear(LEATHER_HEX),
 		VoxelModel.BELT: _linear(BELT_HEX),
 		VoxelModel.TOOTH: _linear(TOOTH_HEX),
 		VoxelModel.METAL: _linear(METAL_HEX),
 		VoxelModel.WOOD: _linear(WOOD_HEX),
+		VoxelModel.LINER: _linear(LINER_HEX),
+		# COUNTERSHADING, and it costs zero extra voxels because it is a palette
+		# split of a slot that already exists. Derived from the skin rather than
+		# tabled so it tracks the player's pick: a belly is the same animal's
+		# hide with the sun on it, not a different colour. Mixed toward white in
+		# LINEAR space, which is what "lighter" physically means.
+		VoxelModel.SKIN_VENTRAL: _lighten(skin, 0.55),
+		VoxelModel.TRIM_BRIGHT: _linear(TRIM_BRIGHT_HEX),
+		VoxelModel.METAL_DARK: _linear(METAL_DARK_HEX),
+		VoxelModel.SCALE_A: _linear(SCALE_A_HEX),
+		VoxelModel.SCALE_B: _linear(SCALE_B_HEX),
+		# EMISSIVE TRAVELS IN THE ALPHA, exactly as flora's does - but the
+		# mesher sets the flag from the slot, not from this colour. That is the
+		# whole of the character/foliage unification item 12 asks for: a shared
+		# channel, not a shared struct.
+		VoxelModel.GLOW: _linear(GLOW_HEX),
 	}
+	# Alpha is not set here at all: `VoxelModel.build_mesh` derives it from the
+	# SLOT, so a palette cannot accidentally light something up. See the note
+	# there - it is the difference between failing open and failing closed.
+	return out
+
+
+## The race's own tier colours, for anything that needs one directly rather
+## than through a slot - the gallery's palette sheet, and the armour trim later.
+static func tier_hex(race: int, tier: String) -> String:
+	var r := valid_race(race)
+	match tier:
+		"liner": return LINER_HEX
+		"deep": return DEEP_HEX[r]
+		"mid": return MID_HEX[r]
+		"light": return LIGHT_HEX[r]
+		"accent": return ACCENT_HEX[r]
+	return LINER_HEX
+
+
+const TIER_NAMES := ["liner", "deep", "mid", "light", "accent"]
 
 
 ## sRGB hex to the linear value the renderer actually wants. See Block.COLORS:
@@ -332,6 +536,13 @@ static func _linear(hex: String) -> Color:
 ## Alpha is left alone.
 static func _scale(c: Color, f: float) -> Color:
 	return Color(c.r * f, c.g * f, c.b * f, c.a)
+
+
+## Toward white by `f`, in LINEAR space. Scaling cannot lighten - a scale by 1.5
+## takes a bright skin past 1.0 and clips it to a different hue - so the light
+## direction is a mix and the dark direction is a multiply. Alpha is left alone.
+static func _lighten(c: Color, f: float) -> Color:
+	return Color(lerpf(c.r, 1.0, f), lerpf(c.g, 1.0, f), lerpf(c.b, 1.0, f), c.a)
 
 
 # --- The rig -----------------------------------------------------------------
@@ -382,14 +593,87 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 		{"name": "head", "parent": "torso", "rest": Vector3(0, torso, 0) * V,
 			"part": "head"},
 		{"name": "arm_r", "parent": "torso", "rest": Vector3(arm_x, shoulder_y, 0) * V,
-			"part": "arm"},
+			"part": "arm_upper"},
 		{"name": "arm_l", "parent": "torso", "rest": Vector3(-arm_x, shoulder_y, 0) * V,
-			"part": "arm", "mirror": true},
+			"part": "arm_upper", "mirror": true},
 		{"name": "leg_r", "parent": "hips", "rest": Vector3(leg_x, 0, 0) * V,
-			"part": "leg"},
+			"part": "leg_upper"},
 		{"name": "leg_l", "parent": "hips", "rest": Vector3(-leg_x, 0, 0) * V,
-			"part": "leg", "mirror": true},
+			"part": "leg_upper", "mirror": true},
 	]
+
+	# THE KNEE AND THE ELBOW - character v2 Stage 4.
+	#
+	# ADDED, NOT SUBSTITUTED, and that is the whole design. `leg_r` keeps its
+	# name and gains a child; it does not become `leg_upper`. `Rig.apply_pose()`
+	# has one contract and it is written down there: a pose that says nothing
+	# about a bone leaves it at rest. So every static pose, the critter, the
+	# trot and every self-test that names a bone kept working on the day these
+	# four landed, and the poses that wanted knees were refined afterwards
+	# because someone chose to rather than to stop the build being red.
+	#
+	# The cost is that `leg_r` names a thigh, which is slightly dishonest. The
+	# PART keys got the honest names instead - `leg_upper`, `leg_lower` - because
+	# a part key is an asset contract with one consumer (assets/characters/, and
+	# it ships empty) while a bone name is a pose contract with a dozen. Rename
+	# the cheap one.
+	#
+	# THE SEGMENT LENGTH IS READ OFF THE PART, not computed as `legs / 2`. The
+	# two are not the same number: the dwarf's legs are 15 voxels and its
+	# segments are 8 and 8, because the grid map rounds each half up. Deriving
+	# the offset from the part that is actually there is the only version that
+	# cannot drift, and it is the same argument as the height self-test
+	# measuring a built rig rather than summing the table.
+	var set_for_bones := part_set(race, build)
+	var thigh := _segment_height(set_for_bones, "leg_upper", float(legs) * 0.5)
+	var upper_arm := _segment_height(set_for_bones, "arm_upper", float(arm_len) * 0.5)
+	for side in [["r", 1.0], ["l", -1.0]]:
+		var suffix: String = side[0]
+		var mirrored: bool = suffix == "l"
+		out.append({"name": "leg_%s_lower" % suffix, "parent": "leg_%s" % suffix,
+			"rest": Vector3(0, -thigh, 0) * V,
+			"part": "leg_lower", "mirror": mirrored})
+		out.append({"name": "arm_%s_lower" % suffix, "parent": "arm_%s" % suffix,
+			"rest": Vector3(0, -upper_arm, 0) * V,
+			"part": "arm_lower", "mirror": mirrored})
+		# THE THIRD LEG SEGMENT, and only the lizardfolk has one. A digitigrade
+		# animal stands on the end of a long foot with the ankle raised into a
+		# backward-facing hock, and that hock is the feature that reads as "not
+		# a person" from any angle - unlike the tail and the snout, which a
+		# front-on mask cannot see at all.
+		#
+		# Optional by the same rule the knee is: a race whose part set has no
+		# `leg_foot` simply does not get the bone, and nothing branches on
+		# which races are digitigrade.
+		if set_for_bones.has("leg_foot"):
+			out.append({"name": "leg_%s_foot" % suffix, "parent": "leg_%s_lower" % suffix,
+				"rest": Vector3(0, -_segment_height(set_for_bones, "leg_lower",
+					float(legs) / 3.0), 0) * V,
+				"part": "leg_foot", "mirror": mirrored})
+
+	# A DIGITIGRADE LEG IS BENT WHEN IT IS STANDING STILL, and that is the
+	# whole point of it. A dog at rest has a folded hind leg; only a person
+	# stands on straight columns. So the crouch belongs in the REST POSE, baked
+	# in exactly as the forward lean already is - not in the walk cycle, where
+	# it would vanish the moment the character stopped.
+	#
+	# It is also what finally moved the silhouette. The mask metric photographs
+	# a character in its rest pose, so a race whose legs were straight at rest
+	# and folded only while walking measured as a straight-legged race. Front on
+	# against the human this pair went 0.913 -> 0.797 on the torso narrowing
+	# alone, and the rest of the way on this.
+	#
+	# The numbers are a Z: thigh forward, shin back under the body, foot
+	# forward onto the toes. They are tabled per race rather than computed,
+	# because "what this animal's leg does when it is standing" is a fact about
+	# the animal.
+	var stance: Dictionary = t.get("leg_stance", {})
+	if not stance.is_empty():
+		for entry in out:
+			var bone_name: String = entry["name"]
+			for key in stance:
+				if bone_name.ends_with(key):
+					entry["rest_rot"] = Vector3(deg_to_rad(float(stance[key])), 0.0, 0.0)
 
 	# The tail is a CHAIN, and the chain machinery is generic because the
 	# critter in Stage 13 needs it too. Bones are named `<chain>_1..n` and the
@@ -426,6 +710,16 @@ static func bone_table(race: int, build := STOCKY) -> Array:
 	return out
 
 
+
+## The built height of a limb segment, in model voxels, or a fallback.
+##
+## Read off the part rather than halved from the table, because the two are not
+## the same number after a non-integer change of grid. See bone_table().
+static func _segment_height(parts: Dictionary, part_name: String, fallback: float) -> float:
+	if parts.has(part_name) and (parts[part_name] as Dictionary).has("size"):
+		return float((parts[part_name]["size"] as Vector3i).y)
+	return fallback
+
 ## The six sockets, on every race, positioned from that race's own numbers.
 ##
 ## ALL SIX EXIST EVERYWHERE even where nothing will ever hang on them, because
@@ -438,9 +732,16 @@ static func socket_table(race: int, build := STOCKY) -> Array:
 	var arm_len: int = t["arm_len"]
 	var pelvis := pelvis_height(race, build)
 	var chest_y := float(torso) * 0.7
+	# THE HANDS HANG OFF THE FOREARM since character v2 Stage 4, not off the
+	# shoulder. `arm_r` is now the upper arm, so a hand parented to it would
+	# stay put while the elbow bent - which is the single most obviously wrong
+	# thing a two-segment arm can do. The offset is the FOREARM's length, read
+	# off its part for the same reason the elbow's is.
+	var forearm := _segment_height(part_set(race, build), "arm_lower",
+		float(arm_len) * 0.5)
 	return [
-		{"name": "hand_r", "parent": "arm_r", "rest": Vector3(0, -arm_len, 0) * V, "socket": true},
-		{"name": "hand_l", "parent": "arm_l", "rest": Vector3(0, -arm_len, 0) * V, "socket": true},
+		{"name": "hand_r", "parent": "arm_r_lower", "rest": Vector3(0, -forearm, 0) * V, "socket": true},
+		{"name": "hand_l", "parent": "arm_l_lower", "rest": Vector3(0, -forearm, 0) * V, "socket": true},
 		{"name": "neck", "parent": "torso", "rest": Vector3(0, torso, 0) * V, "socket": true},
 		{"name": "chest", "parent": "torso", "rest": Vector3(0, chest_y, -float(torso_d) * 0.5) * V, "socket": true},
 		{"name": "back", "parent": "torso", "rest": Vector3(0, chest_y, float(torso_d) * 0.5) * V, "socket": true},
@@ -508,7 +809,8 @@ static func parts_for(def: CharacterDef) -> Dictionary:
 	for part_name in out.keys():
 		var original: Dictionary = out[part_name]
 		var replacement = VoxLoader.drop_in(race_name, part_name,
-			original.get("anchor", Vector3.ZERO))
+			original.get("anchor", Vector3.ZERO),
+			original.get("size", Vector3i.ZERO))
 		if replacement != null:
 			out[part_name] = replacement
 	return out

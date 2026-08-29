@@ -10,14 +10,14 @@ The stack, in model voxels:
     head   [50, 72) 22
 """
 
-from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
-HEAD_SIZE = (28, 25, 17)
+HEAD_SIZE = (28, 22, 17)
 HEAD_ANCHOR = (14, 0, 9)
 # Head-frame geometry, for the hair file.
 SKULL_X = (-8, 8)
-SKULL_Y = (3, 25)
+SKULL_Y = (3, 22)
 SKULL_Z = (-8, 8)
 CHAMFER = 2
 JAW_INSETS = (2, 1)
@@ -34,7 +34,7 @@ def head() -> Part:
     p.box((10, 18), (0, NECK), (5, 13), S)
     p.note(0, "the neck")
     # The skull: 16 wide at columns 6..21, 22 tall, at z 1..16.
-    p.prism((6, 22), (NECK, 25), (1, 17), S, chamfer=CHAMFER,
+    p.prism((6, 22), (NECK, 22), (1, 17), S, chamfer=CHAMFER,
             bottom=JAW_INSETS, top=CROWN_INSETS)
     p.note(NECK, "the chin, stepped in twice")
     # Five wide, centred on the elf's face (look v2 Stage 5).
@@ -83,8 +83,12 @@ head part rather than a bone: the head rotates about the BASE of the neck,
 which is where a head-look should pivot."""
 
 
+## How far the collar rises above the stack's torso, in author voxels.
+COLLAR = 3
+
+
 def torso() -> Part:
-    p = Part("TORSO", (12, 20, 8), (6, 0, 4))
+    p = Part("TORSO", (12, 20 + COLLAR, 8), (6, 0, 4))
     p.box((0, 12), (0, 18), (0, 8), C)
     p.box((1, 11), (18, 19), (0, 8), C)
     p.box((2, 10), (19, 20), (1, 7), C)
@@ -92,9 +96,35 @@ def torso() -> Part:
     p.repaint((5, 7), (0, 2), (0, 1), X)
     for y, (x0, x1) in ((19, (3, 9)), (18, (4, 8)), (17, (5, 7))):
         p.front_paint(y, (x0, x1), c)
+
+    # THE HIGH STANDING COLLAR, and it is the elf's identity rather than its
+    # ears - character v2's design doc is emphatic about why. The ears do not
+    # survive a helmet: the moment armour puts a helm on this race it becomes a
+    # narrow human. The collar is torso, the collar is UNDER the helm, and the
+    # collar is always there. Ears stay and are swept back and up in the
+    # collar's plane, so at 15 m ear plus collar reads as one continuous
+    # vertical fin - but the identity is carried by the thing that cannot be
+    # taken off.
+    #
+    # A RING, not a block: the neck comes up through it. Three author voxels
+    # above the stack's torso, which is what `torso_rise` in races.gd records
+    # so the bone table and the self-test both know the part is taller than its
+    # slice of the stack.
+    for y in range(20, 20 + COLLAR):
+        p.box((1, 11), (y, y + 1), (0, 8), C)
+        for z in range(1, 7):
+            for x in range(2, 10):
+                p.erase(x, y, z)
+    # Inked at the top, so the collar's edge is a line rather than a fade, and
+    # at the bottom where it meets the shoulder.
+    p.box((1, 11), (20 + COLLAR - 1, 20 + COLLAR), (0, 1), k)
+    p.repaint((1, 11), (19, 20), (0, 8), k)
+
     p.note(0, "the belt")
     p.note(2, "the tunic")
     p.note(18, "the shoulders step in")
+    p.note(19, "the liner under the collar")
+    p.note(20, "the collar, a ring the neck comes up through")
     return p
 
 
@@ -121,7 +151,10 @@ anything else."""
 def leg() -> Part:
     p = Part("LEG", (7, 24, 7), (3.5, 24, 4.5))
     p.box((1, 6), (4, 24), (2, 7), c)
+    # The liner at the boot top - one of the four places the design doc
+    # names where cloth meets skin or leather: collar, cuff, waist, boot.
     p.box((0, 7), (0, 4), (0, 7), L)
+    p.box((0, 7), (4, 5), (0, 7), k)
     p.note(0, "the boot")
     p.note(4, "the trouser leg, five by five")
     return p
@@ -136,14 +169,17 @@ is 6, one more than the trouser, so the boots touch rather than overlap."""
 
 def arm() -> Part:
     p = Part("ARM", (6, 24, 6), (3, 24, 3))
-    p.box((1, 5), (16, 24), (1, 5), C)
-    p.box((1, 5), (15, 16), (1, 5), c)
-    p.box((1, 5), (6, 15), (1, 5), S)
+    # The cuff is the LINER now, and it lands on ARM_SPLIT, which is where
+    # the elbow is - so the joint is inked by the row the design wanted
+    # there anyway. Two ideas, one voxel. See human.py.
+    p.box((1, 5), (13, 24), (1, 5), C)
+    p.box((1, 5), (12, 13), (1, 5), k)
+    p.box((1, 5), (6, 12), (1, 5), S)
     p.box((0, 6), (0, 6), (0, 6), s)
     p.note(0, "the hand, six by six")
     p.note(6, "the forearm")
-    p.note(15, "the cuff")
-    p.note(16, "the sleeve")
+    p.note(12, "the liner cuff, on the elbow")
+    p.note(13, "the sleeve")
     return p
 
 
@@ -178,19 +214,37 @@ part means the head rotates about the BASE of the neck, which is where a
 head-look should pivot anyway."""
 
 
+# --- Where this race's knee and elbow go -------------------------------------
+#
+# Character v2 Stage 4. The limb is authored full length above and cut here, so
+# the drawing code never has to know where the joint is. Both splits are the
+# midpoint of the author-grid limb, which is what the design doc asks for - "the
+# legs are 24, and 12/12 thigh and shin"; at the author grid of 64 that is 8/8.
+LEG_SPLIT = 12
+ARM_SPLIT = 12
+
+
 def render() -> str:
+    leg_upper, leg_lower = split_limb(
+        leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
+    arm_upper, arm_lower = split_limb(
+        arm(), ARM_SPLIT, "ARM_UPPER", "ARM_LOWER")
     parts = {
         "head": head(),
         "torso": torso(),
         "pelvis": pelvis(),
-        "leg": leg(),
-        "arm": arm(),
+        "leg_upper": leg_upper,
+        "leg_lower": leg_lower,
+        "arm_upper": arm_upper,
+        "arm_lower": arm_lower,
     }
     blocks = [
         parts["head"].gd("HEAD", HEAD_COMMENT),
         parts["torso"].gd("TORSO", TORSO_COMMENT),
         parts["pelvis"].gd("PELVIS", PELVIS_COMMENT),
-        parts["leg"].gd("LEG", LEG_COMMENT),
-        parts["arm"].gd("ARM", ARM_COMMENT),
+        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
+        parts["leg_lower"].gd("LEG_LOWER"),
+        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
+        parts["arm_lower"].gd("ARM_LOWER"),
     ]
     return gd_file("PartsElf", DOC, blocks, {k: k.upper() for k in parts}, "elf.py")

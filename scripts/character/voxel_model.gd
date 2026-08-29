@@ -49,15 +49,38 @@ class_name VoxelModel
 ## below is deliberately the most boring one that can hold a voxel: an array of
 ## strings you can read in a terminal.
 
-## Metres per model voxel. 16 per 0.5 m block since look v1: a 2 m human is
-## 64 voxels tall. Character v1 built at 8 per block, the scale foliage v1
-## fixed for plants; the look plan halved it for characters alone, because a
-## face needs the resolution and a grass tuft does not. Plants stay at 1/8.
-const VOXEL_M := 0.03125
+## Metres per model voxel. **24 per 0.5 m block since character v2: a 2 m human
+## is 96 voxels tall**, and one voxel is 2.083 cm.
+##
+## The history, because the number has moved twice and each move had a reason.
+## Character v1 built at 8 per block, the scale foliage v1 fixed for plants.
+## Look v1 halved it to 16 for characters alone, because a face needs the
+## resolution and a grass tuft does not; plants stay at 1/8. Character v2 takes
+## it to 24, and the reason is NOT surface detail:
+##
+## A 16-voxel leg cannot have a knee. Split it and each segment is 8 voxels - a
+## limb whose joint is half its own thickness. At 96 the legs are 24, and a
+## 12/12 thigh and shin with a two-voxel joint is a joint you can see bend.
+## That is the whole argument; everything else the raise buys is a bonus.
+##
+## AND NOT 128. At the game's 75 degree FOV a 2 m character at 15 m - the far
+## edge of the band the game is actually played in - is 94 px tall at 1080p. So
+## one voxel is 1.5 px at 64, 0.98 px at 96, and 0.73 px at 128. Below one pixel
+## the detail does not render, it ALIASES, and every frame of movement makes it
+## shimmer. 96 is the last grid whose atomic unit is still a pixel at the
+## distance this game is played at. An independent research lane with no access
+## to this repository arrived at the same number for compatible reasons.
+##
+## Written as arithmetic rather than as a decimal so the reason stays attached
+## to the value: 2.00 m of human over 96 voxels.
+const VOXEL_M := 2.0 / 96.0
 
 ## Semantic slots. A part is authored in these, never in colours - the same
 ## voxels resolved through a different palette are a different-looking
 ## character, and that is what makes a palette swap free.
+## NEW SLOTS ARE APPENDED, NEVER INSERTED. The index IS the `.vox` palette
+## index minus one (see VoxLoader), so renumbering an existing slot would
+## silently re-colour every model anyone has ever exported.
 enum {
 	SKIN = 0,
 	SKIN_SHADED = 1,
@@ -72,11 +95,34 @@ enum {
 	TOOTH = 10,
 	METAL = 11,
 	WOOD = 12,
+	# --- Character v2 Stage 1 ---
+	LINER = 13,
+	SKIN_VENTRAL = 14,
+	TRIM_BRIGHT = 15,
+	METAL_DARK = 16,
+	SCALE_A = 17,
+	SCALE_B = 18,
+	# --- Character v2 Stage 10 ---
+	GLOW = 19,
 }
 
-const SLOT_COUNT := 13
+const SLOT_COUNT := 20
 
 ## The legend, shared by every part file. `.` and space are empty.
+##
+## THE CONVENTION IS THAT LOWERCASE IS THE DARKER SIBLING of its uppercase -
+## `S`/`s` skin, `C`/`c` cloth, `X`/`x` metal, `A`/`a` scale. Half the legend is
+## therefore derivable rather than memorised, which is the only reason nineteen
+## of these is still a thing a person can read a slice in.
+##
+## THE CEILING, since the tech plan asks. `parse()` reads ONE CHARACTER per
+## voxel out of a GDScript string, so the hard limit is printable ASCII (95)
+## minus `.` and space (both mean empty) and minus `"` and `\` (which would
+## have to be escaped in the source): **91**. That is not the real limit. The
+## real limit is the legend someone can hold in their head while reading a
+## slice, and the upper/lower convention roughly doubles it: call it **about
+## 24**. Past that the format wants two characters per voxel, which is a
+## different file format and a different decision.
 const SLOT_CHARS := {
 	"S": SKIN,
 	"s": SKIN_SHADED,
@@ -91,12 +137,37 @@ const SLOT_CHARS := {
 	"T": TOOTH,
 	"X": METAL,
 	"D": WOOD,
+	"k": LINER,
+	"v": SKIN_VENTRAL,
+	"R": TRIM_BRIGHT,
+	"x": METAL_DARK,
+	"A": SCALE_A,
+	"a": SCALE_B,
+	"G": GLOW,
 }
 
 const SLOT_NAMES := [
 	"skin", "skin_shaded", "hair", "iris", "eye_white", "mouth",
 	"cloth", "cloth_dark", "leather", "belt", "tooth", "metal", "wood",
+	"liner", "skin_ventral", "trim_bright", "metal_dark", "scale_a", "scale_b",
+	"glow",
 ]
+
+## WHICH SLOTS GLOW, as a table, because that is a fact and facts are data.
+##
+## THE FOLIAGE AND CHARACTER VOXEL FORMATS DO NOT NEED TO BECOME ONE ARRAY
+## SHAPE, which is what the note further down this file promised and what the
+## tech plan's item 12 asks for. They have to agree on the CHANNEL - emissive
+## travels in the vertex colour's alpha, authored per voxel - and a character
+## does not need a fifth component to say so, because it already has a semantic
+## slot. An emissive voxel is a voxel in the GLOW slot.
+##
+## Flora keeps its `[x, y, z, colour, emissive]` and characters keep
+## `Vector4i(x, y, z, slot)`, and the difference between them stays what it
+## always was: flora resolves its colours at author time and a character
+## resolves them through a per-character palette, which IS the palette-swap
+## feature. Collapsing that would cost the creation screen to buy nothing.
+const EMISSIVE_SLOTS := {GLOW: true}
 
 ## AO levels are 0 (fully enclosed) to 3 (fully open), exactly as in
 ## ChunkMesher - the same rule, so a character shades like the ground it stands
@@ -292,7 +363,19 @@ static func build_mesh(voxels: Array, palette: Dictionary, anchor: Vector3,
 
 	for v in voxels:
 		var p := Vector3i(v.x, v.y, v.z)
+		# THE EMISSIVE FLAG COMES FROM THE SLOT, NOT FROM THE PALETTE.
+		#
+		# Alpha is the channel - the same one flora uses - and it would be easy
+		# to let each palette set it. That fails open: any palette that does not
+		# think about alpha gets Color's default of 1, and every voxel it draws
+		# glows. The gallery's own test cube did exactly that the moment the
+		# shader line landed, and `PartsCritter.palette()` was next in line.
+		#
+		# Deriving it from `EMISSIVE_SLOTS` fails closed instead, and it is also
+		# what the design actually says: an emissive voxel is a voxel in the
+		# GLOW slot. A palette cannot make a mistake it is not allowed to make.
 		var color: Color = palette.get(v.w, Color.MAGENTA)
+		color.a = 1.0 if EMISSIVE_SLOTS.has(v.w) else 0.0
 		for d in 3:
 			for s: int in [-1, 1]:
 				var n := p

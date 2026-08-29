@@ -76,6 +76,49 @@ func build(new_def: CharacterDef) -> void:
 	# the F8 panel would silently disarm the T key.
 	if _gear_on:
 		set_gear_placeholders(true)
+	# And whatever the character is wearing, which arrived in the def.
+	apply_armour()
+
+
+## Hang everything `def` says this character is wearing.
+##
+## THROUGH THE SAME ONE ENTRY POINT as everything else visual, which is the
+## whole design of this file: the local player, the friend across the network
+## and the creation screen's turntable can never disagree about what a dwarf in
+## plate looks like, because there is one function that turns a def into
+## geometry and this is part of it.
+##
+## Cheap enough to call on every rebuild - `build()` already tears the rig down
+## and puts it back on every click of the creation screen.
+func apply_armour() -> void:
+	if rig == null or def == null:
+		return
+	rig.clear_overlays()
+	var palette := Races.palette(def.race, def.skin, def.hair_color, def.eyes)
+	for slot in CharacterDef.ARMOUR_SLOTS:
+		if def.armour_tier[slot] <= 0:
+			continue
+		var where := Armour.attach_points(slot)
+		var bones: Array = where.get("bones", [])
+		for i in bones.size():
+			# PER BONE, because a slot's two bones do not always wear the same
+			# thing: tier 5's rune band is on ONE pauldron, and one lit
+			# shoulder is a story where two are a costume.
+			#
+			# The left of a mirrored pair takes the mirrored part, exactly as
+			# the body's own limbs do - Rig knows which bones were built
+			# mirrored and mirrors the overlay to match.
+			var piece := Armour.part_name_for(slot, def.armour_tier[slot], def.race, i)
+			if piece.is_empty() or not PartsArmour.PARTS.has(piece):
+				continue
+			rig.attach_overlay(bones[i], PartsArmour.PARTS[piece], piece,
+				palette, _config.ao_strength)
+		var carried := Armour.part_name(slot, def.armour_tier[slot], def.race)
+		if carried.is_empty() or not PartsArmour.PARTS.has(carried):
+			continue
+		for socket in where.get("sockets", []):
+			rig.attach_to_socket(socket, PartsArmour.PARTS[carried], carried,
+				palette, _config.ao_strength)
 
 
 ## What this character is doing. Called every physics frame by Player, and

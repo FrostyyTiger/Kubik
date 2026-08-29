@@ -7,7 +7,7 @@ The stack, in model voxels:
     head   [28, 48) 20
 """
 
-from .voxlib import (Part, gd_file, solid_eyes, hair_brow,
+from .voxlib import (split_limb, Part, gd_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 HEAD_SIZE = (20, 20, 17)
@@ -54,18 +54,56 @@ The head is 42% of the total height, the most extreme proportion in the
 game, and the point of the race."""
 
 
+## How far the shoulders rise above the stack's torso, in author voxels. The
+## dwarf's whole silhouette rule lives in this number - see below.
+##
+## THE STACK STAYS AT 18 AND NOT THE DESIGN DOC'S 17. The doc's dwarf is
+## "total 72, legs 16, pelvis 0, torso 26, head 30". Its `legs` of 16 is not
+## reachable from the author grid - the leg part is 10 author voxels, which is
+## 15 - so taking `torso` to 26 would leave the stack one voxel short and
+## `pelvis_height()` would hand the dwarf a ONE-VOXEL PELVIS, and with it a
+## pelvis part this race has never had and does not want. 27 instead of 26 is
+## two centimetres on a 1.5 m character and keeps the pelvis at zero, which is
+## what "no neck, no pelvis, by construction" means for this race.
+SHOULDER_RISE = 3
+
+
 def torso() -> Part:
-    p = Part("TORSO", (26, 18, 14), (13, 0, 7))
+    p = Part("TORSO", (26, 18 + SHOULDER_RISE, 14), (13, 0, 7))
     p.box((0, 26), (0, 16), (0, 14), C)
-    p.box((1, 25), (16, 17), (0, 14), C)
-    p.box((2, 24), (17, 18), (1, 13), C)
     p.repaint((0, 26), (0, 2), (0, 14), B)
     p.repaint((11, 15), (0, 2), (0, 1), X)
-    for y, (x0, x1) in ((17, (9, 17)), (16, (10, 16)), (15, (11, 15)), (14, (12, 14))):
+
+    # THE HEAD SITS BETWEEN THE SHOULDERS, NOT ABOVE THEM, and that is the
+    # whole trick of this race. A head that pokes above the shoulders reads as
+    # a person; a head set INSIDE the shoulder line reads as mass. The dwarf is
+    # the only race wider than the space it occupies - it fills a doorway - and
+    # it is not a short human, because a short human is a child and no part of
+    # this may read as one.
+    #
+    # So instead of the human's ziggurat, where the torso steps IN toward the
+    # neck, the dwarf's shoulders carry straight up past the point where the
+    # head bone sits, and the neck opening is cut out of them. Three author
+    # voxels of rise, recorded as `torso_rise` in races.gd so the bone table
+    # and the self-test both know this part is taller than its slice of the
+    # stack.
+    top = 18 + SHOULDER_RISE
+    p.box((0, 26), (16, top), (0, 14), C)
+    for y in range(16, top):
+        for z in range(3, 11):
+            for x in range(9, 17):
+                p.erase(x, y, z)
+    # Inked around the opening, so the shoulders read as two masses with a gap
+    # rather than as one slab with a hole in it.
+    p.box((8, 18), (top - 1, top), (2, 12), k)
+    p.repaint((0, 26), (15, 16), (0, 14), k)
+
+    for y, (x0, x1) in ((15, (11, 15)), (14, (12, 14))):
         p.front_paint(y, (x0, x1), c)
     p.note(0, "the belt, buckle on the front")
     p.note(2, "the tunic")
-    p.note(16, "the shoulders step in")
+    p.note(15, "the liner, under the shoulder line")
+    p.note(16, "the shoulders carry on up, and the head sits between them")
     return p
 
 
@@ -80,7 +118,10 @@ tall."""
 def leg() -> Part:
     p = Part("LEG", (10, 10, 10), (5, 10, 6))
     p.box((1, 9), (4, 10), (2, 10), c)
+    # The liner at the boot top - one of the four places the design doc
+    # names where cloth meets skin or leather: collar, cuff, waist, boot.
     p.box((0, 10), (0, 4), (0, 10), L)
+    p.box((0, 10), (4, 5), (0, 10), k)
     p.note(0, "the boot, ten wide and ten deep")
     p.note(4, "the trouser leg, eight by eight")
     return p
@@ -95,14 +136,17 @@ and quick out of the same one-line scale every other race uses."""
 
 def arm() -> Part:
     p = Part("ARM", (10, 16, 10), (5, 16, 5))
-    p.box((1, 9), (11, 16), (1, 9), C)
-    p.box((1, 9), (10, 11), (1, 9), c)
-    p.box((1, 9), (6, 10), (1, 9), S)
+    # The cuff is the LINER now, and it lands on ARM_SPLIT, which is where
+    # the elbow is - so the joint is inked by the row the design wanted
+    # there anyway. Two ideas, one voxel. See human.py.
+    p.box((1, 9), (9, 16), (1, 9), C)
+    p.box((1, 9), (8, 9), (1, 9), k)
+    p.box((1, 9), (6, 8), (1, 9), S)
     p.box((0, 10), (0, 6), (0, 10), s)
     p.note(0, "the hand, ten by ten")
     p.note(6, "the forearm")
-    p.note(10, "the cuff")
-    p.note(11, "the sleeve")
+    p.note(8, "the liner cuff, on the elbow")
+    p.note(9, "the sleeve")
     return p
 
 
@@ -132,17 +176,35 @@ No pelvis - the stack leaves no room and `hips` is a pure transform with the
 belt socket on it."""
 
 
+# --- Where this race's knee and elbow go -------------------------------------
+#
+# Character v2 Stage 4. The limb is authored full length above and cut here, so
+# the drawing code never has to know where the joint is. Both splits are the
+# midpoint of the author-grid limb, which is what the design doc asks for - "the
+# legs are 24, and 12/12 thigh and shin"; at the author grid of 64 that is 8/8.
+LEG_SPLIT = 5
+ARM_SPLIT = 8
+
+
 def render() -> str:
+    leg_upper, leg_lower = split_limb(
+        leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
+    arm_upper, arm_lower = split_limb(
+        arm(), ARM_SPLIT, "ARM_UPPER", "ARM_LOWER")
     parts = {
         "head": head(),
         "torso": torso(),
-        "leg": leg(),
-        "arm": arm(),
+        "leg_upper": leg_upper,
+        "leg_lower": leg_lower,
+        "arm_upper": arm_upper,
+        "arm_lower": arm_lower,
     }
     blocks = [
         parts["head"].gd("HEAD", HEAD_COMMENT),
         parts["torso"].gd("TORSO", TORSO_COMMENT),
-        parts["leg"].gd("LEG", LEG_COMMENT),
-        parts["arm"].gd("ARM", ARM_COMMENT),
+        parts["leg_upper"].gd("LEG_UPPER", LEG_COMMENT),
+        parts["leg_lower"].gd("LEG_LOWER"),
+        parts["arm_upper"].gd("ARM_UPPER", ARM_COMMENT),
+        parts["arm_lower"].gd("ARM_LOWER"),
     ]
     return gd_file("PartsDwarf", DOC, blocks, {k: k.upper() for k in parts}, "dwarf.py")

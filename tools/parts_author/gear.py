@@ -47,11 +47,23 @@ as."""
 
 
 def pendant() -> Part:
+    # ONE VOXEL FURTHER OUT SINCE CHARACTER V2 STAGE 3, and the reason is the
+    # dwarf's beard. Character v1's status doc already recorded that this
+    # placeholder "floats slightly proud of a narrow chest because a cord that
+    # sloped back would put two voxels inside a dwarf" - the clearance was one
+    # voxel at 1/16 of a block, which is 3.1 cm. At 1/24 a voxel is 2.1 cm, so
+    # the same one-voxel standoff is a third less room, and the beard, which
+    # scaled with everything else, closed on it: the gear-socket self-test
+    # reported 30 cells of pendant inside the dwarf's beard.
+    #
+    # Moved rather than the test loosened. It is a placeholder proving a
+    # socket, and a placeholder that intersects a dwarf is measuring the
+    # placeholder instead of the socket.
     f = Frame()
-    f.box((-3, 3), (-2, 0), (-13, -11), X)   # the clasp
-    f.box((-1, 1), (-4, -2), (-13, -11), X)
-    f.box((-1, 1), (-8, -4), (-13, -11), B)  # the cord
-    f.box((-2, 2), (-12, -8), (-13, -11), X) # the medallion
+    f.box((-3, 3), (-2, 0), (-14, -12), X)   # the clasp
+    f.box((-1, 1), (-4, -2), (-14, -12), X)
+    f.box((-1, 1), (-8, -4), (-14, -12), B)  # the cord
+    f.box((-2, 2), (-12, -8), (-14, -12), X) # the medallion
     return f.to_part("PENDANT")
 
 

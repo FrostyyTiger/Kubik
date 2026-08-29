@@ -137,10 +137,15 @@ func _sheets() -> Dictionary:
 		"anim-poses": _sheet_anim_poses,
 		"study": _sheet_study,
 		"silhouettes": _sheet_silhouettes,
+		"palette-tiers": _sheet_palette_tiers,
 		"masks-40": _sheet_masks_40,
+		"outline": _sheet_outline,
 		"variants": _sheet_variants,
 		"masks-options": _sheet_masks_options,
+		"armour": _sheet_armour,
+		"tiers": _sheet_tiers,
 		"gear": _sheet_gear,
+		"campfire": _sheet_campfire,
 		"critter": _sheet_critter,
 		"budget": _sheet_budget,
 	}
@@ -490,7 +495,7 @@ func _aim_at_swatches() -> void:
 ## converted exactly as apply() converts them before publishing - so the sheet
 ## predicts from the same numbers the shader was handed, and a disagreement is
 ## the TRANSFER and never a stale uniform.
-func _report_swatches(image: Image) -> void:
+func _report_swatches(image: Image, json_name := "swatches") -> void:
 	# STRAIGHT FROM THE KEYFRAME, not from the wrappers: this is the same
 	# Dictionary apply() published, so a disagreement is the transfer and never
 	# a value that was converted twice on its way to the prediction.
@@ -539,7 +544,7 @@ func _report_swatches(image: Image) -> void:
 		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
 		"grain_forced_off": true,
 	}
-	var path := "%s/swatches.json" % _out_dir
+	var path := "%s/%s.json" % [_out_dir, json_name]
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify(report, "  "))
@@ -778,6 +783,26 @@ func _make_subject(def) -> Node3D:
 		return holder
 	var view := CharacterView.new()
 	view.build(def)
+	# FROZEN THE MOMENT IT IS BUILT, for the same reason `_freeze_pose` freezes
+	# a strip: the pose in the picture must be the pose that was asked for.
+	#
+	# A live CharacterView breathes on wall-clock `time` and blinks on real
+	# randomness - deliberately, both of them, because a character that blinks
+	# on a schedule reads as a scripted event rather than as life. That is
+	# right in the game and wrong in a gallery, where a still sheet that
+	# happens to catch an eyelid is a sheet nobody can compare to yesterday's.
+	# It does not fire today: a sheet is shot four process frames after its
+	# subjects are built, and the blink timer starts at 3 to 6 seconds. It
+	# fires the moment anything makes a sheet slower, which the 96-voxel grid
+	# will.
+	#
+	# HONEST NOTE, because this line was added on a hypothesis the measurement
+	# then refuted: this is NOT why two runs of the gallery differ. They differ
+	# anyway, and character v2's Stage 0 measured why - see the status doc.
+	# Freezing the subject fixed none of it. It is kept because a still sheet
+	# catching a blink is a real hazard that costs one line to remove, not
+	# because it made anything reproducible.
+	view.set_process(false)
 	return view
 
 
@@ -923,8 +948,8 @@ func _sheet_budget() -> void:
 	# renderer needs a frame with nothing on the pad to tell us what that is.
 	var empty := await _primitives()
 	print("[Gallery] triangle budget, %d per character with hair and beard:" % CharacterConfig.TRIANGLE_BUDGET)
-	print("[Gallery]   %-22s %8s %8s   (drawn = mesh x 2, the shadow pass)" % [
-		"", "mesh", "drawn"])
+	print("[Gallery]   %-22s %8s %8s %9s %8s   (drawn = mesh x 2, the shadow pass)" % [
+		"", "mesh", "drawn", "voxels", "KB"])
 	print("[Gallery]   %-22s %8s %8d" % ["(pad and sky alone)", "-", empty])
 
 	var worst := 0
@@ -937,7 +962,19 @@ func _sheet_budget() -> void:
 			var drawn := await _primitives()
 			var mesh_tris := view.triangle_count()
 			var label := "%s%s" % [_mask_name(def), " + gear" if gear else ""]
-			print("[Gallery]   %-22s %8d %8d%s" % [label, mesh_tris, drawn - empty,
+			# THE RETAINED VOXEL LIST, which nobody has ever looked at.
+			#
+			# Rig keeps `{"voxels": Array, "anchor": Vector3}` per bone after
+			# meshing, because the gear overlap check has to ask "is there a
+			# voxel here" and a mesh cannot answer. Each voxel is a Vector4i in
+			# a GDScript Array, so a Variant, so 24 bytes. It is free at 64
+			# voxels and it is the number the resolution raise multiplies by
+			# 3.375 - so it stops being free somewhere, and the only way to
+			# know where is to print it before and after. See the tech plan's
+			# item 5: measure, then choose.
+			var voxels := _retained_voxels(view.rig)
+			print("[Gallery]   %-22s %8d %8d %9d %7dK%s" % [
+				label, mesh_tris, drawn - empty, voxels, voxels * 24 / 1024,
 				"   OVER" if mesh_tris > CharacterConfig.TRIANGLE_BUDGET else ""])
 			if not gear and mesh_tris > worst:
 				worst = mesh_tris
@@ -962,6 +999,14 @@ func _sheet_budget() -> void:
 		worst_name, worst, CharacterConfig.TRIANGLE_BUDGET])
 
 
+## Every voxel Rig is still holding on to after meshing, bones and sockets.
+static func _retained_voxels(rig: Rig) -> int:
+	var total := 0
+	for key in rig.part_voxels:
+		total += (rig.part_voxels[key]["voxels"] as Array).size()
+	return total
+
+
 ## Triangles the renderer drew this frame. Needs a real frame to have happened,
 ## which is why this awaits the same way a capture does.
 func _primitives() -> int:
@@ -969,6 +1014,51 @@ func _primitives() -> int:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	return int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+
+
+## THE SHOT THAT IS NOT A TEST, AND IS THE ACTUAL POINT.
+##
+## Four characters in tier-3 gear, sitting, at 3 m, at dusk. `DESIGN.md` says
+## "your character sitting at the campfire IS the progress screen", and that
+## sentence is a specification: progression has to be legible on the body, at
+## campfire distance, without a menu - and the payoff moment is a LOOK AT EACH
+## OTHER, which is why armour is a character-design problem and not an
+## inventory one.
+##
+## If this image is not one Marcel would put on a poster, the epic is not done,
+## whatever the numbers say. There is no assertion here on purpose.
+func _sheet_campfire() -> void:
+	var seated := []
+	for def: CharacterDef in _lineup_defs():
+		var v: CharacterDef = def.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = 3
+		v.validate()
+		seated.append(v)
+	# Late dusk rather than full night: the hour the design doc calls the warm
+	# register, where firelight would be the only light and a silhouette has to
+	# carry itself on its light tier alone.
+	_set_time(0.78)
+	_set_lineup(seated)
+	# Sat down, and shot from 55 degrees - a sitting character photographed
+	# from the front looks like a standing one with short legs, because its
+	# legs point along its own forward axis straight at the camera. Character
+	# v1 found that the hard way and the strip has been shot off-axis since.
+	_face(FACING_CAMERA + deg_to_rad(55.0))
+	for child in _subjects_root.get_children():
+		var view := child as CharacterView
+		if view == null:
+			continue
+		var st := LocomotionState.new()
+		st.grounded = true
+		st.pose = LocomotionState.POSE_SIT
+		_freeze_pose(view, {"state": st})
+	# FRAMED FROM THE ROW'S OWN SPAN, not from a fixed 3 m: four characters at
+	# 2.6 m apart are a 7.8 m row, and 3 m in front of it puts two of them off
+	# the sides. `_shoot_row` computes the distance that fits, which is what
+	# "campfire distance" means for a group rather than for one person.
+	await _shoot_row("campfire", seated.size())
+	_set_time(-1.0)
 
 
 # --- The critter ---------------------------------------------------------------
@@ -1189,6 +1279,412 @@ func _report_masks(defs: Array, yaw_deg: float, label: String, judged: bool) -> 
 	else:
 		print("[Gallery]   %d race pairs; worst %s at %.3f; %d over 0.70" % [
 			race_pairs, worst_pair, worst, over])
+
+
+## Every race wearing everything that has geometry, at three distances.
+##
+## THREE DISTANCES BECAUSE THE PIECE IS DIFFERENT AT EACH. At 3 m you are
+## judging whether a plate looks like a plate; at 15 m whether the tier reads;
+## at 40 m whether any of it survives at the distance the game is mostly played
+## at. A sheet at one distance answers one of those and quietly implies the
+## other two.
+func _sheet_armour() -> void:
+	var worn := []
+	for def: CharacterDef in _lineup_defs():
+		var v: CharacterDef = def.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = 4
+			v.armour_item[slot] = maxi(Armour.piece_count(slot) - 1, 0)
+		v.validate()
+		worn.append(v)
+	for entry in [{"deg": 0.0, "name": "front"}, {"deg": 35.0, "name": "three-quarter"}]:
+		for distance in [3.0, 15.0, 40.0]:
+			_set_lineup(worn)
+			_face(FACING_CAMERA + deg_to_rad(entry["deg"]))
+			await _shoot("armour-%dm-%s" % [int(distance), entry["name"]], distance)
+
+
+## One race, every tier, side by side, at three distances and two hours.
+##
+## THE SHEET MARCEL ORDERS THE LADDER FROM. The count is taken at 3 m by
+## `--sheet outline`, where a voxel exists; this is the picture, and the claim
+## it has to support is that a viewer who has never seen the game puts the six
+## in the right order without being told what the order is.
+func _sheet_tiers() -> void:
+	var base := CharacterDef.new()
+	base.race = Races.HUMAN
+	base.validate()
+	var row := []
+	for tier in range(0, CharacterDef.TIER_MAX + 1):
+		var v: CharacterDef = base.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = tier
+		v.validate()
+		row.append(v)
+	for time_entry in [{"t": 0.5, "name": "noon"}, {"t": 0.82, "name": "dusk"}]:
+		_set_time(time_entry["t"])
+		for distance in [3.0, 15.0, 40.0]:
+			_set_lineup(row)
+			_face(FACING_CAMERA + deg_to_rad(20.0))
+			await _shoot("tiers-%s-%dm" % [time_entry["name"], int(distance)], distance)
+	_set_time(-1.0)
+
+
+# --- The value tiers -----------------------------------------------------------
+#
+# CHARACTER V2 STAGE 1'S GATE, and the reason a data-only stage has one.
+#
+# The liner is a SHAPE, so the stage that introduces the slot changes no
+# picture: the liner voxels arrive with the re-authored parts several stages
+# later. That would leave the single highest-value decision in the design doc
+# unverified for four stages, which is exactly how a palette ships wrong.
+#
+# So the palette is photographed as flat swatches through the real ground
+# material and MEASURED - the same swatch machinery look v2 built, at the same
+# 6-units-per-channel tolerance - and the luminance relationships the design
+# rests on are asserted as arithmetic rather than trusted:
+#
+#   - every skin clears the liner by at least 6:1  (the worst case in the game
+#     is the darkest human at 6.1:1, and that number IS the argument for the
+#     liner: the old rule managed 2.1:1)
+#   - every race spans at least three of the five value tiers
+#   - no two races sit in the same place in the mid band, which is the torso,
+#     which is most of what you see at 15 m
+
+## How far apart two races' mid tiers have to be, in luminance. The design
+## doc's palettes clear this with 0.046 at the tightest (human against elf).
+const MID_BAND_MIN_GAP := 0.03
+
+## The floor under skin-to-liner contrast. The whole point of the slot.
+const LINER_MIN_RATIO := 6.0
+
+
+func _sheet_palette_tiers() -> void:
+	for child in _subjects_root.get_children():
+		child.free()
+	_swatch_probes.clear()
+
+	var holder := Node3D.new()
+	_subjects_root.add_child(holder)
+	var half := SWATCH_SIZE * 0.5
+	# One row per race, five tiers across. Laid out in the same frame the
+	# swatch sheet uses so the sampler and the tolerance are the same ones.
+	var rows := Races.RACE_COUNT
+	for race in rows:
+		for t in Races.TIER_NAMES.size():
+			var hex: String = Races.tier_hex(race, Races.TIER_NAMES[t])
+			var linear := Color.html(hex).srgb_to_linear()
+			var cx := (float(t) - float(Races.TIER_NAMES.size() - 1) * 0.5) * SWATCH_PITCH
+			var cy := SWATCH_SHADE_Y + (float(rows - 1) * 0.5 - float(race)) * SWATCH_PITCH
+			holder.add_child(_swatch_quad([
+				Vector3(cx - half, cy - half, SUBJECT_Z),
+				Vector3(cx + half, cy - half, SUBJECT_Z),
+				Vector3(cx + half, cy + half, SUBJECT_Z),
+				Vector3(cx - half, cy + half, SUBJECT_Z),
+			], Vector3.BACK, linear))
+			_swatch_probes.append({
+				"name": "%s %s" % [Races.name_of(race), Races.TIER_NAMES[t]],
+				"authored": hex, "linear": linear, "lit": false,
+				"centre": Vector3(cx, cy, SUBJECT_Z)})
+
+	# GRAIN OFF for the reason the swatch sheet turns it off, and CONTACT BAND
+	# off for a reason that is this sheet's alone.
+	#
+	# The contact band darkens the bottom half of every half-metre cell of a
+	# VERTICAL face, which is what puts a printed line where a block meets the
+	# ground. These swatches are vertical faces stacked four rows high, so each
+	# row lands at a different point inside its half-metre cell and is darkened
+	# by a different amount - measured, before this line existed, as a clean
+	# gradient down the sheet: the bottom race off by 0, the top race off by 11
+	# against a tolerance of 6, with the misses in a perfect vertical order.
+	# That is the sheet measuring its own Y coordinate, not the palette.
+	#
+	# The one-row swatch sheet never hit it because a single row at y = 3.2
+	# happens to sit in the light half of its cell. That is luck, and it is
+	# worth knowing it was luck.
+	var mat := Look.opaque_material()
+	mat.set_shader_parameter("grain_amount", 0.0)
+	mat.set_shader_parameter("grain_hue", 0.0)
+	mat.set_shader_parameter("contact_band", 1.0)
+	_aim_at_swatches()
+	var image := await _capture()
+	_save_image(image, "palette-tiers")
+	_report_swatches(image, "palette-tiers")
+	Look.apply_local_knobs(config)
+
+	_report_value_tiers()
+
+
+## The arithmetic the palette has to satisfy, printed and judged.
+func _report_value_tiers() -> void:
+	print("[Gallery] --- value tiers ---")
+	var liner_y := _luminance(Races.LINER_HEX)
+	print("[Gallery] liner %s Y=%.4f, and every skin must clear it by %.1fx" % [
+		Races.LINER_HEX, liner_y, LINER_MIN_RATIO])
+
+	var bad := 0
+	var worst := 1e9
+	var worst_name := ""
+	for race in Races.RACE_COUNT:
+		var line := ""
+		for i in Races.skin_count(race):
+			var hex: String = Races.SKIN_HEX[race][i]
+			var ratio := _luminance(hex) / liner_y
+			line += " %s %5.1fx" % [hex, ratio]
+			if ratio < worst:
+				worst = ratio
+				worst_name = "%s %s" % [Races.name_of(race), hex]
+			if ratio < LINER_MIN_RATIO:
+				bad += 1
+		print("[Gallery]   %-11s%s" % [Races.name_of(race), line])
+	print("[Gallery]   worst skin/liner %.2f:1 (%s), %d under %.1f" % [
+		worst, worst_name, bad, LINER_MIN_RATIO])
+
+	print("[Gallery]   %-11s %8s %8s %8s %8s" % ["race", "deep", "mid", "light", "accent"])
+	var mids := []
+	for race in Races.RACE_COUNT:
+		var ys := []
+		for tier in ["deep", "mid", "light", "accent"]:
+			ys.append(_luminance(Races.tier_hex(race, tier)))
+		mids.append(ys[1])
+		print("[Gallery]   %-11s %8.4f %8.4f %8.4f %8.4f" % [
+			Races.name_of(race), ys[0], ys[1], ys[2], ys[3]])
+
+	var gap_bad := 0
+	var min_gap := 1e9
+	for i in mids.size():
+		for j in range(i + 1, mids.size()):
+			var gap: float = absf(mids[i] - mids[j])
+			min_gap = minf(min_gap, gap)
+			if gap < MID_BAND_MIN_GAP:
+				gap_bad += 1
+				print("[Gallery]   %s and %s share a mid band: %.4f apart" % [
+					Races.name_of(i), Races.name_of(j), gap])
+	print("[Gallery]   closest pair of mid tiers %.4f apart, floor %.2f, %d too close" % [
+		min_gap, MID_BAND_MIN_GAP, gap_bad])
+	print("[Gallery]   VALUE TIERS: %s" % ["PASS" if bad == 0 and gap_bad == 0 else "FAIL"])
+
+
+## Relative luminance of an sRGB hex, on the LINEAR values - the same weights
+## the shader's own shade band uses.
+static func _luminance(hex: String) -> float:
+	var c := Color.html(hex).srgb_to_linear()
+	return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+
+
+# --- The outline-event metric --------------------------------------------------
+#
+# THE GATE THE WHOLE ARMOUR TIER LADDER IS DEFINED IN TERMS OF, so it exists
+# before there is any armour for it to judge. See docs/plans/character-v2-tech.md
+# Stage 0.
+#
+# WHY THIS METRIC EXISTS AT ALL. With flat vertex colour and no textures,
+# surface detail is free to author and invisible at range: the outline is the
+# only currency an armour piece has. So an armour tier is a ladder of OUTLINE
+# EVENTS - places where the silhouette's width profile has a local maximum the
+# naked body does not have - and the design doc's ladder is 0 / 1 / 1 / 3 / 5.
+# That is a countable claim, and this counts it.
+#
+# WHY 3 m AND NOT 15 m, which is where the ladder is JUDGED. At 1280 x 720 a
+# 2 m character is 313 px at 3 m and 62 px at 15 m. The smallest legal feature
+# is 2 voxels per side, which is 6-7 px at 3 m and about 1 px at 15 m. The
+# picture is judged at 15 m by a person; the count is taken where a voxel is
+# still a thing that exists. A count taken at 15 m would be measuring the
+# antialiaser.
+#
+# THE REFERENCE IS THE NAKED BODY, not tier 1. That is what makes "tier 1 has
+# zero outline events" a measurement rather than a tautology, and a starting
+# tunic that quietly widens a shoulder is exactly what it catches.
+
+## Where the count is taken. Not MASK_DISTANCE, and it shares no constants with
+## it: the IoU metric's 40 m and 1280 x 720 are load-bearing for every number
+## this project has ever recorded and must not move.
+const OUTLINE_DISTANCE := 3.0
+
+## An event has to be at least this much wider than the bare body, in model
+## voxels, TOTAL across both sides. The Kimi research lane's floor: a chest
+## piece that does not change the shoulder outline by at least 2 voxels per
+## side will not read as armour.
+const OUTLINE_MIN_WIDTH_VOX := 4
+
+## And it has to be at least this tall, in model voxels. Also the research
+## lane's: nothing smaller than about 3 x 3 voxels matters at gameplay
+## distance, so a one-row bulge is not an event, it is a rounding error.
+const OUTLINE_MIN_RUN_VOX := 3
+
+
+## Count outline events for every race at every tier, against the naked body.
+##
+## THE LADDER IS 0 / 0 / 1 / 1 / 3 / 5 and this is the gate on it. Anything that
+## disagrees is reported with what was wanted, because "tier 4 produced two
+## events" is a sentence someone can act on and "the ladder is wrong" is not.
+func _sheet_outline() -> void:
+	print("[Gallery] --- outline events, measured at %.0f m ---" % OUTLINE_DISTANCE)
+	print("[Gallery] an event is >= %d voxels wider than bare, over >= %d voxels of height" % [
+		OUTLINE_MIN_WIDTH_VOX, OUTLINE_MIN_RUN_VOX])
+	print("[Gallery]   %-34s %6s %6s %6s %6s %7s" % [
+		"subject", "front", "prof", "merged", "up", "total"])
+	var over := 0
+	for def: CharacterDef in _lineup_defs():
+		var bare_front := await _outline_mask(def, 0.0, 0)
+		var bare_prof := await _outline_mask(def, 90.0, 0)
+		for tier in range(0, CharacterDef.TIER_MAX + 1):
+			var m_front := bare_front if tier == 0 else await _outline_mask(def, 0.0, tier)
+			var m_prof := bare_prof if tier == 0 else await _outline_mask(def, 90.0, tier)
+			var f := _outline_bands(m_front, bare_front)
+			var p := _outline_bands(m_prof, bare_prof)
+			var widths := _merge_bands(f["bands"], p["bands"])
+			# A vertical element above the head is one feature however many
+			# views can see it.
+			var vertical: int = maxi(int(f["vertical"]), int(p["vertical"]))
+			var total: int = widths + vertical
+			var want: int = int(Armour.TIERS[tier]["events"])
+			var flag := ""
+			if total != want:
+				flag = "   WANTED %d" % want
+				over += 1
+			print("[Gallery]   %-34s %6d %6d %6d %6d %7d%s" % [
+				"%s tier %d %s" % [_mask_name(def), tier, Armour.TIERS[tier]["name"]],
+				(f["bands"] as Array).size(), (p["bands"] as Array).size(),
+				widths, vertical, total, flag])
+	print("[Gallery]   the ladder is %s: %d of %d rows off" % [
+		"CORRECT" if over == 0 else "WRONG", over,
+		Races.RACE_COUNT * (CharacterDef.TIER_MAX + 1)])
+
+
+## One subject as a mask at the outline distance, optionally wearing something.
+func _outline_mask(def, yaw_deg: float, tier: int) -> Dictionary:
+	var worn = def
+	if def != null and tier > 0:
+		worn = (def as CharacterDef).duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			worn.armour_tier[slot] = tier
+		worn.validate()
+	_enter_mask_mode()
+	_set_lineup([worn])
+	if yaw_deg != 0.0:
+		_face(FACING_CAMERA + deg_to_rad(yaw_deg))
+	var eye := _lineup_chest_height()
+	_camera.global_position = Vector3(0.0, eye, SUBJECT_Z + OUTLINE_DISTANCE)
+	_camera.look_at(Vector3(0.0, eye, SUBJECT_Z), Vector3.UP)
+	var image := await _capture()
+	_leave_mask_mode()
+	return _crop_mask(image)
+
+
+## Pixels per model voxel at the outline distance.
+##
+## DERIVED FROM THE CAMERA, not measured off the mask. Godot's `fov` is
+## VERTICAL and `keep_aspect` is KEEP_HEIGHT, so the vertical extent at a
+## distance is exactly `2 d tan(fov/2)` and this is arithmetic rather than an
+## estimate. Measuring it off the mask would fold the subject's own hair into
+## the scale factor, and then a race with a taller crest would be measured in
+## different units from one without.
+func _outline_px_per_voxel() -> float:
+	var extent_m := 2.0 * OUTLINE_DISTANCE * tan(deg_to_rad(FOV) * 0.5)
+	return (float(get_viewport().size.y) / extent_m) * VoxelModel.VOXEL_M
+
+
+## The outline's width per row, in pixels, indexed from the BOTTOM row up.
+##
+## The OUTLINE's width - rightmost minus leftmost - and not the count of set
+## pixels, so a gap inside the shape is not an event. An arm held away from the
+## body is one outline; the daylight under it is not a second one.
+func _width_profile(mask: Dictionary) -> PackedInt32Array:
+	var w: int = mask["w"]
+	var h: int = mask["h"]
+	var bits: PackedByteArray = mask["bits"]
+	var out := PackedInt32Array()
+	out.resize(h)
+	for y in h:
+		var lo := -1
+		var hi := -1
+		for x in w:
+			if bits[x + y * w] != 0:
+				if lo < 0:
+					lo = x
+				hi = x
+		# Bottom row first: the two masks are compared bottom-aligned, for the
+		# same reason _mask_iou aligns them there - two characters standing in
+		# the world are standing on the same ground.
+		out[h - 1 - y] = 0 if lo < 0 else hi - lo + 1
+	return out
+
+
+## The HEIGHT BANDS at which `worn` is wider than `bare`, plus a vertical flag.
+##
+## BANDS RATHER THAN A COUNT, because an outline event is a FEATURE and a
+## feature can be seen from more than one side. A gorget shows in the front
+## view and in profile; counting each view separately made one collar into two
+## events, and the ladder disagreed with itself on three of four races. Merging
+## by the height a feature sits at is what turns two sightings of one thing back
+## into one thing - and it is also just a better description of what an outline
+## event is.
+func _outline_bands(worn: Dictionary, bare: Dictionary) -> Dictionary:
+	if int(worn["w"]) == 0 or int(bare["w"]) == 0:
+		return {"bands": [], "vertical": 0}
+	var px := _outline_px_per_voxel()
+	var min_width := int(round(float(OUTLINE_MIN_WIDTH_VOX) * px))
+	var min_run := maxi(1, int(round(float(OUTLINE_MIN_RUN_VOX) * px)))
+
+	var pw := _width_profile(worn)
+	var pb := _width_profile(bare)
+
+	var bands := []
+	var run := 0
+	var limit := mini(pw.size(), pb.size())
+	for i in limit + 1:
+		var wide := i < limit and pw[i] - pb[i] >= min_width
+		if wide:
+			run += 1
+			continue
+		if run >= min_run:
+			# Normalised to a fraction of the body's height, so a band on a
+			# 1.5 m dwarf and a band on a 2.25 m elf can be compared - and so
+			# the front and profile views, whose masks are different heights,
+			# agree about where a thing is.
+			bands.append([float(i - run) / float(limit), float(i) / float(limit)])
+		run = 0
+
+	# Anything standing above the bare body's crown: a crest, a helm spike, the
+	# vertical element tier 5 is allowed. At most one per view - two spikes on
+	# one helmet are one idea, not two.
+	var above := 0
+	for i in range(pb.size(), pw.size()):
+		if pw[i] > 0:
+			above += 1
+	return {"bands": bands, "vertical": 1 if above >= min_run else 0}
+
+
+## Two views' bands, merged into one count of FEATURES.
+##
+## Two bands are the same feature when they overlap by more than half of the
+## LONGER one - not the shorter.
+##
+## The difference decides whether a cloak can ever be an event. Two sightings of
+## one feature have similar extents and overlap almost entirely, so either rule
+## merges them. Two DIFFERENT features do not: a cloak's band runs most of the
+## body and a pauldron's is a tenth of it, and against the shorter one the
+## overlap is the pauldron's whole length - so the cloak swallowed it and tier 5
+## measured four events instead of five however big the cloak was. Against the
+## longer, a short band inside a long one stays its own feature, which is what
+## a pauldron under a cloak actually is.
+static func _merge_bands(a: Array, b: Array) -> int:
+	var all := a.duplicate()
+	for band in b:
+		var merged := false
+		for other in all:
+			var lo: float = maxf(band[0], other[0])
+			var hi: float = minf(band[1], other[1])
+			var longer: float = maxf(band[1] - band[0], other[1] - other[0])
+			if longer > 0.0 and (hi - lo) > longer * 0.5:
+				other[0] = minf(other[0], band[0])
+				other[1] = maxf(other[1], band[1])
+				merged = true
+				break
+		if not merged:
+			all.append(band)
+	return all.size()
 
 
 ## THE WORST CASE ACROSS HAIR AND BEARD OPTIONS.

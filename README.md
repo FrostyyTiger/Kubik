@@ -255,6 +255,26 @@ for one player, a boulder_m must give. **Spawn is a meadow and boulders grow in
 rock and above**, so it goes and finds them — a count of zero at spawn is
 correct, not a broken stage.
 
+### The character sheets
+
+```
+godot --path . scenes/character/gallery.tscn -- --label some-name
+godot --path . scenes/character/gallery.tscn -- --label x --sheet outline
+godot --path . scenes/character/gallery.tscn -- --label x --sheet tiers
+```
+
+Sixty-odd images into `build/character/<label>/`, plus four tables that print
+and write nothing: `budget` (triangles and the retained voxel list),
+`masks-40` (silhouette IoU, target every race pair under 0.70), `outline` (the
+armour tier ladder, counted rather than judged) and `palette-tiers` (every
+race's five value tiers, measured against what was authored).
+
+**The counts are the gates and the pictures are not.** Two runs of the same
+commit differ on every lit sheet on this GPU - mostly by one least-significant
+bit, worst case 1.5% of an image - so `tools/png_diff.py` compares them against
+a tolerance rather than for equality. Frozen-pose strips, mask sheets and swatch
+sheets ARE bit-stable and may be diffed exactly. See `docs/status/character-v2.md`.
+
 ### The swatch check
 
 The one gate that says whether an authored colour is the colour on screen:

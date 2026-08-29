@@ -51,6 +51,14 @@ var part_voxels := {}
 ## socket name -> MeshInstance3D, for whatever is currently hanging on it.
 var attachments := {}
 
+## Which bone carries the race's baked forward lean, or "" for a race with
+## none. Published because the height self-test has to stand a character
+## upright before measuring it - an axis-aligned bound of a rotated body reads
+## taller than the body - and a test that guessed the bone would silently stop
+## compensating the day the lean moved. It did exactly that in character v2
+## Stage 6, when the lean went from `hips` to `torso`.
+var lean_bone := ""
+
 
 ## Build the whole skeleton. Parents must appear before their children in the
 ## table, which Races.bone_table guarantees.
@@ -73,8 +81,18 @@ func build(bone_table: Array, part_set: Dictionary, palette: Dictionary,
 				bone_name, parent_name])
 			add_child(node)
 
+		# A BAKED REST ROTATION, if the race has one. The lizardfolk's
+		# digitigrade crouch arrives this way for the same reason its forward
+		# lean does: baked into the rest pose, it survives every pose, and the
+		# animator never learns that one race stands differently from the
+		# others. `apply_pose` composes a pose onto the rest basis, so a pose
+		# that says nothing about these bones leaves the crouch alone and one
+		# that does adds to it.
+		if entry.has("rest_rot"):
+			node.rotation = entry["rest_rot"]
 		bones[bone_name] = node
 		rest[bone_name] = node.transform
+		mirrored[bone_name] = bool(entry.get("mirror", false))
 		if entry.get("socket", false):
 			sockets[bone_name] = node
 			continue
@@ -93,12 +111,31 @@ func build(bone_table: Array, part_set: Dictionary, palette: Dictionary,
 		_attach_part(node, bone_name, part_set[part_name], part_name,
 			entry.get("mirror", false), palette, ao_strength)
 
-	# The lizardfolk's 8 degree forward lean is baked into the hips REST pose
-	# rather than applied by the animator, so it survives every pose and the
-	# animator never learns that one race stands differently from the others.
-	if hips_pitch != 0.0 and bones.has("hips"):
-		bones["hips"].rotation.x = hips_pitch
-		rest["hips"] = bones["hips"].transform
+	# The lizardfolk's forward lean is baked into a REST pose rather than
+	# applied by the animator, so it survives every pose and the animator never
+	# learns that one race stands differently from the others.
+	#
+	# ON THE TORSO, NOT THE HIPS, since character v2 Stage 6 - and the
+	# difference is the whole race. The legs are children of `hips`, so a lean
+	# baked there rotates them too: the character tips backwards from the
+	# ankles like a felled tree, its feet swing out behind it, and at anything
+	# past about 20 degrees it is plainly falling over rather than running.
+	# That was measured by looking: at 52 degrees on the hips the silhouette
+	# metric was delighted - 0.658 front on, comfortably past target - and the
+	# picture was a face-plant. A count can tell you a shape is not a human's.
+	# It cannot tell you it is good.
+	#
+	# On the TORSO the spine leans and the legs stay under the body, which is
+	# what a running animal does and what "its centre of mass is not over its
+	# feet" actually means. The head is a child of the torso, so "head low and
+	# forward" comes for free; the tail hangs off the hips and stays level to
+	# counterweight it, which is the other half of the design doc's horizontal S.
+	lean_bone = ""
+	var wanted := "torso" if bones.has("torso") else "hips"
+	if hips_pitch != 0.0 and bones.has(wanted):
+		lean_bone = wanted
+		bones[lean_bone].rotation.x = hips_pitch
+		rest[lean_bone] = bones[lean_bone].transform
 
 
 func clear() -> void:
@@ -111,6 +148,9 @@ func clear() -> void:
 	blink_meshes.clear()
 	part_voxels.clear()
 	attachments.clear()
+	overlays.clear()
+	mirrored.clear()
+	lean_bone = ""
 
 
 func _attach_part(bone: Node3D, bone_name: String, part: Dictionary,
@@ -333,6 +373,67 @@ func attach_to_socket(socket_name: String, part: Dictionary, part_name: String,
 	part_voxels["socket:" + socket_name] = {"voxels": voxels, "anchor": anchor}
 
 
+## Hang a second mesh on an EXISTING bone - armour, worn over a body part.
+##
+## AN OVERLAY IS NOT A SOCKET, and the difference is the reason both exist.
+## A socket is a point to hang a CARRIED object from: a sword, a pendant, a
+## cloak. An overlay is a LAYER over a body part, and it wants to move with
+## that part exactly rather than from a point on it - a pauldron is the
+## shoulder seen from outside, and it swings with the arm because it is a
+## child of the same bone the arm is drawn on.
+##
+## The part is authored in the BONE's own frame, so a piece stamped from that
+## bone's part lands where that part is, on any race.
+func attach_overlay(bone_name: String, part: Dictionary, part_name: String,
+		palette: Dictionary, ao_strength: float) -> void:
+	if not bones.has(bone_name):
+		push_warning("[Rig] no bone named %s to overlay %s onto" % [bone_name, part_name])
+		return
+	var voxels := VoxelModel.parse(part, part_name)
+	if voxels.is_empty():
+		return
+	var anchor: Vector3 = part.get("anchor", Vector3.ZERO)
+	if mirrored.get(bone_name, false):
+		var size: Vector3i = part["size"]
+		voxels = VoxelModel.mirror_x(voxels, size.x)
+		anchor = VoxelModel.mirror_anchor_x(anchor, size.x)
+	var mesh := VoxelModel.build_mesh(voxels, palette, anchor, ao_strength)
+	if mesh == null:
+		return
+	var mi := MeshInstance3D.new()
+	mi.name = "Overlay_" + part_name
+	mi.mesh = mesh
+	(bones[bone_name] as Node3D).add_child(mi)
+	overlays[bone_name] = mi
+	# Kept for the same reason a part's voxels are: the overlap check has to
+	# ask "is there a voxel here" and a mesh cannot answer.
+	part_voxels["overlay:" + bone_name] = {"voxels": voxels, "anchor": anchor}
+
+
+## bone name -> the armour mesh worn over it.
+var overlays := {}
+
+## Which bones the bone table built MIRRORED. Recorded rather than inferred
+## from the name, so an overlay lands the same way round as the limb it is
+## worn on without anything having to know that `_l` means left. Getting this
+## wrong is not subtle and is not obvious either: the left pauldron grew
+## inboard into the torso, four hundred voxels of it, while the right one was
+## perfect.
+var mirrored := {}
+
+
+## Every voxel centre of an overlay, in rig space and in metres.
+func overlay_voxel_centres_in_rig(bone_name: String) -> PackedVector3Array:
+	return _centres("overlay:" + bone_name, overlays.get(bone_name))
+
+
+func clear_overlays() -> void:
+	for bone_name in overlays:
+		(overlays[bone_name] as MeshInstance3D).queue_free()
+		part_voxels.erase("overlay:" + bone_name)
+	overlays.clear()
+
+
 func clear_attachments() -> void:
 	for socket_name in attachments:
 		(attachments[socket_name] as MeshInstance3D).queue_free()
@@ -342,13 +443,21 @@ func clear_attachments() -> void:
 
 ## The same voxel-centre question, for something hanging on a socket.
 func socket_voxel_centres_in_rig(socket_name: String) -> PackedVector3Array:
+	return _centres("socket:" + socket_name, attachments.get(socket_name))
+
+
+## Voxel centres of whatever is under `key`, placed by `node`'s transform.
+##
+## Shared by parts, sockets and overlays because the question is the same one
+## three times, and three copies of it would be three places for the half-voxel
+## offset to be wrong.
+func _centres(key: String, node) -> PackedVector3Array:
 	var out := PackedVector3Array()
-	var key := "socket:" + socket_name
-	if not part_voxels.has(key) or not attachments.has(socket_name):
+	if not part_voxels.has(key) or node == null:
 		return out
 	var entry: Dictionary = part_voxels[key]
 	var anchor: Vector3 = entry["anchor"]
-	var to_rig := transform_to_rig(attachments[socket_name])
+	var to_rig := transform_to_rig(node)
 	for v in (entry["voxels"] as Array):
 		var centre := (Vector3(v.x, v.y, v.z) + Vector3(0.5, 0.5, 0.5) - anchor) * VoxelModel.VOXEL_M
 		out.push_back(to_rig * centre)

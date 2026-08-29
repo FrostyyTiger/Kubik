@@ -1,6 +1,15 @@
 # Status
 
-The latest run is **distance v1, both nights**, on `feat/distance-v1`:
+The latest run is **character v2**, on `feat/character-v2`:
+`docs/status/character-v2.md`. Fourteen stages over two nights - the model grid
+from 64 to 96 voxels, a liner slot that ended four black shirts, a knee and an
+elbow, the lizardfolk rebuilt until **no two races' silhouettes overlap by more
+than 0.70 for the first time in this project**, six armour slots on a bumped
+wire format, and a walk with a contact pose in it. It is also the run that found
+the gallery's own sheets are not bit-reproducible on this GPU, which changes
+what counts as evidence for everything after it.
+
+The run before it was **distance v1, both nights**, on `feat/distance-v1`:
 `docs/status/distance-v1.md`. Night 1 is the far country's geometry and colour -
 a filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
 dilation, and the end of the far field's zone dither. Night 2 is what grows on

@@ -29,7 +29,126 @@ Two ways to author:
 
 from __future__ import annotations
 
-# The slot letters, exactly VoxelModel.SLOT_CHARS.
+import math
+
+# --- The grid ----------------------------------------------------------------
+#
+# THE RESOLUTION IS A NUMBER IN THIS FILE, which is the single most important
+# fact about the character redesign: nothing under scripts/character/parts/ is
+# drawn by hand, so moving the grid is a re-run rather than a rewrite, and the
+# 96-vs-128 decision stops being one-way. See docs/plans/character-v2-tech.md
+# Stage 2.
+#
+# EVERY GENERATOR STILL AUTHORS AT 64 AND KNOWS NOTHING ABOUT THIS. That is
+# deliberate, and it is what makes the change small enough to be safe. The
+# alternative - wrapping every literal in every generator in a scale call - is
+# 1,887 lines of edits whose correctness cannot be checked by the one gate that
+# actually proves something, because at RES 64 every scale call is the identity
+# and the edits are invisible to it.
+#
+# Instead the scaling happens ONCE, at output. A part is authored, drawn and
+# reasoned about entirely on the 64 grid; `Part.slices()` and `Part.gd()` are
+# the only things that have ever heard of RES. So:
+#
+#   - every drawing method, every frame, every hair footprint and every skull
+#     test stays in author space and is untouched;
+#   - there is no inverse map to get wrong, because nothing ever has to ask
+#     "which author voxel did this scaled voxel come from" anywhere except in
+#     the one function that builds the output grid;
+#   - at RES 64 the map is the identity, so the byte-identity gate is exact.
+#
+# THE RULE: an author voxel `a` occupies the half-open scaled span
+# `[U(a), U(a + 1))`. Adjacency, abutting boxes and solidity are preserved by
+# construction, because U is applied to COORDINATES and never to lengths - two
+# boxes that met at author y = 18 still meet at U(18), whatever U does to it.
+
+## The grid every generator is written against. Not a knob.
+AUTHOR_RES = 64
+
+## The grid to emit. 64 reproduces the committed files byte for byte.
+## `python -m tools.parts_author --res 96` is the character v2 grid.
+RES = 96
+
+
+def U(v: int) -> int:
+    """An author coordinate to an output coordinate.
+
+    ROUND HALF UP, and consistently, which is the whole of why this is a
+    function and not an inline multiply. Python's `round` is banker's rounding:
+    `round(16.5)` is 16 and `round(17.5)` is 18. Used here that would map a
+    part's depth of 11 to 16 while the box filling it mapped to 17, and the
+    part would be one slice short of itself at some resolutions and not at
+    others. Half-up is monotonic and boring, which is what a coordinate map has
+    to be.
+
+    AND `math.floor`, NOT `int`. `int` truncates toward zero, so it maps -4.5
+    to -4 while mapping 4.5 to 4 - and anchors here are routinely negative: a
+    sword is authored in its socket's frame with anchor x = -5, and a tail link
+    sits at y = -1. The first version of this function used `int` and moved
+    three anchors at RES 64, where the map is supposed to be the identity. The
+    byte-identity gate caught it on three files, which is exactly what that
+    gate is for.
+    """
+    return math.floor(v * RES / AUTHOR_RES + 0.5)
+
+
+def U_len(n: int) -> int:
+    """A LENGTH, for the rare thing that is a thickness rather than a position.
+
+    Not the same function: a length has no origin, so it cannot be the
+    difference of two mapped coordinates without depending on where it starts.
+    At least 1, because a one-voxel rim that scales to nothing is not a thinner
+    rim, it is a missing one.
+    """
+    return max(1, math.floor(n * RES / AUTHOR_RES + 0.5))
+
+
+def _axis_map(n: int) -> list[int]:
+    """For each output index along an axis of author length `n`, the author
+    index it came from. Length `U(n)` by construction."""
+    out: list[int] = []
+    for a in range(n):
+        out.extend([a] * (U(a + 1) - U(a)))
+    return out
+
+
+def _scale_anchor(a: float, size: int) -> float:
+    """An anchor scales as a FRACTION OF ITS PART, not through `U`.
+
+    An anchor is a lattice point and may sit on a half voxel - the top centre
+    of a 9-wide leg is x = 4.5 - so it is not a voxel index and `U` is not the
+    right map for it. What it actually is, is a position expressed relative to
+    the part it belongs to, and the thing that must survive a change of grid is
+    that relationship.
+
+    THE ALTERNATIVE WAS TRIED FIRST AND IT PUT A TUNIC INSIDE A DWARF.
+    Interpolating `U` sends the dwarf torso's central anchor of 7, in a 14-deep
+    part, to 11 - while the part itself becomes 21 deep, whose middle is 10.5.
+    Half a voxel of asymmetry, invisible on the part. But `races.gd` places the
+    `chest` socket at `-torso_d * 0.5`, which is -10.5, on the assumption that
+    a part is symmetric about its own anchor. It no longer was, so the socket
+    sat half a voxel inside the torso's front face and the tunic placeholder
+    landed 204 voxel-cells inside a dwarf. The gear-socket self-test caught it.
+
+    Proportional scaling sends 7 of 14 to 10.5 of 21 and 5.5 of 11 to 8.5 of
+    17: both exactly the middle, both agreeing with the table.
+
+    WHAT IT COSTS, stated because it is a real trade. An anchor that is the
+    centre of a SUB-shape rather than of the whole part is now off by up to
+    half an output voxel: the head's anchor is the skull's centre, and the
+    skull sits inside a part that is one deeper for the nose, so proportional
+    scaling puts it at 13.76 where the skull's true centre is 14. That is
+    0.24 of a voxel, 5 mm, on a head-look pivot. The error it replaces was
+    0.5 of a voxel on a socket, which is a placeholder inside a body.
+    """
+    if size <= 0:
+        return 0.0
+    return a * (float(U(size)) / float(size))
+
+
+# The slot letters, exactly VoxelModel.SLOT_CHARS. `check_slots_match()` below
+# is what keeps "exactly" true - these are two copies of one fact in two
+# languages, and nothing else would notice them drifting apart.
 S = "S"   # skin
 s = "s"   # skin, shaded
 H = "H"   # hair
@@ -43,9 +162,50 @@ B = "B"   # belt
 T = "T"   # tooth
 X = "X"   # metal
 D = "D"   # wood
+# --- Character v2 Stage 1. Lowercase is the darker sibling of its uppercase.
+k = "k"   # liner - the fixed near-black at every skin/cloth boundary
+v = "v"   # skin, ventral - the countershaded belly, throat, underside of tail
+R = "R"   # trim, bright - the raised rim that makes metal read as metal
+x = "x"   # metal, dark - the body a bright rim sits on
+A = "A"   # scale/mail checker, the lighter of the two adjacent values
+a = "a"   # scale/mail checker, the darker
+# --- Character v2 Stage 10.
+G = "G"   # glow - emissive, and capped at twelve voxels by a self-test
 EMPTY = "."
 
-SLOTS = set("SsHEWMCcLBTXD")
+SLOTS = set("SsHEWMCcLBTXDkvRxAaG")
+
+
+def check_slots_match(root) -> None:
+    """`SLOTS` above and `VoxelModel.SLOT_CHARS` are one fact in two languages.
+
+    Nothing else in the build would notice them drifting apart: a generator
+    that paints a letter the runtime has never heard of writes a part file
+    that `VoxelModel.parse()` rejects at load with an error naming a slice and
+    a row, which is a long way from the line that caused it. So the generator
+    refuses to write anything at all until the two agree.
+
+    Read out of the GDScript by regex rather than by parsing it. That is
+    normally a bad idea and is the right one here: the block is a literal
+    dictionary of one-character keys, the alternative is a GDScript parser,
+    and a regex that stops matching is a loud failure rather than a quiet one.
+    """
+    import re
+
+    source = (root / "scripts" / "character" / "voxel_model.gd").read_text()
+    block = re.search(r"const SLOT_CHARS := \{(.*?)\n\}", source, re.S)
+    if block is None:
+        raise SystemExit(
+            "voxlib: could not find SLOT_CHARS in voxel_model.gd. If the "
+            "declaration moved or was reformatted, fix this regex - do not "
+            "delete the check.")
+    theirs = set(re.findall(r'"(.)":', block.group(1)))
+    if theirs != SLOTS:
+        raise SystemExit(
+            "voxlib: the slot legends disagree.\n"
+            "  only in voxel_model.gd: %s\n"
+            "  only in voxlib.py:      %s"
+            % (sorted(theirs - SLOTS) or "-", sorted(SLOTS - theirs) or "-"))
 
 
 def _fmt(v: float) -> str:
@@ -160,14 +320,34 @@ class Part(Cells):
     def note(self, y: int, text: str) -> None:
         self.notes[y] = text
 
+    def size_out(self) -> tuple[int, int, int]:
+        """The part's size on the OUTPUT grid."""
+        return (U(self.w), U(self.h), U(self.d))
+
+    def anchor_out(self) -> tuple[float, float, float]:
+        return tuple(_scale_anchor(a, n)
+                     for a, n in zip(self.anchor, (self.w, self.h, self.d)))
+
     def slices(self) -> list[list[str]]:
+        """The ASCII, on the output grid.
+
+        THE ONLY PLACE RES IS APPLIED. Every cell above was authored, drawn and
+        checked at 64; this walks the output grid and asks which author voxel
+        each output voxel falls inside. The three axis maps make that a lookup
+        rather than arithmetic, so there is no rounding decision taken twice.
+
+        The `w - 1 - col` inversion is the same one it always was and is
+        applied on the OUTPUT width: the first character of a row is the left
+        of the picture, which is the character's own right. See VoxelModel.
+        """
+        mx, my, mz = _axis_map(self.w), _axis_map(self.h), _axis_map(self.d)
         out = []
-        for y in range(self.h):
+        for y in my:
             rows = []
-            for z in range(self.d):
+            for z in mz:
                 rows.append("".join(
-                    self.cells.get((self.w - 1 - col, y, z), EMPTY)
-                    for col in range(self.w)))
+                    self.cells.get((mx[len(mx) - 1 - col], y, z), EMPTY)
+                    for col in range(len(mx))))
             out.append(rows)
         return out
 
@@ -189,13 +369,22 @@ class Part(Cells):
             for text in comment.rstrip("\n").split("\n"):
                 lines.append(("# " + text).rstrip())
             lines.append("")
+        w_out, h_out, d_out = self.size_out()
         lines.append("const %s := {" % const_name)
-        lines.append('\t"size": Vector3i(%d, %d, %d),' % (self.w, self.h, self.d))
-        lines.append('\t"anchor": Vector3(%s, %s, %s),' % tuple(_fmt(a) for a in self.anchor))
+        lines.append('\t"size": Vector3i(%d, %d, %d),' % (w_out, h_out, d_out))
+        lines.append('\t"anchor": Vector3(%s, %s, %s),' % tuple(
+            _fmt(a) for a in self.anchor_out()))
         lines.append('\t"slices": [')
-        per_line = max(1, (76 - 3) // (self.w + 4))
+        per_line = max(1, (76 - 3) // (w_out + 4))
+        # Notes are keyed by AUTHOR slice; a note lands on the first output
+        # slice that author slice became, so "y = 5, the mouth" still points at
+        # the mouth whatever the grid is.
+        note_at = {}
+        for a in range(self.h):
+            if a in self.notes:
+                note_at[U(a)] = self.notes[a]
         for y, rows in enumerate(self.slices()):
-            note = self.notes.get(y)
+            note = note_at.get(y)
             if note is not None:
                 lines.append("\t\t# y = %d, %s" % (y, note))
             quoted = ['"%s"' % r for r in rows]
@@ -242,6 +431,76 @@ class Frame(Cells):
                     if footprint is not None and (x, z) in footprint:
                         continue
                     self.put(x, y, z, ch)
+
+
+def split_limb(p: Part, at: int, name_upper: str, name_lower: str,
+               inset: int = 1, joint=None):
+    """Cut a full-length limb into two segments at author height `at`.
+
+    CHARACTER V2 STAGE 4. A rigid single-segment limb has exactly one
+    expressive degree of freedom - its angle - and every technique that makes a
+    walk read as weight rather than as machinery needs a second: the knee
+    bending through swing, the foot rolling heel to toe, the contact pose, the
+    compression on landing. None of them can be faked by animating the one
+    angle harder.
+
+    THE LIMB IS STILL AUTHORED AS ONE PIECE and cut afterwards, which is the
+    whole reason this is nine lines per race instead of a rewrite. A leg is
+    drawn as a leg - boot, trouser, the lot - and no race's drawing code has to
+    know where its own knee is or keep two halves agreeing about the width they
+    meet at.
+
+    THE JOINT IS AN INSET, NEVER A GAP. A hole between two segments shows
+    daylight through a leg the moment it bends, which is worse than no knee at
+    all. The bottom slice of the upper segment and the top slice of the lower
+    one are narrowed by `inset` all round and repainted in `joint` - so the limb
+    stays solid and acquires a crease that the mesher's own baked AO darkens.
+    Same trick as the liner at a collar, and at the elbow it lands exactly where
+    a rolled sleeve would put one.
+
+    The anchors are both TOPS: the upper segment pivots at the hip or shoulder,
+    the lower at the knee or elbow. So a pose rotates each about the joint above
+    it, which is what a joint is.
+    """
+    if joint is None:
+        joint = k
+    (_, _), (y0, y1), (_, _) = p.bounds()
+    assert y0 <= at < y1, (p.name, at, (y0, y1))
+    ax, ay, az = p.anchor
+
+    upper = Part(name_upper, (p.w, p.h - at, p.d), (ax, p.h - at, az))
+    lower = Part(name_lower, (p.w, at, p.d), (ax, at, az))
+    for (x, y, z), ch in p.cells.items():
+        if y >= at:
+            upper.put(x, y - at, z, ch)
+        else:
+            lower.put(x, y, z, ch)
+
+    _ink_joint_slice(upper, 0, inset, joint)
+    _ink_joint_slice(lower, at - 1, inset, joint)
+    return upper, lower
+
+
+def _ink_joint_slice(p: Part, y: int, inset: int, ch: str) -> None:
+    """Narrow one slice to `inset` inside its own footprint and repaint it.
+
+    The footprint is measured from THAT SLICE rather than from the part, so a
+    leg whose boot is wider than its trouser insets the trouser and not the
+    boot - the crease is at the joint, not at whatever the part's widest point
+    happens to be.
+    """
+    here = [(x, z) for (x, yy, z) in p.cells if yy == y]
+    if not here:
+        return
+    xs = [c[0] for c in here]
+    zs = [c[1] for c in here]
+    x0, x1 = min(xs) + inset, max(xs) + 1 - inset
+    z0, z1 = min(zs) + inset, max(zs) + 1 - inset
+    if x0 >= x1 or z0 >= z1:
+        return  # already too thin to crease; leave it solid
+    for (x, z) in here:
+        p.erase(x, y, z)
+    p.box((x0, x1), (y, y + 1), (z0, z1), ch)
 
 
 def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
@@ -292,7 +551,7 @@ def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
 
 
 def solid_eyes(p, x_centre: int, y0: int, z_face: int, gap: int = 6,
-               width: int = 2, height: int = 4, catchlight: bool = True,
+               width: int = 2, height: int = 4, catchlight: bool = False,
                clear=None) -> None:
     """Two solid iris blocks, one voxel proud of the face plane at `z_face`.
 
@@ -312,6 +571,41 @@ def solid_eyes(p, x_centre: int, y0: int, z_face: int, gap: int = 6,
             # highlight, and two of them read as a second pair of pupils.
             cx = x0 + width - 1 if sign < 0 else x0
             p.put(cx, y0 + height - 1, z_face - 1, W)
+
+
+# --- Why the catchlight defaults to OFF from character v2 Stage 3 -------------
+#
+# IT CANNOT BE MADE SYMMETRIC UNDER A NON-INTEGER GRID CHANGE, and a lopsided
+# glint is worse than no glint.
+#
+# The scale map `U` sends an author voxel to the span `[U(a), U(a + 1))`, which
+# at 96/64 is alternately one and two voxels wide. That is fine for every SHAPE
+# in the cast, because shapes here are boxes two or more voxels across and a
+# mirrored pair of boxes lands on a mirrored pair of spans. It is not fine for a
+# feature ONE voxel across: the human's catchlights sit at author x = 5 and
+# x = 12, an exact mirror pair about the head's centre line of 8.5, and they
+# scale to spans of ONE voxel and TWO voxels respectively. The face acquires a
+# half-voxel list to one side.
+#
+# It was found by the eyes-forward self-test, which measures the direction from
+# the head's centre to the iris centroid and asserts it points along the way the
+# character is travelling. That agreement dropped from 1.0000 to 0.9981 on all
+# four races - about three and a half degrees of squint - and the test is right
+# to object.
+#
+# Two ways out, and the design doc chooses for us. Preserving the catchlight
+# would need the face authored as a half and mirrored at output, which is real
+# machinery. Dropping it costs a highlight that is ONE VOXEL on a grid where
+# the design doc's own floor is that "nothing smaller than about 3 x 3 voxels
+# matters at 8-15 m" and that "authoring 1-voxel detail at the new grid would
+# waste the raise". The eye is specified there as "a 2 x 4 block of pure iris
+# colour... one shape and one value: it survives being two pixels tall". The
+# catchlight was never part of that argument.
+#
+# So it goes, the iris blocks come out exactly symmetric, and the eyes-forward
+# test passes at its original 0.999 without the threshold being touched. Stage 5
+# re-authors every face and may bring a highlight back as a 2 x 2 - which would
+# scale cleanly, because two is not one.
 
 
 def hair_brow(p, xr, y: int, z_face: int) -> None:

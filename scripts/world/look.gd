@@ -201,6 +201,18 @@ uniform float grain_sparse = 0.0;
 // How dark the bottom half-metre of a vertical face goes. A printed block has
 // a line where it meets the ground; this is that line, and it is arithmetic.
 uniform float contact_band = 0.72;
+// EMISSIVE, FOR FIGURES ONLY, and it is off by default for a reason.
+//
+// Character v2 Stage 10 gave characters an emissive channel in the vertex
+// colour's ALPHA, exactly where flora's has always been. Terrain, the far field
+// and the impostor ring share this shader's SOURCE and write alpha 1, so an
+// unconditional EMISSION line here would set the entire world glowing. The
+// uniform is per-material, defaults to 0, and only figure_material() sets it.
+//
+// This was only safe to do at all because distance v1 Stage 6 gave the
+// impostor forest its own material. Before that, figure_material() had two
+// callers and this line would have lit two thousand cones on every hillside.
+uniform float figure_emissive = 0.0;
 
 varying vec3 world_pos;
 // THE NORMAL IN WORLD SPACE. fragment()'s NORMAL is in VIEW space, so
@@ -247,6 +259,12 @@ void fragment() {
 	float up = abs(world_normal.y);
 	float fy = fract(world_pos.y / 0.5);
 	v_albedo *= mix(1.0, mix(contact_band, 1.0, step(0.25, fy)), 1.0 - up);
+
+	// The rune band on a named piece. Present by day and strong at night: a
+	// floor of 0.25 rather than zero, because pillar 2's register is that the
+	// dark is where the warm things show, not that they only exist there.
+	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * figure_emissive
+		* mix(0.25, 1.0, kubik_night);
 
 	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
@@ -527,6 +545,9 @@ static func figure_material() -> ShaderMaterial:
 		# flat, and a line under its feet would follow it around.
 		_figure.set_shader_parameter("grain_amount", 0.0)
 		_figure.set_shader_parameter("contact_band", 1.0)
+		# The only material in the game that reads the vertex alpha as emissive.
+		# See the uniform's note in OPAQUE_SHADER.
+		_figure.set_shader_parameter("figure_emissive", 1.0)
 	_mutex.unlock()
 	return _figure
 

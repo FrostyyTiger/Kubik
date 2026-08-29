@@ -60,6 +60,25 @@ Territory: `scripts/world/` worldgen + lakes, `worldgen_config.gd`, a new
 `scripts/world/water/`. **Collides with `feat/flora-streaming` - wait for it
 to land.** 1-2 nights.
 
+### A4. Character v2 - the people  *(done, 2026-08-29)*
+
+Ran before Wave 1 rather than after it, and the reason is a dependency rather
+than a preference: **creatures v1 builds a quadruped on `Animator.RIG_SHAPES`
+and combat v1 builds hit, stagger and death poses on `pose_for()`.** Both are
+cheaper against a rig that already has a knee than against one that grows one
+underneath them, and every combat pose written against single-segment limbs
+would have been rewritten.
+
+What it leaves for those two: `RIG_SHAPES` takes an optional `lower` key per
+limb, so a quadruped can have knees or not without anything branching on
+species; `LocomotionState` is still the seam, and an enemy driven by AI fills
+the same struct a player fills from input; and the critter is at the new grid,
+16,380 triangles, ready to be something.
+
+`docs/plans/character-v2.md` is the design, `docs/plans/character-v2-tech.md`
+the build plan, `docs/status/character-v2.md` what actually happened - including
+the three places the run did not meet its own gate.
+
 ### C. Creatures v1 - the trio
 
 Wolf (rusher), marmot (whistle + burrow), eagle (ridge orbit + cry). The
@@ -118,8 +137,20 @@ Territory: `scripts/game/` save + journal, `scripts/ui/menu*`. 1 night.
 
 ### G. Items v1 - pickup, inventory, visible gear, gathering
 
+**Character v2 already built the visible half.** Six armour slots exist on the
+wire, four of them with geometry; `Armour` is the table of pieces and tiers;
+`CharacterView` draws whatever a def says is worn, on every peer. What Items v1
+adds is everything about WHERE gear comes from - the item table, pickup, drop,
+the inventory, and the rule about what grants a tier - and one deletion: the
+debug key that cycles a character's tier says in the code that it is
+scaffolding, exactly as character v1's `X` key did for `sit`.
+
+The two empty slots are the point of having declared them. `legs` and `hands`
+carry no geometry and reserve their bytes, so filling them is art rather than
+another wire version.
+
 Item table (facts as data), pickup / drop as mutations, a small inventory,
-the three gear slots rendered on the character, wolf drops, the gathering
+wolf drops, the gathering
 RPC at `World.remove_flora_local()`, the first gatherable plants. Gathering
 was parked until something was worth gathering FOR - a campfire that wants
 wood and a bolt that wants a reagent is that. 1 night.

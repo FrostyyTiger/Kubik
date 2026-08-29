@@ -32,8 +32,25 @@ extends RefCounted
 ## at 60 and the game feels different on two machines.
 
 ## The reference leg length the stride table is written against: the stocky
-## human's 16 voxels, 0.5 m. Every other race scales from it.
-const REFERENCE_LEG_M := 16.0 * VoxelModel.VOXEL_M
+## human's legs, 0.5 m. Every other race scales from it.
+##
+## THE LITERAL IS IN VOXELS AND THE VOXEL CHANGED SIZE. It was 16 at 1/16 of a
+## block and is 24 at 1/24 - the same half metre, a different number of voxels.
+## Miss this and every race's stride scales from a reference two thirds of the
+## right length, which reads as the whole cast mincing and is the sort of thing
+## that gets blamed on an amplitude knob for a week.
+const REFERENCE_LEG_M := 24.0 * VoxelModel.VOXEL_M
+
+## Where the knee's peak sits relative to the hip's, in cycles. THE CONTACT
+## POSE IS THIS NUMBER: at 0.25 the knee peaks at mid-swing and both legs reach
+## both extremes straight, which is a scissor; at 0.40 the front leg is straight
+## at contact, the back leg is bent, and the knee's peak lands just after
+## push-off, which is when a real knee bends most.
+const KNEE_LAG := 0.40
+
+## How much wider the forward arm swing is than the back one. Symmetric swing
+## reads mechanical.
+const ARM_FORWARD_BIAS := 0.20
 
 ## Below this speed the character is standing still as far as the legs are
 ## concerned, and the swing blends out rather than shrinking asymptotically.
@@ -71,6 +88,23 @@ var _wave_remaining := 0.0
 ## different moments, which is exactly as visible as it sounds - not at all.
 var _blink_timer := 0.0
 var _blinking := false
+
+## How out of breath this character is, 0..1. Rises with speed and decays over
+## `winded_decay_s`, so breathing after a sprint is louder than breathing after
+## standing about. Stateful by nature, so it is smoothed here and handed to the
+## pure function in `extra`.
+var _winded := 0.0
+
+## Seconds of continuous true idle, and which break is playing.
+##
+## IDLE BREAKS ARE THE CHEAPEST PERSONALITY IN GAMES. After a few seconds of
+## standing still, one of four short motions - a weight rock, a shoulder roll, a
+## head tilt, a look around - and the character stops being a mannequin. Four
+## short poses, and nobody who plays the game will ever consciously notice them.
+var _idle_for := 0.0
+var _break_index := -1
+var _break_left := 0.0
+var _break_next := 0.0
 
 
 func setup(p_config: CharacterConfig, p_dims: Dictionary) -> void:
@@ -114,6 +148,15 @@ func update(state: LocomotionState, dt: float) -> void:
 	_look_pitch = lerpf(_look_pitch, clampf(state.look_pitch,
 		-deg_to_rad(config.look_pitch_deg), deg_to_rad(config.look_pitch_deg)), look_t)
 
+	# Exertion rises fast and falls slowly - which is what being out of breath
+	# is - so the rise is immediate and only the decay is timed.
+	var exertion := clampf(state.speed / 8.0, 0.0, 1.0)
+	if exertion > _winded:
+		_winded = exertion
+	elif config.winded_decay_s > 0.0:
+		_winded = maxf(0.0, _winded - dt / config.winded_decay_s)
+
+	_update_idle_break(state, dt)
 	_update_blink(dt)
 
 	var target := pose_for(state, phase, time, config, dims, {
@@ -121,6 +164,9 @@ func update(state: LocomotionState, dt: float) -> void:
 		"look_pitch": _look_pitch,
 		"land": land_amount(),
 		"wave": _wave_remaining,
+		"winded": _winded,
+		"break": _break_index,
+		"break_t": 1.0 - (_break_left / maxf(BREAK_SECONDS, 0.001)),
 	})
 
 	var t := 1.0 - exp(-config.pose_smoothing * dt)
@@ -209,9 +255,17 @@ func land_amount() -> float:
 ## Scales with leg length across races and schemes, so the dwarf takes short
 ## quick steps and the elf long slow ones out of one table, and then stretches
 ## rather than letting the leg rate exceed `cycle_hz_max`.
+## The race's own cadence multiplier: a HIGHER cadence is a SHORTER stride at
+## the same speed, which is what taking quick short steps means. The dwarf is
+## 1.20 and the elf 0.85, on top of the leg-length scaling that already
+## produced dwarf < human < elf from one line of arithmetic.
+func _cadence() -> float:
+	return float((dims.get("gait_scale", {}) as Dictionary).get("cadence", 1.0))
+
+
 func stride_for(speed: float) -> float:
 	var leg: float = float(dims.get("legs", 9)) * VoxelModel.VOXEL_M
-	var base: float = config.stride_walk_m * leg / REFERENCE_LEG_M
+	var base: float = config.stride_walk_m * leg / REFERENCE_LEG_M / _cadence()
 	return _stride_capped(base, speed, config.cycle_hz_max)
 
 
@@ -263,15 +317,21 @@ const RIG_SHAPES := {
 		"root": "hips",
 		"lean": "torso",
 		# Opposite ends of the cycle: one leg forward while the other is back.
+		#
+		# `lower` IS OPTIONAL, and its absence is a statement rather than an
+		# omission: a rig shape with no `lower` key is a rig with no knee, which
+		# is the correct description of the critter's trot and of anything else
+		# built from rigid parts that does not have one. Nothing branches on
+		# which races have knees.
 		"legs": [
-			{"bone": "leg_r", "phase": 0.0},
-			{"bone": "leg_l", "phase": 0.5},
+			{"bone": "leg_r", "lower": "leg_r_lower", "foot": "leg_r_foot", "phase": 0.0},
+			{"bone": "leg_l", "lower": "leg_l_lower", "foot": "leg_l_foot", "phase": 0.5},
 		],
 		# Arms in antiphase with the leg on their OWN side, which is what a
 		# person does and what makes a walk read as a walk.
 		"arms": [
-			{"bone": "arm_r", "phase": 0.5},
-			{"bone": "arm_l", "phase": 0.0},
+			{"bone": "arm_r", "lower": "arm_r_lower", "phase": 0.5},
+			{"bone": "arm_l", "lower": "arm_l_lower", "phase": 0.0},
 		],
 	},
 	"trot": {
@@ -327,7 +387,11 @@ static func pose_for(state: LocomotionState, phase: float, t: float,
 		config: CharacterConfig, dims: Dictionary, extra := {}) -> Dictionary:
 	var pose := {}
 	var v := VoxelModel.VOXEL_M
-	var legs_m: float = float(dims.get("legs", 9)) * v
+	# NO DEFAULT. `dims` always comes from a race table or from a part file's
+	# own DIMS, both of which have `legs`; the old fallback of 9 was a fossil
+	# from the 1/8 grid and would now silently produce a character with legs
+	# three quarters of a voxel long rather than a loud failure.
+	var legs_m: float = float(dims["legs"]) * v
 
 	match state.pose:
 		LocomotionState.POSE_SIT:
@@ -341,6 +405,7 @@ static func pose_for(state: LocomotionState, phase: float, t: float,
 			return pose
 
 	pose = _pose_locomotion(state, phase, t, config, dims, legs_m, extra)
+	_apply_idle_break(pose, int(extra.get("break", -1)), float(extra.get("break_t", 0.0)))
 	_apply_head_look(pose, extra)
 	return pose
 
@@ -351,6 +416,11 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 		extra: Dictionary) -> Dictionary:
 	var v := VoxelModel.VOXEL_M
 	var pose := {}
+	# THE GAIT TABLE. Multipliers on knobs that already exist, read out of the
+	# race's own dimensions - which `pose_for` already receives, so this costs
+	# the pure function no new parameters and teaches it nothing about which
+	# race it is animating.
+	var gait: Dictionary = dims.get("gait_scale", {})
 
 	# How much of the swing this speed has earned. Blending in over the first
 	# MOVING_SPEED_M rather than scaling by speed keeps a character nudged by a
@@ -367,7 +437,7 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 			bob_vox = config.bob_walk_vox * config.precision_swing_ratio
 
 	var swing := deg_to_rad(swing_deg) * moving
-	var arm_swing := swing * config.arm_swing_ratio
+	var arm_swing := swing * config.arm_swing_ratio * float(gait.get("arm", 1.0))
 
 	var shape := rig_shape(dims)
 	var root_bone: String = shape["root"]
@@ -375,17 +445,24 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 
 	# Hips rise and fall twice per cycle - once per step - about their rest
 	# height, so the character does not float upward at speed.
-	var bob := bob_vox * v * 0.5 * sin(2.0 * TAU * phase) * moving
+	var bob := bob_vox * float(gait.get("bob", 1.0)) * v * 0.5 * sin(2.0 * TAU * phase) * moving
 
 	# Breathing. Small and slow: a character that visibly pumps while standing
 	# still reads as panting. Fades out as soon as it is walking, where the bob
 	# is doing the same job much more loudly.
-	var breath := config.breath_vox * v * sin(TAU * config.breath_hz * t) * (1.0 - moving)
+	# BREATHING AMPLITUDE TRACKS EXERTION - free winded-ness with no sound. A
+	# character that has just sprinted breathes harder for a few seconds than
+	# one that has been standing about, and `extra["winded"]` is the decaying
+	# memory of how fast it was going. Still fades out while actually moving,
+	# where the hip bob is doing the same job much more loudly.
+	var winded: float = float(extra.get("winded", 0.0))
+	var breath := config.breath_vox * v * (1.0 + winded * config.breath_exertion) \
+		* sin(TAU * config.breath_hz * (1.0 + winded * 0.5) * t) * (1.0 - moving)
 
 	var torso_pitch := 0.0
 	if state.mode == LocomotionState.MODE_SPRINT:
 		# Negative pitches the top of the torso toward -Z, which is forward.
-		torso_pitch = -deg_to_rad(config.sprint_lean_deg) * moving
+		torso_pitch = -deg_to_rad(config.sprint_lean_deg) * float(gait.get("lean", 1.0)) * moving
 
 	# A positive rotation about X swings a downward-hanging bone's tip toward
 	# -Z, which is forward. Every leg is the same expression at its own point
@@ -393,8 +470,51 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var tuck := deg_to_rad(config.jump_tuck_deg)
 	var rising := not state.grounded and state.rising
 	for entry in (shape["legs"] as Array):
-		var angle: float = tuck if rising else swing * sin(TAU * (phase + float(entry["phase"])))
+		var leg_phase := float(entry["phase"])
+		var angle: float = tuck if rising else swing * sin(TAU * (phase + leg_phase))
 		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, 0.0)}
+		if entry.has("lower"):
+			# A KNEE BENDS ONE WAY. A knee that hyperextends is the single most
+			# obviously wrong thing a procedural rig can do, and a plain sine
+			# does it for half of every cycle. So the angle is a RECTIFIED sine
+			# - negative half clipped away - which is also, conveniently, what a
+			# knee actually does: straight through stance, bent through swing.
+			#
+			# THE CONTACT POSE, and it is one number.
+			#
+			# "Front leg straight, back leg bent, both feet down for one frame"
+			# is the pose everyone skips and the one that makes a walk a walk.
+			# It is not a keyframe here - it is where the knee's peak sits
+			# relative to the hip's.
+			#
+			# At a quarter cycle the knee peaked at mid-swing, which left BOTH
+			# legs straight at both extremes: the character reached contact with
+			# two straight poles, which is a scissor. At `KNEE_LAG` the knee is
+			# straight at the front extreme and bent at the back one, and its
+			# peak lands just after push-off - which is when a real knee bends
+			# most. Front straight, back bent, and the frame the design doc asks
+			# for falls out of the arithmetic rather than being posed.
+			var bend := -deg_to_rad(config.knee_swing_deg) * moving * maxf(
+				0.0, sin(TAU * (phase + leg_phase + KNEE_LAG)))
+			if rising:
+				# Tucked under, which is most of what makes a tuck read as one.
+				bend = -tuck
+			pose[entry["lower"]] = {"rot": Vector3(bend, 0.0, 0.0)}
+			if entry.has("foot"):
+				# THE HOCK BENDS THE OTHER WAY. On a digitigrade leg the ankle
+				# is raised and faces BACKWARD, so where the knee folds the
+				# shin back, the hock folds the foot forward under it - which
+				# is the joint that makes a lizardfolk read as an animal from
+				# any angle. Another quarter cycle behind the knee, so the
+				# three joints peak in sequence down the limb.
+				#
+				# A pose entry for a bone that does not exist costs nothing -
+				# `Rig.apply_pose` iterates the bones it HAS - so writing this
+				# for a human is free rather than a branch on race.
+				pose[entry["foot"]] = {"rot": Vector3(
+					deg_to_rad(config.hock_swing_deg) * moving * maxf(
+						0.0, sin(TAU * (phase + leg_phase + KNEE_LAG + 0.25))),
+					0.0, 0.0)}
 
 	var falling := not state.grounded and not state.rising
 	# Arms out while falling. Positive Z rotation swings the right arm's tip
@@ -403,11 +523,24 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var arms: Array = shape["arms"]
 	for i in arms.size():
 		var entry: Dictionary = arms[i]
-		var angle := arm_swing * sin(TAU * (phase + float(entry["phase"])))
+		var arm_phase := float(entry["phase"])
+		# ARM SWING ASYMMETRY. The forward swing is wider than the back swing
+		# by `ARM_FORWARD_BIAS`; a symmetric swing reads mechanical, and this is
+		# two characters of code.
+		var raw := sin(TAU * (phase + arm_phase))
+		var angle: float = arm_swing * raw * (
+			1.0 + ARM_FORWARD_BIAS if raw > 0.0 else 1.0)
 		# The first arm in the list is the right one, and outward is +Z for it
 		# and -Z for its mirror.
 		var side := 1.0 if i % 2 == 0 else -1.0
 		pose[entry["bone"]] = {"rot": Vector3(angle, 0.0, out * side)}
+		if entry.has("lower"):
+			# An elbow bends the OTHER WAY from a knee, and it is the same
+			# rectified expression with the opposite sign. Positive X swings the
+			# forearm's tip forward, which is the only direction an elbow goes.
+			pose[entry["lower"]] = {"rot": Vector3(
+				deg_to_rad(config.elbow_swing_deg) * moving * maxf(
+					0.0, sin(TAU * (phase + arm_phase + 0.25))), 0.0, 0.0)}
 
 	if not state.grounded:
 		bob = 0.0
@@ -415,6 +548,12 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	# The landing dip, decaying over land_squash_ms.
 	var land: float = float(extra.get("land", 0.0))
 	var dip := -config.land_squash_vox * v * land
+
+	# HIP COUNTER-ROTATION. The shoulders turn opposite the hips, once per
+	# cycle. Two lines, and it is the difference between a person and a wind-up
+	# toy: without it the torso is a rigid box being carried along by legs.
+	var twist := deg_to_rad(config.hip_twist_deg) * float(gait.get("twist", 1.0)) \
+		* moving * sin(TAU * phase)
 
 	# On a person the root and the lean are two bones; on a quadruped they are
 	# the same one, so the two writes are merged rather than one overwriting
@@ -425,8 +564,10 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 		root_entry["pos"] = Vector3(0.0, bob + dip + breath, 0.0)
 		pose[root_bone] = root_entry
 	else:
+		root_entry["rot"] = Vector3(0.0, twist, 0.0)
 		pose[root_bone] = root_entry
-		pose[lean_bone] = {"rot": Vector3(torso_pitch, 0.0, 0.0),
+		# Opposite sign, so the two counter-rotate rather than turning together.
+		pose[lean_bone] = {"rot": Vector3(torso_pitch, -twist * 2.0, 0.0),
 			"pos": Vector3(0.0, breath, 0.0)}
 
 	_apply_chains(pose, config, t, state.speed)
@@ -453,10 +594,23 @@ static func _pose_sit(config: CharacterConfig, legs_m: float, t: float,
 		"hips": {"pos": Vector3(0.0, -legs_m + config.sit_lift_vox * v, 0.0)},
 		"torso": {"rot": Vector3(deg_to_rad(-4.0), 0.0, 0.0),
 			"pos": Vector3(0.0, config.breath_vox * v * sin(TAU * config.breath_hz * t), 0.0)},
-		"leg_r": {"rot": Vector3(deg_to_rad(90.0), 0.0, 0.0)},
-		"leg_l": {"rot": Vector3(deg_to_rad(90.0), 0.0, 0.0)},
+		# THIGHS FLAT, SHINS DOWN - which is what sitting is, and which was not
+		# available before there was a knee. Until character v2 Stage 4 this
+		# pose was legs straight out in front, and the v1 status doc records
+		# what that cost: "a sitting character photographed from the front looks
+		# like a standing character with short legs", because its legs pointed
+		# along its own forward axis straight at the camera. Knees up fixes the
+		# pose rather than the camera.
+		"leg_r": {"rot": Vector3(deg_to_rad(78.0), 0.0, 0.0)},
+		"leg_l": {"rot": Vector3(deg_to_rad(78.0), 0.0, 0.0)},
+		"leg_r_lower": {"rot": Vector3(deg_to_rad(-72.0), 0.0, 0.0)},
+		"leg_l_lower": {"rot": Vector3(deg_to_rad(-72.0), 0.0, 0.0)},
 		"arm_r": {"rot": Vector3(deg_to_rad(-20.0), 0.0, deg_to_rad(6.0))},
 		"arm_l": {"rot": Vector3(deg_to_rad(-20.0), 0.0, deg_to_rad(-6.0))},
+		# Forearms resting forward on the knees rather than hanging through
+		# them.
+		"arm_r_lower": {"rot": Vector3(deg_to_rad(34.0), 0.0, 0.0)},
+		"arm_l_lower": {"rot": Vector3(deg_to_rad(34.0), 0.0, 0.0)},
 	}
 	_apply_chains(pose, config, t, 0.0)
 	_apply_head_look(pose, extra)
@@ -478,8 +632,17 @@ static func _pose_downed(config: CharacterConfig, legs_m: float) -> Dictionary:
 		"torso": {"rot": Vector3(deg_to_rad(6.0), 0.0, 0.0)},
 		"leg_r": {"rot": Vector3(deg_to_rad(-8.0), 0.0, 0.0)},
 		"leg_l": {"rot": Vector3(deg_to_rad(-8.0), 0.0, 0.0)},
+		# One knee drawn up, the other nearly straight. A body on its back with
+		# two identical legs reads as a doll laid down; asymmetry reads as
+		# someone who fell. Free, and it is the same argument the armour ladder
+		# makes about symmetry meaning "issued" and asymmetry meaning "lived
+		# through".
+		"leg_r_lower": {"rot": Vector3(deg_to_rad(-38.0), 0.0, 0.0)},
+		"leg_l_lower": {"rot": Vector3(deg_to_rad(-12.0), 0.0, 0.0)},
 		"arm_r": {"rot": Vector3(0.0, 0.0, deg_to_rad(55.0))},
 		"arm_l": {"rot": Vector3(0.0, 0.0, deg_to_rad(-55.0))},
+		"arm_r_lower": {"rot": Vector3(deg_to_rad(22.0), 0.0, 0.0)},
+		"arm_l_lower": {"rot": Vector3(deg_to_rad(10.0), 0.0, 0.0)},
 	}
 	_apply_chains(pose, config, 0.0, 0.0)
 	return pose
@@ -498,6 +661,11 @@ static func _apply_wave(pose: Dictionary, config: CharacterConfig, t: float,
 		deg_to_rad(10.0) * strength,
 		0.0,
 		(deg_to_rad(150.0) + swing) * strength)}
+	# THE WAVE IS AT THE ELBOW, not the shoulder, now that there is one. A whole
+	# arm swinging from the shoulder is a semaphore; a raised upper arm with the
+	# forearm doing the moving is a wave. The upper arm holds still at 150
+	# degrees out and the oscillation moves down one joint.
+	pose["arm_r_lower"] = {"rot": Vector3(0.0, 0.0, deg_to_rad(28.0) * strength + swing * 1.6)}
 
 
 ## The head follows the camera, clamped and already smoothed by update().
@@ -568,6 +736,99 @@ static func _apply_chains(pose: Dictionary, config: CharacterConfig, t: float,
 			# Each link adds a little of its own, so the tip travels furthest.
 			var scale := 0.6 + 0.4 * float(i) / float(MAX_CHAIN_LINKS - 1)
 			pose[bone] = {"rot": Vector3(0.0, sway * scale, 0.0)}
+
+
+## How long one idle break lasts.
+const BREAK_SECONDS := 1.6
+
+## How many there are. Four short motions, per the design doc.
+const BREAK_COUNT := 4
+
+
+## Count idle time and run a break when one is due.
+func _update_idle_break(state: LocomotionState, dt: float) -> void:
+	if state.speed > 0.1 or not state.grounded or state.pose != LocomotionState.POSE_NONE:
+		_idle_for = 0.0
+		_break_index = -1
+		_break_left = 0.0
+		_break_next = 0.0
+		return
+	_idle_for += dt
+	if _break_left > 0.0:
+		_break_left = maxf(0.0, _break_left - dt)
+		if _break_left <= 0.0:
+			_break_index = -1
+			_break_next = _idle_for + _pick_break_gap()
+		return
+	if _break_next <= 0.0:
+		_break_next = _idle_for + _pick_break_gap()
+	if _idle_for >= _break_next:
+		_break_index = _pick_idle_break()
+		_break_left = BREAK_SECONDS
+
+
+## TODO(marcel): the idle-break selector.
+##
+## Four short motions exist and this returns the first one, every time. It is a
+## working idle break - a character that rocks its weight every few seconds
+## still stops being a mannequin - and it is the least interesting of the four.
+##
+##   Hint: a weighted random pick, and NEVER THE SAME BREAK TWICE IN A ROW. The
+##   repeat is what makes it read as a loop rather than as a person; one
+##   remembered index and a re-draw is the whole fix. The weights are worth
+##   having too - a shoulder roll is a stronger read than a head tilt and should
+##   be rarer. `_break_index` is the last one played and is already to hand.
+func _pick_idle_break() -> int:
+	return 0
+
+
+## TODO(marcel): and the gap between them.
+##
+## A fixed gap. Real idling is not periodic, and a character that fidgets on a
+## metronome is worse than one that does not fidget at all.
+##
+##   Hint: `randf_range(4.0, 9.0)`, scaled by the race's own `gait.idle` - the
+##   dwarf is 1.40 and fidgets constantly, the elf is 0.70 and does not. The
+##   multiplier is already in the table and already reaches this function
+##   through `dims`; it is the divisor, because a HIGHER rate is a SHORTER gap.
+func _pick_break_gap() -> float:
+	return 6.0 / maxf(0.2, float((dims.get("gait_scale", {}) as Dictionary).get("idle", 1.0)))
+
+
+## The four breaks, as offsets from whatever the body is already doing.
+##
+## Layered on top of the idle pose rather than replacing it, so a break never
+## fights the breathing and never has to know what the rest of the body is up
+## to. `t` runs 0..1 across the break and every one of them is a single arc out
+## and back, which is what stops them reading as a twitch.
+static func _apply_idle_break(pose: Dictionary, index: int, t: float) -> void:
+	if index < 0:
+		return
+	# One smooth out-and-back. sin(PI t) is 0 at both ends by construction, so
+	# a break can never leave the body somewhere it has to snap back from.
+	var arc := sin(PI * clampf(t, 0.0, 1.0))
+	match index:
+		0:  # A WEIGHT ROCK. The hips shift and the shoulders follow late.
+			_add_rot(pose, "hips", Vector3(0.0, 0.0, deg_to_rad(3.0) * arc))
+			_add_rot(pose, "torso", Vector3(0.0, deg_to_rad(4.0) * arc, deg_to_rad(-2.0) * arc))
+		1:  # A SHOULDER ROLL, on one side only. Asymmetric, like everything
+			# else here that is worth doing.
+			_add_rot(pose, "arm_r", Vector3(deg_to_rad(-14.0) * arc, 0.0, deg_to_rad(8.0) * arc))
+			_add_rot(pose, "arm_r_lower", Vector3(deg_to_rad(18.0) * arc, 0.0, 0.0))
+		2:  # A HEAD TILT.
+			_add_rot(pose, "head", Vector3(deg_to_rad(4.0) * arc, deg_to_rad(-9.0) * arc,
+				deg_to_rad(6.0) * arc))
+		3:  # A LOOK AROUND - further, and the torso comes with it a little,
+			# which is the difference between looking and swivelling.
+			_add_rot(pose, "head", Vector3(0.0, deg_to_rad(26.0) * arc, 0.0))
+			_add_rot(pose, "torso", Vector3(0.0, deg_to_rad(7.0) * arc, 0.0))
+
+
+## Add a rotation to a bone's pose entry, creating it if it is not there.
+static func _add_rot(pose: Dictionary, bone: String, delta: Vector3) -> void:
+	var entry: Dictionary = pose.get(bone, {})
+	entry["rot"] = (entry.get("rot", Vector3.ZERO) as Vector3) + delta
+	pose[bone] = entry
 
 
 ## The chains this animator writes poses for. A pose entry for a bone that does

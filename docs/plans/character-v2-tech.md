@@ -345,6 +345,15 @@ or a hash. That is not fastidiousness - `docs/status/world-feel-v1.md` records a
 retraction of a night's performance deltas because a single probe run cannot
 compare two commits, and it cost this project credibility once.
 
+**Nor does any stage gate on pixel equality of a lit sheet.** Stage 0 measured
+this and it was a surprise: two runs of the *same commit* differ on 31 of 53
+sheets, 72% of the differing pixels by exactly one least-significant bit, worst
+case 1.53% of an image. Frozen-pose strips, mask sheets and swatch sheets *are*
+bit-stable and may be diffed exactly; lit sheets are compared with
+`tools/png_diff.py` against a tolerance set from that measurement. The counts
+were unaffected - budget, IoU and the option sweep reproduced to the digit on
+every run - which is the whole reason this plan gates on them.
+
 The one timing number this run records is the animator's cost per character
 (`0.045-0.053 ms` at v1). It is **reported, not gated**. If any stage ever needs
 to compare two commits on it, the comparison is ABAB, at least five runs each,
@@ -432,8 +441,10 @@ anything it will judge.
 costs a loop over a dictionary and it is the number item 5 turns on. Today it
 should read roughly 20,000 for the dwarf; Stage 3 is where it matters.
 
-**Files:** `scripts/tools/character_gallery.gd`, `docs/status/character-v2.md`
-(new), `docs/status/character-v1.md`, `docs/plans/character-v2.md` (one line).
+**Files:** `scripts/tools/character_gallery.gd`, `tools/png_diff.py` (new),
+`docs/status/character-v2.md` (new), `docs/status/character-v1.md`,
+`docs/plans/character-v2.md` (one line), and this file where the measurement
+contradicts it.
 
 **Evidence:** the three count tables, three times each, recorded with the fact
 that all three runs agreed to the thousandth; `--sheet outline` on the four
@@ -1272,9 +1283,17 @@ both self-test suites; the worldgen probe.
 **Verify:**
 1. `--sheet outline` reports exactly **5** at tier 5.
 2. `_test_glow_is_capped` passes: 12 voxels, never more.
-3. The tour shots are pixel-identical to the pre-stage run except where a
-   character stands. A single changed pixel on a hillside means the emissive
-   uniform reached the terrain material and that is a stop-the-stage finding.
+3. The tour shots are unchanged except where a character stands - judged with
+   `tools/png_diff.py`, not by pixel equality. **Amended after Stage 0
+   measured that pixel equality is not achievable on this renderer**: two runs
+   of the same commit differ on every lit sheet, mostly by one
+   least-significant bit, worst case 1.53% of an image. So the gate is the
+   differ's tolerance, plus one targeted check that does not depend on it -
+   shoot the `ridge` vantage at night with no character in frame, before and
+   after, and assert its mean luminance moves by less than one 8-bit step. An
+   emissive uniform that reached the terrain material would light a hillside,
+   which is a change of many steps over most of the frame, not a change the
+   noise floor could hide.
 4. `git grep figure_material` shows one caller.
 
 ## Stage 11 - The walk that has a contact pose

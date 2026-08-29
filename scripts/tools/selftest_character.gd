@@ -28,15 +28,20 @@ func _ready() -> void:
 		"mesher ao": _test_mesher_ao,
 		"palette swap": _test_palette_swap,
 		"part parsing": _test_part_parsing,
+		"parts match the table": _test_parts_match_table,
 		"eyes forward": _test_eyes_forward,
 		"rig completeness": _test_rig_completeness,
 		"character height": _test_character_height,
 		"def round trip": _test_def_round_trip,
 		"def from strangers": _test_def_from_strangers,
+		"a v1 payload still parses": _test_v1_payload_still_parses,
 		"pose is finite": _test_pose_finite,
 		"phase by distance": _test_phase_by_distance,
 		"idle converges": _test_idle_converges,
 		"poses differ": _test_poses_differ,
+		"knees bend one way": _test_knee_never_hyperextends,
+		"the walk has a contact pose": _test_contact_pose,
+		"the races walk differently": _test_gait_differs,
 		"sprint lean": _test_sprint_lean,
 		"animator cost": _measure_animator_cost,
 		"chain lag": _test_chain_lag,
@@ -47,6 +52,8 @@ func _ready() -> void:
 		"every combination": _test_every_combination,
 		"option tables agree": _test_option_tables,
 		"gear sockets": _test_gear_sockets,
+		"armour is not inside a body": _test_armour_not_inside_a_body,
+		"glow is capped": _test_glow_is_capped,
 		"vox fixture": _test_vox_fixture,
 		"vox garbage": _test_vox_garbage,
 		"critter": _test_critter,
@@ -386,6 +393,488 @@ func _test_part_parsing():
 ## model built back-to-front would have looked exactly like a correct one and
 ## the bug would have surfaced as "the new character walks backwards".
 ##
+
+
+
+
+
+
+## THE GAIT TABLE IS WIRED UP, AND IT IS WIRED UP THE WAY IT READS.
+##
+## A table of multipliers nobody can see the effect of is a table that has not
+## been wired up, and the failure is silent: every number looks plausible in the
+## file and every character moves identically on screen.
+##
+## So this checks the ORDERING the table's own prose claims, not the values.
+## "The elf glides", "the dwarf is a piston", "the lizardfolk's power is in its
+## spine" are testable sentences: the elf swings its arms widest, the dwarf
+## takes the shortest stride and bobs least, the lizardfolk twists most. If
+## someone retunes the table those orderings should survive, and if they
+## deliberately do not, this test is the place the decision gets recorded.
+func _test_gait_differs():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var arm := {}
+	var bob := {}
+	var twist := {}
+	var stride := {}
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		var anim := Animator.new()
+		anim.setup(config, dims)
+		var st := LocomotionState.new()
+		st.speed = 4.0
+		st.grounded = true
+		stride[race] = anim.stride_for(4.0)
+		# The extremes over a cycle, which is what an amplitude is.
+		var most_arm := 0.0
+		var most_bob := 0.0
+		var most_twist := 0.0
+		for step in 120:
+			var pose := Animator.pose_for(st, float(step) / 120.0, 0.0, config, dims)
+			if pose.has("arm_r"):
+				most_arm = maxf(most_arm, absf((pose["arm_r"]["rot"] as Vector3).x))
+			if pose.has("hips"):
+				most_bob = maxf(most_bob, absf((pose["hips"]["pos"] as Vector3).y))
+				most_twist = maxf(most_twist, absf((pose["hips"]["rot"] as Vector3).y))
+		arm[race] = most_arm
+		bob[race] = most_bob
+		twist[race] = most_twist
+
+	for claim in [
+			["the elf swings its arms widest", arm[Races.ELF] > arm[Races.HUMAN]
+				and arm[Races.ELF] > arm[Races.DWARF]],
+			["the dwarf swings its arms least", arm[Races.DWARF] < arm[Races.HUMAN]],
+			["the dwarf bobs least", bob[Races.DWARF] < bob[Races.HUMAN]
+				and bob[Races.DWARF] < bob[Races.ELF]],
+			["the lizardfolk twists most", twist[Races.LIZARDFOLK] > twist[Races.HUMAN]
+				and twist[Races.LIZARDFOLK] > twist[Races.ELF]],
+			["the dwarf takes the shortest stride", stride[Races.DWARF] < stride[Races.HUMAN]],
+			["the elf takes the longest", stride[Races.ELF] > stride[Races.HUMAN]],
+	]:
+		if not bool(claim[1]):
+			print("  the gait table says %s, and the animator does not agree" % claim[0])
+			bad += 1
+
+	print("the races walk differently: strides %.2f/%.2f/%.2f/%.2f m, %d checks failed" % [
+		stride[0], stride[1], stride[2], stride[3], bad])
+	return 1 if bad > 0 else 0
+
+## THE CONTACT POSE EXISTS, AND IT IS ASSERTED RATHER THAN LOOKED FOR.
+##
+## Acceptance test 4 is "eight frozen phases, and the contact pose is visible in
+## at least one of them". Judged off the picture that is a person squinting at a
+## strip; judged off the pose it is arithmetic, and it can be checked at 360
+## phases instead of 8.
+##
+## THE POSE: one leg straight and forward while the other is bent and back. It
+## is the pose everyone skips and the one that makes a walk read as weight
+## rather than as a scissor, and it was not achievable at all before there was a
+## knee - character v1's strips are eight rigid poles.
+##
+## It is not a keyframe. It falls out of where the knee's peak sits relative to
+## the hip's - `Animator.KNEE_LAG` - so this test is really asking whether that
+## number is still right.
+func _test_contact_pose():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var report := PackedStringArray()
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		var st := LocomotionState.new()
+		st.speed = 4.0
+		st.grounded = true
+		var best := 0.0
+		var best_phase := 0.0
+		for step in 360:
+			var phase := float(step) / 360.0
+			var pose := Animator.pose_for(st, phase, 0.0, config, dims)
+			if not pose.has("leg_r") or not pose.has("leg_r_lower"):
+				continue
+			for pair in [["leg_r", "leg_l"], ["leg_l", "leg_r"]]:
+				var front: float = (pose[pair[0]]["rot"] as Vector3).x
+				var back: float = (pose[pair[1]]["rot"] as Vector3).x
+				var front_knee: float = absf((pose[pair[0] + "_lower"]["rot"] as Vector3).x)
+				var back_knee: float = absf((pose[pair[1] + "_lower"]["rot"] as Vector3).x)
+				# Front leg forward and straight, back leg back and bent.
+				if front <= 0.0 or back >= 0.0:
+					continue
+				if front_knee > deg_to_rad(6.0):
+					continue
+				var quality: float = back_knee
+				if quality > best:
+					best = quality
+					best_phase = phase
+		if best < deg_to_rad(12.0):
+			print("  %s never reaches a contact pose - best trailing knee %.1f deg" % [
+				Races.name_of(race), rad_to_deg(best)])
+			bad += 1
+		report.append("%s %.0fdeg@%.2f" % [Races.name_of(race), rad_to_deg(best), best_phase])
+
+	print("the walk has a contact pose: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+## TWELVE VOXELS OF GLOW, NEVER MORE, ON ANY CHARACTER AT ANY TIER.
+##
+## The cap is the design and not an optimisation. A rune band on one pauldron
+## is a story about something the wearer did; a glowing character is what every
+## game does wrong, and the only thing standing between the two is a number
+## that somebody actually enforces. So it is enforced here rather than trusted
+## to the generator, because the generator is where it would drift.
+func _test_glow_is_capped():
+	var bad := 0
+	var worst := 0
+	var worst_where := ""
+	for race in Races.RACE_COUNT:
+		for tier in range(0, CharacterDef.TIER_MAX + 1):
+			var def := CharacterDef.new()
+			def.race = race
+			for slot in CharacterDef.ARMOUR_SLOTS:
+				def.armour_tier[slot] = tier
+			def.validate()
+			var view := CharacterView.new()
+			view.build(def)
+			var lit := 0
+			for key in view.rig.part_voxels:
+				for v in (view.rig.part_voxels[key]["voxels"] as Array):
+					if VoxelModel.EMISSIVE_SLOTS.has(v.w):
+						lit += 1
+			if lit > worst:
+				worst = lit
+				worst_where = "%s tier %d" % [Races.name_of(race), tier]
+			if lit > GLOW_CAP:
+				print("  %s tier %d has %d glowing voxels, cap is %d" % [
+					Races.name_of(race), tier, lit, GLOW_CAP])
+				bad += 1
+			view.free()
+	print("glow is capped: worst %d voxels (%s), cap %d, %d checks failed" % [
+		worst, worst_where, GLOW_CAP, bad])
+	return 1 if bad > 0 else 0
+
+
+## The design doc's number: "an emissive accent of 4-12 voxels".
+const GLOW_CAP := 12
+
+## ARMOUR SITS ON A BODY. IT DOES NOT SIT INSIDE ONE.
+##
+## The fitting rule - proportions relative, thicknesses absolute - is what makes
+## one authored set work across four bodies that differ by more than a factor of
+## two in width. The way it fails is not dramatic: a piece stamped from the
+## wrong fraction does not vanish or error, it sinks into the wearer, and on
+## three of four races it looks fine. So it is checked voxel by voxel on every
+## race rather than by eye on the one that happens to be on screen.
+##
+## Voxel CENTRES with a half-voxel tolerance, not mesh vertices or AABBs, for
+## the reason character v1 wrote down: two parts authored on lattices half a
+## voxel apart share no vertex even when they occupy the same space, and an
+## AABB comparison cannot tell a dwarf's 21-deep torso from an elf's 12.
+func _test_armour_not_inside_a_body():
+	var bad := 0
+	var report := PackedStringArray()
+
+	for race in Races.RACE_COUNT:
+		var def := CharacterDef.new()
+		def.race = race
+		# Everything on at once, which is the worst case and the only case
+		# worth checking: pieces that clear a body one at a time can still
+		# arrive on top of each other.
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			def.armour_tier[slot] = 4
+			def.armour_item[slot] = maxi(Armour.piece_count(slot) - 1, 0)
+		def.validate()
+
+		var view := CharacterView.new()
+		view.build(def)
+		var rig: Rig = view.rig
+
+		# Every BODY voxel, as a set of cells. Hair and beards are excluded,
+		# and the exclusion is the interesting part: a helm through hair and a
+		# breastplate through a beard are real questions, but they are DESIGN
+		# questions with per-race answers - the dwarf's helm has its beard
+		# emerging below, the elf's is open at the sides - and not the fitting
+		# failure this test is looking for. Rolling them together would mean a
+		# single number that cannot distinguish "the plate is inside the ribs"
+		# from "the helmet touches the fringe".
+		var body := {}
+		for bone_name in rig.meshes:
+			if bone_name in Rig.ORNAMENT_BONES:
+				continue
+			for centre in rig.voxel_centres_in_rig(bone_name):
+				body[_cell(centre)] = true
+
+		var worn := 0
+		var inside := 0
+		for bone_name in rig.overlays:
+			worn += 1
+			for centre in rig.overlay_voxel_centres_in_rig(bone_name):
+				if body.has(_cell(centre)):
+					inside += 1
+		for socket_name in rig.attachments:
+			worn += 1
+			for centre in rig.socket_voxel_centres_in_rig(socket_name):
+				if body.has(_cell(centre)):
+					inside += 1
+
+		if worn == 0:
+			print("  the %s wore nothing at tier 4 - the armour never attached" % Races.name_of(race))
+			bad += 1
+		if inside > 0:
+			print("  %s: %d armour voxels are INSIDE the body" % [Races.name_of(race), inside])
+			bad += 1
+		report.append("%s %dp/%di" % [Races.name_of(race), worn, inside])
+		view.free()
+
+	print("armour is not inside a body: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+
+## A voxel centre in rig space to the integer cell it falls in. Half a voxel of
+## tolerance falls out of the rounding, which is what the question needs: does
+## a voxel of this occupy the same cell as a voxel of that.
+static func _cell(p: Vector3) -> Vector3i:
+	var v := VoxelModel.VOXEL_M
+	return Vector3i(roundi(p.x / v), roundi(p.y / v), roundi(p.z / v))
+
+## A VERSION 1 PAYLOAD IS A REAL CHARACTER WEARING NOTHING.
+##
+## `CharacterDef` went to eight bytes plus twelve of armour in character v2
+## Stage 7. Every save file written before that and every peer on an older
+## build is describing the character it always described - only the armour is
+## absent, and absent armour is tier 0, which the game already has a word for.
+##
+## THE FAILURE THIS GUARDS AGAINST IS SILENT AND NASTY: falling back to the
+## default human on an unrecognised length would change a friend's RACE, and
+## the symptom is a friend who looks wrong rather than an error anyone can see.
+## So the literal old byte array is in the test, and it stays there.
+func _test_v1_payload_still_parses():
+	var bad := 0
+
+	# race 2 (dwarf), build 0, skin 3, hair colour 1, eyes 2, hair 1, beard 2.
+	var v1 := PackedByteArray([1, 2, 0, 3, 1, 2, 1, 2])
+	var def := CharacterDef.from_bytes(v1)
+	if def.race != Races.DWARF:
+		print("  a v1 payload came back as %s, not a dwarf" % Races.name_of(def.race))
+		bad += 1
+	for pair in [["skin", def.skin, 3], ["hair_color", def.hair_color, 1],
+			["eyes", def.eyes, 2], ["hair", def.hair, 1], ["beard", def.beard, 2]]:
+		if pair[1] != pair[2]:
+			print("  a v1 payload's %s came back %d, wanted %d" % pair)
+			bad += 1
+	for i in CharacterDef.ARMOUR_SLOTS:
+		if def.armour_tier[i] != 0 or def.armour_item[i] != 0:
+			print("  a v1 payload arrived wearing something in slot %d" % i)
+			bad += 1
+
+	# A version 2 payload round trips with its armour.
+	var worn := CharacterDef.new()
+	worn.race = Races.ELF
+	worn.armour_tier[CharacterDef.SLOT_TORSO] = 4
+	worn.armour_tier[CharacterDef.SLOT_BACK] = 5
+	worn.validate()
+	var back := CharacterDef.from_bytes(worn.to_bytes())
+	if back.armour_tier[CharacterDef.SLOT_TORSO] != 4 \
+			or back.armour_tier[CharacterDef.SLOT_BACK] != 5:
+		print("  a v2 payload lost its armour tiers on the wire")
+		bad += 1
+	if back.race != Races.ELF:
+		print("  a v2 payload lost its race on the wire")
+		bad += 1
+
+	# THE SAVE FILE DOES NOT CARRY ARMOUR, and this is the assertion that stops
+	# someone helpfully "fixing" that. See CharacterDef.to_dict.
+	var through_dict := CharacterDef.new()
+	through_dict.from_dict(worn.to_dict())
+	if Armour.highest_tier(through_dict) != 0:
+		print("  armour survived a round trip through the save dictionary - it must not")
+		bad += 1
+	if through_dict.race != Races.ELF:
+		print("  the save dictionary lost the race")
+		bad += 1
+
+	# A version nobody knows is the default human with a warning, not a crash.
+	var future := PackedByteArray([99, 1, 0, 0, 0, 0, 0, 0])
+	if CharacterDef.from_bytes(future).race != Races.HUMAN:
+		print("  an unknown wire version did not fall back to the default human")
+		bad += 1
+	# And a length that disagrees with its own version byte.
+	var lying := PackedByteArray([2, 1, 0, 0, 0, 0, 0, 0])
+	if CharacterDef.from_bytes(lying).race != Races.HUMAN:
+		print("  a payload claiming v2 at 8 bytes was believed")
+		bad += 1
+
+	print("a v1 payload still parses: v1 dwarf intact, v2 round trip, dict drops armour, %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+## A KNEE BENDS ONE WAY, AND SO DOES AN ELBOW.
+##
+## The single most obviously wrong thing a procedural rig can do is bend a knee
+## backwards, and a plain sine does it for half of every cycle. The knee angle
+## is therefore a RECTIFIED sine - see Animator._pose_locomotion - and this is
+## the check that it stays rectified through every pose, every speed and every
+## race, including the ones assembled by hand rather than by arithmetic.
+##
+## SIGN CONVENTION, since it is the whole test: a positive rotation about X
+## swings a downward-hanging bone's tip toward -Z, which is FORWARD. So a knee,
+## whose shin swings backward, must never be positive; an elbow, whose forearm
+## swings forward, must never be negative. Both are checked against the REST
+## pose, which is what `apply_pose` treats them as offsets from.
+##
+## It walks the static poses too, because those are hand-written numbers and a
+## typed minus sign is exactly the kind of thing that produces a character
+## sitting with its shins through its thighs.
+func _test_knee_never_hyperextends():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var worst_knee := 0.0
+	var worst_elbow := 0.0
+	var worst_where := ""
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		for mode in [LocomotionState.MODE_WALK, LocomotionState.MODE_SPRINT,
+				LocomotionState.MODE_PRECISION]:
+			for grounded in [true, false]:
+				for rising in [true, false]:
+					for step in 90:
+						var st := LocomotionState.new()
+						st.speed = 5.0
+						st.mode = mode
+						st.grounded = grounded
+						st.rising = rising
+						var pose := Animator.pose_for(
+							st, float(step) / 90.0, 0.0, config, dims)
+						bad += _check_joint_signs(pose, "%s mode %d" % [
+							Races.name_of(race), mode])
+		# The hand-written poses, which arithmetic does not protect.
+		for pose_id in [LocomotionState.POSE_SIT, LocomotionState.POSE_DOWNED,
+				LocomotionState.POSE_WAVE]:
+			var st := LocomotionState.new()
+			st.grounded = true
+			st.pose = pose_id
+			var pose := Animator.pose_for(st, 0.0, 0.0, config, dims,
+				{"wave": 1.0})
+			bad += _check_joint_signs(pose, "%s pose %d" % [
+				Races.name_of(race), pose_id])
+
+	# And report the extremes actually reached, so a knee that never bends at
+	# all is as visible as one that bends the wrong way.
+	var st_walk := LocomotionState.new()
+	st_walk.speed = 5.0
+	st_walk.grounded = true
+	for step in 90:
+		var pose := Animator.pose_for(st_walk, float(step) / 90.0, 0.0, config,
+			Races.dims(Races.HUMAN))
+		if pose.has("leg_r_lower"):
+			worst_knee = minf(worst_knee, (pose["leg_r_lower"]["rot"] as Vector3).x)
+		if pose.has("arm_r_lower"):
+			worst_elbow = maxf(worst_elbow, (pose["arm_r_lower"]["rot"] as Vector3).x)
+	if worst_knee > -0.01:
+		print("  the human's knee never bends at all through a walk cycle")
+		bad += 1
+	print("knees bend one way: human knee to %.1f deg, elbow to %.1f deg, %d checks failed" % [
+		rad_to_deg(worst_knee), rad_to_deg(worst_elbow), bad])
+	return 1 if bad > 0 else 0
+
+
+## Every lower-limb bone in one pose, against its allowed direction.
+func _check_joint_signs(pose: Dictionary, where: String) -> int:
+	var bad := 0
+	for bone in pose:
+		var entry: Dictionary = pose[bone]
+		if not entry.has("rot"):
+			continue
+		var x: float = (entry["rot"] as Vector3).x
+		# A hair past zero is float noise, not a hyperextension.
+		if bone.begins_with("leg_") and bone.ends_with("_lower") and x > 0.001:
+			print("  %s: %s bends %+.2f deg - a knee hyperextending" % [
+				where, bone, rad_to_deg(x)])
+			bad += 1
+		elif bone.begins_with("arm_") and bone.ends_with("_lower") and x < -0.001:
+			print("  %s: %s bends %+.2f deg - an elbow hyperextending" % [
+				where, bone, rad_to_deg(x)])
+			bad += 1
+	return bad
+
+## THE PART FILES AND THE RACE TABLE ARE ONE DESIGN IN TWO LANGUAGES.
+##
+## `races.gd` says a human head is `head_w` 18 wide and `head` 22 tall;
+## `human.py` draws one 18 wide and 22 tall. Nothing has ever checked that
+## those two agree, and they are edited by different hands for different
+## reasons - the table for the rig's rest offsets, the generator for the
+## drawing. A disagreement does not crash: it produces a character whose arms
+## hang off the side of its shoulders by a voxel, which is a thing you find by
+## looking, three stages later, at a sheet you were looking at for another
+## reason.
+##
+## It matters more from character v2 Stage 2 on, because the two now scale
+## THROUGH DIFFERENT CODE - `voxlib.U()` in Python and the tabled numbers in
+## GDScript - and the byte-identity gate at the author grid cannot see a
+## disagreement that only appears at another one.
+##
+## Depth is not checked against `head_d`: the head part carries the nose in
+## front of the skull, so its depth is deliberately larger, and by a margin
+## that is itself resolution-dependent. The comment in `races.gd` says so.
+func _test_parts_match_table():
+	var bad := 0
+	var report := PackedStringArray()
+	for race in Races.RACE_COUNT:
+		if not Races.has_part_set(race):
+			continue
+		var t := Races.dims(race)
+		var parts := Races.part_set(race)
+		# THE HEAD PART IS NOT THE SKULL, and the two ways it is not are both
+		# documented rules rather than slack in the test:
+		#
+		#  - EARS ARE PART OF THE HEAD, so the elf's head part is `head_w` plus
+		#    `ear_out` on each side. That is why the elf's ears survive being
+		#    authored once and mirrored, and why they move with a head-look.
+		#  - THE NECK IS PART OF THE HEAD, authored as the bottom slices of it,
+		#    so the head bone sits at the top of the torso and the head pivots
+		#    about the BASE of the neck - which is where a head-look should
+		#    pivot. `races.gd` says this in as many words and warns that
+		#    offsetting by `neck` in the bone table as well would double-count
+		#    it.
+		#
+		# Both were found by this test on its first run, which is the argument
+		# for having written it.
+		var ear: int = int(t.get("ear_out", 0))
+		var neck: int = int(t.get("neck", 0))
+		var checks := [
+			["head", "head_w + 2 * ear_out", "x", int(t["head_w"]) + 2 * ear],
+			["head", "head + neck", "y", int(t["head"]) + neck],
+			["torso", "torso_w", "x", t["torso_w"]],
+			# A TORSO PART MAY BE TALLER THAN ITS SLICE OF THE STACK, by exactly
+			# `torso_rise` - the elf's standing collar and the dwarf's raised
+			# shoulders both live above the point where the head bone sits. The
+			# rise is tabled rather than tolerated, so this stays an equality.
+			["torso", "torso + torso_rise", "y",
+				int(t["torso"]) + int(t.get("torso_rise", 0))],
+			["torso", "torso_d", "z", t["torso_d"]],
+			["leg", "legs", "y", t["legs"]],
+			["arm", "arm_len", "y", t["arm_len"]],
+		]
+		for check in checks:
+			var part_name: String = check[0]
+			if not parts.has(part_name):
+				continue
+			var size: Vector3i = parts[part_name]["size"]
+			var got: int = size.x if check[2] == "x" else (
+				size.y if check[2] == "y" else size.z)
+			var want: int = check[3]
+			if got != want:
+				print("  %s part %s is %d %s, but the table's %s says %d" % [
+					Races.name_of(race), part_name, got, check[2], check[1], want])
+				bad += 1
+		report.append("%s %dp" % [Races.name_of(race), parts.size()])
+	print("parts match the table: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
+
+
 ## Two assertions, and the second is the one that matters:
 ##
 ##   1. In model space, the iris voxels sit forward of the head's own centre.
@@ -545,18 +1034,28 @@ func _test_character_height():
 	for entry in _every_build():
 		var view := CharacterView.new()
 		view.build(_def_for(entry))
-		# MEASURED STANDING UPRIGHT. The lizardfolk's 8 degree lean is baked
-		# into its hips rest pose, and a leaning head's bounding box reaches
-		# higher at the back than the crown does - by two voxels at 1/16 of a
-		# block, which is past the tolerance. The table's number is the crown
+		# MEASURED STANDING UPRIGHT. The lizardfolk's forward lean is baked
+		# into a rest pose, and the AXIS-ALIGNED bound of a rotated body reads
+		# taller than the body: a 24-voxel head pitched 26 degrees bounds to
+		# 24*cos26 + 24*sin26, which is 32. The table's number is the crown
 		# height of the race stood straight, so that is what is measured; the
-		# lean is put back afterwards, though nothing else here reads it.
+		# lean goes back afterwards.
+		#
+		# THE RIG SAYS WHICH BONE IT LEANED. This used to name `hips`, and when
+		# character v2 Stage 6 moved the lean to the torso - so the spine leans
+		# and the legs stay under the body - the compensation silently stopped
+		# working and the lizardfolk measured 1.98 m against a tabled 1.88. A
+		# test that guesses where a thing is will stop testing the day it moves.
 		var rig: Rig = view.rig
-		var lean: float = rig.bones["hips"].rotation.x
-		rig.bones["hips"].rotation.x = 0.0
+		var leaned := rig.lean_bone
+		var lean := 0.0
+		if leaned != "" and rig.bones.has(leaned):
+			lean = rig.bones[leaned].rotation.x
+			rig.bones[leaned].rotation.x = 0.0
 		var got := view.height_m()
 		var crown := view.height_m(true)
-		rig.bones["hips"].rotation.x = lean
+		if leaned != "" and rig.bones.has(leaned):
+			rig.bones[leaned].rotation.x = lean
 		var want := Races.height_m(entry["race"], entry["build"])
 		var tris := view.triangle_count()
 		# A race still borrowing the human's parts is the wrong height BY
