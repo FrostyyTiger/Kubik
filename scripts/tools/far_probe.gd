@@ -72,6 +72,36 @@ extends Node
 ## is 16 m. See the note above on why it is a multiple of every ring's step.
 const FIZZ_OFFSET_BLOCKS := 32
 
+## SHELF STABILITY: the same measurement over a 200 m WALK rather than a 16 m
+## step. Blocks. Distance v2 Stage 1.
+##
+## The gate that stage is written against is "walk 200 m and back; a named shelf
+## does not change height", and that is a different question from fizz. Fizz
+## isolates the LOD boundary sliding past a mountain over one rebuild's worth of
+## walking. This asks whether the quantisation itself is world-absolute: a
+## terrace grid with any player term in it would slide the whole far country by
+## up to half a step here, and 400 blocks is a multiple of every ring's step
+## (8, 16, 32) for exactly the reason FIZZ_OFFSET_BLOCKS is, so a ring's lattice
+## still lands on the same world positions in both builds and the quantisation
+## is the only thing left that can differ.
+const SHELF_OFFSET_BLOCKS := 400
+
+## THE SEAM, distance v2 Stage 8: how far past the voxel boundary to read the
+## far mesh's opinion of the ground, in blocks, and how many samples round.
+##
+## The far mesh's inner edge is at voxel_radius - 2 * far_step (176 blocks at
+## High), and just outside it _corner_y() blends the far mesh onto the VOXEL
+## surface - coarse + detail + half a block, which is the top face of the
+## topmost solid block. So the two meshes are supposed to meet at exactly the
+## same altitude there, and the number that says whether terracing broke that
+## is the difference between them, sampled on a ring just outside the hole.
+##
+## 6 blocks out rather than 0: the quad whose CENTRE is at the hole radius has
+## corners either side of it, and sampling exactly on the edge reads whichever
+## quad the lookup grid happened to claim.
+const SEAM_PROBE_OUT_BLOCKS := 6
+const SEAM_PROBE_SAMPLES := 720
+
 ## FIZZ: the sampling lattice, in blocks. Anchored to the WORLD, not to the
 ## centre, so the sample set does not move when the centre does.
 ##
@@ -110,6 +140,21 @@ const PEAK_RANGE_M := 600.0
 ## ring's step, so one cell is covered by at most one quad of every ring.
 const LOOKUP_CELL_BLOCKS := 8
 
+## HALF-WIDTH OF THE RING-BOUNDARY WINDOW, in metres. Distance v2 Stage 0.
+##
+## The 100 m bins above are what Stage 2 of distance v1 was read against, and
+## they are too wide for the question distance v2 Stage 9 asks: the 400 m ring
+## boundary shows up as the max of the 300-400 bin OR of the 400-500 one,
+## depending on which side of it the worst sample fell. 25 m each side puts one
+## number on each boundary, taken over the samples that actually straddle it.
+const BOUNDARY_HALF_M := 25.0
+
+## TERRACE COMPLIANCE, distance v2 Stage 1: how close a corner height has to be
+## to a multiple of its ring's step before it counts as landing on the grid.
+## Blocks. Slack for float32 in the vertex buffer and for the y_offset being
+## added and taken away again, not for arithmetic that nearly quantises.
+const TERRACE_EPS_BLOCKS := 0.002
+
 var _world: Node = null
 var _heightmap: Heightmap = null
 var _config: WorldgenConfig = null
@@ -141,6 +186,11 @@ func _go() -> void:
 	print("[FarProbe] seed %d, view %s, fog_end %.0f m, far_step %d blocks" % [
 		_world.world_seed, _config.view_distance_name(), _config.fog_end_m,
 		_config.far_step])
+	# DISTANCE V2 STAGE 0. Every number below is a function of these two, and a
+	# table without them in its header is a table nobody can place afterwards.
+	print("[FarProbe] far_terrace %.2f, far_riser_shade %.2f, far_band_m %.1f, far_band_step %.3f" % [
+		_config.far_terrace, _config.far_riser_shade,
+		_config.far_band_m, _config.far_band_step])
 
 	var t0 := Time.get_ticks_msec()
 	var first: PackedStringArray = await _measure()
@@ -181,6 +231,20 @@ func _measure() -> PackedStringArray:
 	var fizz_max := 0.0
 	var rough_sum := 0.0
 	var rough_n := 0
+	# DISTANCE V2 STAGE 0: one max per ring boundary, over the whole run, and
+	# one terrace-compliance line per vantage.
+	var edge_max := PackedFloat32Array()
+	edge_max.resize(FarFieldJob.RING_OUTER_M.size())
+	edge_max.fill(0.0)
+	var edge_sum := PackedFloat64Array()
+	edge_sum.resize(edge_max.size())
+	edge_sum.fill(0.0)
+	var edge_count := PackedInt32Array()
+	edge_count.resize(edge_max.size())
+	edge_count.fill(0)
+	var terrace := PackedStringArray()
+	var shelf_rows := PackedStringArray()
+	var seam_rows := PackedStringArray()
 
 	for v in vantages:
 		var centre: Vector2i = v["centre"]
@@ -188,20 +252,62 @@ func _measure() -> PackedStringArray:
 		var b: Surface = await _surface(centre + Vector2i(FIZZ_OFFSET_BLOCKS, 0))
 		var fizz := _fizz(a, b, centre)
 		var rough := _roughness(a, centre)
+		# THE 200 m WALK, Stage 1's gate. Compared against the SAME first
+		# surface, so the only difference is where the second one was centred.
+		var walked: Surface = await _surface(centre + Vector2i(SHELF_OFFSET_BLOCKS, 0))
+		var shelf := _fizz(a, walked, centre)
+		shelf_rows.append("[FarProbe] %-14s rms %7.3f  max %7.3f  over %d samples" % [
+			v["name"], float(shelf["rms"]), float(shelf["max"]), int(shelf["n"])])
 		fizz_sq += float(fizz["sum_sq"])
 		fizz_n += int(fizz["n"])
 		fizz_max = maxf(fizz_max, float(fizz["max"]))
 		rough_sum += float(rough["sum"])
 		rough_n += int(rough["n"])
+		var edges: PackedFloat32Array = fizz["edges"]
+		var e_sq: PackedFloat64Array = fizz["edge_sq"]
+		var e_n: PackedInt32Array = fizz["edge_n"]
+		for i in edge_max.size():
+			edge_max[i] = maxf(edge_max[i], edges[i])
+			edge_sum[i] += e_sq[i]
+			edge_count[i] += e_n[i]
 		out.append("[FarProbe] %-14s %9.3f %9.3f %10.4f %s" % [
 			v["name"], float(fizz["rms"]), float(fizz["max"]), float(rough["mean"]),
 			fizz["bands"]])
+		terrace.append("[FarProbe] %-14s %s" % [v["name"], _terrace_row(a)])
+		seam_rows.append("[FarProbe] %-14s %s" % [v["name"], _seam_row(a, centre)])
 
 	print("[FarProbe]   ... %d meshes built so far" % _builds)
 	var total_rms := sqrt(fizz_sq / maxf(float(fizz_n), 1.0))
 	var total_rough := rough_sum / maxf(float(rough_n), 1.0)
 	out.append("[FarProbe] %-14s %9.3f %9.3f %10.4f  (%d samples)" % [
 		"ALL", total_rms, fizz_max, total_rough, fizz_n])
+
+	# THE RING BOUNDARIES, ONE NUMBER EACH. Distance v2 Stage 9 asks whether
+	# the power-of-two step ladder removed the 400 m re-cut without a geomorph,
+	# and that question needs the boundary measured over a window that
+	# straddles it rather than read off whichever 100 m bin it fell in.
+	var edge_parts := PackedStringArray()
+	for i in FarFieldJob.RING_OUTER_M.size():
+		edge_parts.append("%.0f m: max %.2f rms %.3f over %d" % [
+			FarFieldJob.RING_OUTER_M[i], edge_max[i],
+			sqrt(edge_sum[i] / maxf(float(edge_count[i]), 1.0)), edge_count[i]])
+	out.append("[FarProbe] ring boundary max fizz (+/- %.0f m) - %s" % [
+		BOUNDARY_HALF_M, String("   ").join(edge_parts)])
+
+	# TERRACE COMPLIANCE, Stage 1's gate as a number rather than as a promise.
+	out.append("[FarProbe] terrace: ground-quad corners on their ring's step grid")
+	out.append_array(terrace)
+
+	# THE SEAM, Stage 8's gate as a number: does the far mesh still meet the
+	# voxel surface where the voxels stop?
+	out.append("[FarProbe] seam: far mesh against the voxel surface, %d blocks out (blocks)" % [
+		SEAM_PROBE_OUT_BLOCKS])
+	out.append_array(seam_rows)
+
+	# AND THE SHELF HELD STILL OVER A 200 m WALK - the other half of that gate.
+	out.append("[FarProbe] shelf stability over a %d m walk (drawn height, blocks)" % [
+		int(float(SHELF_OFFSET_BLOCKS) * _config.block_size)])
+	out.append_array(shelf_rows)
 
 	# --- PEAK LOSS, and its mirror --------------------------------------------
 	out.append_array(await _extrema_rows(1, "peak loss",
@@ -385,6 +491,18 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 	var bins := PackedFloat32Array()
 	bins.resize(int(ceil((_config.fog_end_m * FarFieldJob.FOG_MARGIN) / FIZZ_BIN_M)) + 1)
 	bins.fill(0.0)
+	var edges := PackedFloat32Array()
+	edges.resize(FarFieldJob.RING_OUTER_M.size())
+	edges.fill(0.0)
+	# AND THE RMS IN THE SAME WINDOW. A max is one sample, and "the boundary got
+	# three times worse" is a different claim from "one quad at the boundary got
+	# three times worse". Stage 9 needs both.
+	var edge_sq := PackedFloat64Array()
+	edge_sq.resize(edges.size())
+	edge_sq.fill(0.0)
+	var edge_n := PackedInt32Array()
+	edge_n.resize(edges.size())
+	edge_n.fill(0)
 
 	var sum_sq := 0.0
 	var n := 0
@@ -408,6 +526,11 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 			var dist_m := Vector2(float(bx - centre.x), float(bz - centre.y)).length() * bs
 			var bin := clampi(int(dist_m / FIZZ_BIN_M), 0, bins.size() - 1)
 			bins[bin] = maxf(bins[bin], d)
+			for e in edges.size():
+				if absf(dist_m - FarFieldJob.RING_OUTER_M[e]) <= BOUNDARY_HALF_M:
+					edges[e] = maxf(edges[e], d)
+					edge_sq[e] += float(d) * float(d)
+					edge_n[e] += 1
 			bx += FIZZ_STEP_BLOCKS
 		bz += FIZZ_STEP_BLOCKS
 
@@ -420,6 +543,9 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 		"sum_sq": sum_sq,
 		"n": n,
 		"bands": String(" ").join(parts),
+		"edges": edges,
+		"edge_sq": edge_sq,
+		"edge_n": edge_n,
 	}
 
 
@@ -451,6 +577,94 @@ func _roughness(s: Surface, centre: Vector2i) -> Dictionary:
 
 func _snap(b: int) -> int:
 	return int(floor(float(b) / float(FIZZ_STEP_BLOCKS))) * FIZZ_STEP_BLOCKS
+
+
+## STAGE 8'S GATE AS A NUMBER: does the far mesh still meet the voxel surface
+## at the seam, with the terrace on?
+##
+## The voxel surface a player stands on is `height_at + detail_at +
+## VOXEL_TOP_BIAS_BLOCKS` - the coarse height plus the per-block detail plus
+## half a block, because "the topmost solid block in a column is floor(surface)
+## and the face you see is its top". `_corner_y()` computes exactly that at the
+## seam and fades to the plain coarse height a band further out, which is what
+## makes the boundary invisible.
+##
+## Terracing inside that band would break the agreement the band exists to
+## create, so `_terrace_at()` fades the terrace in over the same cells the
+## detail fades out over. If that fade is right this number is the same with the
+## knob at 0 and at 1. If it is wrong, this is where the step appears.
+func _seam_row(s: Surface, centre: Vector2i) -> String:
+	var r := maxf(float(_config.voxel_radius_chunks * Chunk.SIZE)
+		- float(2 * _config.far_step), 0.0) + float(SEAM_PROBE_OUT_BLOCKS)
+	var worst := 0.0
+	var sum_sq := 0.0
+	var n := 0
+	for k in SEAM_PROBE_SAMPLES:
+		var a := TAU * float(k) / float(SEAM_PROBE_SAMPLES)
+		var bx := float(centre.x) + cos(a) * r
+		var bz := float(centre.y) + sin(a) * r
+		var drawn := s.height_at(bx, bz)
+		if is_nan(drawn):
+			continue
+		var voxel := _heightmap.height_at(bx, bz) + _generator.detail_at(bx, bz) \
+			+ FarFieldJob.VOXEL_TOP_BIAS_BLOCKS
+		var d := absf(drawn - voxel)
+		worst = maxf(worst, d)
+		sum_sq += d * d
+		n += 1
+	return "max %6.3f  rms %6.3f  over %d samples" % [
+		worst, sqrt(sum_sq / maxf(float(n), 1.0)), n]
+
+
+## STAGE 1'S GATE AS A NUMBER: are the drawn corner heights on their ring's
+## step grid, or are they only nearly on it?
+##
+## Read off the emitted vertices, not off the quantise expression - the whole
+## discipline of this probe. A gate that re-derived what the height ought to be
+## would pass on the day the expression and the mesh stopped agreeing, which is
+## the only day it matters.
+##
+## Two things are subtracted before the question is asked. The constant
+## y_offset - half a detail_amp, the drop that keeps the far mesh under voxels
+## it does not know about - is added to every ground corner and is not part of
+## the terrace. And quads inside the seam band are skipped outright: there the
+## far mesh computes the voxel surface on purpose (Stage 8), so a corner on the
+## step grid there would be the bug.
+##
+## Reported per ring step, because the three rings quantise to 8, 16 and 32
+## blocks and a single fraction over all of them hides which one slipped.
+func _terrace_row(s: Surface) -> String:
+	var per_step := {}
+	for i in s.qstep.size():
+		var step := float(s.qstep[i])
+		var cx := float(s.qx[i]) + step * 0.5 - float(s.centre.x)
+		var cz := float(s.qz[i]) + step * 0.5 - float(s.centre.y)
+		# ONE CELL OF MARGIN. The terrace strength is decided at the cell CENTRE
+		# and the seam's detail blend is applied at each CORNER, so a quad whose
+		# centre has just left the band can still have two corners inside it -
+		# 112 quads of ring 0 at spawn, all of them correct and none of them on
+		# the step grid. Excluding by centre alone measured them as failures.
+		if sqrt(cx * cx + cz * cz) <= s.seam_end_blocks + step:
+			continue
+		if not per_step.has(step):
+			per_step[step] = [0, 0, 0.0]   # on grid, total, worst deviation
+		var row: Array = per_step[step]
+		var worst := 0.0
+		for k in 4:
+			var h := s.qy[i * 4 + k] - s.y_off_blocks
+			worst = maxf(worst, absf(h - round(h / step) * step))
+		row[1] += 1
+		if worst <= TERRACE_EPS_BLOCKS:
+			row[0] += 1
+		row[2] = maxf(row[2], worst)
+	var keys := per_step.keys()
+	keys.sort()
+	var parts := PackedStringArray()
+	for k in keys:
+		var row: Array = per_step[k]
+		parts.append("%d blk: %d/%d on grid, worst %.3f" % [
+			int(k), row[0], row[1], row[2]])
+	return String("   ").join(parts)
 
 
 # --- Building one far mesh, and reading heights back out of it ----------------
@@ -486,6 +700,15 @@ class Surface extends RefCounted:
 	var qstep := PackedInt32Array()
 	var qy := PackedFloat32Array()
 
+	# DISTANCE V2 STAGE 1. What a terrace check has to know: where the disc was
+	# centred, the constant y_offset every ground corner carries (taken back off
+	# before asking whether the height is on the step grid), and where the seam
+	# band ends - inside it the far mesh deliberately computes the VOXEL surface
+	# and is not terraced at all (Stage 8).
+	var centre := Vector2i.ZERO
+	var y_off_blocks := 0.0
+	var seam_end_blocks := 0.0
+
 	# A flat grid of LOOKUP_CELL_BLOCKS cells over the disc's bounding box,
 	# each holding the index of the finest quad covering it, or -1.
 	var grid := PackedInt32Array()
@@ -496,6 +719,11 @@ class Surface extends RefCounted:
 	func build(job: FarFieldJob, config: WorldgenConfig) -> void:
 		var bs: float = config.block_size
 		var inv := 1.0 / bs
+		centre = job.center
+		y_off_blocks = -0.5 * config.detail_amp
+		seam_end_blocks = maxf(float(config.voxel_radius_chunks * Chunk.SIZE)
+			- float(2 * config.far_step), 0.0) \
+			+ float(config.far_step) * FarFieldJob.TERRACE_FADE_CELLS
 		var verts: PackedVector3Array = job.arrays[Mesh.ARRAY_VERTEX] \
 			if not job.arrays.is_empty() else PackedVector3Array()
 

@@ -131,8 +131,9 @@ func run() -> void:
 	# and behind the heightmap's own mutex, so in practice FarFieldJob has
 	# already paid for it - but the ring must not depend on which of the two
 	# workers happened to run first.
-	if _tint_on():
+	if _tint_on() or _terrace_on():
 		heightmap.build_pyramid()
+	if _tint_on():
 		_band_treeline = FarFieldJob.treeline_band(generator, config)
 
 	var inner_sq := inner_blocks * inner_blocks
@@ -222,11 +223,28 @@ func run() -> void:
 				if not by_species.has(species):
 					by_species[species] = []
 				var d := sqrt(d_sq)
+				# THE FOOTING, distance v2 Stage 5. The hillside this impostor
+				# stands on has shelves now, so its base has to sit on the SHELF
+				# TOP or half the far forest sinks into a riser.
+				#
+				# terrace_offset() returns how far the terrace MOVED the ground
+				# here rather than where the shelf is, and that is what keeps this
+				# exact at far_terrace 0. A tree stands on `ground + 1`, the TRUE
+				# voxel surface, while the far mesh draws the FILTERED one - at a
+				# summit the two differ by tens of blocks, which is PEAK LOSS.
+				# Snapping the tree to the shelf outright would move every far tree
+				# by that difference at every value of the knob, zero included.
+				# Adding the offset moves it by exactly what the ground under it
+				# moved, and by nothing at 0. Paid per PLACED tree, like the tint.
+				var lift := 0.0
+				if _terrace_on():
+					lift = FarFieldJob.terrace_offset(heightmap, config,
+						found["bx"], found["bz"], d * config.block_size)
 				by_species[species].append({
 					"spread": spread,
 					"pos": Vector3(
 						float(found["bx"]) * config.block_size,
-						float(found["ground"] + 1) * config.block_size,
+						(float(found["ground"] + 1) + lift) * config.block_size,
 						float(found["bz"]) * config.block_size),
 					"height": float(found["params"]["height"]) * config.block_size,
 					"crown": float(found["params"]["crown"]) * config.block_size,
@@ -274,6 +292,13 @@ func _fade_at(distance: float) -> float:
 ## impostors are flat species colour, which is the old behaviour bit for bit.
 func _tint_on() -> bool:
 	return config.far_tree_tint > 0.0 and heightmap != null and generator != null
+
+
+## Is the terrace on at all? At far_terrace 0 the ring costs exactly what it
+## cost before distance v2 - no pyramid, no extra lookups - and every impostor
+## stands where it stood, which is hard rule 1 on this side of the epic.
+func _terrace_on() -> bool:
+	return config.far_terrace > 0.0 and heightmap != null
 
 
 ## THE COLOUR THIS IMPOSTOR CONVERGES TOWARDS, AND HOW FAR, distance v1

@@ -101,6 +101,13 @@ const LOCAL_TUNING_ROWS := [
 	["far_peak_gain", "distance: peak gain", 0.0, 1.0, 0.05],
 	["far_zone_cell_ratio", "distance: zone cell x d", 0.0, 0.2, 0.01],
 	["far_tree_tint", "distance: far tree tint", 0.0, 1.0, 0.05],
+	# DISTANCE V2, appended after distance v1's block. `far terrace` is the one
+	# this epic is judged by: 0 is the smooth far mesh f23c3f0 drew, 1 is the
+	# far country made of blocks. It redraws the far mesh and the impostor ring
+	# WITHOUT a reroll - see FarField.apply_far_knobs(), which is what the one
+	# appended line in game.gd calls.
+	["far_terrace", "distance: far terrace", 0.0, 1.0, 0.05],
+	["far_riser_shade", "distance: riser shade", 0.0, 1.0, 0.05],
 ]
 
 var config: WorldgenConfig = null

@@ -1018,6 +1018,15 @@ func _on_config_changed() -> void:
 	FloraModels.apply_local_knobs(config)
 	Look.apply_local_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
+	# DISTANCE V2 STAGE 0, AND THIS IS THE ONE LINE THIS EPIC SPENDS HERE.
+	# far_terrace, far_riser_shade and distance v1's four geometry knobs change
+	# the far mesh and the impostor ring and never a voxel chunk, so they do not
+	# need F7's full reroll - forty seconds with the world streaming back in
+	# around you, which is not an A/B anybody can judge by eye. FarField owns
+	# the whole decision, including which knobs qualify and whether one actually
+	# moved; this keeps whatever message it hands back. See
+	# FarField.apply_far_knobs().
+	_status.text = FarField.apply_far_knobs(_world, _far_trees, config, _status.text)
 
 
 func _on_config_reload_requested() -> void:

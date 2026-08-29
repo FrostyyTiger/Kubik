@@ -59,6 +59,7 @@ func _ready() -> void:
 		"body promotion": _test_body_promotion,
 		"push holds": _test_push_holds,
 		"heightmap pyramid": _test_heightmap_pyramid,
+		"far terrace knob": _test_far_terrace_knob,
 	}
 	var failures := 0
 	for name in tests:
@@ -1607,3 +1608,118 @@ func _test_heightmap_pyramid():
 	world.reset()
 	world.free()
 	return 1 if bad > 0 else 0
+
+
+
+## THE KNOB REDRAWS THE FAR COUNTRY AND DOES NOT REROLL THE WORLD.
+## Distance v2 Stage 0, and it is the epic's whole judging method as a test.
+##
+## `far_terrace` is judged by standing still, moving one number and watching
+## the mountains change. That only works if a change to it rebuilds the far
+## mesh and the impostor ring and NOTHING ELSE - F7's reroll is 3,276 voxel
+## chunks and forty seconds, with the world streaming back in around you, which
+## is not an A/B anybody can judge by eye.
+##
+## Four things are checked, and the last is hard rule 1:
+##
+##   1. a call with nothing moved returns the caller's own message, so an
+##      unrelated knob still says "press F7";
+##   2. moving far_terrace returns the far-field message and starts a rebuild;
+##   3. not one chunk is queued, built or freed by it;
+##   4. going back to 0.0 returns EXACTLY the vertex count the mesh had before
+##      it was ever turned up. That is the way back, and it is the rule this
+##      epic is not allowed to break at any stage.
+##
+## The World here is not in the scene tree, so FarField's _process never runs
+## and a finished mesh is never applied. _pump_far_field pumps it by hand,
+## which is also what makes the test synchronous - see the note in _ready about
+## why every test here returns an int rather than awaiting.
+func _test_far_terrace_knob():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	# Small enough that a far mesh is a few thousand vertices rather than a
+	# hundred thousand: this test is about the WIRING, and the cost of a real
+	# terraced rebuild is measured by the far probe on the real world.
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	cfg.far_terrace = 0.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var far_field: Node = world.get_node_or_null("FarField")
+	if far_field == null:
+		print("  far terrace knob: World has no FarField child")
+		return 1
+	_pump_far_field(far_field)
+	var verts0: int = far_field.stats()["vertices"]
+	var rebuilds0: int = far_field.stats()["rebuilds"]
+	var chunks0 := world.loaded_chunk_count() + world.queued_chunk_count()
+	print("far terrace knob: %d verts at far_terrace 0.0, %d rebuilds" % [
+		verts0, rebuilds0])
+
+	# 1. Nothing moved - the caller keeps its own message.
+	var quiet := FarField.apply_far_knobs(world, null, cfg, "FALLBACK")
+	if quiet != "FALLBACK":
+		print("  a call with no knob moved returned %s, not the fallback" % quiet)
+		bad += 1
+
+	# 2. far_terrace moves - the far field answers for it.
+	cfg.far_terrace = 1.0
+	var msg := FarField.apply_far_knobs(world, null, cfg, "FALLBACK")
+	if msg == "FALLBACK" or not msg.contains("far_terrace"):
+		print("  moving far_terrace returned %s" % msg)
+		bad += 1
+	_pump_far_field(far_field)
+	var stats1: Dictionary = far_field.stats()
+	print("  far_terrace 1.0: %d verts, %d ms build, %d ms wall, %d rebuilds" % [
+		stats1["vertices"], stats1["build_ms"], stats1["wall_ms"],
+		stats1["rebuilds"]])
+	if int(stats1["rebuilds"]) <= rebuilds0:
+		print("  the knob did not rebuild the far mesh at all")
+		bad += 1
+	# AND THE MESH IS ACTUALLY DIFFERENT. Distance v2 Stage 2: a terraced far
+	# field emits a riser wherever a cell is higher than its neighbour, so the
+	# vertex count must GROW. Without this the test passed while the knob did
+	# nothing at all - World keeps a SNAPSHOT of the config, and the far mesh
+	# was being rebuilt from the old value every time. Everything else about
+	# the wiring was correct and everything else about this test was green.
+	if int(stats1["vertices"]) <= verts0:
+		print("  far_terrace 1.0 emitted %d vertices against %d at 0.0 - no risers, so the knob is not reaching the job" % [
+			stats1["vertices"], verts0])
+		bad += 1
+
+	# 3. And it did not touch a single voxel chunk.
+	var chunks1 := world.loaded_chunk_count() + world.queued_chunk_count()
+	if chunks1 != chunks0:
+		print("  the knob changed the chunk set: %d -> %d" % [chunks0, chunks1])
+		bad += 1
+
+	# 4. HARD RULE 1. Back at 0.0 the mesh is the one f23c3f0 drew.
+	cfg.far_terrace = 0.0
+	FarField.apply_far_knobs(world, null, cfg, "FALLBACK")
+	_pump_far_field(far_field)
+	var verts_back: int = far_field.stats()["vertices"]
+	if verts_back != verts0:
+		print("  far_terrace 1.0 -> 0.0 gave %d verts, not the original %d" % [
+			verts_back, verts0])
+		bad += 1
+
+	world.free()
+	return bad
+
+
+## Drive FarField's _process by hand until it is idle.
+##
+## FarField applies a finished mesh in _process, which the engine only calls
+## for a node in the scene tree. The Worlds these tests build are not, so
+## without this the task completes on the worker and the mesh is never picked
+## up - and the test would read the vertex count of the build before it.
+func _pump_far_field(far_field: Node) -> void:
+	for i in 4000:
+		far_field._process(0.0)
+		if far_field._task == -1 and not far_field._has_pending:
+			return
+		OS.delay_msec(2)
+	print("  far field never went idle - a rebuild is stuck")

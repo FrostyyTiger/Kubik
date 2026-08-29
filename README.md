@@ -196,8 +196,16 @@ a colour path is checked on both:
 
 ```
 godot --path . -- --tour --seed 42 --label <name>
-godot --path . -- --tour --seed 42 --label <name>-gl --rendering-driver opengl3
+godot --path . --rendering-driver opengl3 -- --tour --seed 42 --label <name>-gl
 ```
+
+**`--rendering-driver` goes BEFORE the `--`, and the line above used to have it
+after.** Anything after `--` is passed to the game rather than to the engine, so
+the old form selected no driver at all and silently took the second set of
+pictures on Forward+ as well. It is not an error and there is no warning: the
+two directories fill up, the images differ by a frame of the day cycle, and
+nothing says the comparison did not happen. Found in distance v2 Stage 5, when a
+"both renderers" gate produced two identical measurements.
 
 ### The streaming probe
 
