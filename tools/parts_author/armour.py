@@ -33,7 +33,7 @@ answer is variants everywhere.
 from __future__ import annotations
 
 from . import human, elf, dwarf, lizardfolk
-from .voxlib import Part, gd_file, X, R, x, L, C, c, k, A, a
+from .voxlib import Part, gd_file, X, R, x, L, C, c, k, A, a, G
 
 ## Thicknesses, in AUTHOR voxels, the same on every race. The whole point of the
 ## fitting rule - these are the numbers that must NOT scale with the wearer.
@@ -179,7 +179,7 @@ def breastplate(module, race: str) -> Part:
     return p
 
 
-def pauldron(module, race: str) -> Part:
+def pauldron(module, race: str, glow: bool = False) -> Part:
     """A shoulder cap that grows the outline OUTWARD at the widest point.
 
     The best silhouette per voxel in the game: it is the only slot that adds
@@ -196,7 +196,8 @@ def pauldron(module, race: str) -> Part:
     # event from any angle a silhouette is judged from, and costs a clash with
     # the one part of the body it is guaranteed to be touching.
     pw, pd = w + out, d
-    p = Part("PAULDRON_%s" % race.upper(), (pw, h, pd), anchor)
+    p = Part("PAULDRON_%s%s" % ("RUNED_" if glow else "", race.upper()),
+             (pw, h, pd), anchor)
     y0, y1 = _span(0.80, 1.0, h)
     # OUTWARD ONLY. `x` is the character's own right and the right arm is the
     # authored one, so growing the pauldron in BOTH directions grows it inboard
@@ -207,6 +208,22 @@ def pauldron(module, race: str) -> Part:
     p.box((0, pw), (y0, y1), (0, pd), x)
     # The rim along the bottom lip, which is the edge a viewer actually sees.
     p.box((0, pw), (y0, y0 + 1), (0, pd), R)
+    # THE RUNE BAND, on ONE pauldron, and it is twelve voxels at most.
+    #
+    # The cap IS the design. A rune band on one shoulder is a story about
+    # something the wearer did; a glowing character is what every game does
+    # wrong, and the only thing between the two is a number somebody enforces -
+    # which `_test_glow_is_capped` does, at twelve, on every buildable
+    # character at every tier.
+    #
+    # Asymmetric for free: it is on the authored side, so the mirrored arm does
+    # not get one, and one lit shoulder reads as deliberate where two read as
+    # a costume.
+    if glow:
+        gy = y0 + (y1 - y0) // 3
+        for i in range(min(2, y1 - gy)):
+            p.box((w + out - 1, w + out), (gy + i, gy + i + 1),
+                  (pd // 2, pd // 2 + 1), G)
     # A SHELL, NOT A BLOCK. Everything inside the arm's own footprint comes
     # back out, so the pauldron is a cap OVER the shoulder rather than a solid
     # that happens to contain it. Filling the box and forgetting this put ten
@@ -454,6 +471,7 @@ PIECE_BUILDERS = {
     "gorget": gorget,
     "plate": breastplate,
     "pauldron": pauldron,
+    "pauldron_runed": lambda module, race: pauldron(module, race, glow=True),
     "cloak": cloak,
     "helm": helm,
     "helm_crowned": lambda module, race: helm(module, race, crest=True),

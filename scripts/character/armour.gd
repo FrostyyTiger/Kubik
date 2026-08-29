@@ -129,6 +129,29 @@ const PIECES := [
 	["", "", "", "", "", ""],                               # hands - declared
 ]
 
+## ONE SHOULDER, NOT BOTH. What the FIRST bone of a slot wears instead, per
+## tier, when the piece is deliberately asymmetric.
+##
+## Symmetric armour reads as issued; asymmetric reads as assembled by someone
+## who lived through things - and it is free, which is why the design doc ranks
+## it second only to a cloak in value per voxel authored. Tier 5's rune band
+## goes on ONE pauldron: one lit shoulder is a story, two are a costume.
+##
+## It also halves the glow budget, which is how it was noticed - the cap test
+## reported 30 voxels against a cap of 12 with the band on both arms.
+const ASYMMETRIC := {
+	5: {CharacterDef.SLOT_SHOULDERS: "pauldron_runed"},
+}
+
+
+## The piece for one bone of a slot. `index` is its position in the slot's bone
+## list, and 0 is the authored side.
+static func part_name_for(slot: int, tier: int, race: int, index: int) -> String:
+	if index == 0 and ASYMMETRIC.has(tier) and ASYMMETRIC[tier].has(slot):
+		return "%s_%s" % [ASYMMETRIC[tier][slot], Races.name_of(race)]
+	return part_name(slot, tier, race)
+
+
 ## Variants within a tier. One each for now; the byte exists so Items v1 can
 ## add a second tier-4 breastplate without another wire version.
 const VARIANTS := 1

@@ -19,19 +19,19 @@ Part names are the keys of the race's part set: `head`, `torso`, `pelvis`,
 
 ## Authoring rules
 
-**Palette indices 1 to 19 are the nineteen slots**, in the order
+**Palette indices 1 to 20 are the twenty slots**, in the order
 `VoxelModel`'s enum declares them:
 
     1 skin        2 skin shaded   3 hair/crest   4 iris        5 eye white
     6 mouth       7 cloth         8 cloth dark   9 leather    10 belt
    11 tooth/claw 12 metal        13 wood        14 liner      15 skin ventral
-   16 trim bright 17 metal dark   18 scale A     19 scale B
+   16 trim bright 17 metal dark   18 scale A     19 scale B   20 glow
 
 A drop-in is loaded WITH that convention, so it takes skin and hair swaps
 exactly as an ASCII part does. A `.vox` authored in arbitrary colours will
-still load - every index outside 1..19 becomes skin - but it will not respond
+still load - every index outside 1..20 becomes skin - but it will not respond
 to the creation screen's palette pickers, so build the model against a palette
-whose first nineteen entries are the legend above.
+whose first twenty entries are the legend above.
 
 **It was 13 until character v2 Stage 1**, and the six new ones are appended
 rather than inserted precisely so that a model authored against the old legend

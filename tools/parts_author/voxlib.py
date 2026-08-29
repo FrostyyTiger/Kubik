@@ -169,9 +169,11 @@ R = "R"   # trim, bright - the raised rim that makes metal read as metal
 x = "x"   # metal, dark - the body a bright rim sits on
 A = "A"   # scale/mail checker, the lighter of the two adjacent values
 a = "a"   # scale/mail checker, the darker
+# --- Character v2 Stage 10.
+G = "G"   # glow - emissive, and capped at twelve voxels by a self-test
 EMPTY = "."
 
-SLOTS = set("SsHEWMCcLBTXDkvRxAa")
+SLOTS = set("SsHEWMCcLBTXDkvRxAaG")
 
 
 def check_slots_match(root) -> None:

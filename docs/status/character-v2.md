@@ -1141,3 +1141,76 @@ At 15 m the row does read left to right — the last two are visibly bulkier.
   dwarven axe carried by an elf is a different story from an elf's axe.
 
 Green: 32 character tests, world suite passed.
+
+---
+
+## Stage 10 — tier 5, and the emissive channel a character never had
+
+Committed as `feat(character): stage 10 - ...`. One slot, one uniform, one
+shader line, and a cap that a test enforces.
+
+### Item 12, and it is smaller than the promise
+
+`voxel_model.gd` promised "a ten-line change once both branches have landed",
+meaning `Vector4i(x, y, z, slot)` and flora's `[x, y, z, colour, emissive]`
+become one thing. **They should not.** Flora resolves its colours at author
+time and a character resolves them through a per-character palette, and that
+difference *is* the palette-swap feature — collapsing it would cost the creation
+screen to buy nothing.
+
+What the two formats have to agree on is the **channel**: emissive travels in
+the vertex colour's alpha, authored per voxel. And a character needs no fifth
+component to say so, because it already has a semantic slot. **An emissive
+voxel is a voxel in the `GLOW` slot**, and which slots glow is a one-entry
+table. Both formats stay where they are.
+
+### It was only safe because of something that landed two days ago
+
+`Look.figure_material()` had two callers until distance v1 Stage 6: characters,
+and the impostor forest. Terrain, the far field and the impostors all share this
+shader's *source* and write alpha 1, so an unconditional `EMISSION` line would
+have set two thousand cones on every hillside glowing. Checked before touching
+it — `git grep figure_material` returns one real caller — and the uniform
+defaults to 0 with only `figure_material()` setting it to 1.
+
+### The flag comes from the slot, not from the palette
+
+The first version let each palette set its own alpha. That **fails open**: any
+palette that does not think about alpha gets `Color`'s default of 1, and every
+voxel it draws glows. The gallery's own test cube did exactly that the moment
+the shader line landed, and `PartsCritter.palette()` was next in line.
+
+`build_mesh` now derives the flag from `EMISSIVE_SLOTS` and ignores what the
+palette says. It **fails closed**, and it is also just what the design says: an
+emissive voxel is a voxel in the GLOW slot. A palette cannot make a mistake it
+is not allowed to make.
+
+### The leak check
+
+The tour was the plan's proposed check and it is too slow here — it streams a
+world. The precise check is cheaper and sharper: the emissive uniform is
+**per-material**, so anything drawn with the *terrain* material must be
+bit-identical.
+
+```
+swatches.png     IDENTICAL     <- drawn with Look.opaque_material()
+swatch-ramp.png  IDENTICAL
+testcube.png     IDENTICAL     <- drawn with the CHARACTER mesher, and the
+                                  one that caught the fail-open bug
+```
+
+### The cap is the design
+
+**Twelve voxels, enforced by `_test_glow_is_capped`** over every race at every
+tier. A rune band on one pauldron is a story about something the wearer did; a
+glowing character is what every game does wrong, and the only thing between the
+two is a number somebody actually enforces. Worst measured: **6**.
+
+**On one shoulder, not both.** `Armour.ASYMMETRIC` gives the first bone of a
+slot a different piece at a given tier. Symmetric armour reads as issued;
+asymmetric reads as assembled by someone who lived through things — and it
+halves the glow budget, which is how the two-shoulder version was noticed at 30
+voxels against a cap of 12.
+
+Green: 33 character tests, world suite passed, silhouette and swatch gates
+unchanged, ladder unchanged at 6 of 24 rows off.

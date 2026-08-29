@@ -274,6 +274,12 @@ const METAL_DARK_HEX := "#4A5058"    # Y 0.079, the body it sits on
 const SCALE_A_HEX := "#47665A"       # Y 0.116
 const SCALE_B_HEX := "#3C574D"       # Y 0.083
 
+## The tier-5 rune. Cold and bright, and CAPPED AT 12 VOXELS by a self-test -
+## the cap is the design. A rune band on one pauldron is a story; a glowing
+## character is what every game does wrong, and the only thing between the two
+## is a number that somebody enforces.
+const GLOW_HEX := "#8FD8FF"
+
 
 # --- Options -----------------------------------------------------------------
 #
@@ -412,13 +418,14 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 	var skin := _linear(SKIN_HEX[r][clampi(skin_index, 0, SKIN_HEX[r].size() - 1)])
 	var hair := _linear(HAIR_HEX[r][clampi(hair_index, 0, HAIR_HEX[r].size() - 1)])
 	var eyes := _linear(EYE_HEX[r][clampi(eye_index, 0, EYE_HEX[r].size() - 1)])
+	var out := {}
 	# THE TORSO'S MID TIER IS THE CLOTH. Released from the look v2 rule: it is
 	# the race's main hue at its own value, because the liner is what separates
 	# it from skin now. `CLOTH_DARK` is the deep tier rather than a scale of the
 	# mid, so the two tiers are authored values rather than one value and a
 	# multiplier that drifts.
 	var cloth := _linear(MID_HEX[r])
-	return {
+	out = {
 		VoxelModel.SKIN: skin,
 		# Derived rather than authored: a shaded skin that is not the skin
 		# times a constant drifts away from it the moment the skin is retuned.
@@ -445,7 +452,16 @@ static func palette(race: int, skin_index: int, hair_index: int, eye_index: int)
 		VoxelModel.METAL_DARK: _linear(METAL_DARK_HEX),
 		VoxelModel.SCALE_A: _linear(SCALE_A_HEX),
 		VoxelModel.SCALE_B: _linear(SCALE_B_HEX),
+		# EMISSIVE TRAVELS IN THE ALPHA, exactly as flora's does - but the
+		# mesher sets the flag from the slot, not from this colour. That is the
+		# whole of the character/foliage unification item 12 asks for: a shared
+		# channel, not a shared struct.
+		VoxelModel.GLOW: _linear(GLOW_HEX),
 	}
+	# Alpha is not set here at all: `VoxelModel.build_mesh` derives it from the
+	# SLOT, so a palette cannot accidentally light something up. See the note
+	# there - it is the difference between failing open and failing closed.
+	return out
 
 
 ## The race's own tier colours, for anything that needs one directly rather

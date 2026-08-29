@@ -51,6 +51,7 @@ func _ready() -> void:
 		"option tables agree": _test_option_tables,
 		"gear sockets": _test_gear_sockets,
 		"armour is not inside a body": _test_armour_not_inside_a_body,
+		"glow is capped": _test_glow_is_capped,
 		"vox fixture": _test_vox_fixture,
 		"vox garbage": _test_vox_garbage,
 		"critter": _test_critter,
@@ -392,6 +393,48 @@ func _test_part_parsing():
 ##
 
 
+
+
+## TWELVE VOXELS OF GLOW, NEVER MORE, ON ANY CHARACTER AT ANY TIER.
+##
+## The cap is the design and not an optimisation. A rune band on one pauldron
+## is a story about something the wearer did; a glowing character is what every
+## game does wrong, and the only thing standing between the two is a number
+## that somebody actually enforces. So it is enforced here rather than trusted
+## to the generator, because the generator is where it would drift.
+func _test_glow_is_capped():
+	var bad := 0
+	var worst := 0
+	var worst_where := ""
+	for race in Races.RACE_COUNT:
+		for tier in range(0, CharacterDef.TIER_MAX + 1):
+			var def := CharacterDef.new()
+			def.race = race
+			for slot in CharacterDef.ARMOUR_SLOTS:
+				def.armour_tier[slot] = tier
+			def.validate()
+			var view := CharacterView.new()
+			view.build(def)
+			var lit := 0
+			for key in view.rig.part_voxels:
+				for v in (view.rig.part_voxels[key]["voxels"] as Array):
+					if VoxelModel.EMISSIVE_SLOTS.has(v.w):
+						lit += 1
+			if lit > worst:
+				worst = lit
+				worst_where = "%s tier %d" % [Races.name_of(race), tier]
+			if lit > GLOW_CAP:
+				print("  %s tier %d has %d glowing voxels, cap is %d" % [
+					Races.name_of(race), tier, lit, GLOW_CAP])
+				bad += 1
+			view.free()
+	print("glow is capped: worst %d voxels (%s), cap %d, %d checks failed" % [
+		worst, worst_where, GLOW_CAP, bad])
+	return 1 if bad > 0 else 0
+
+
+## The design doc's number: "an emissive accent of 4-12 voxels".
+const GLOW_CAP := 12
 
 ## ARMOUR SITS ON A BODY. IT DOES NOT SIT INSIDE ONE.
 ##

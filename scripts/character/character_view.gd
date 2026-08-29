@@ -98,18 +98,27 @@ func apply_armour() -> void:
 	for slot in CharacterDef.ARMOUR_SLOTS:
 		if def.armour_tier[slot] <= 0:
 			continue
-		var piece := Armour.part_name(slot, def.armour_tier[slot], def.race)
-		if piece.is_empty() or not PartsArmour.PARTS.has(piece):
-			continue
-		var part: Dictionary = PartsArmour.PARTS[piece]
 		var where := Armour.attach_points(slot)
-		for bone in where.get("bones", []):
+		var bones: Array = where.get("bones", [])
+		for i in bones.size():
+			# PER BONE, because a slot's two bones do not always wear the same
+			# thing: tier 5's rune band is on ONE pauldron, and one lit
+			# shoulder is a story where two are a costume.
+			#
 			# The left of a mirrored pair takes the mirrored part, exactly as
-			# the body's own limbs do - one authored side, two that cannot
-			# drift apart.
-			rig.attach_overlay(bone, part, piece, palette, _config.ao_strength)
+			# the body's own limbs do - Rig knows which bones were built
+			# mirrored and mirrors the overlay to match.
+			var piece := Armour.part_name_for(slot, def.armour_tier[slot], def.race, i)
+			if piece.is_empty() or not PartsArmour.PARTS.has(piece):
+				continue
+			rig.attach_overlay(bones[i], PartsArmour.PARTS[piece], piece,
+				palette, _config.ao_strength)
+		var carried := Armour.part_name(slot, def.armour_tier[slot], def.race)
+		if carried.is_empty() or not PartsArmour.PARTS.has(carried):
+			continue
 		for socket in where.get("sockets", []):
-			rig.attach_to_socket(socket, part, piece, palette, _config.ao_strength)
+			rig.attach_to_socket(socket, PartsArmour.PARTS[carried], carried,
+				palette, _config.ao_strength)
 
 
 ## What this character is doing. Called every physics frame by Player, and

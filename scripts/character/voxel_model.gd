@@ -102,9 +102,11 @@ enum {
 	METAL_DARK = 16,
 	SCALE_A = 17,
 	SCALE_B = 18,
+	# --- Character v2 Stage 10 ---
+	GLOW = 19,
 }
 
-const SLOT_COUNT := 19
+const SLOT_COUNT := 20
 
 ## The legend, shared by every part file. `.` and space are empty.
 ##
@@ -141,13 +143,31 @@ const SLOT_CHARS := {
 	"x": METAL_DARK,
 	"A": SCALE_A,
 	"a": SCALE_B,
+	"G": GLOW,
 }
 
 const SLOT_NAMES := [
 	"skin", "skin_shaded", "hair", "iris", "eye_white", "mouth",
 	"cloth", "cloth_dark", "leather", "belt", "tooth", "metal", "wood",
 	"liner", "skin_ventral", "trim_bright", "metal_dark", "scale_a", "scale_b",
+	"glow",
 ]
+
+## WHICH SLOTS GLOW, as a table, because that is a fact and facts are data.
+##
+## THE FOLIAGE AND CHARACTER VOXEL FORMATS DO NOT NEED TO BECOME ONE ARRAY
+## SHAPE, which is what the note further down this file promised and what the
+## tech plan's item 12 asks for. They have to agree on the CHANNEL - emissive
+## travels in the vertex colour's alpha, authored per voxel - and a character
+## does not need a fifth component to say so, because it already has a semantic
+## slot. An emissive voxel is a voxel in the GLOW slot.
+##
+## Flora keeps its `[x, y, z, colour, emissive]` and characters keep
+## `Vector4i(x, y, z, slot)`, and the difference between them stays what it
+## always was: flora resolves its colours at author time and a character
+## resolves them through a per-character palette, which IS the palette-swap
+## feature. Collapsing that would cost the creation screen to buy nothing.
+const EMISSIVE_SLOTS := {GLOW: true}
 
 ## AO levels are 0 (fully enclosed) to 3 (fully open), exactly as in
 ## ChunkMesher - the same rule, so a character shades like the ground it stands
@@ -343,7 +363,19 @@ static func build_mesh(voxels: Array, palette: Dictionary, anchor: Vector3,
 
 	for v in voxels:
 		var p := Vector3i(v.x, v.y, v.z)
+		# THE EMISSIVE FLAG COMES FROM THE SLOT, NOT FROM THE PALETTE.
+		#
+		# Alpha is the channel - the same one flora uses - and it would be easy
+		# to let each palette set it. That fails open: any palette that does not
+		# think about alpha gets Color's default of 1, and every voxel it draws
+		# glows. The gallery's own test cube did exactly that the moment the
+		# shader line landed, and `PartsCritter.palette()` was next in line.
+		#
+		# Deriving it from `EMISSIVE_SLOTS` fails closed instead, and it is also
+		# what the design actually says: an emissive voxel is a voxel in the
+		# GLOW slot. A palette cannot make a mistake it is not allowed to make.
 		var color: Color = palette.get(v.w, Color.MAGENTA)
+		color.a = 1.0 if EMISSIVE_SLOTS.has(v.w) else 0.0
 		for d in 3:
 			for s: int in [-1, 1]:
 				var n := p
