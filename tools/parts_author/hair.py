@@ -349,7 +349,7 @@ profile features.
 
 
 
-def render() -> tuple[str, str]:
+def render() -> str:
     # HAIR HAS NO `PARTS` MAP to take keys from - the option tables below are
     # the index, and they are positional. So the JSON key is the constant's
     # own name, lowercased, and the pairs are written once here rather than
@@ -376,8 +376,4 @@ def render() -> tuple[str, str]:
     parts = {const.lower(): part for const, part, _c in built}
     comments = {const.lower(): comment for const, _p, comment in built}
 
-    # NO GDSCRIPT. `parts_hair.gd` is hand-written and permanent since
-    # parts-data v1: the option tables and `_lookup()` are the part of that
-    # file no JSON can hold, and they are not generated any more. The blocks
-    # above are built only so the ASCII has one origin.
-    return (None, json_file("hair.py", DOC, parts, comments))
+    return json_file("hair.py", DOC, parts, comments)

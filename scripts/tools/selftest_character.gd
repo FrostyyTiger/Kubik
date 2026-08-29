@@ -2335,18 +2335,36 @@ func _test_unknown_gait():
 ## THE JSON IS THE CONSTS, part for part and voxel for voxel.
 ##
 ## This is the whole of the argument that moving 33,158 lines of ASCII out of
-## `scripts/` and into `assets/` moved no art. Both sides are walked: for each
-## of the eight modules and each of the 101 parts, the `size`, the `anchor`
-## and the FULL parsed voxel array have to be equal between the GDScript
-## constant and what `PartsData` read off disk.
+## `scripts/` and into `assets/` moved no art. For the length of parts-data
+## v1 it walked BOTH sides - the GDScript constants and what `PartsData` read
+## off disk - and compared `size`, `anchor` and the full parsed voxel array
+## for all 101 parts. It passed at Stage 2, when the consts were live, and
+## again at Stage 3, when they were dead code and the data was what the game
+## ran on, which is the strongest that comparison ever got.
 ##
-## It is at its strongest AFTER Stage 3, when the consts are dead code and the
-## data is what the game actually runs on - at that point this is a diff
-## between the thing that shipped yesterday and the thing that ships today.
+## STAGE 4 DELETED THE OTHER SIDE, so what is left is the eight hashes that
+## comparison printed, frozen below and recomputed from the JSON on every
+## run. They are the identity claim, outliving the thing it was a claim
+## about: a regeneration that moves one voxel in one part changes one of
+## these numbers and this test says which module.
 ##
-## It prints a hash per module, and those eight numbers outlive the consts:
-## once the generated `.gd` files are deleted there is nothing left to compare
-## against, so Stage 4 freezes them here and this test keeps meaning something.
+## IF ONE TRIPS, it is not automatically a bug - a deliberate change to
+## `tools/parts_author/` is meant to move voxels. It is a claim that has to be
+## re-made: work out which part changed and why, satisfy yourself the change
+## was the intended one, then update the one number here in a commit whose
+## message says what moved. Never update all eight to make it green.
+const FROZEN_HASHES := {
+	"human": 0xd01be863,
+	"elf": 0x35acfb4e,
+	"dwarf": 0x0d725c10,
+	"lizardfolk": 0x00e17bec,
+	"hair": 0xf389b6d9,
+	"gear": 0xafd2b79c,
+	"armour": 0xff9a7ff7,
+	"critter": 0x5ca6453b,
+}
+
+
 func _test_json_is_the_consts():
 	var bad := 0
 	var report := []
@@ -2358,38 +2376,13 @@ func _test_json_is_the_consts():
 			bad += 1
 			continue
 		total += data.size()
-		report.append("%s %08x" % [module, _module_hash(data)])
-		if not COMPARED.has(module):
-			continue
-		var consts := _const_parts(module)
-		if consts.size() != data.size():
-			print("  %s: %d parts in the consts, %d in the json" % [
-				module, consts.size(), data.size()])
+		var got := _module_hash(data)
+		report.append("%s %08x" % [module, got])
+		var want: int = FROZEN_HASHES.get(module, -1)
+		if got != want:
+			print("  %s hashes %08x, and Stage 2 froze %08x - a voxel moved" % [
+				module, got, want])
 			bad += 1
-		for key in consts:
-			if not data.has(key):
-				print("  %s: the json has no part '%s'" % [module, key])
-				bad += 1
-				continue
-			var was: Dictionary = consts[key]
-			var now: Dictionary = data[key]
-			if was["size"] != now["size"]:
-				print("  %s '%s': size was %s, json says %s" % [
-					module, key, was["size"], now["size"]])
-				bad += 1
-			if was.get("anchor", Vector3.ZERO) != now.get("anchor", Vector3.ZERO):
-				print("  %s '%s': anchor was %s, json says %s" % [
-					module, key, was.get("anchor"), now.get("anchor")])
-				bad += 1
-			# The voxels, not the rows: a part could be reformatted, rewrapped
-			# or re-indented and still be the same art, and it is the art this
-			# is about.
-			var before := VoxelModel.parse(was, key)
-			var after := VoxelModel.parse(now, key)
-			if before != after:
-				print("  %s '%s': %d voxels in the const, %d in the json, and they differ" % [
-					module, key, before.size(), after.size()])
-				bad += 1
 	if total != 101:
 		print("  %d parts in total, wanted 101" % total)
 		bad += 1
@@ -2398,43 +2391,13 @@ func _test_json_is_the_consts():
 	return 1 if bad > 0 else 0
 
 
-## The modules that still have generated GDScript to be compared against.
-##
-## Stage 3 of parts-data v1 rewrote `parts_{hair,gear,critter}.gd` by hand -
-## they kept the option tables, the socket index and the critter's dimension
-## and bone tables, and lost every voxel - so those three have no const side
-## left. They are still counted and still hashed; there is simply nothing on
-## the other side of the equals sign. Stage 4 empties this list.
-const COMPARED := ["human", "elf", "dwarf", "lizardfolk", "armour"]
-
-
-## The GDScript side of the comparison, one module at a time.
-##
-## Every module here has a `PARTS` map from the key a bone table uses to the
-## constant, which is the same key the JSON is written under.
-func _const_parts(module: String) -> Dictionary:
-	match module:
-		"human":
-			return PartsHuman.PARTS
-		"elf":
-			return PartsElf.PARTS
-		"dwarf":
-			return PartsDwarf.PARTS
-		"lizardfolk":
-			return PartsLizardfolk.PARTS
-		"armour":
-			return PartsArmour.PARTS
-	print("  no const table is known for module '%s'" % module)
-	return {}
-
-
-## A hash of every voxel in a module, and it has to survive the consts.
+## A hash of every voxel in a module, and it had to survive the consts.
 ##
 ## FNV-1a over 32-bit words, written out rather than borrowed from
-## `Array.hash()`, because Stage 4 freezes these numbers in this file and a
-## number frozen against an engine internal is a test that fails on an engine
-## upgrade and calls it a moved voxel. Keys are sorted and hashed with their
-## voxels, so a RENAMED part trips it too.
+## `Array.hash()`, because these numbers are frozen in this file and a number
+## frozen against an engine internal is a test that fails on an engine upgrade
+## and calls it a moved voxel. Keys are sorted and hashed with their voxels,
+## so a RENAMED part trips it too.
 func _module_hash(parts: Dictionary) -> int:
 	var h := 2166136261
 	var keys := parts.keys()

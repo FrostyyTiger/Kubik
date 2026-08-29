@@ -106,7 +106,7 @@ socket."""
 
 
 
-def render() -> tuple[str, str]:
+def render() -> str:
     # THE KEY IS THE SOCKET, because `PLACEHOLDERS` is the only index these
     # three have ever had and a placeholder exists to prove one socket.
     built = [
@@ -117,7 +117,4 @@ def render() -> tuple[str, str]:
     parts = {key: part for key, _c, part, _cm in built}
     comments = {key: comment for key, _c, _p, comment in built}
 
-    # NO GDSCRIPT. `parts_gear.gd` is hand-written and permanent since
-    # parts-data v1: `PLACEHOLDERS` is an index from a socket to a part, which
-    # is not itself a part.
-    return (None, json_file("gear.py", DOC, parts, comments))
+    return json_file("gear.py", DOC, parts, comments)

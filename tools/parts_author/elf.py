@@ -10,7 +10,7 @@ The stack, in model voxels:
     head   [50, 72) 22
 """
 
-from .voxlib import (split_limb, Part, gd_file, json_file, solid_eyes, hair_brow, k,
+from .voxlib import (split_limb, Part, json_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 HEAD_SIZE = (28, 22, 17)
@@ -224,7 +224,7 @@ LEG_SPLIT = 12
 ARM_SPLIT = 12
 
 
-def render() -> tuple[str, str]:
+def render() -> str:
     leg_upper, leg_lower = split_limb(
         leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
     arm_upper, arm_lower = split_limb(
@@ -241,7 +241,4 @@ def render() -> tuple[str, str]:
     comments = {"head": HEAD_COMMENT, "torso": TORSO_COMMENT,
                 "pelvis": PELVIS_COMMENT, "leg_upper": LEG_COMMENT,
                 "arm_upper": ARM_COMMENT}
-    blocks = [p.gd(name.upper(), comments.get(name, ""))
-              for name, p in parts.items()]
-    return (gd_file("PartsElf", DOC, blocks, {k: k.upper() for k in parts}, "elf.py"),
-            json_file("elf.py", DOC, parts, comments))
+    return json_file("elf.py", DOC, parts, comments)

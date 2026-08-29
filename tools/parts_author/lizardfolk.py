@@ -9,7 +9,7 @@ The stack, in model voxels:
     head   [42, 60) 18
 """
 
-from .voxlib import (split_limb, Part, gd_file, json_file, solid_eyes, k, v,
+from .voxlib import (split_limb, Part, json_file, solid_eyes, k, v,
                      S, s, M, E, W, C, c, B, X, T)
 
 HEAD_SIZE = (16, 16, 24)
@@ -274,7 +274,7 @@ FOOT_SPLIT = 6
 ARM_SPLIT = 10
 
 
-def render() -> tuple[str, str]:
+def render() -> str:
     # THREE SEGMENTS, so the limb is cut twice: thigh off the top, then the
     # remainder cut again into shin and foot. `split_limb` takes the same
     # shape both times and neither call knows the other happened.
@@ -306,8 +306,4 @@ def render() -> tuple[str, str]:
     comments = {"head": HEAD_COMMENT, "torso": TORSO_COMMENT,
                 "pelvis": PELVIS_COMMENT, "leg_upper": LEG_COMMENT,
                 "arm_upper": ARM_COMMENT, "tail_1": TAIL_COMMENT}
-    blocks = [p.gd(name.upper(), comments.get(name, ""))
-              for name, p in parts.items()]
-    return (gd_file("PartsLizardfolk", DOC, blocks,
-                    {k: k.upper() for k in parts}, "lizardfolk.py"),
-            json_file("lizardfolk.py", DOC, parts, comments))
+    return json_file("lizardfolk.py", DOC, parts, comments)

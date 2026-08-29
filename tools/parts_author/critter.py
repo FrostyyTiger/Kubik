@@ -118,11 +118,7 @@ three links or a humanoid parent, this is where it would show."""
 
 
 
-def render() -> tuple[str, str]:
-    # NO GDSCRIPT. `parts_critter.gd` is hand-written and permanent since
-    # parts-data v1: `DIMS`, `bone_table()` and `palette()` are GDScript no
-    # JSON can hold, and they stopped being written by a Python string the
-    # moment they no longer had to share a file with the ASCII.
+def render() -> str:
     from .voxlib import json_file
     built = [
         ("body", scaled("BODY"), BODY_COMMENT),
@@ -133,4 +129,4 @@ def render() -> tuple[str, str]:
     ]
     parts = {key: part for key, part, _cm in built}
     comments = {key: comment for key, _p, comment in built}
-    return (None, json_file("critter.py", DOC, parts, comments))
+    return json_file("critter.py", DOC, parts, comments)

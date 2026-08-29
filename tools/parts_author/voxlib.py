@@ -1,12 +1,12 @@
 """The voxel authoring kit behind every generated part file.
 
-WHAT THIS IS. `scripts/character/parts/parts_*.gd` hold every character part
-as ASCII slices in slot letters - see the docstring on `VoxelModel` for the
+WHAT THIS IS. `assets/characters/parts/*.json` hold every character part as
+ASCII slices in slot letters - see the docstring on `VoxelModel` for the
 convention. At 1/16 of a block a human head is 22 slices of 17 rows of 18
 characters, which is past what anyone should type by hand, so the ASCII is
 WRITTEN by the modules beside this one and committed alongside them. The
-runtime never sees Python: it parses the ASCII exactly as it did when the
-ASCII was typed.
+runtime never sees Python: `PartsData` reads the JSON and `VoxelModel.parse()`
+walks the same rows it walked when they were typed.
 
 THE COORDINATE CONVENTION IS VoxelModel'S, restated once here. Inside a part,
 `x` runs along the character's own right (+X, `Vector3.RIGHT`), `y` runs up,
@@ -35,7 +35,7 @@ import math
 # --- The grid ----------------------------------------------------------------
 #
 # THE RESOLUTION IS A NUMBER IN THIS FILE, which is the single most important
-# fact about the character redesign: nothing under scripts/character/parts/ is
+# fact about the character redesign: nothing under assets/characters/parts/ is
 # drawn by hand, so moving the grid is a re-run rather than a rewrite, and the
 # 96-vs-128 decision stops being one-way. See docs/plans/character-v2-tech.md
 # Stage 2.
@@ -48,8 +48,8 @@ import math
 # and the edits are invisible to it.
 #
 # Instead the scaling happens ONCE, at output. A part is authored, drawn and
-# reasoned about entirely on the 64 grid; `Part.slices()` and `Part.gd()` are
-# the only things that have ever heard of RES. So:
+# reasoned about entirely on the 64 grid; `Part.slices()` is the only thing
+# that has ever heard of RES. So:
 #
 #   - every drawing method, every frame, every hair footprint and every skull
 #     test stays in author space and is untouched;
@@ -209,13 +209,6 @@ def check_slots_match(root) -> None:
             % (sorted(theirs - SLOTS) or "-", sorted(SLOTS - theirs) or "-"))
 
 
-def _fmt(v: float) -> str:
-    """A number the way the existing part files write it: `9`, not `9.0`."""
-    if float(v).is_integer():
-        return str(int(v))
-    return repr(float(v))
-
-
 def octagon(x0: int, x1: int, z0: int, z1: int, chamfer: int) -> set[tuple[int, int]]:
     """The cells of the box [x0, x1) x [z0, z1) with each corner cut by
     `chamfer`: a cell is dropped when it is fewer than `chamfer` steps from
@@ -361,43 +354,6 @@ class Part(Cells):
         assert all(float(a).is_integer() for a in self.anchor), self.anchor
         return {(x - int(ax), y - int(ay), z - int(az)) for (x, y, z) in self.cells}
 
-    def gd(self, const_name: str, comment: str = "") -> str:
-        """The GDScript constant, formatted the way the hand-written files
-        were: one slice per group, rows wrapped to the line width, a `# y =`
-        note where the author left one."""
-        lines = []
-        if comment:
-            for text in comment.rstrip("\n").split("\n"):
-                lines.append(("# " + text).rstrip())
-            lines.append("")
-        w_out, h_out, d_out = self.size_out()
-        lines.append("const %s := {" % const_name)
-        lines.append('\t"size": Vector3i(%d, %d, %d),' % (w_out, h_out, d_out))
-        lines.append('\t"anchor": Vector3(%s, %s, %s),' % tuple(
-            _fmt(a) for a in self.anchor_out()))
-        lines.append('\t"slices": [')
-        per_line = max(1, (76 - 3) // (w_out + 4))
-        # Notes are keyed by AUTHOR slice; a note lands on the first output
-        # slice that author slice became, so "y = 5, the mouth" still points at
-        # the mouth whatever the grid is.
-        note_at = {}
-        for a in range(self.h):
-            if a in self.notes:
-                note_at[U(a)] = self.notes[a]
-        for y, rows in enumerate(self.slices()):
-            note = note_at.get(y)
-            if note is not None:
-                lines.append("\t\t# y = %d, %s" % (y, note))
-            quoted = ['"%s"' % r for r in rows]
-            chunks = [quoted[i:i + per_line] for i in range(0, len(quoted), per_line)]
-            for i, chunk in enumerate(chunks):
-                head = "\t\t[" if i == 0 else "\t\t "
-                tail = "]," if i == len(chunks) - 1 else ","
-                lines.append(head + ", ".join(chunk) + tail)
-        lines.append("\t],")
-        lines.append("}")
-        return "\n".join(lines)
-
     def json_obj(self, comment: str = "") -> dict:
         """The same part as a JSON-able object, from the same cells.
 
@@ -530,41 +486,8 @@ def _ink_joint_slice(p: Part, y: int, inset: int, ch: str) -> None:
     p.box((x0, x1), (y, y + 1), (z0, z1), ch)
 
 
-def gd_file(class_name: str, doc: str, blocks: list[str], parts: dict[str, str],
-            generator: str, extra: str = "") -> str:
-    """Assemble a parts file. `doc` is the class docstring without the `## `
-    prefixes; `blocks` are the formatted constants in order; `parts` maps the
-    bone-table name to the constant it refers to."""
-    out = ["class_name %s" % class_name, ""]
-    for line in doc.strip("\n").split("\n"):
-        out.append(("## " + line).rstrip())
-    out.append("##")
-    out.append("## GENERATED by tools/parts_author/%s. Re-run" % generator)
-    out.append("## `python -m tools.parts_author` after editing the generator. Editing the")
-    out.append("## ASCII by hand is legal - say so on this line if you do, so the next")
-    out.append("## person knows the generator is behind.")
-    out.append("")
-    for block in blocks:
-        out.append("")
-        out.append(block)
-        out.append("")
-    out.append("")
-    out.append("## Every part in this set, by the name a bone table refers to it with.")
-    out.append("const PARTS := {")
-    for key, const in parts.items():
-        out.append('\t"%s": %s,' % (key, const))
-    out.append("}")
-    if extra:
-        out.append("")
-        out.append("")
-        out.append(extra.rstrip("\n"))
-    out.append("")
-    return "\n".join(out)
-
-
 def json_file(generator: str, doc: str, parts: dict, comments: dict = None) -> str:
-    """Assemble a parts file as JSON, from the same `Part` objects `gd_file`
-    was handed.
+    """Assemble a parts file.
 
     THE FORMAT IS CHOSEN FOR A HUMAN READING A DIFF, not for a parser. The
     ASCII rows *are* the art, and the only review this art gets is somebody

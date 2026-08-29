@@ -88,6 +88,17 @@ jobs:
             exit 1
           fi
 
+          # AND THE CHARACTERS ARE IN IT. Every part is a .json under
+          # assets/characters/parts/ since parts-data v1; .json is a native
+          # Resource, so export_filter="all_resources" should carry them - but
+          # "should" shipped a game with no characters in it exactly once too
+          # often for anyone's taste. The pck stores its file table
+          # uncompressed, so the path is findable as plain text.
+          if [ "$(grep -ac "assets/characters/parts/armour.json" build/Kubik.exe)" = "0" ]; then
+            echo "::error::the parts data is not in the pck - the export filter stopped carrying .json"
+            exit 1
+          fi
+
       # Both players must run the SAME build. Kubik never sends terrain, only a
       # seed, so two slightly different builds generate two different worlds from
       # that seed and neither machine reports an error. Stamping the commit into

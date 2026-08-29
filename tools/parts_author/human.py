@@ -10,7 +10,7 @@ Numbers are the look plan's Stage 6 table. The stack, in model voxels:
     head   [42, 64) 22
 """
 
-from .voxlib import (split_limb, Part, gd_file, json_file, solid_eyes, hair_brow, k,
+from .voxlib import (split_limb, Part, json_file, solid_eyes, hair_brow, k,
                      S, s, M, E, W, H, C, c, L, B, X)
 
 # --- Geometry the hair file needs to know ------------------------------------
@@ -280,7 +280,7 @@ LEG_SPLIT = 8
 ARM_SPLIT = 10
 
 
-def render() -> tuple[str, str]:
+def render() -> str:
     leg_upper, leg_lower = split_limb(
         leg(), LEG_SPLIT, "LEG_UPPER", "LEG_LOWER")
     arm_upper, arm_lower = split_limb(
@@ -297,8 +297,4 @@ def render() -> tuple[str, str]:
     comments = {"head": HEAD_COMMENT, "torso": TORSO_COMMENT,
                 "pelvis": PELVIS_COMMENT, "leg_upper": LEG_COMMENT,
                 "arm_upper": ARM_COMMENT}
-    blocks = [p.gd(name.upper(), comments.get(name, ""))
-              for name, p in parts.items()]
-    return (gd_file("PartsHuman", DOC, blocks,
-                    {k: k.upper() for k in parts}, "human.py"),
-            json_file("human.py", DOC, parts, comments))
+    return json_file("human.py", DOC, parts, comments)
