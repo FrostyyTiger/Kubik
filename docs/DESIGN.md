@@ -194,11 +194,44 @@ elemental matrix for now - a combination table is a Someday, not a v1.
 
 ## Gear
 
-Three slots, **all visible on the character**: weapon, torso armour, trinket.
+**Six slots, all visible on the character**: torso, shoulders, back, head,
+legs, hands. Four ship with geometry; **legs and hands are declared with none**,
+so filling them later costs art and not a wire-format change.
+
+Changed from three (weapon, torso armour, trinket) by character v2, and the
+order is argued rather than alphabetical - it is the share of the SILHOUETTE
+each one owns. Torso is 38%, back is 15% and reads at 40 m, shoulders are the
+only slot that grows the outline outward at the widest point the character has.
+Legs go last, and that is not a slight: a greave at 15 m is nine pixels behind a
+tuft of grass.
 
 Visible gear is the cozy progression payoff. Your character sitting at the
 campfire *is* the progress screen - which is pillar 2 doing its job, so keep the
 silhouette legible as gear changes.
+
+**Tiers are a ladder of OUTLINE EVENTS, not of surface decoration.** With flat
+vertex colour and no textures, surface detail is free to author and invisible at
+range: the outline is the only currency a piece has. So five tiers are defined
+by how many places the silhouette gains a local maximum the naked body does not
+have - 0 / 1 / 1 / 3 / 5 - which is a countable claim, and the gallery's
+`--sheet outline` counts it. Tier 1 has zero on purpose: if starting gear
+changes the silhouette then the naked character is not the design.
+
+**One authored set fits four bodies: proportions relative, thicknesses
+absolute.** A piece is described in fractions of the attachment's own width,
+height and depth and stamped into each race's real dimensions, but its plate is
+the same number of voxels thick on everyone. Scale the thickness too and dwarf
+armour looks like foam rubber while elf armour looks like it was cut from sheet
+tin. Two per-race exceptions are named and there are no others: leg armour does
+not fit a digitigrade leg, and a back piece has to route around a tail.
+
+**Every head item is authored per race and leaves its wearer's identity feature
+intact or replaces it in kind.** A full helm erases the elf's ears, the dwarf's
+beard line and the lizardfolk's snout in one item, and then four races that took
+a whole epic to separate are four helmets.
+
+None of this is an item system. There is no item table, no inventory, no drops
+and no rule about what grants a tier; **Items v1 owns all of that.**
 
 ## Art pipeline
 

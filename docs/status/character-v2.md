@@ -1338,3 +1338,118 @@ trim — that is four `TODO(marcel)` exercises, each with a working fallback and
 a hint. The plan asked for at least two.
 
 Green: 35 character tests, world suite passed, every gate unchanged.
+
+---
+
+## Stage 13 — the critter, the sheets, and the record
+
+Committed as `feat(character): stage 13 - ...`.
+
+**The critter** was regenerated at 96 in Stage 3 because its `DIMS` are in
+voxels; without that it would have arrived at two thirds of its size and the
+first-enemy plan would have started from a shrunken animal. It has **no knee and
+should not grow one here** — `RIG_SHAPES["trot"]` with no `lower` key is the
+correct description of a four-legged animal built from rigid parts, and creatures
+v1 can decide otherwise with a quadruped actually in front of it. **16,380
+triangles**, 9 bones, `critter-walk.png` unchanged through every locomotion
+change in night 2.
+
+**The campfire shot.** `--sheet campfire` — four races in tier-3 gear, seated,
+at late dusk, framed from the row's own span. It is not a test and there is no
+assertion in it. Honestly: it is not yet a poster. The mail checker reads
+beautifully at that distance, which is the thing the free-LOD argument predicted
+and the best single vindication in the run; the gorget reads as a tray; and
+there is no fire, because Wave 2 owns that.
+
+**Docs.** `DESIGN.md`'s Gear section goes from three slots to six with the
+outline-event ladder, the fitting rule and the head-slot rule written into
+settled design. `README.md` gains the character sheets and — more usefully — the
+warning that the counts are the gates and the pictures are not. `TODO.md`,
+`docs/IDEAS.md` and `docs/ROADMAP.md` place the epic before Wave 1 with its
+reason. `STATUS.md` points here.
+
+---
+
+# Acceptance, against the four tests the design doc set
+
+**1. The lineup — PASSED, and this is the one the epic was for.**
+
+| | v1 record | Stage 0 (GPU) | final |
+| --- | --- | --- | --- |
+| worst race pair, front on | 0.868 | **0.913** | **0.664** |
+| race pairs over 0.70 | 1 | 1 | **0** |
+| cross-race variant pairs over 0.70 | 15 of 94 | 15 of 94 | **1 of 94** |
+| worst variant pair | 0.928 | 0.928 | 0.716 |
+
+One variant pair remains over, at 0.716: the human's second hairstyle against
+the lizardfolk's third crest.
+
+**2. The tier ladder — NOT PASSED.** Exact on the dwarf (0/0/1/1/3/5), off on 6
+of 24 rows. Tiers 0 and 1 are 0 on every race, which is the row that matters
+most. Stage 9 records exactly which rows and why.
+
+**3. The colour test — PASSED.** Every race spans three value tiers, the
+closest pair of mid tiers is 0.046 apart against a floor of 0.03, and every one
+of the twenty skins clears the liner by at least 6:1 — against the 2.1:1 the old
+rule scraped. Swatch transfer within 1 unit of 6.
+
+**4. The walk — PASSED.** The contact pose is asserted over 360 phases per race
+rather than eight frames of a strip: all four reach it at phase 0.35 with a 45°
+trailing knee.
+
+**And the campfire** — shot, and not yet a poster. See above.
+
+## Every gate, at the end
+
+```
+CHARACTER SELFTEST: 35 tests, all passed      (28 at the start of the run)
+SELFTEST: all passed
+heightmap#    76cccdb6                        unchanged, every stage
+spawn         (-44, -124)                     unchanged, every stage
+worst character   44,936 triangles            budget 48,000
+worst race pair   0.664                       target 0.70, 0 over
+value tiers       PASS
+swatch transfer   worst channel delta 1       tolerance 6
+generator         python -m tools.parts_author, zero diff
+67 sheets
+```
+
+## The four `TODO(marcel)` exercises
+
+Each has a working fallback and a hint, and none of them is load-bearing.
+
+| what | where | fallback |
+| --- | --- | --- |
+| the idle-break selector | `Animator._pick_idle_break()` | always break 0 |
+| the gap between breaks | `Animator._pick_break_gap()` | a fixed gap, race-scaled |
+| the dwarf's beard-ring tier mapping | `Armour.beard_rings_for()` | always one ring |
+| per-race armour trim | `Armour.trim_hex_for()` | steel for everyone |
+
+## What is left, ranked
+
+1. **The tier ladder's six rows.** The elf's faulds want to be a fraction of
+   the wearer with an absolute floor rather than purely absolute; the human's
+   cloak needs to stop merging with its faulds; the lizardfolk's lean produces
+   genuine extra profile bands. A design afternoon with `--sheet outline` open.
+2. **The armour shapes.** The helms read as caps and the gorget as a tray. The
+   plumbing, the fitting rule and the gate are done; the sculpting is not.
+3. **The stateful animation details** — head lag, overshoot on settle,
+   anticipation, the jump apex hold. All four are the same piece of machinery
+   and belong in one pass. Foot roll wants an ankle bone; stance width and turn
+   in place want a field on `LocomotionState`.
+4. **The elf's hair** is still the side-of-head slab the design doc criticises,
+   which widens the one race whose whole idea is narrowness.
+5. **Hands and boots up 15%**, the design doc's exaggeration at the extremities.
+   The one item with no test behind it.
+
+## What the next three plans get from this run
+
+- **Creatures v1**: the critter at the new grid; `RIG_SHAPES` with an optional
+  `lower` key so a quadruped can have knees or not without anything branching on
+  species; `LocomotionState` still the seam.
+- **Combat v1**: a rig with two-segment limbs, which every hit reaction,
+  stagger and death pose needs, and `pose_for()` still a pure function testable
+  with no scene tree.
+- **Items v1**: six declared slots, four with geometry, a wire layout that does
+  not need to change to fill the other two, `Armour` to point item ids at, and
+  one debug key to delete.

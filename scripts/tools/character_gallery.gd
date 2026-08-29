@@ -145,6 +145,7 @@ func _sheets() -> Dictionary:
 		"armour": _sheet_armour,
 		"tiers": _sheet_tiers,
 		"gear": _sheet_gear,
+		"campfire": _sheet_campfire,
 		"critter": _sheet_critter,
 		"budget": _sheet_budget,
 	}
@@ -1013,6 +1014,51 @@ func _primitives() -> int:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	return int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
+
+
+## THE SHOT THAT IS NOT A TEST, AND IS THE ACTUAL POINT.
+##
+## Four characters in tier-3 gear, sitting, at 3 m, at dusk. `DESIGN.md` says
+## "your character sitting at the campfire IS the progress screen", and that
+## sentence is a specification: progression has to be legible on the body, at
+## campfire distance, without a menu - and the payoff moment is a LOOK AT EACH
+## OTHER, which is why armour is a character-design problem and not an
+## inventory one.
+##
+## If this image is not one Marcel would put on a poster, the epic is not done,
+## whatever the numbers say. There is no assertion here on purpose.
+func _sheet_campfire() -> void:
+	var seated := []
+	for def: CharacterDef in _lineup_defs():
+		var v: CharacterDef = def.duplicate_def()
+		for slot in CharacterDef.ARMOUR_SLOTS:
+			v.armour_tier[slot] = 3
+		v.validate()
+		seated.append(v)
+	# Late dusk rather than full night: the hour the design doc calls the warm
+	# register, where firelight would be the only light and a silhouette has to
+	# carry itself on its light tier alone.
+	_set_time(0.78)
+	_set_lineup(seated)
+	# Sat down, and shot from 55 degrees - a sitting character photographed
+	# from the front looks like a standing one with short legs, because its
+	# legs point along its own forward axis straight at the camera. Character
+	# v1 found that the hard way and the strip has been shot off-axis since.
+	_face(FACING_CAMERA + deg_to_rad(55.0))
+	for child in _subjects_root.get_children():
+		var view := child as CharacterView
+		if view == null:
+			continue
+		var st := LocomotionState.new()
+		st.grounded = true
+		st.pose = LocomotionState.POSE_SIT
+		_freeze_pose(view, {"state": st})
+	# FRAMED FROM THE ROW'S OWN SPAN, not from a fixed 3 m: four characters at
+	# 2.6 m apart are a 7.8 m row, and 3 m in front of it puts two of them off
+	# the sides. `_shoot_row` computes the distance that fits, which is what
+	# "campfire distance" means for a group rather than for one person.
+	await _shoot_row("campfire", seated.size())
+	_set_time(-1.0)
 
 
 # --- The critter ---------------------------------------------------------------

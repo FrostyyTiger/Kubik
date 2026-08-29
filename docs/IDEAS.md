@@ -54,6 +54,21 @@ here on this list is filled by what a playtest taught us.
    has every number, every check that failed and why, and one BLOCKING finding
    for the Windows box.
 
+   **Character v2 - the people** ran on 2026-08-28/29 on `feat/character-v2`,
+   all fourteen stages. [plans/character-v2.md](plans/character-v2.md) is the
+   design and [plans/character-v2-tech.md](plans/character-v2-tech.md) the build
+   plan. The model grid went from 64 voxels to 96 at 1/24 of a block - for a
+   knee, not for detail, since a 16-voxel leg split in two has segments half the
+   thickness of their own joint. A fixed dark LINER slot between skin and cloth
+   retired look v2's tunic rule, which had exactly one solution and it was that
+   all four races wore black. The lizardfolk was rebuilt rather than adjusted
+   and the human/lizardfolk silhouette went 0.913 to 0.664, so **no race pair
+   overlaps by more than 0.70 for the first time**. Six armour slots on a bumped
+   wire format, a tier ladder counted rather than judged, and a walk with a
+   contact pose in it. `docs/status/character-v2.md` has every number, the four
+   `TODO(marcel)` exercises, and the three places the run did not meet its own
+   gate.
+
    **World feel v1 - the ground keeps up, the forest closes over** ran on
    2026-08-26 on `feat/world-feel-v1`; night 1 (Stages 0-8) is done and night 2
    (physics) has not started. [plans/world-feel-v1.md](plans/world-feel-v1.md).
