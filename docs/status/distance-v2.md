@@ -64,6 +64,24 @@ next to it - 0.23 sRGB levels for the band lock, 1,063 pixels for the
 single-sided riser - are signal rather than renderer noise. Anything that ever
 compares CHARACTER sheets needs character v2's tolerance instead.
 
+**But that is true of the FAR BAND ONLY, and it is worth pinning down**, because
+every per-pixel number in this document is taken over rows 0-300 and none of
+them says anything about the rest of the frame. Two tours from code that is
+identical at `far_terrace 0.0`:
+
+| region of the frame | mean \|dL\| | worst |
+| --- | --- | --- |
+| far band, rows 0-300 | **0.0000** | **0.0** |
+| near field, rows 500-720 | 0.0213 | **48.1** |
+| whole frame | 0.1571 | 68.8 |
+
+The far field is bit-reproducible; **the flora is not.** The likely cause is
+which columns have finished streaming when the shutter opens, not the scatter
+hash. So a tour A/B of `8-meadow-closeup` or `7-forest-interior` is not evidence
+of anything, and the far-country shots this epic lives on are. A fixed capture
+barrier - wait for the flora queue to drain before the screenshot - would make
+the whole tour comparable and is worth someone's afternoon.
+
 ---
 
 *(this document is written as the run proceeds; sections appear in stage order)*
@@ -367,6 +385,10 @@ run to photograph rather than quietly fix; it is photographed, and the fix was
 to stop dimming.
 
 Left on F4 as `distance: riser shade` so Marcel can overrule it in one spinbox.
+
+**AND IT WAS OVERRULED, UPWARD, AFTER THE MERGE.** The monotone trend above does
+not stop at 1.0: the useful direction is a **lift** past it. See "The riser
+lift" below - shipped at **1.30**, and the range on F4 now runs to 1.5.
 
 ### Gate
 
@@ -1017,7 +1039,7 @@ Also on disk, all `far_terrace 1.0`, Forward+, seed 42:
 | constant | `f23c3f0` | shipped | why, in one line |
 | --- | --- | --- | --- |
 | `far_terrace` | - | **0.0**, on F4 | ships OFF; 1.0 is the epic and 0.0 is the way back |
-| `far_riser_shade` | - | **1.0**, on F4 | the plan's 0.7 measured as a dimmer, not a contrast knob |
+| `far_riser_shade` | - | **1.30**, on F4 (0-1.5) | the plan's 0.7 is a dimmer; 1.0 is the near field's own ratio; past it is a LIFT off the shade floor, and that is the direction that helps |
 | `TERRACE_LEVEL_RING` | - | **0** (pyramid level 2) | swept 0/1/2/per-ring; chosen on PEAK LOSS and the seam dip |
 | `RIDGE_SPAN_BLOCKS` | - | **96** | `far_normal_m`'s half-span: a ridge read at the scale a flank is |
 | `TERRACE_FADE_CELLS` | - | **12** | three times the detail's fade; halves the seam artefact |
@@ -1130,13 +1152,186 @@ the first column character for character**, checked by the far probe at Stages
 2. **`far_riser_shade`, three ways.** `d2-t1-rs050` / `d2-t1-rs070` /
    `d2-t1-rs100`. Shipped at **1.00**, which is the near field's own ratio; the
    plan's 0.70 is on disk and it is darker, not more contrasty.
-3. **`far_band_step` after the lock.** Shipped at **0.03** with the interval
-   scaled, which preserves the value change per metre exactly. `n2-s7-t1`
-   against `n1-t1` is what the lock is worth: 0.23 sRGB levels.
+3. **`far_band_step` after the lock.** Shipped at **0.03**, swept and
+   photographed - see the knob table below. **Too close to call**, and that is
+   the finding.
+
+### Taste, on F4 and still Marcel's
+
+The table distance v1 kept, for this epic's knobs. Every alternative is a full
+seventeen-shot tour on ganymede, seed 42, Forward+.
+
+| knob | shipped | photographed alternatives |
+| --- | --- | --- |
+| `far_terrace` | **0.0** | `n1-t0` / `n1-t0-gl` at 0, `final-t1` / `final-t1-gl` at 1, and `zonefix-t1` at 1 after the zone fix |
+| `far_riser_shade` | **1.30** | `d2-t1-rs050` (0.50), `d2-t1-rs070` (0.70), `zonefix-t1` (1.00), `rs130` (shipped) |
+| `far_band_step` | **0.03** | `bs015` (0.015), `bs060` (0.06) |
+
+### The `far_band_step` sweep, and why it changes nothing
+
+`ganymede, eye` and `ganymede, deterministic`. All three at `far_terrace 1.0`,
+identical but for the knob, compared over `6-postcard`'s far band:
+
+| | mean \|dL\| against 0.015 | worst pixel |
+| --- | --- | --- |
+| 0.015 -> 0.06, a **four-fold** move | **1.73** | **12.8** |
+
+**Thirteen luma levels on the single worst pixel in the frame, for four times
+the knob.** An independent look at day and dusk shots at 2x and 4x could not
+tell the three apart, and amplifying the difference ten times showed a smooth
+vertical gradient rather than any change in band structure.
+
+The reason is Stage 7's own design and it is worth stating as a limit rather
+than as a success: **`far_band_step` is normalised so the total value change
+from treeline to summit is constant**, so the knob only redistributes a fixed
+budget of about ten luma levels among more or fewer bands. It cannot make the
+bands stronger, only finer.
+
+The clamp worry in the plan - that at four times the density the 0.85-1.25 clamp
+would flatten the upper mountain - **does not materialise**: distinct colours in
+the top 80 rows go 882 -> 1025 -> **1132** across the sweep, the wrong direction
+for flattening. These views never climb high enough to reach the cap.
+
+**Shipped at 0.03**, the midpoint, because nothing in the frame argues for
+moving. If a later pass wants the far mountains to read as painted contour
+bands rather than as terraced blocks, **the number to raise is the total, not
+the step** - and the contour reading in these postcards is coming from the
+terrace risers, not from this tint at all.
+
+### The zone bug, found by looking rather than by measuring
+
+An agent reviewing the postcards noticed a meadow had turned to rock. It had.
+
+Since Stage 2 the far terrain decided **what a place is made of** - meadow,
+heath, rock, snow - from `mid_h`, the height the quad is DRAWN at, which is the
+cell's quantised shelf. A cell whose true altitude sat just under a zone
+threshold, and whose shelf rounded up across it, was repainted as the zone
+above. The treeline and the snow line could move by half a step: 2 m at ring 0,
+4 m at ring 1. The comment four lines below the bug says exactly why the inner
+rings may not do that - "the first so the treeline agrees with the voxels at the
+seam".
+
+**It is hard rule 7 in spirit.** This epic changes how the far country is DRAWN
+and never what it IS, and what a place is made of is what it is.
+
+Fixed: the zone reads `mid_true`, the unquantised height - the mean of the raw
+corner samples on the blended path, the cached cell-centre height on the fully
+terraced one. At `far_terrace 0.0` the two are the same number, so it is a no-op
+there, confirmed **pixel-identical** over the far band.
+
+| | |
+| --- | --- |
+| pixels moved at `far_terrace 1.0` | **0.52%** of the far band, worst 69.4 levels |
+| at `far_terrace 0.0` | **0.0000 mean, 0.0 worst** - identical |
+| black crush | **15.63% -> 15.64%**, unmoved |
+
+That last row matters: the reviewer proposed this bug as the explanation for the
+treeline band going black, and **it is not**. The two are separate, the fix
+repaints about a fifth of a per cent of the frame, and the black crush is
+Stage 3's lighting consequence rather than a material error. Judged
+independently as "a small genuine improvement, near a wash - ship it", defended
+on the lakeside slope left of centre in `6-postcard`, where the pale alpine turf
+band between meadow and beach comes back at about the thickness the
+terracing-off reference draws it.
+
+### The riser lift, which is the one shipped value an agent changed
+
+Stage 3 shipped `far_riser_shade` at 1.00 on the argument that the lighting ramp
+already does the contrast and the constant is only a dimmer. That was right as
+far as it went and it stopped one notch short: **the trend does not stop at
+1.0.** An agent given the postcards and none of the reasoning proposed going
+past it, to pull away-facing slopes off the shade floor. Rendered, measured and
+judged:
+
+| | below luma 40 | mean luma | step edge |
+| --- | --- | --- | --- |
+| terracing off (reference) | 7.08% | 111.9 | 2.764 |
+| riser 1.00 | 15.64% | 105.4 | 4.426 |
+| **riser 1.30 (shipped)** | **14.37%** | **112.0** | **4.886** |
+
+1.30 puts the far country's brightness back **exactly** where terracing-off had
+it, and the steps read more strongly again - the same monotone trend, continued
+in the direction nobody had tried.
+
+**It is physically a cheat**: a face drawn brighter than its own albedo. It
+ships because it does not look like one, and that was checked rather than
+assumed. **Fog dilutes it** - on riser pixels the median change is x1.083 and
+only the top quartile reaches x1.15 - so it lands as a shadow lift on the
+near-dark mid-distance and barely touches the far horizon snow. Nothing clips;
+the brightest pixel in the frame goes 226.6 to 240.6. At the seam the near-field
+meadow's side faces are **pixel-identical** and the far risers above them stay
+at or below those values, so decision 8's one lighting language survives the
+cheat.
+
+**1.30 is the top of the range, not the middle of it.** In the fogged grey mass
+right of the central ridge the brightest riser already edges one level past the
+brightest shelf top - 235.4 against 232.4. Higher inverts more of them, and that
+is where a viewer starts to see it.
+
+**What it does NOT do is fix the black crush**, and that is worth saying because
+it is what the lift was proposed for. Measured on the treeline band itself
+rather than on the whole upper frame, below-luma-40 moves **34.79% -> 34.11%** -
+nothing. Mean luma 57.5 -> 62.9, against the 81.3 terracing-off had there. It is
+still a dark mass; what improved is legibility INSIDE it, the shelf lines now
+running visibly through the band instead of merging. **Dusk is where it earns
+its keep**: on `14-postcard-dusk` the deepest blacks go 8.52% -> 5.58% and the
+central ridge keeps its blue instead of going to black.
+
+`far_terrace 0.0` emits no risers at all, so this constant is unread there and
+hard rule 1 is untouched by it.
 
 ### Carried forward
 
 Everything below is measured, not suspected.
+
+#### What an independent eye found that the numbers did not
+
+Every number in this document was taken by the person who wrote the code. Two
+agents were given the postcards and no access to the reasoning, and between them
+they confirmed the two shipped taste calls and found three things the
+measurements had missed. Their confirmations are recorded where they belong -
+the riser value in Stage 3, the band sweep and the zone bug above. What is left
+is the part that is not fixed.
+
+**THE BLACK CRUSH, and it is the biggest visual cost of the epic.** On a slope
+facing away from the sun, terracing turns a continuously shaded diagonal into a
+wall of vertical risers that all land on the same bottom rung of the three-tone
+ramp, and the slope collapses to one flat black. Measured on `6-postcard`, the
+share of the upper frame below luma 40:
+
+| | below luma 40 |
+| --- | --- |
+| terracing off | **7.08%** |
+| terracing on | **15.63%** |
+
+**Terracing more than doubles the dead-black area.** In `6-postcard` it is the
+band from about x 350 to x 950 at y 180-300: at `far_terrace 0` a lit brown
+slope with readable ground under the trees, at 1 a near-solid mass. The distant
+tree trunks inside it lose their bases and read as floating sticks, which is a
+symptom of the same thing rather than a separate fault. It reads as a hole in
+the poster rather than as shade, and it is a design consequence of decision 8
+rather than a bug - which is why it is carried rather than patched.
+
+**THE SUMMITS STOP BEING SUMMITS.** At the top of `6-postcard` the tall snow
+peak that is a clean triangle with a sharp apex at `far_terrace 0` becomes a
+stack of rectangular slabs at 1, and the slender spire beside it becomes a
+banded tower. That corner reads as a grey city skyline rather than an alpine
+one. The 16 m step at the fog is eating the one silhouette a travel poster most
+depends on. A step size that tapers back down in the top of the terrain's height
+range would keep the point; nobody has tried it.
+
+**AND ONE INVENTED NEEDLE.** Left of centre in `6-postcard`, around x 720 and
+y 90-190, a free-standing one-block-wide pillar with a white cap stands in front
+of the dark massif. At `far_terrace 0` that spot is smooth ridge with nothing on
+it. Terracing plus Stage 4's ridge round-up is quantising a thin crest into a
+lone column - a minimum-footprint rule would remove it.
+
+**The riser lift was tried against the crush and does not fix it** - see "The
+riser lift" above: 34.79% -> 34.11% on the band itself. What the crush wants is
+a different lever, most likely a floor under the shade band for the mid
+distance, or a fog floor. Nobody has tried either.
+
+None of the three affects the shipped default, which is `far_terrace 0.0`.
 
 #### This epic owns these six
 

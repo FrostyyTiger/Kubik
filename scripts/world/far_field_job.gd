@@ -569,8 +569,14 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var r01 := 0.0
 			var terr := 0.0
 			var hq := 0.0
+			# THE UNQUANTISED HEIGHT, kept for the ZONE. See the note on
+			# zone_h below: what a cell is MADE of must not depend on which
+			# shelf it landed on.
+			var mid_true := 0.0
 			if _t_full:
-				hq = _t_hq[_cell(i, j)]
+				var at := _cell(i, j)
+				hq = _t_hq[at]
+				mid_true = _cell_h(i, j)
 				terr = 1.0
 				h00 = hq
 				h10 = hq
@@ -585,6 +591,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				r10 = h10
 				r11 = h11
 				r01 = h01
+				mid_true = (h00 + h10 + h11 + h01) * 0.25
 				if _t_amount > 0.0:
 					var at := _cell(i, j)
 					terr = _t_t[at]
@@ -609,7 +616,25 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var mid_h := (h00 + h10 + h11 + h01) * 0.25
 			var zone_bx := bx0 + step / 2
 			var zone_bz := bz0 + step / 2
-			var zone_h := mid_h
+			# THE ZONE READS THE UNQUANTISED HEIGHT, distance v2 - and it read
+			# the quantised one from Stage 2 until an agent looking at the
+			# pictures noticed a meadow had turned to rock.
+			#
+			# `mid_h` is the height the quad is DRAWN at, which since Stage 2 is
+			# the cell's shelf. Deciding the zone from it means a cell whose
+			# true altitude sits just under a zone threshold, and whose shelf
+			# rounds up across it, is repainted as the zone above - so the
+			# treeline and the snow line move by up to half a step, 2 m at
+			# ring 0 and 4 m at ring 1. The comment below says exactly why the
+			# inner rings may not do that: "the first so the treeline agrees
+			# with the voxels at the seam".
+			#
+			# WHAT a place is made of is not this epic's to change - hard rule
+			# 7 in spirit, the same reason the heightmap hash may not move. The
+			# terrace changes how the far country is DRAWN and never what it IS,
+			# and a zone is what it is. At far_terrace 0 mid_true is mid_h
+			# exactly, so this is a no-op there.
+			var zone_h := mid_true
 			# BEYOND THE FIRST RING THE ZONE IS SAMPLED ON A COARSER CELL, look
 			# v1. Zone boundaries are noise, so quad by quad a far peak comes
 			# out as a speckle of rock, snow and turf; sampled once per

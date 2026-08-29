@@ -107,7 +107,10 @@ const LOCAL_TUNING_ROWS := [
 	# WITHOUT a reroll - see FarField.apply_far_knobs(), which is what the one
 	# appended line in game.gd calls.
 	["far_terrace", "distance: far terrace", 0.0, 1.0, 0.05],
-	["far_riser_shade", "distance: riser shade", 0.0, 1.0, 0.05],
+	# The top of this range is 1.5, not 1.0, because the useful direction may be
+	# UP: a riser above 1.0 LIFTS an away-facing slope off the shade band, which
+	# is what the black crush in the treeline band wants. See the status doc.
+	["far_riser_shade", "distance: riser shade", 0.0, 1.5, 0.05],
 ]
 
 var config: WorldgenConfig = null

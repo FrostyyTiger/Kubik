@@ -44,6 +44,16 @@ stop being a different game.
 is that comparison on ganymede, and `final-t1-gl` / `n1-t0-gl` is the same pair
 on Compatibility.
 
+**Two agents were then given the postcards and none of the reasoning.** They
+confirmed both shipped taste calls, overruled one of them upward, and found
+three things the measurements had missed - a **zone bug** (the far terrain was
+choosing meadow-or-rock from the SNAPPED shelf altitude instead of the true one,
+so the treeline could move 4 m; fixed), the **black crush** (terracing more than
+doubles the dead-black area of the far band, 7.08% -> 15.63%, because a slope
+facing away from the sun becomes a wall of risers that all land on the shade
+rung), and **summits that read as a city skyline** rather than as peaks. Only
+the first is fixed; the other two are items 14 and 15 below.
+
 **What it did not fix, measured:** the 400 m ring boundary is 3.7x LOUDER with
 the terrace on - 80.00 blocks against 21.57 - and Stage 9 found out why, which
 is not what the plan assumed. See item 9 below.
@@ -355,12 +365,49 @@ above that function already warns about, from the last time somebody did it.
 It stays at 8. What would move this is more runs, or a far probe that can be
 given a frontier - see item 13.
 
+**13a. The screenshot tour is bit-reproducible in the far field and NOT in the
+near one.** Two runs of code that is identical: the far band (rows 0-300) comes
+back at mean |dL| 0.0000 and worst 0.0 - genuinely identical - while the near
+field (rows 500-720) differs by up to 48 luma levels. The likely cause is which
+flora columns have finished streaming when the shutter opens, not the scatter
+hash. **So a tour A/B of a foliage shot is not evidence**, and every per-pixel
+number in `docs/status/distance-v2.md` is deliberately taken over the far band
+only. A capture barrier - drain the flora queue before the screenshot - would
+make the whole tour comparable.
+
 **13. The far probe is structurally blind to the frontier.** It never sets
 `FarFieldJob.frontier`, so `_sector_exclude`, `FRONTIER_OVERLAP_CELLS` and the
 whole per-sector hole are invisible to it, and a change to exactly that passed
 seven stages of "identical on every geometry row". Either the probe should take
 a frontier, or the far-mesh vertex count the WORLD prints at load should be a
 gate in its own right. The second is nearly free and would have caught it.
+
+**14. Terracing more than doubles the dead-black area of the far country.** On
+`6-postcard`, the share of the upper frame below luma 40 goes **7.08% with
+`far_terrace` off to 15.63% with it on**. The cause is structural rather than a
+constant: a slope facing away from the sun stops being a continuously shaded
+diagonal and becomes a wall of vertical risers that all land on the same bottom
+rung of the three-tone ramp, so the whole slope collapses to one flat black. In
+that frame it is the treeline band from about x 350 to x 950 - a lit brown slope
+with readable ground at `far_terrace 0`, a near-solid mass at 1, with the
+distant tree trunks inside it losing their bases and reading as floating sticks.
+
+**The riser lift was tried against it and does not fix it.** `far_riser_shade`
+1.00 -> 1.30 moves below-luma-40 on the band itself from 34.79% to 34.11% -
+nothing - though it does buy legibility inside the mass and is shipped for other
+reasons. What the crush wants is a different lever: a floor under the shade band
+for the mid distance, or a fog floor. Neither has been tried.
+
+**15. The far summits read as a city skyline, not as peaks.** At the top of
+`6-postcard` the tall snow peak that is a clean triangle with a sharp apex at
+`far_terrace 0` is a stack of rectangular slabs at 1, and the slender spire
+beside it is a banded tower. Two independent reviewers raised it unprompted and
+called it a bigger aesthetic problem than either knob they were asked about. The
+16 m step at the fog is eating the one silhouette a travel poster most depends
+on. A step size that tapers back down in the top of the terrain's height range
+would keep the point; nobody has tried it. Related and smaller: terracing plus
+the ridge round-up invents a **one-block-wide pillar** on a thin crest in the
+same frame, which a minimum-footprint rule would remove.
 
 Earlier runs, newest first:
 
