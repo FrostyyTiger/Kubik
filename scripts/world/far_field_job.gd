@@ -230,16 +230,37 @@ const INV_LN2 := 1.4426950408889634
 ## overlap is invisible - the far mesh sits half a detail_amp below the voxel
 ## surface and the voxels are drawn over it - whereas a gap is a hole in the
 ## world. Hard rule S1: never a hole, at any speed.
-## TWELVE SINCE DISTANCE V2 STAGE 8, and it was eight before that. The mechanism
-## is the one this constant was always about: the hole is cut to the frontier
-## captured when the job was SUBMITTED, and the mesh that expresses it lands a
-## rebuild later. Terracing makes that rebuild 12% slower - 1,650 ms to 1,852 -
-## and at 13 m/s the player covers proportionally more ground inside the window.
-## An interleaved ABAB found one hole sample in three terraced runs against
-## none in three smooth ones and none in distance v1's twelve; four more cells
-## of overlap is 8 m more of ground that is drawn twice and never a gap. Hard
-## rule S1 is a property, not a threshold.
-const FRONTIER_OVERLAP_CELLS := 12
+const FRONTIER_OVERLAP_CELLS := 8
+
+## IT WAS BRIEFLY 12 WHILE TERRACING, AND THAT WAS TWO MISTAKES IN ONE LINE.
+## Distance v2 Stage 8, reverted while merging to main. Kept as a comment
+## because the second mistake is one this file's neighbour already warns about
+## and it was made anyway.
+##
+## Terracing makes a rebuild 12% slower, so the hole cut to the frontier
+## captured at submit time lags further behind a sprinting player, and an
+## interleaved ABAB found one hole sample in three terraced runs. Four more
+## cells of overlap looked like the fix.
+##
+##   1. RAISING THIS CONSTANT BREAKS HARD RULE 1. It is not gated on
+##      far_terrace, so it moves the far mesh's inner edge at every value of the
+##      knob: 103,608 vertices at far_terrace 0.0 became 104,808. The far probe
+##      cannot see it - it builds FarFieldJob with an EMPTY frontier, so
+##      _sector_exclude is never filled and this constant is dead code to it -
+##      so seven stages of "identical on every geometry row" said nothing about
+##      the one thing that had changed.
+##   2. ADDING THE EXTRA ONLY WHILE TERRACING BREAKS THE PROBE INSTEAD, and
+##      world.gd's far_field_exclusion_m() says so in as many words: "keeping a
+##      second copy of it here is how the probe came to report 21 holes that
+##      were not there: the job had widened its overlap and this had not."
+##      world.gd reads THIS constant to decide whether a column is covered, so
+##      the job and that function must cut the hole with the same number or the
+##      stream probe's hole count is fiction. Measured: two hole samples in one
+##      run with the two out of step, and both of them false.
+##
+## So it stays at 8, for both settings, and whether terracing costs a real hole
+## is measured at a MATCHED overlap in docs/status/distance-v2.md rather than
+## papered over with a number that made the instrument lie.
 
 ## THE FRONTIER, one radius in CHUNKS per angular sector (world feel v1 Stage
 ## 3). The far mesh cuts its hole only where the voxels have actually arrived,

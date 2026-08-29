@@ -310,13 +310,42 @@ Every earlier `-gl` set in this project was taken with the flag in the old
 position and none of them has been checked.**
 
 **11. The far mesh's vertex upload is on the main thread and terracing more than
-doubles it** - 103,608 to 256,328 vertices at `far_terrace 1.0`. Interleaved
-ABAB says holes 0 on every run of both settings and every other row's spread
-overlaps, so it is not a measured regression; it is a thing that is now twice as
-big in front of a budget that is already the tightest one in the project.
-Single-sided risers would take it to 179,368 and tear a see-through gash down
-every steep face (photographed, `build/probe/crop-single.png`). Getting both
-needs a watertight shell, which is a mesher change.
+doubles it** - 103,608 to 255,128 vertices at `far_terrace 1.0`. Interleaved
+ABAB says every long-frame and chunks/s spread overlaps, so it is not a measured
+regression; it is a thing that is now two and a half times bigger in front of
+the tightest budget in the project. Single-sided risers would take it to 179,368
+and tear a see-through gash down every steep face (photographed,
+`build/probe/crop-single.png`). Getting both needs a watertight shell, which is
+a mesher change.
+
+**12. One hole sample in seven terraced runs, and it is not settled.** 0 of 11
+at `far_terrace 0.0`, **1 of 7 at 1.0**, at a matched overlap; distance v1 saw 0
+of 12. Hard rule S1 says never a hole, and one sample over a 480 m sprint
+sampled four times a second is neither a pass nor a failure at that sample size.
+The plausible mechanism is that terracing makes the far-mesh rebuild 12% slower
+(1,650 -> 1,852 ms) and the hole is cut to a frontier captured a rebuild
+earlier.
+
+**The obvious remedy cannot be spent, and both ways of spending it were tried
+during the merge.** Raising `FarFieldJob.FRONTIER_OVERLAP_CELLS` from 8 to 12
+moves the far mesh's inner edge at **every** value of the knob, so
+`far_terrace 0.0` stopped being `f23c3f0` (103,608 vertices became 104,808) -
+and **the far probe cannot see that at all**, because it builds `FarFieldJob`
+with an empty `frontier`, so the constant is dead code to it. Gating the extra
+on `far_terrace` instead made the stream probe report **two holes that were not
+there**, because `world.gd`'s `far_field_exclusion_m()` reads the same constant
+to decide whether a column is covered - which is precisely what the comment
+above that function already warns about, from the last time somebody did it.
+
+It stays at 8. What would move this is more runs, or a far probe that can be
+given a frontier - see item 13.
+
+**13. The far probe is structurally blind to the frontier.** It never sets
+`FarFieldJob.frontier`, so `_sector_exclude`, `FRONTIER_OVERLAP_CELLS` and the
+whole per-sector hole are invisible to it, and a change to exactly that passed
+seven stages of "identical on every geometry row". Either the probe should take
+a frontier, or the far-mesh vertex count the WORLD prints at load should be a
+gate in its own right. The second is nearly free and would have caught it.
 
 Earlier runs, newest first:
 

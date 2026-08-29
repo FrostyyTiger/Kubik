@@ -748,12 +748,17 @@ to it, with the wider fade, is nothing.
 
 **1. A hole. Hard rule S1.** The first interleaved ABAB at `far_terrace 1.0`
 reported **one hole sample** in one of three runs, against none in three smooth
-runs and none in distance v1's twelve. The mechanism is the one
+runs and none in distance v1's twelve. The plausible mechanism is the one
 `FRONTIER_OVERLAP_CELLS` was always about: the far mesh's hole is cut to the
 frontier captured when the job was **submitted**, and terracing makes that job
 12% slower (1,650 -> 1,852 ms), so at 13 m/s the player covers proportionally
-more ground inside the window. **`FRONTIER_OVERLAP_CELLS` 8 -> 12**: four more
-cells, 8 m more ground drawn twice, never a gap.
+more ground inside the window.
+
+**Four more cells of overlap looked like the fix, were shipped, and were wrong
+twice over.** The merge to `main` caught it - see "The constant that looked like
+a fix and made the instrument lie" below, which is the most instructive mistake
+in the epic. The constant is back at 8 for both settings, and the honest number
+is at the end of this stage.
 
 **2. Single-sided risers, tried and reverted, with the picture.** A riser looks
 like it needs only the winding that faces its lower neighbour - the higher
@@ -797,10 +802,71 @@ rather than two runs.
 | --- | --- |
 | walk out from the meadow and back; nothing pops at 96 m | **MET at spawn and lake** - the seam disagreement is 3.37 and 0.68 blocks max against the smooth mesh's own 2.93 and 0.50, and the 0-100 m fizz band is 2.30 and 2.80 against 1.75 and 1.76. **At the summit vantage the number is 18.99 blocks and it is 19.99 with the knob off** - the far mesh's own quad linearisation on the steepest ground in the world, which terracing neither causes nor worsens |
 | no step appears inside the voxel radius | **MET by construction and by measurement** - `_terrace_at` returns exactly 0 at the seam radius, the far mesh draws nothing inside the hole at all, and the terrace-compliance rows (which exclude the fade band) are 100% outside it |
-| never a hole | **MET, 0 on six interleaved runs**, after `FRONTIER_OVERLAP_CELLS` 8 -> 12 |
-| hard rule 1 | **MET** - far probe at 0.0 identical to Stage 7's on every geometry row; far mesh 103,608 vertices |
+| never a hole | **0 of 11 runs at `far_terrace 0.0`. 1 of 7 at 1.0.** Not met as a proof at 1.0 and not refuted either - see "The honest hole number" above. At the shipped default it is met on every run ever taken |
+| hard rule 1 | **MET after the correction below.** As first written this stage broke it - see the next section |
 | self-tests | green |
-| cost | far mesh **256,328** vertices at 1.0 (2.47x), 1,874 ms per rebuild |
+| cost | far mesh **255,128** vertices at 1.0 (2.46x), 1,852 ms per rebuild |
+
+### The constant that looked like a fix and made the instrument lie
+
+Found while merging to `main`, from the one line the WORLD prints at load. Two
+mistakes in one constant, and the second is one the neighbouring file already
+warns about in as many words.
+
+The four extra cells of overlap were first spent by raising
+`FRONTIER_OVERLAP_CELLS` from 8 to 12.
+
+**Mistake one: it broke hard rule 1, and the far probe could not see it.** The
+constant is not gated on `far_terrace`, so it moved the far mesh's inner edge at
+**every** value of the knob, and `far_terrace 0.0` quietly stopped being
+`f23c3f0`:
+
+| in-game far mesh at `far_terrace 0.0` | vertices |
+| --- | --- |
+| `f23c3f0`, and Stages 0-7 | **103,608** |
+| Stage 8 as first written | **104,808** |
+| now | **103,608** |
+
+The far probe **builds `FarFieldJob` with an empty `frontier`**, so
+`_sector_exclude` is never filled and this constant is dead code to it. Seven
+stages of "identical on every geometry row" were all true and said nothing about
+the one thing that had changed. That is a different instrument failure from
+distance v1's aliased probe - not measuring the wrong thing, but being
+structurally blind to a whole input - and it belongs beside it.
+
+**Mistake two: gating the extra on `far_terrace` broke the probe instead.** The
+obvious repair is a second constant added only while terracing, so 0.0 goes back
+to `f23c3f0`. That was written, and it made the stream probe report **two hole
+samples that were not there** - because `scripts/world/world.gd` reads
+`FarFieldJob.FRONTIER_OVERLAP_CELLS` to decide whether a column is covered, and
+`far_field_exclusion_m()` says exactly what happens when it and the job disagree:
+
+> THE SAME CONSTANT THE JOB CUT THE MESH WITH. Keeping a second copy of it here
+> is how the probe came to report 21 holes that were not there: the job had
+> widened its overlap and this had not.
+
+Raising it also changed the behaviour of a file this epic is not allowed to
+touch, **through a shared constant rather than an edit** - the lane rule broken
+by arithmetic, which no diff would have shown.
+
+**So it stays at 8, for both settings.** Whether terracing costs a real hole is
+then measured with the job and world.gd in step, which is the only way the
+number means anything.
+
+### The honest hole number
+
+`ganymede`, seed 42, `--view High`, matched overlap, interleaved:
+
+| | runs | hole samples |
+| --- | --- | --- |
+| `far_terrace 0.0` | **11** | **0** |
+| `far_terrace 1.0` | **7** | **1** |
+
+One sample, in one run, on a probe that samples four times a second through a
+480 m sprint. Distance v1 saw 0 in twelve at this setting. **It is not enough to
+call either way**, and it is written down as a number rather than as a fix.
+`far_terrace` ships at 0.0, where the count is 0 of 11 and has never been
+anything else.
 
 ---
 
@@ -933,7 +999,7 @@ Also on disk, all `far_terrace 1.0`, Forward+, seed 42:
 | `TERRACE_LEVEL_RING` | - | **0** (pyramid level 2) | swept 0/1/2/per-ring; chosen on PEAK LOSS and the seam dip |
 | `RIDGE_SPAN_BLOCKS` | - | **96** | `far_normal_m`'s half-span: a ridge read at the scale a flank is |
 | `TERRACE_FADE_CELLS` | - | **12** | three times the detail's fade; halves the seam artefact |
-| `FRONTIER_OVERLAP_CELLS` | 8 | **12** | a 12% slower rebuild put one hole back; hard rule S1 |
+| `FRONTIER_OVERLAP_CELLS` | 8 | **8, unchanged** | raised to 12 in Stage 8 and reverted at merge time: it broke hard rule 1 and, gated, made the hole probe lie |
 | `SKIRT_DEPTH_CELLS` | 1.0 | **1.0 + `far_terrace`** | a terraced ring can disagree with its coarser neighbour by most of a step |
 | `far_band_m` | 60.0 | **lerp(60, ring step, `far_terrace`)** | decision 7; 16 m at ring 2, exactly 60 at knob 0 |
 | `far_band_step` | 0.03 | **0.03 x band_m / 60** | the constant preserved is the value change per METRE |
@@ -965,8 +1031,8 @@ join.
 | seam vs voxel surface, max | 2.93/19.99/0.50 | - | - | - | - | 4.26/18.24/1.34 | **3.37/18.99/0.68** |
 | shelf move over 200 m, rms | 5.74/5.25/8.34 | 4.58/6.63/5.20 | " | 4.78/6.79/5.31 | " | " | **4.78/6.85/5.31** |
 | terrace compliance | 0% | 100% | 100% | 100% | 100% | 100% | **100%** |
-| far mesh verts, in game | 103,608 | 103,608 | 229,824 | 232,136 | 232,136 | 232,136 | **256,328** |
-| far mesh build, ms | 1,650 | 1,406 | 1,719 | 1,782 | 1,782 | 1,830 | **1,874** |
+| far mesh verts, in game | 103,608 | 103,608 | 229,824 | 232,136 | 232,136 | 232,136 | **255,128** |
+| far mesh build, ms | 1,650 | 1,406 | 1,719 | 1,782 | 1,782 | 1,830 | **1,852** |
 | impostors at spawn | 580 | 580 | 580 | 580 | 580 | 580 | **580** |
 | impostor triangles | 6,764 | 6,764 | 6,764 | 6,764 | 17,700 | 17,700 | **17,700** |
 
@@ -993,9 +1059,9 @@ the first column character for character**, checked by the far probe at Stages
 | hard rule 6 - `look.gd` append-only, `figure_material()` unmodified | **MET - `look.gd` was not touched at all.** Stage 3 turned out not to need it: a riser already carries a horizontal normal and goes through the existing ramp |
 | hard rule 7 - heightmap hash unchanged | **MET** |
 | hard rule 8 - same seed, spawn, tree count | **MET** |
-| hard rule S1 - never a hole | **MET, 0 on six interleaved runs**, after `FRONTIER_OVERLAP_CELLS` 8 -> 12 |
+| hard rule S1 - never a hole | **MET at the shipped default** - 0 samples over 11 runs at `far_terrace 0.0`. At 1.0 it is **1 sample over 7 runs**, which is neither a pass nor a failure at that sample size. Carried forward |
 | `--strict` | **PASS** at Stages 0, 2 and 7; at Stage 8 the interleaved ABAB is the number, and holes are 0 on all six |
-| vertex count under 4x | **MET at 2.47x** |
+| vertex count under 4x | **MET at 2.46x** |
 | impostor triangles under 4x | **MET at 2.62x** |
 
 ### Gates that could not be met as written, all four in one place
@@ -1050,7 +1116,7 @@ the first column character for character**, checked by the far probe at Stages
 
 Everything below is measured, not suspected.
 
-#### This epic owns these five
+#### This epic owns these six
 
 1. **The 400 m ring boundary is 3.7x worse with the terrace on** - 80.00 max
    against `f23c3f0`'s 21.57 - and Stage 9 found the mechanism and the fix.
@@ -1065,7 +1131,7 @@ Everything below is measured, not suspected.
    their cell. A narrower or two-tier test would move it. The gate is met by a
    factor of four, so this is taste, and it wants an eye on a picture rather
    than another sweep.
-3. **The far mesh is 2.47x the vertices at `far_terrace 1.0` and its upload runs
+3. **The far mesh is 2.46x the vertices at `far_terrace 1.0` and its upload runs
    on the main thread.** Single-sided risers would take that to 1.73x and tear a
    see-through gash down every steep face (Stage 8, with the crop). Getting both
    needs a genuinely watertight shell - one face per boundary, wound outward,
@@ -1075,19 +1141,35 @@ Everything below is measured, not suspected.
    lands on the shelf below it, symmetrically with the peaks. It is the price of
    a 16 m step and not a filter error, and nobody has looked at whether a valley
    floor drawn 3 m low reads badly.
-5. **`TERRACE_LEVEL_RING` is a taste knob that is a `const`.** Three values were
+5. **One hole sample in seven terraced runs, and nobody knows if it is real.**
+   0 of 11 at `far_terrace 0.0`, 1 of 7 at 1.0, at a matched overlap. Distance
+   v1 saw 0 of 12. The plausible mechanism is that terracing makes the rebuild
+   12% slower and the hole is cut to a frontier captured a rebuild earlier, but
+   the obvious remedy - more overlap - cannot be spent without either breaking
+   hard rule 1 or putting the job and `world.gd` out of step, and both were
+   tried. Wants more runs, or a frontier the far probe can actually set.
+
+6. **`TERRACE_LEVEL_RING` is a taste knob that is a `const`.** Three values were
    swept and the table is in Stage 1; the shipped one is best on PEAK LOSS and
    on the seam and worst on the 400 m boundary. If (1) is ever fixed, this
    should be re-swept, and it may want to be on F4.
 
 #### Method
 
-6. **The `-gl` half of every "both renderers" check in this project may not have
+7. **The far probe is blind to the frontier.** It builds `FarFieldJob` without
+   setting `frontier`, so `_sector_exclude`, `FRONTIER_OVERLAP_CELLS` and the
+   whole per-sector hole are dead code to it - and a Stage 8 change to exactly
+   that shipped through seven "identical on every geometry row" checks before
+   the merge to `main` caught it from the world's own load line. Either the
+   probe should take a frontier, or the vertex count the WORLD prints should be
+   a gate in its own right. The second is nearly free.
+
+8. **The `-gl` half of every "both renderers" check in this project may not have
    happened.** `--rendering-driver` after the `--` is passed to the game, not to
    the engine, and selects nothing, with no error. The README is corrected and
    distance v2's own pair was re-taken; **no earlier epic's `-gl` set has been
    checked.**
-7. **The knob's full redraw is 2.7 s on ganymede**, not the plan's two seconds -
+9. **The knob's full redraw is 2.7 s on ganymede**, not the plan's two seconds -
    1.87 s of far mesh and 0.9 s of impostor ring, serialised because this engine
    build runs one GDScript task at a time. Halving either would need the job
    itself to get cheaper, which is the GDExtension conversation.
