@@ -40,6 +40,7 @@ func _ready() -> void:
 		"idle converges": _test_idle_converges,
 		"poses differ": _test_poses_differ,
 		"knees bend one way": _test_knee_never_hyperextends,
+		"the walk has a contact pose": _test_contact_pose,
 		"sprint lean": _test_sprint_lean,
 		"animator cost": _measure_animator_cost,
 		"chain lag": _test_chain_lag,
@@ -394,6 +395,63 @@ func _test_part_parsing():
 
 
 
+
+
+## THE CONTACT POSE EXISTS, AND IT IS ASSERTED RATHER THAN LOOKED FOR.
+##
+## Acceptance test 4 is "eight frozen phases, and the contact pose is visible in
+## at least one of them". Judged off the picture that is a person squinting at a
+## strip; judged off the pose it is arithmetic, and it can be checked at 360
+## phases instead of 8.
+##
+## THE POSE: one leg straight and forward while the other is bent and back. It
+## is the pose everyone skips and the one that makes a walk read as weight
+## rather than as a scissor, and it was not achievable at all before there was a
+## knee - character v1's strips are eight rigid poles.
+##
+## It is not a keyframe. It falls out of where the knee's peak sits relative to
+## the hip's - `Animator.KNEE_LAG` - so this test is really asking whether that
+## number is still right.
+func _test_contact_pose():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var report := PackedStringArray()
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		var st := LocomotionState.new()
+		st.speed = 4.0
+		st.grounded = true
+		var best := 0.0
+		var best_phase := 0.0
+		for step in 360:
+			var phase := float(step) / 360.0
+			var pose := Animator.pose_for(st, phase, 0.0, config, dims)
+			if not pose.has("leg_r") or not pose.has("leg_r_lower"):
+				continue
+			for pair in [["leg_r", "leg_l"], ["leg_l", "leg_r"]]:
+				var front: float = (pose[pair[0]]["rot"] as Vector3).x
+				var back: float = (pose[pair[1]]["rot"] as Vector3).x
+				var front_knee: float = absf((pose[pair[0] + "_lower"]["rot"] as Vector3).x)
+				var back_knee: float = absf((pose[pair[1] + "_lower"]["rot"] as Vector3).x)
+				# Front leg forward and straight, back leg back and bent.
+				if front <= 0.0 or back >= 0.0:
+					continue
+				if front_knee > deg_to_rad(6.0):
+					continue
+				var quality: float = back_knee
+				if quality > best:
+					best = quality
+					best_phase = phase
+		if best < deg_to_rad(12.0):
+			print("  %s never reaches a contact pose - best trailing knee %.1f deg" % [
+				Races.name_of(race), rad_to_deg(best)])
+			bad += 1
+		report.append("%s %.0fdeg@%.2f" % [Races.name_of(race), rad_to_deg(best), best_phase])
+
+	print("the walk has a contact pose: %s, %d checks failed" % [
+		String(" ").join(report), bad])
+	return 1 if bad > 0 else 0
 
 ## TWELVE VOXELS OF GLOW, NEVER MORE, ON ANY CHARACTER AT ANY TIER.
 ##

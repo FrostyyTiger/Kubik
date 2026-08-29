@@ -41,6 +41,17 @@ extends RefCounted
 ## that gets blamed on an amplitude knob for a week.
 const REFERENCE_LEG_M := 24.0 * VoxelModel.VOXEL_M
 
+## Where the knee's peak sits relative to the hip's, in cycles. THE CONTACT
+## POSE IS THIS NUMBER: at 0.25 the knee peaks at mid-swing and both legs reach
+## both extremes straight, which is a scissor; at 0.40 the front leg is straight
+## at contact, the back leg is bent, and the knee's peak lands just after
+## push-off, which is when a real knee bends most.
+const KNEE_LAG := 0.40
+
+## How much wider the forward arm swing is than the back one. Symmetric swing
+## reads mechanical.
+const ARM_FORWARD_BIAS := 0.20
+
 ## Below this speed the character is standing still as far as the legs are
 ## concerned, and the swing blends out rather than shrinking asymptotically.
 ## Without it a character nudged by a slope twitches its legs forever.
@@ -77,6 +88,12 @@ var _wave_remaining := 0.0
 ## different moments, which is exactly as visible as it sounds - not at all.
 var _blink_timer := 0.0
 var _blinking := false
+
+## How out of breath this character is, 0..1. Rises with speed and decays over
+## `winded_decay_s`, so breathing after a sprint is louder than breathing after
+## standing about. Stateful by nature, so it is smoothed here and handed to the
+## pure function in `extra`.
+var _winded := 0.0
 
 
 func setup(p_config: CharacterConfig, p_dims: Dictionary) -> void:
@@ -120,6 +137,14 @@ func update(state: LocomotionState, dt: float) -> void:
 	_look_pitch = lerpf(_look_pitch, clampf(state.look_pitch,
 		-deg_to_rad(config.look_pitch_deg), deg_to_rad(config.look_pitch_deg)), look_t)
 
+	# Exertion rises fast and falls slowly - which is what being out of breath
+	# is - so the rise is immediate and only the decay is timed.
+	var exertion := clampf(state.speed / 8.0, 0.0, 1.0)
+	if exertion > _winded:
+		_winded = exertion
+	elif config.winded_decay_s > 0.0:
+		_winded = maxf(0.0, _winded - dt / config.winded_decay_s)
+
 	_update_blink(dt)
 
 	var target := pose_for(state, phase, time, config, dims, {
@@ -127,6 +152,7 @@ func update(state: LocomotionState, dt: float) -> void:
 		"look_pitch": _look_pitch,
 		"land": land_amount(),
 		"wave": _wave_remaining,
+		"winded": _winded,
 	})
 
 	var t := 1.0 - exp(-config.pose_smoothing * dt)
@@ -396,7 +422,14 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	# Breathing. Small and slow: a character that visibly pumps while standing
 	# still reads as panting. Fades out as soon as it is walking, where the bob
 	# is doing the same job much more loudly.
-	var breath := config.breath_vox * v * sin(TAU * config.breath_hz * t) * (1.0 - moving)
+	# BREATHING AMPLITUDE TRACKS EXERTION - free winded-ness with no sound. A
+	# character that has just sprinted breathes harder for a few seconds than
+	# one that has been standing about, and `extra["winded"]` is the decaying
+	# memory of how fast it was going. Still fades out while actually moving,
+	# where the hip bob is doing the same job much more loudly.
+	var winded: float = float(extra.get("winded", 0.0))
+	var breath := config.breath_vox * v * (1.0 + winded * config.breath_exertion) \
+		* sin(TAU * config.breath_hz * (1.0 + winded * 0.5) * t) * (1.0 - moving)
 
 	var torso_pitch := 0.0
 	if state.mode == LocomotionState.MODE_SPRINT:
@@ -419,10 +452,22 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 			# - negative half clipped away - which is also, conveniently, what a
 			# knee actually does: straight through stance, bent through swing.
 			#
-			# A quarter cycle behind the hip, because the knee's peak bend is
-			# at mid-swing and the hip's extreme is at contact.
+			# THE CONTACT POSE, and it is one number.
+			#
+			# "Front leg straight, back leg bent, both feet down for one frame"
+			# is the pose everyone skips and the one that makes a walk a walk.
+			# It is not a keyframe here - it is where the knee's peak sits
+			# relative to the hip's.
+			#
+			# At a quarter cycle the knee peaked at mid-swing, which left BOTH
+			# legs straight at both extremes: the character reached contact with
+			# two straight poles, which is a scissor. At `KNEE_LAG` the knee is
+			# straight at the front extreme and bent at the back one, and its
+			# peak lands just after push-off - which is when a real knee bends
+			# most. Front straight, back bent, and the frame the design doc asks
+			# for falls out of the arithmetic rather than being posed.
 			var bend := -deg_to_rad(config.knee_swing_deg) * moving * maxf(
-				0.0, sin(TAU * (phase + leg_phase + 0.25)))
+				0.0, sin(TAU * (phase + leg_phase + KNEE_LAG)))
 			if rising:
 				# Tucked under, which is most of what makes a tuck read as one.
 				bend = -tuck
@@ -440,7 +485,8 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 				# for a human is free rather than a branch on race.
 				pose[entry["foot"]] = {"rot": Vector3(
 					deg_to_rad(config.hock_swing_deg) * moving * maxf(
-						0.0, sin(TAU * (phase + leg_phase + 0.5))), 0.0, 0.0)}
+						0.0, sin(TAU * (phase + leg_phase + KNEE_LAG + 0.25))),
+					0.0, 0.0)}
 
 	var falling := not state.grounded and not state.rising
 	# Arms out while falling. Positive Z rotation swings the right arm's tip
@@ -450,7 +496,12 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	for i in arms.size():
 		var entry: Dictionary = arms[i]
 		var arm_phase := float(entry["phase"])
-		var angle := arm_swing * sin(TAU * (phase + arm_phase))
+		# ARM SWING ASYMMETRY. The forward swing is wider than the back swing
+		# by `ARM_FORWARD_BIAS`; a symmetric swing reads mechanical, and this is
+		# two characters of code.
+		var raw := sin(TAU * (phase + arm_phase))
+		var angle: float = arm_swing * raw * (
+			1.0 + ARM_FORWARD_BIAS if raw > 0.0 else 1.0)
 		# The first arm in the list is the right one, and outward is +Z for it
 		# and -Z for its mirror.
 		var side := 1.0 if i % 2 == 0 else -1.0
@@ -470,6 +521,11 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var land: float = float(extra.get("land", 0.0))
 	var dip := -config.land_squash_vox * v * land
 
+	# HIP COUNTER-ROTATION. The shoulders turn opposite the hips, once per
+	# cycle. Two lines, and it is the difference between a person and a wind-up
+	# toy: without it the torso is a rigid box being carried along by legs.
+	var twist := deg_to_rad(config.hip_twist_deg) * moving * sin(TAU * phase)
+
 	# On a person the root and the lean are two bones; on a quadruped they are
 	# the same one, so the two writes are merged rather than one overwriting
 	# the other.
@@ -479,8 +535,10 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 		root_entry["pos"] = Vector3(0.0, bob + dip + breath, 0.0)
 		pose[root_bone] = root_entry
 	else:
+		root_entry["rot"] = Vector3(0.0, twist, 0.0)
 		pose[root_bone] = root_entry
-		pose[lean_bone] = {"rot": Vector3(torso_pitch, 0.0, 0.0),
+		# Opposite sign, so the two counter-rotate rather than turning together.
+		pose[lean_bone] = {"rot": Vector3(torso_pitch, -twist * 2.0, 0.0),
 			"pos": Vector3(0.0, breath, 0.0)}
 
 	_apply_chains(pose, config, t, state.speed)

@@ -88,6 +88,10 @@ const TRIANGLE_BUDGET := 48000
 ## knee is negative. Only the lizardfolk has one.
 @export var hock_swing_deg := 30.0
 
+## Shoulders against hips, in degrees, once per cycle. The difference between a
+## person and a wind-up toy, and it costs two lines.
+@export var hip_twist_deg := 8.0
+
 ## Torso pitched forward at sprint, in degrees. The single strongest cue that
 ## a character is running rather than walking quickly.
 @export var sprint_lean_deg := 12.0
@@ -134,6 +138,11 @@ const TRIANGLE_BUDGET := 48000
 ## standing still reads as panting, not as breathing.
 @export var breath_hz := 0.25
 @export var breath_vox := 1.5
+
+## How much harder a winded character breathes, as a multiplier on the
+## amplitude, and how long it takes to get its breath back.
+@export var breath_exertion := 1.6
+@export var winded_decay_s := 8.0
 
 ## How high the hips sit above the ground in the two static poses, in model
 ## voxels.
@@ -203,6 +212,7 @@ const TUNING_ROWS := [
 	["knee_swing_deg", "knee bend (deg)", 0.0, 120.0, 1.0],
 	["elbow_swing_deg", "elbow bend (deg)", 0.0, 120.0, 1.0],
 	["hock_swing_deg", "hock bend (deg)", 0.0, 120.0, 1.0],
+	["hip_twist_deg", "hip counter-rotation (deg)", 0.0, 30.0, 0.5],
 	["sprint_lean_deg", "sprint torso lean (deg)", 0.0, 45.0, 1.0],
 	["bob_walk_vox", "walk hip bob (vox)", 0.0, 18.0, 0.1],
 	["bob_sprint_vox", "sprint hip bob (vox)", 0.0, 24.0, 0.1],
@@ -217,6 +227,8 @@ const TUNING_ROWS := [
 	["downed_lift_vox", "downed hip height (vox)", 0.0, 24.0, 0.1],
 	["breath_hz", "breathing (Hz)", 0.0, 2.0, 0.05],
 	["breath_vox", "breathing rise (vox)", 0.0, 9.0, 0.1],
+	["breath_exertion", "winded breathing x", 0.0, 5.0, 0.1],
+	["winded_decay_s", "get breath back (s)", 0.5, 30.0, 0.5],
 	["blink_min_s", "blink gap min (s)", 0.5, 20.0, 0.5],
 	["blink_max_s", "blink gap max (s)", 0.5, 30.0, 0.5],
 	["blink_ms", "blink length (ms)", 40.0, 400.0, 10.0],

@@ -1214,3 +1214,66 @@ voxels against a cap of 12.
 
 Green: 33 character tests, world suite passed, silhouette and swatch gates
 unchanged, ladder unchanged at 6 of 24 rows off.
+
+---
+
+## Stage 11 — the walk that has a contact pose
+
+Committed as `feat(character): stage 11 - ...`.
+
+### The contact pose is one number
+
+"Front leg straight, back leg bent, both feet down for one frame" is the pose
+everyone skips and the one that makes a walk read as weight rather than as a
+scissor. It is **not a keyframe here.** It is where the knee's peak sits
+relative to the hip's.
+
+At a quarter cycle — Stage 4's value — the knee peaked at mid-swing, so both
+legs reached both extremes **straight**: the character arrived at contact with
+two straight poles. At `KNEE_LAG = 0.40` the front leg is straight at contact,
+the back leg is bent, and the knee's own peak lands just after push-off, which
+is when a real knee bends most.
+
+**`the walk has a contact pose`** asserts it over 360 phases per race rather
+than eight frames of a strip: one leg forward with its knee within 6° of
+straight while the other is back with a bent knee. All four races reach it at
+phase 0.35 with a 45° trailing knee.
+
+That is acceptance test 4, and it was not achievable at all before there was a
+knee — character v1's strips are eight rigid poles.
+
+### The rest of tier A that landed
+
+- **Hip counter-rotation**, ±8°, shoulders against hips once per cycle. Two
+  lines, and the difference between a person and a wind-up toy.
+- **Arm swing asymmetry** — the forward swing 20% wider than the back. Two
+  characters of code; a symmetric swing reads mechanical.
+- **The hock follows the knee** rather than sitting at a fixed half-cycle, so
+  the lizardfolk's three joints peak in sequence down the limb.
+- **Breathing tracks exertion.** `_winded` rises immediately with speed and
+  decays over 8 s, driving both the amplitude and the rate. Free winded-ness
+  with no sound.
+
+### What is not in this stage, and why
+
+Four of the plan's ten details are in, plus the contact pose. The rest are
+named rather than quietly dropped:
+
+- **Foot roll** wants an ankle, and only the lizardfolk has one — on the other
+  three the boot is the bottom of `leg_lower`, so a roll would pitch the whole
+  shin. It wants a fourth bone or a boot part of its own.
+- **Head lag, overshoot on settle, anticipation and the jump apex hold** are all
+  *stateful*: they need a value smoothed across frames, which is `update()`'s
+  half of this file rather than `pose_for()`'s. They are the same piece of
+  machinery four times, which argues for doing them together rather than one
+  per stage.
+- **Stance width tracking acceleration** needs acceleration, and
+  `LocomotionState` carries speed but not its derivative. One field, on the seam
+  between physics and animation, and worth a moment's thought about who owns it
+  rather than being bolted on here. **Turn in place** needs a turn signal for
+  the same reason.
+
+Green: 34 character tests, world suite passed. `anim-human-walk.png` shows
+folded trailing knees and a torso that turns against the hips; `critter-walk`
+and `masks-40` are bit-identical, which is what a locomotion change should
+leave alone.
