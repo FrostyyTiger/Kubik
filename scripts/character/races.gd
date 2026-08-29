@@ -93,6 +93,23 @@ const BUILD_NAMES := ["stocky", "lean"]
 # keeps the stack summing and the height test honest; the rise is geometry
 # around the head, not a change to where the head is.
 
+# THE GAIT TABLE, in words, because a column of multipliers is not a design.
+#
+# The key is `gait_scale` and NOT `gait`, which was already taken: `dims["gait"]`
+# names the RIG SHAPE - "biped", "trot" - that Animator.rig_shape looks up, and
+# putting a dictionary there made every character in the game pose zero bones.
+# Two different things called the same obvious name, one of them four stages
+# older; the self-tests caught it in a minute and the collision is worth a
+# sentence so nobody re-introduces it.
+#
+#   the elf GLIDES and takes a long time to stop - long slow strides, the
+#   widest arm swing in the cast, and a settle a third longer than anyone's.
+#   the dwarf is a PISTON - short, quick, low bob, settles instantly, and
+#   fidgets constantly.
+#   the lizardfolk's power is in its SPINE, so its counter-rotation and its
+#   sprint lean are the highest in the cast and its arms do the least.
+#   the human is 1.00 everywhere, which is what being the reference means.
+
 ## Model voxels, for readability of the tables below.
 const V := VoxelModel.VOXEL_M
 
@@ -110,6 +127,13 @@ const TABLE := [
 	# the armpit. `head_d` is the skull; the nose is one more in front of it.
 	{
 		"name": "human",
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.00, "arm": 1.00, "twist": 1.00,
+			"bob": 1.00, "lean": 1.00, "settle": 1.00, "idle": 1.00},
 		"total": 96, "legs": 24, "torso": 30, "head": 32,
 		"torso_w": 30, "torso_d": 17, "head_w": 27, "head_d": 24,
 		"leg_w": 12, "arm_len": 30, "arm_w": 12,
@@ -118,6 +142,13 @@ const TABLE := [
 	},
 	{
 		"name": "elf",
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 0.85, "arm": 1.35, "twist": 1.20,
+			"bob": 1.15, "lean": 0.80, "settle": 1.30, "idle": 0.70},
 		"total": 108, "legs": 36, "torso": 30, "head": 28, "torso_rise": 5,
 		"torso_w": 18, "torso_d": 12, "head_w": 24, "head_d": 24,
 		"leg_w": 9, "arm_len": 36, "arm_w": 9,
@@ -127,6 +158,13 @@ const TABLE := [
 	},
 	{
 		"name": "dwarf",
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.20, "arm": 0.65, "twist": 0.60,
+			"bob": 0.55, "lean": 1.10, "settle": 0.55, "idle": 1.40},
 		"total": 72, "legs": 15, "torso": 27, "head": 30, "torso_rise": 5,
 		"torso_w": 39, "torso_d": 21, "head_w": 30, "head_d": 24,
 		"leg_w": 15, "arm_len": 24, "arm_w": 15,
@@ -135,6 +173,13 @@ const TABLE := [
 	},
 	{
 		"name": "lizardfolk",
+		# HOW THIS RACE MOVES, as multipliers on knobs that already exist.
+		# Race is never a stat and gait is not one either: this is the same
+		# animator reading different numbers out of this table, exactly as
+		# stride already scales with leg length. Nothing here reaches the
+		# simulation.
+		"gait_scale": {"cadence": 1.10, "arm": 0.80, "twist": 1.40,
+			"bob": 0.70, "lean": 1.60, "settle": 0.90, "idle": 1.20},
 		"total": 90, "legs": 30, "torso": 30, "head": 24,
 		"torso_w": 21, "torso_d": 17, "head_w": 24, "head_d": 24,
 		"leg_w": 12, "arm_len": 30, "arm_w": 12,

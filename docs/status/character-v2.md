@@ -1277,3 +1277,64 @@ Green: 34 character tests, world suite passed. `anim-human-walk.png` shows
 folded trailing knees and a torso that turns against the hips; `critter-walk`
 and `masks-40` are bit-identical, which is what a locomotion change should
 leave alone.
+
+---
+
+## Stage 12 — per-race gait, and idle breaks
+
+Committed as `feat(character): stage 12 - ...`.
+
+### The gait table
+
+Seven multipliers per race on knobs that already exist, read out of `dims` —
+which `pose_for()` already receives, so the pure function gains no parameters
+and still learns nothing about which race it is animating. Race is never a stat
+and gait is not one either.
+
+Measured strides at 4 m/s: **dwarf 1.14, human 1.30, lizardfolk 1.48, elf
+2.29 m.**
+
+**`the races walk differently` asserts the table's own prose, not its values.**
+"The elf glides", "the dwarf is a piston", "the lizardfolk's power is in its
+spine" are testable sentences: the elf swings widest, the dwarf takes the
+shortest stride and bobs least, the lizardfolk twists most. A table of
+multipliers nobody can see the effect of is a table that has not been wired up,
+and that failure is silent — every number looks plausible in the file and every
+character moves identically on screen.
+
+### The collision that made every character pose zero bones
+
+The obvious key for this table is `gait`. **`dims["gait"]` was already taken**:
+it names the RIG SHAPE — `"biped"`, `"trot"` — that `Animator.rig_shape()` looks
+up. Putting a dictionary there made `rig_shape` fail its type check and return
+nothing, and every character in the game posed zero bones.
+
+Two different things wanting the same obvious name, one of them four stages
+older. The suites caught it in under a minute; the key is `gait_scale` and the
+collision is written down in `races.gd` so nobody re-introduces it.
+
+### Idle breaks
+
+Four short motions — a weight rock, a shoulder roll on one side, a head tilt, a
+look around — layered on top of whatever the body is already doing rather than
+replacing it, so a break never fights the breathing. Each is a single
+`sin(PI·t)` arc, which is 0 at both ends *by construction*, so a break can
+never leave the body somewhere it has to snap back from.
+
+### The two exercises this stage leaves open
+
+- **`_pick_idle_break()`** returns 0 every time. A working idle break — a
+  character that rocks its weight every few seconds still stops being a
+  mannequin — and the least interesting of the four. The hint names the real
+  rule: **never the same break twice in a row**, because the repeat is what
+  makes it read as a loop rather than as a person.
+- **`_pick_break_gap()`** returns a fixed gap scaled by the race's `idle`
+  multiplier. Real idling is not periodic, and a character that fidgets on a
+  metronome is worse than one that does not fidget at all. The hint is
+  `randf_range(4.0, 9.0)` over the same divisor.
+
+Together with **Stage 9's two** — the dwarf's beard rings and per-race armour
+trim — that is four `TODO(marcel)` exercises, each with a working fallback and
+a hint. The plan asked for at least two.
+
+Green: 35 character tests, world suite passed, every gate unchanged.

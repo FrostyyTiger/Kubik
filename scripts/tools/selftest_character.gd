@@ -41,6 +41,7 @@ func _ready() -> void:
 		"poses differ": _test_poses_differ,
 		"knees bend one way": _test_knee_never_hyperextends,
 		"the walk has a contact pose": _test_contact_pose,
+		"the races walk differently": _test_gait_differs,
 		"sprint lean": _test_sprint_lean,
 		"animator cost": _measure_animator_cost,
 		"chain lag": _test_chain_lag,
@@ -396,6 +397,69 @@ func _test_part_parsing():
 
 
 
+
+
+## THE GAIT TABLE IS WIRED UP, AND IT IS WIRED UP THE WAY IT READS.
+##
+## A table of multipliers nobody can see the effect of is a table that has not
+## been wired up, and the failure is silent: every number looks plausible in the
+## file and every character moves identically on screen.
+##
+## So this checks the ORDERING the table's own prose claims, not the values.
+## "The elf glides", "the dwarf is a piston", "the lizardfolk's power is in its
+## spine" are testable sentences: the elf swings its arms widest, the dwarf
+## takes the shortest stride and bobs least, the lizardfolk twists most. If
+## someone retunes the table those orderings should survive, and if they
+## deliberately do not, this test is the place the decision gets recorded.
+func _test_gait_differs():
+	var bad := 0
+	var config := CharacterConfig.load_or_default()
+	var arm := {}
+	var bob := {}
+	var twist := {}
+	var stride := {}
+
+	for race in Races.RACE_COUNT:
+		var dims := Races.dims(race)
+		var anim := Animator.new()
+		anim.setup(config, dims)
+		var st := LocomotionState.new()
+		st.speed = 4.0
+		st.grounded = true
+		stride[race] = anim.stride_for(4.0)
+		# The extremes over a cycle, which is what an amplitude is.
+		var most_arm := 0.0
+		var most_bob := 0.0
+		var most_twist := 0.0
+		for step in 120:
+			var pose := Animator.pose_for(st, float(step) / 120.0, 0.0, config, dims)
+			if pose.has("arm_r"):
+				most_arm = maxf(most_arm, absf((pose["arm_r"]["rot"] as Vector3).x))
+			if pose.has("hips"):
+				most_bob = maxf(most_bob, absf((pose["hips"]["pos"] as Vector3).y))
+				most_twist = maxf(most_twist, absf((pose["hips"]["rot"] as Vector3).y))
+		arm[race] = most_arm
+		bob[race] = most_bob
+		twist[race] = most_twist
+
+	for claim in [
+			["the elf swings its arms widest", arm[Races.ELF] > arm[Races.HUMAN]
+				and arm[Races.ELF] > arm[Races.DWARF]],
+			["the dwarf swings its arms least", arm[Races.DWARF] < arm[Races.HUMAN]],
+			["the dwarf bobs least", bob[Races.DWARF] < bob[Races.HUMAN]
+				and bob[Races.DWARF] < bob[Races.ELF]],
+			["the lizardfolk twists most", twist[Races.LIZARDFOLK] > twist[Races.HUMAN]
+				and twist[Races.LIZARDFOLK] > twist[Races.ELF]],
+			["the dwarf takes the shortest stride", stride[Races.DWARF] < stride[Races.HUMAN]],
+			["the elf takes the longest", stride[Races.ELF] > stride[Races.HUMAN]],
+	]:
+		if not bool(claim[1]):
+			print("  the gait table says %s, and the animator does not agree" % claim[0])
+			bad += 1
+
+	print("the races walk differently: strides %.2f/%.2f/%.2f/%.2f m, %d checks failed" % [
+		stride[0], stride[1], stride[2], stride[3], bad])
+	return 1 if bad > 0 else 0
 
 ## THE CONTACT POSE EXISTS, AND IT IS ASSERTED RATHER THAN LOOKED FOR.
 ##

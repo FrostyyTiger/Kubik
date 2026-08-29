@@ -95,6 +95,17 @@ var _blinking := false
 ## pure function in `extra`.
 var _winded := 0.0
 
+## Seconds of continuous true idle, and which break is playing.
+##
+## IDLE BREAKS ARE THE CHEAPEST PERSONALITY IN GAMES. After a few seconds of
+## standing still, one of four short motions - a weight rock, a shoulder roll, a
+## head tilt, a look around - and the character stops being a mannequin. Four
+## short poses, and nobody who plays the game will ever consciously notice them.
+var _idle_for := 0.0
+var _break_index := -1
+var _break_left := 0.0
+var _break_next := 0.0
+
 
 func setup(p_config: CharacterConfig, p_dims: Dictionary) -> void:
 	config = p_config
@@ -145,6 +156,7 @@ func update(state: LocomotionState, dt: float) -> void:
 	elif config.winded_decay_s > 0.0:
 		_winded = maxf(0.0, _winded - dt / config.winded_decay_s)
 
+	_update_idle_break(state, dt)
 	_update_blink(dt)
 
 	var target := pose_for(state, phase, time, config, dims, {
@@ -153,6 +165,8 @@ func update(state: LocomotionState, dt: float) -> void:
 		"land": land_amount(),
 		"wave": _wave_remaining,
 		"winded": _winded,
+		"break": _break_index,
+		"break_t": 1.0 - (_break_left / maxf(BREAK_SECONDS, 0.001)),
 	})
 
 	var t := 1.0 - exp(-config.pose_smoothing * dt)
@@ -241,9 +255,17 @@ func land_amount() -> float:
 ## Scales with leg length across races and schemes, so the dwarf takes short
 ## quick steps and the elf long slow ones out of one table, and then stretches
 ## rather than letting the leg rate exceed `cycle_hz_max`.
+## The race's own cadence multiplier: a HIGHER cadence is a SHORTER stride at
+## the same speed, which is what taking quick short steps means. The dwarf is
+## 1.20 and the elf 0.85, on top of the leg-length scaling that already
+## produced dwarf < human < elf from one line of arithmetic.
+func _cadence() -> float:
+	return float((dims.get("gait_scale", {}) as Dictionary).get("cadence", 1.0))
+
+
 func stride_for(speed: float) -> float:
 	var leg: float = float(dims.get("legs", 9)) * VoxelModel.VOXEL_M
-	var base: float = config.stride_walk_m * leg / REFERENCE_LEG_M
+	var base: float = config.stride_walk_m * leg / REFERENCE_LEG_M / _cadence()
 	return _stride_capped(base, speed, config.cycle_hz_max)
 
 
@@ -383,6 +405,7 @@ static func pose_for(state: LocomotionState, phase: float, t: float,
 			return pose
 
 	pose = _pose_locomotion(state, phase, t, config, dims, legs_m, extra)
+	_apply_idle_break(pose, int(extra.get("break", -1)), float(extra.get("break_t", 0.0)))
 	_apply_head_look(pose, extra)
 	return pose
 
@@ -393,6 +416,11 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 		extra: Dictionary) -> Dictionary:
 	var v := VoxelModel.VOXEL_M
 	var pose := {}
+	# THE GAIT TABLE. Multipliers on knobs that already exist, read out of the
+	# race's own dimensions - which `pose_for` already receives, so this costs
+	# the pure function no new parameters and teaches it nothing about which
+	# race it is animating.
+	var gait: Dictionary = dims.get("gait_scale", {})
 
 	# How much of the swing this speed has earned. Blending in over the first
 	# MOVING_SPEED_M rather than scaling by speed keeps a character nudged by a
@@ -409,7 +437,7 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 			bob_vox = config.bob_walk_vox * config.precision_swing_ratio
 
 	var swing := deg_to_rad(swing_deg) * moving
-	var arm_swing := swing * config.arm_swing_ratio
+	var arm_swing := swing * config.arm_swing_ratio * float(gait.get("arm", 1.0))
 
 	var shape := rig_shape(dims)
 	var root_bone: String = shape["root"]
@@ -417,7 +445,7 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 
 	# Hips rise and fall twice per cycle - once per step - about their rest
 	# height, so the character does not float upward at speed.
-	var bob := bob_vox * v * 0.5 * sin(2.0 * TAU * phase) * moving
+	var bob := bob_vox * float(gait.get("bob", 1.0)) * v * 0.5 * sin(2.0 * TAU * phase) * moving
 
 	# Breathing. Small and slow: a character that visibly pumps while standing
 	# still reads as panting. Fades out as soon as it is walking, where the bob
@@ -434,7 +462,7 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	var torso_pitch := 0.0
 	if state.mode == LocomotionState.MODE_SPRINT:
 		# Negative pitches the top of the torso toward -Z, which is forward.
-		torso_pitch = -deg_to_rad(config.sprint_lean_deg) * moving
+		torso_pitch = -deg_to_rad(config.sprint_lean_deg) * float(gait.get("lean", 1.0)) * moving
 
 	# A positive rotation about X swings a downward-hanging bone's tip toward
 	# -Z, which is forward. Every leg is the same expression at its own point
@@ -524,7 +552,8 @@ static func _pose_locomotion(state: LocomotionState, phase: float, t: float,
 	# HIP COUNTER-ROTATION. The shoulders turn opposite the hips, once per
 	# cycle. Two lines, and it is the difference between a person and a wind-up
 	# toy: without it the torso is a rigid box being carried along by legs.
-	var twist := deg_to_rad(config.hip_twist_deg) * moving * sin(TAU * phase)
+	var twist := deg_to_rad(config.hip_twist_deg) * float(gait.get("twist", 1.0)) \
+		* moving * sin(TAU * phase)
 
 	# On a person the root and the lean are two bones; on a quadruped they are
 	# the same one, so the two writes are merged rather than one overwriting
@@ -707,6 +736,99 @@ static func _apply_chains(pose: Dictionary, config: CharacterConfig, t: float,
 			# Each link adds a little of its own, so the tip travels furthest.
 			var scale := 0.6 + 0.4 * float(i) / float(MAX_CHAIN_LINKS - 1)
 			pose[bone] = {"rot": Vector3(0.0, sway * scale, 0.0)}
+
+
+## How long one idle break lasts.
+const BREAK_SECONDS := 1.6
+
+## How many there are. Four short motions, per the design doc.
+const BREAK_COUNT := 4
+
+
+## Count idle time and run a break when one is due.
+func _update_idle_break(state: LocomotionState, dt: float) -> void:
+	if state.speed > 0.1 or not state.grounded or state.pose != LocomotionState.POSE_NONE:
+		_idle_for = 0.0
+		_break_index = -1
+		_break_left = 0.0
+		_break_next = 0.0
+		return
+	_idle_for += dt
+	if _break_left > 0.0:
+		_break_left = maxf(0.0, _break_left - dt)
+		if _break_left <= 0.0:
+			_break_index = -1
+			_break_next = _idle_for + _pick_break_gap()
+		return
+	if _break_next <= 0.0:
+		_break_next = _idle_for + _pick_break_gap()
+	if _idle_for >= _break_next:
+		_break_index = _pick_idle_break()
+		_break_left = BREAK_SECONDS
+
+
+## TODO(marcel): the idle-break selector.
+##
+## Four short motions exist and this returns the first one, every time. It is a
+## working idle break - a character that rocks its weight every few seconds
+## still stops being a mannequin - and it is the least interesting of the four.
+##
+##   Hint: a weighted random pick, and NEVER THE SAME BREAK TWICE IN A ROW. The
+##   repeat is what makes it read as a loop rather than as a person; one
+##   remembered index and a re-draw is the whole fix. The weights are worth
+##   having too - a shoulder roll is a stronger read than a head tilt and should
+##   be rarer. `_break_index` is the last one played and is already to hand.
+func _pick_idle_break() -> int:
+	return 0
+
+
+## TODO(marcel): and the gap between them.
+##
+## A fixed gap. Real idling is not periodic, and a character that fidgets on a
+## metronome is worse than one that does not fidget at all.
+##
+##   Hint: `randf_range(4.0, 9.0)`, scaled by the race's own `gait.idle` - the
+##   dwarf is 1.40 and fidgets constantly, the elf is 0.70 and does not. The
+##   multiplier is already in the table and already reaches this function
+##   through `dims`; it is the divisor, because a HIGHER rate is a SHORTER gap.
+func _pick_break_gap() -> float:
+	return 6.0 / maxf(0.2, float((dims.get("gait_scale", {}) as Dictionary).get("idle", 1.0)))
+
+
+## The four breaks, as offsets from whatever the body is already doing.
+##
+## Layered on top of the idle pose rather than replacing it, so a break never
+## fights the breathing and never has to know what the rest of the body is up
+## to. `t` runs 0..1 across the break and every one of them is a single arc out
+## and back, which is what stops them reading as a twitch.
+static func _apply_idle_break(pose: Dictionary, index: int, t: float) -> void:
+	if index < 0:
+		return
+	# One smooth out-and-back. sin(PI t) is 0 at both ends by construction, so
+	# a break can never leave the body somewhere it has to snap back from.
+	var arc := sin(PI * clampf(t, 0.0, 1.0))
+	match index:
+		0:  # A WEIGHT ROCK. The hips shift and the shoulders follow late.
+			_add_rot(pose, "hips", Vector3(0.0, 0.0, deg_to_rad(3.0) * arc))
+			_add_rot(pose, "torso", Vector3(0.0, deg_to_rad(4.0) * arc, deg_to_rad(-2.0) * arc))
+		1:  # A SHOULDER ROLL, on one side only. Asymmetric, like everything
+			# else here that is worth doing.
+			_add_rot(pose, "arm_r", Vector3(deg_to_rad(-14.0) * arc, 0.0, deg_to_rad(8.0) * arc))
+			_add_rot(pose, "arm_r_lower", Vector3(deg_to_rad(18.0) * arc, 0.0, 0.0))
+		2:  # A HEAD TILT.
+			_add_rot(pose, "head", Vector3(deg_to_rad(4.0) * arc, deg_to_rad(-9.0) * arc,
+				deg_to_rad(6.0) * arc))
+		3:  # A LOOK AROUND - further, and the torso comes with it a little,
+			# which is the difference between looking and swivelling.
+			_add_rot(pose, "head", Vector3(0.0, deg_to_rad(26.0) * arc, 0.0))
+			_add_rot(pose, "torso", Vector3(0.0, deg_to_rad(7.0) * arc, 0.0))
+
+
+## Add a rotation to a bone's pose entry, creating it if it is not there.
+static func _add_rot(pose: Dictionary, bone: String, delta: Vector3) -> void:
+	var entry: Dictionary = pose.get(bone, {})
+	entry["rot"] = (entry.get("rot", Vector3.ZERO) as Vector3) + delta
+	pose[bone] = entry
 
 
 ## The chains this animator writes poses for. A pose entry for a bone that does
