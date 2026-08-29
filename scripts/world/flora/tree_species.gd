@@ -733,6 +733,25 @@ static func gallery_rows(config: WorldgenConfig = null) -> Array:
 	return rows
 
 
+## The seed every gallery specimen is hashed under.
+##
+## A CONSTANT, AND NOT THE WORLD'S. The gallery photographs shapes, not a
+## world, so its trees must not move when somebody plays a different seed -
+## and a specimen photographed at one stage has to be the same specimen at the
+## next, or two gallery sheets cannot be compared with each other at all.
+const SPECIMEN_SEED := 20260824
+
+
+## The cell stamp_specimen() hashes a specimen from, when the caller has not
+## chosen one.
+##
+## Far from anything the world uses, varied per specimen, so the details a
+## shape hashes for itself - lean, stubs, holes - differ between the three
+## sizes instead of all three leaning the same way.
+static func specimen_cell(species: int, t: float) -> Vector2i:
+	return Vector2i(100000 + species * 37, 100000 + int(round(t * 2.0)) * 53)
+
+
 ## Draw one specimen at a chosen size rather than a hashed one.
 ##
 ## `t` runs 0 (the species' smallest) to 1 (its largest), so the gallery's three
@@ -743,13 +762,27 @@ static func gallery_rows(config: WorldgenConfig = null) -> Array:
 ## params dictionary the world builds.
 static func stamp_specimen(writer, species: int, bx: int, ground: int, bz: int,
 		t: float, config: WorldgenConfig = null) -> Dictionary:
+	var cell := specimen_cell(species, t)
+	return stamp_specimen_at(writer, species, bx, ground, bz, t,
+		cell.x, cell.y, config)
+
+
+## The same, from a cell the CALLER chooses.
+##
+## WHY THE CELL IS A PARAMETER (trees v1 Stage 0). One size of one species is
+## one tree: `stamp_specimen()` derives its cell from the species and the size,
+## so asking it twice gets the same specimen twice. That is right for a size
+## row and useless for a variation row, which is n specimens of ONE species at
+## ONE size and differs only in what the cell hashed - the lean, the holes, the
+## shade, and everything the shape stages are about to hang off the same hash.
+##
+## Nothing else moves: stamp_specimen() calls straight through with the cell it
+## always used, and the world has never called either of them.
+static func stamp_specimen_at(writer, species: int, bx: int, ground: int,
+		bz: int, t: float, cell_x: int, cell_z: int,
+		config: WorldgenConfig = null) -> Dictionary:
 	var cfg := config if config != null else WorldgenConfig.new()
-	# A cell far from anything the world uses, varied per specimen, so the
-	# details a shape hashes for itself - lean, stubs, holes - differ between
-	# the three sizes instead of all three leaning the same way.
-	var cell_x := 100000 + species * 37
-	var cell_z := 100000 + int(round(t * 2.0)) * 53
-	var params := params_for(species, cell_x, cell_z, 20260824, cfg)
+	var params := params_for(species, cell_x, cell_z, SPECIMEN_SEED, cfg)
 	var row: Dictionary = table(cfg)[species]
 	# Override the two hashed sizes with the chosen ones; everything else the
 	# hash decided stands.
