@@ -13,6 +13,14 @@
 # Local export output.
 build/
 
+# Scratch images dropped in the project root. Godot imports anything under the
+# project directory and writes a committed-by-policy .import sidecar next to it,
+# so a stray debug PNG here does not stay stray - it becomes two tracked files.
+# distance v2 shipped two of them to main this way, from an agent that wrote its
+# working crops beside the project instead of into a scratch directory.
+/*.png
+/*.png.import
+
 # Generated from CSV translation files.
 *.translation
 
