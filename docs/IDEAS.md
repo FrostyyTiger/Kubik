@@ -161,6 +161,34 @@ here on this list is filled by what a playtest taught us.
      Compatibility half of every check in this project may have been Forward+.
      README fixed; no earlier epic's `-gl` set has been checked.
 
+   **Trees v1 - no two alike, and the ziggurat arrives** ran in one night,
+   2026-08-29/30, on `feat/trees-v1`, all seven stages.
+   [plans/trees-v1.md](plans/trees-v1.md), with the taste in
+   `docs/research/art-direction.md` §2.5 and the machinery in
+   [research/trees.md](research/trees.md). Marcel's ask: "no variation, they're
+   all symmetrical, a bit boring - let's sort of nail this so we won't have to
+   think about it for a while." Stage 0 measured exactly that and it was worse
+   than the complaint: **TWINS 1.00 on spruce and beech**, two trees hashed
+   from two different cells were the SAME TREE down to the pixel. Every species
+   is re-authored - the §2.5 spire with whorl arms, the larch as a ziggurat
+   whose sky is in the gaps rather than in the crown, the beech as a lobed
+   scallop that stops being a solid of revolution, a bowed birch, a
+   wind-flagged krummholz cushion, three snags, a hero that is no longer its
+   parent scaled - and a second colour as authored slivers under the whorls.
+   TWINS is now 0.72 or better on all seven, no species pair is over 0.56, the
+   sparse species are 24-65% CHEAPER in quads (per-block holes are the worst
+   input greedy meshing can be handed, and they are all gone), and there is not
+   one floating block left in the forest. Same heightmap hash, same 28,383
+   trees, same spawn, same mix, every stage: this epic changed what a tree
+   LOOKS like and never where one stands. `DESIGN.md` rule 4 stops saying "not
+   yet". `docs/status/trees-v1.md` has every number with a provenance tag, the
+   judge rounds, and **one failed gate**: canopy closure fell where the design
+   said fuller (old growth 0.694 -> 0.648, grove 0.523 -> 0.481), because
+   §2.5's spire proportion narrowed old-growth crowns by ~30% of disc area and
+   §2.5 outranks the number. The reconciliation is stem DENSITY, which is
+   placement - the open `TODO(marcel)` at `WorldgenConfig.grove_floor`, now
+   with a second measurement feeding it.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or
@@ -202,7 +230,8 @@ and the far field bands, re-authored every character at 1/16 of a block in
 stocky proportions, and gave the UI its typography. See
 `docs/plans/look-v1.md` and `docs/status/look-v1.md`. What it deliberately did
 NOT do: trees. Rule 4 wants cones and ziggurats where there are stacked
-squares, and that is content work parked behind items 2 and 3.
+squares, and that was content work parked behind items 2 and 3 - until trees v1
+jumped them on 2026-08-29, on the same argument look v1 made for itself.
 
 Terrain v1 delivered a walking third-person player as a side effect, and v2
 added sprint, but both on **local physics only**. Rewiring it into the
