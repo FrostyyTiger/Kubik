@@ -183,6 +183,25 @@ const SALT_JITTER := 219
 ## direction, top treatment, whether it self-pruned.
 const SALT_CONIFER := 220
 
+## Everything a beech decides once: how oblate it is, where its crown starts,
+## how many lobes, which way the first one leans, the plan ellipse and its
+## swap, whether it forks and how wide.
+const SALT_BEECH := 221
+## Per-lobe: the vertical jitter that stops four lobes from stacking in the
+## same four places on every tree.
+const SALT_LOBE := 222
+## Per-bite: radius, how deep it cuts, how high up the side it lands.
+const SALT_BITE := 223
+## Everything a birch decides once: the bow, the clump layout, whether it grew
+## a second stem and how far aside.
+const SALT_BIRCH := 224
+## THE SHARED WIND DIRECTION, and it is hashed from the SEED ALONE. See
+## params_for() - this is the one hashed thing in the file that is a property of
+## the world rather than of a tree.
+const SALT_WIND := 225
+## The limb blocks entering a beech's crown underside.
+const SALT_LIMB := 226
+
 
 ## One row per species.
 ##
@@ -237,7 +256,13 @@ const SPECIES := [
 	},
 	{
 		"read": 0.5, "name": "birch", "height": Vector2i(10, 16), "crown": Vector2i(2, 3),
-		"shape": SHAPE_SLENDER, "fill": 0.7,
+		# FILL 0.80, AND THE HOLES ARE CLUMPS NOW (trees v1 Stage 2). At 0.70,
+		# hashed per block, the sparseness was the most expensive thing on the
+		# tree - 588 blocks bought 937 quads - and at forty metres it read as
+		# static rather than as leaves. The openness is the SHAPE now: three to
+		# five clumps with real sky between them. What is left of the fill is a
+		# texture on a solid thing, hashed at 2 x 2 under the clump's own key.
+		"shape": SHAPE_SLENDER, "fill": BIRCH_FILL,
 		"leaves": Block.LEAVES_BIRCH, "leaves_b": Block.LEAVES_BIRCH_B,
 		"trunk_id": Block.TRUNK_BIRCH, "slope": 40.0,
 	},
@@ -436,6 +461,16 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 		draw_species = parent
 		leaves_row = parent_row
 
+	# THE WIND BLOWS ONE WAY IN ONE WORLD, and this is the only thing in the
+	# file hashed from the seed WITHOUT the cell. Every other decision here is
+	# per-tree because two neighbours must not be the same tree; this one is
+	# per-WORLD because a treeline that combed in twelve directions would read
+	# as twelve accidents instead of as weather. The birch bows along it (Stage
+	# 2) and the krummholz will flag along it (Stage 3), each taking a step or
+	# two of its own variation off it - correlation is the point, uniformity is
+	# not.
+	var wind_dir := WorldHash.hash2(0, 0, world_seed, SALT_WIND) % GOLDEN_N
+
 	# A OR B, hashed once for the whole tree. Per-tree, never per-block: the
 	# mesher merges blocks of one colour into one quad, so a crown of two
 	# interleaved shades would cost hundreds of quads instead of a few, for a
@@ -457,6 +492,7 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 		"trunk_width": trunk_width(height, species),
 		"cell": Vector2i(cell_x, cell_z),
 		"seed": world_seed,
+		"wind_dir": wind_dir,
 	}
 
 
@@ -504,11 +540,11 @@ static func draw(writer, species: int, bx: int, ground: int, bz: int,
 		SHAPE_WHORL_CONE:
 			return _draw_whorl_cone(writer, bx, ground, bz, params)
 		SHAPE_DOME:
-			return _draw_dome(writer, bx, ground, bz, params)
+			return _draw_beech(writer, bx, ground, bz, params)
 		SHAPE_MOUND:
 			return _draw_mound(writer, bx, ground, bz, params)
 		SHAPE_SLENDER:
-			return _draw_slender(writer, bx, ground, bz, params)
+			return _draw_birch(writer, bx, ground, bz, params)
 		SHAPE_BARE:
 			return _draw_bare(writer, bx, ground, bz, params)
 	return 0
@@ -1102,33 +1138,460 @@ static func _draw_dead_stubs(writer, bx: int, ground: int, bz: int,
 	return drawn
 
 
-## BEECH. A dome: an ellipsoid crown, slightly wider than tall, on a clean
-## trunk.
+# --- The broadleaves (trees v1 Stage 2) --------------------------------------
+#
+# art-direction 2.5: a beech is "an oblate scallop 1.2-1.3x wider than tall,
+# widest at 40% of the crown, a sky gap under it"; a birch is the pale trunk,
+# and the pale trunk stays full height and visible. The consts below are what
+# those two sentences cost in numbers, beside the shapes that read them.
+
+## The beech's width : height, and how much of twice its half-width a LOBED
+## union actually spans.
 ##
-## The point of it is contrast with the conifers. A forest of nothing but cones
-## has one silhouette repeated at three sizes; a broadleaf among them gives the
-## eye something to measure the cones against, which is why beech is weighted
-## heavily at the bottom of the forest band where it is most visible from the
-## meadow below.
-static func _draw_dome(writer, bx: int, ground: int, bz: int,
+## A single ellipsoid 1.25 wide is 1.25 wide from every azimuth, which is the
+## solid of revolution this stage exists to delete. Two lobes that between them
+## reach the envelope in two directions and fall short of it everywhere else
+## average about seven eighths of it - so the crown HEIGHT is derived from the
+## envelope through that factor, or a lobed beech comes out taller than 2.5
+## asks exactly when the lobes are doing their job.
+const BEECH_OBLATE_MIN := 1.20
+const BEECH_OBLATE_MAX := 1.30
+const BEECH_UNION := 0.88
+
+## Where the crown starts, as a fraction of total height, hashed +/- 0.08.
+##
+## THE SKY GAP IS THIS NUMBER. 2.5 asks for "a sky gap under it on a clean
+## trunk", and on a voxel tree that is not a subtraction - it is where the
+## foliage begins. Four tenths of the height in bare trunk, with the crown's own
+## underside falling away above it (see BEECH_WIDE), is the whole of it.
+const BEECH_BASE := 0.40
+const BEECH_BASE_JITTER := 0.08
+
+## The shortest crown, in layers, and the shortest as a share of the height the
+## trunk fraction left over.
+##
+## THE FLOOR IS THE HERO'S, NOT THE BEECH'S. A hero draws as its parent, and a
+## beech-parent hero is up to 84 blocks tall with a crown radius capped at 16:
+## the oblate rule alone would give it a 23-layer crown on 61 blocks of bare
+## trunk, which is a lollipop with a redesign inside it. The hero is
+## re-proportioned in Stage 3; until then it keeps two thirds of the space it
+## had. The floor does not bind on any beech - a beech's oblate crown is always
+## the taller of the two numbers.
+const BEECH_CROWN_MIN := 4
+const BEECH_CROWN_FLOOR := 0.65
+
+## Two to four lobes, and each one's horizontal radius as a fraction of the
+## crown's half-width.
+##
+## BIG / MEDIUM / SMALL, AT ROUGHLY 60 / 25 / 15 OF THE VOLUME (trees research
+## 2: broadleaf crowns are 2-4 overlapping lobes in a big/medium/small
+## hierarchy). Volume goes as radius squared times vertical span, so 0.80 over a
+## whole crown, 0.60 over seven tenths of one and 0.50 over half of one come out
+## at 62 / 24 / 13 - and it is a HIERARCHY rather than three equal blobs,
+## because three equal blobs are a cloud.
+const BEECH_LOBE_MIN := 2
+const BEECH_LOBE_MAX := 4
+const BEECH_LOBE_A := [0.72, 0.54, 0.46, 0.42]
+
+## And the same two when the tree forked: closer in size, because a forked beech
+## carries two leaders and neither of them is the whole tree.
+const BEECH_LOBE_FORK := [0.62, 0.58]
+
+## Each lobe's vertical span, as fractions of the crown's own height. Lobe 0
+## spans all of it; the others start above the underside and stop short of the
+## top, so the outline is scalloped at both ends and not only in plan.
+const BEECH_LOBE_LO := [0.00, 0.30, 0.12, 0.45]
+const BEECH_LOBE_HI := [0.86, 1.00, 0.64, 0.94]
+
+## Which of the thirteen directions each lobe leans, as a step off the tree's
+## own. Six of thirteen is 166 degrees - the medium lobe sits opposite the big
+## one, which is what a fork does and what a scallop looks like.
+const BEECH_LOBE_DIR := [0, 6, 5, 10]
+
+## How much of its available offset a SMALL lobe takes.
+##
+## THE HARD CAP IS THREE SILHOUETTE EVENTS PER TREE (trees research 2, Harper:
+## "I try to leave everything out"), and a lobe is an event only if it breaks
+## the outline. So the big and the medium lobe are pushed out until they touch
+## the envelope - one event, and it is the scallop - while the small ones sit at
+## half of theirs, inside the outline, where they cost the eye nothing and give
+## the crown its lumpiness. That leaves two events for the bites.
+const BEECH_TUCK := 0.5
+
+## Where a lobe is widest as a fraction of its own height, and how far its upper
+## half reaches.
+##
+## 0.40 IS 2.5's NUMBER, and it is what makes the underside fall away: below the
+## widest point the profile runs out to nothing over four tenths of the crown,
+## above it over six. The upper divisor is 0.63 rather than 0.60 so the top
+## layer still carries a quarter of the radius - a beech is domed, not pointed.
+const BEECH_WIDE := 0.40
+const BEECH_TOP := 0.63
+
+## The narrowest a hashed plan ellipse gets.
+##
+## AREA IS HELD: the long axis is the nominal radius divided by the root of the
+## ratio and the short one multiplied by it, so a beech carries the same amount
+## of tree whichever way its ellipse points and the mean crown mass does not
+## move. The axis SWAP is hashed too, or every beech in the world would be long
+## in the same direction, which is a solid of revolution with extra steps.
+const BEECH_ELLIPSE_MIN := 0.80
+
+## The share of beeches that fork, where they fork, and how far apart the two
+## leaders stand.
+##
+## THE FORK IS THE CURE FOR THE DOME (trees research 3, lever 10). Two beeches
+## in five, between 55 and 75 per cent of the height - which is inside the
+## crown, so the leaders are read through foliage rather than against sky.
+const BEECH_FORK_CHANCE := 0.40
+const BEECH_FORK_LO := 0.55
+const BEECH_FORK_HI := 0.75
+const BEECH_FORK_MIN := 1
+const BEECH_FORK_MAX := 3
+
+## One or two bites, their radius and how deep they cut as fractions of the
+## crown's half-width, and the band of the crown they land in.
+##
+## SUBTRACT, NEVER ADD. A bite is a sphere centred OUTSIDE the silhouette, so it
+## can only remove - and it is the one lever that still reads at sixty to ninety
+## metres, where a bump does not.
+const BEECH_BITE_MIN := 1
+const BEECH_BITE_MAX := 2
+const BEECH_BITE_R := 0.55
+const BEECH_BITE_DEPTH := 0.35
+const BEECH_BITE_LO := 0.25
+const BEECH_BITE_HI := 0.85
+const BEECH_BITE_DIR := [3, 9]
+
+## How far into the crown the trunk is drawn, as a fraction of the crown's
+## height, so the foliage wraps the trunk instead of balancing on it.
+const BEECH_TRUNK_INTO := 0.45
+
+## The limb blocks entering the crown underside: how many, where up the crown,
+## and how far past the trunk they reach.
+##
+## THE ONE DETAIL THAT SEPARATES "BEECH" FROM "LOLLIPOP" (trees research 2:
+## always one visible fork or limb entering the crown from below). Every beech
+## gets one or two, in TRUNK id and drawn BEFORE the foliage so the leaves -
+## which go over air only - cannot paint over them, and on one of the four AXES
+## so each block has a face against the one inward of it.
+const BEECH_LIMB_MIN := 1
+const BEECH_LIMB_MAX := 2
+const BEECH_LIMB_LO := 0.08
+const BEECH_LIMB_HI := 0.28
+const BEECH_LIMB_LEN := 2
+
+
+## BEECH. An oblate scallop: two to four overlapping ellipsoid LOBES in a
+## big/medium/small hierarchy, one or two concave BITES taken out of the outside
+## of it, two trees in five FORKED, a limb or two entering the underside, and a
+## sky gap under all of it on a clean trunk.
+##
+## WHAT THIS REPLACES is the worst shape in the file. The old beech was one
+## centred ellipsoid on one axis - `build/gallery/memo-baseline/
+## species-beech.png` - and Stage 0 measured it at SYMMETRY 0.93, TWINS 1.00:
+## two beeches hashed from two different cells were the same tree, and each of
+## them was the same tree from every azimuth. It is the single picture this epic
+## is judged by.
+##
+## THE CROWN IS BUILT AS A SET AND FLOODED FROM THE TRUNK. Beech is solid, so
+## the lobes alone cannot strand anything - but a bite is a sphere subtracted
+## from a union of spheres, and there is no local test that says whether it has
+## just severed one. So rather than prove it cannot, the crown is rasterised
+## into a byte volume, flooded in three dimensions from the cells the trunk
+## stands in, and only what the flood reached is written. It is a pure function
+## of this tree's own params - no writer read-back, no order dependence - so
+## every chunk that draws this beech computes the same set and
+## `_test_species_borders` holds. It is the same guarantee Stage 1 gave the
+## larch's shelves, one dimension up.
+static func _draw_beech(writer, bx: int, ground: int, bz: int,
 		params: Dictionary) -> int:
 	var h: int = params["height"]
-	var r: int = params["crown"]
-	var crown_base := ground + maxi(1, int(round(float(h) * 0.40)))
+	var table_r: int = maxi(int(params["crown"]), 1)
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var id: int = params["leaves"]
+	var w: int = maxi(int(params.get("trunk_width", 1)), 1)
+	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_BEECH)
+	var roll2 := _hash_keyed(cell, seed, SALT_BEECH, 2)
 	var top := ground + h
-	var crown_h := maxi(top - crown_base, 1)
-	var centre := float(crown_base) + float(crown_h) * 0.5
-	var ry := maxf(float(crown_h) * 0.5, 1.0)
-	var drawn := 0
 
-	drawn += _draw_trunk(writer, bx, ground, bz, int(centre), params)
+	# THE PROPORTION IS THE SHAPE, and the table's crown is only the ceiling it
+	# may not pass - the discipline the spruce's spire takes. The crown's height
+	# comes from the half-width through the oblate ratio, so a beech is 1.2 to
+	# 1.3 times wider than tall whatever the table rolled; and where the trunk
+	# fraction did not leave that much room the HALF-WIDTH comes back down
+	# instead, so the tree is a smaller scallop rather than a taller one.
+	var oblate := lerpf(BEECH_OBLATE_MIN, BEECH_OBLATE_MAX,
+		float(roll & 0xFF) / 255.0)
+	var base_frac := BEECH_BASE + BEECH_BASE_JITTER \
+		* (float((roll >> 8) & 0xFF) / 127.5 - 1.0)
+	var base0 := ground + maxi(1, int(round(float(h) * base_frac)))
+	var avail := maxi(top - base0 + 1, BEECH_CROWN_MIN)
+	var crown_h := clampi(
+		int(round(2.0 * float(table_r) * BEECH_UNION / oblate)),
+		mini(maxi(BEECH_CROWN_MIN,
+			int(round(float(avail) * BEECH_CROWN_FLOOR))), avail),
+		avail)
+	var rw := clampi(int(round(float(crown_h) * oblate
+		/ (2.0 * BEECH_UNION))), 1, table_r)
+	var crown_base := top - crown_h + 1
 
-	for y in range(crown_base, top + 1):
-		var dy := (float(y) - centre) / ry
-		if absf(dy) > 1.0:
+	var ratio := lerpf(BEECH_ELLIPSE_MIN, 1.0, float((roll >> 16) & 0xF) / 15.0)
+	var sq := sqrt(ratio)
+	var swap := ((roll >> 20) & 1) == 1
+
+	var n_lobes := BEECH_LOBE_MIN \
+		+ int((roll >> 21) % (BEECH_LOBE_MAX - BEECH_LOBE_MIN + 1))
+	var d0 := int((roll >> 24) % GOLDEN_N)
+	var forked := (roll2 & 0xFF) < int(BEECH_FORK_CHANCE * 256.0)
+	var fork_d := BEECH_FORK_MIN \
+		+ int((roll2 >> 8) % (BEECH_FORK_MAX - BEECH_FORK_MIN + 1))
+
+	# Each lobe as (plan radius along x, along z, offset x, offset z) and its
+	# (bottom, top) layer. Laid out before anything is drawn, because a leader
+	# is drawn UP TO its own lobe and the limbs go in under the lowest one.
+	var lobes: Array[Vector4i] = []
+	var spans: Array[Vector2i] = []
+	for i in n_lobes:
+		var lr := _hash_keyed(cell, seed, SALT_LOBE, i)
+		var frac: float = BEECH_LOBE_FORK[i] if forked and i < 2 \
+			else BEECH_LOBE_A[i]
+		var m := maxi(int(round(float(rw) * frac)), 1)
+		var ra := clampi(int(round(float(m) / sq)), 1, rw)
+		var rb := clampi(int(round(float(m) * sq)), 1, rw)
+		if swap:
+			var t := ra
+			ra = rb
+			rb = t
+		# THE OFFSET IS WHAT THE ENVELOPE HAS LEFT OVER. `_golden_offset` never
+		# returns a component longer than the distance asked of it, so a lobe
+		# pushed out by `rw - reach` cannot write further than `rw` from the
+		# root - which is the crown radius the table declared and every column
+		# in the world widened its candidate scan by.
+		var reach := maxi(ra, rb)
+		var omax := maxi(rw - reach, 0)
+		var o := omax if i < 2 else int(round(float(omax) * BEECH_TUCK))
+		var off := _golden_offset(
+			GOLDEN_DIRS[(d0 + int(BEECH_LOBE_DIR[i])) % GOLDEN_N], o)
+		var jit := 0 if i == 0 else int(lr % 3) - 1
+		var y0 := clampi(crown_base
+			+ int(round(float(crown_h - 1) * BEECH_LOBE_LO[i])) + jit,
+			crown_base, top)
+		var y1 := clampi(crown_base
+			+ int(round(float(crown_h - 1) * BEECH_LOBE_HI[i])) + jit,
+			mini(y0 + 1, top), top)
+		lobes.append(Vector4i(ra, rb, off.x, off.y))
+		spans.append(Vector2i(y0, y1))
+
+	# The bites, as (offset x, offset z, altitude, radius). A bite that would
+	# reach the CORE is skipped rather than moved: the flood below seeds on the
+	# trunk's own cells, and a bite that ate them would take the crown with it.
+	var core := w + 1
+	var n_bites := BEECH_BITE_MIN \
+		+ int((roll2 >> 12) % (BEECH_BITE_MAX - BEECH_BITE_MIN + 1))
+	var bites: Array[Vector4i] = []
+	for j in n_bites:
+		var brl := _hash_keyed(cell, seed, SALT_BITE, j)
+		var br := clampi(int(round(float(rw) * BEECH_BITE_R))
+			+ int(brl % 3) - 1, 2, rw)
+		var depth := clampi(int(round(float(rw) * BEECH_BITE_DEPTH))
+			+ int((brl >> 4) % 3) - 1, 2, maxi(rw - core, 0))
+		if depth < 2:
 			continue
-		var ri := int(round(float(r) * sqrt(maxf(1.0 - dy * dy, 0.0))))
-		drawn += _disc(writer, bx, y, bz, ri, params)
+		var boff := _golden_offset(GOLDEN_DIRS[
+			(d0 + int(BEECH_BITE_DIR[j % BEECH_BITE_DIR.size()])) % GOLDEN_N],
+			rw + br - depth)
+		if boff.x * boff.x + boff.y * boff.y < (br + core) * (br + core):
+			continue
+		bites.append(Vector4i(boff.x, boff.y,
+			crown_base + int(round(float(crown_h - 1)
+				* lerpf(BEECH_BITE_LO, BEECH_BITE_HI,
+					float((brl >> 8) & 0xFF) / 255.0))), br))
+
+	# The trunk, the leaders and the limbs go in FIRST and in trunk id, so the
+	# foliage - drawn over air only - cannot paint over any of them.
+	var drawn := 0
+	var stem_top := crown_base + int(round(float(crown_h) * BEECH_TRUNK_INTO))
+	if forked:
+		var fork_y := clampi(ground + int(round(float(h)
+			* lerpf(BEECH_FORK_LO, BEECH_FORK_HI,
+				float((roll2 >> 16) & 0xFF) / 255.0))),
+			mini(crown_base, top - 2), top - 2)
+		stem_top = fork_y
+		drawn += _draw_trunk(writer, bx, ground, bz, fork_y, params)
+		var lw := maxi(w - 1, 1)
+		for i in 2:
+			var sp: Vector2i = spans[mini(i, spans.size() - 1)]
+			var lead_top := clampi(sp.x
+				+ int(round(float(sp.y - sp.x) * BEECH_WIDE)), fork_y + 1, top)
+			drawn += _draw_leader(writer, bx, bz, fork_y + 1, lead_top,
+				GOLDEN_DIRS[(d0 + int(BEECH_LOBE_DIR[i])) % GOLDEN_N],
+				(fork_d + 1 - i) / 2, lw, params["trunk_id"])
+	else:
+		drawn += _draw_trunk(writer, bx, ground, bz, stem_top, params)
+
+	var n_limbs := BEECH_LIMB_MIN \
+		+ int((roll2 >> 24) % (BEECH_LIMB_MAX - BEECH_LIMB_MIN + 1))
+	for j in n_limbs:
+		var lrl := _hash_keyed(cell, seed, SALT_LIMB, j)
+		var yl := clampi(crown_base + int(round(float(crown_h - 1)
+			* lerpf(BEECH_LIMB_LO, BEECH_LIMB_HI, float(lrl & 0xFF) / 255.0))),
+			crown_base, maxi(stem_top, crown_base))
+		var step: Vector2i = NUB_DIRS[int((lrl >> 8) % NUB_DIRS.size())]
+		for d in range(1, BEECH_LIMB_LEN + 1):
+			# Out past the trunk's own width on the sides it grows to, so the
+			# first block of a limb has a face against the trunk and every one
+			# after it against the block inward of it.
+			var lx := 0
+			var lz := 0
+			if step.x != 0:
+				lx = (w - 1 + d) if step.x > 0 else -d
+			else:
+				lz = (w - 1 + d) if step.y > 0 else -d
+			writer.set_block(bx + lx, yl, bz + lz, params["trunk_id"], false)
+			drawn += 1
+
+	if id == Block.AIR:
+		return drawn
+
+	# --- the crown, as a set, flooded, then written -------------------------
+	var side := 2 * rw + 1
+	var plane := side * side
+	var keep := PackedByteArray()
+	keep.resize(plane * crown_h)
+
+	for i in lobes.size():
+		var lobe: Vector4i = lobes[i]
+		var sp: Vector2i = spans[i]
+		var span := maxi(sp.y - sp.x, 1)
+		for y in range(sp.x, sp.y + 1):
+			var v := float(y - sp.x) / float(span)
+			# WIDEST AT 0.40 OF ITS OWN HEIGHT, with a different quarter-ellipse
+			# either side of that: the underside falls away, the top is domed.
+			var q := (BEECH_WIDE - v) / BEECH_WIDE if v <= BEECH_WIDE \
+				else (v - BEECH_WIDE) / BEECH_TOP
+			var f := sqrt(maxf(1.0 - q * q, 0.0))
+			var ay := int(round(float(lobe.x) * f))
+			var by := int(round(float(lobe.y) * f))
+			var iy := (y - crown_base) * plane
+			for dz in range(lobe.w - by, lobe.w + by + 1):
+				var row := iy + (dz + rw) * side
+				for dx in range(lobe.z - ay, lobe.z + ay + 1):
+					if not _in_plan_ab(dx - lobe.z, dz - lobe.w, ay, by):
+						continue
+					if _bitten(bites, dx, dz, y):
+						continue
+					keep[row + dx + rw] = 1
+
+	# Seeded on the trunk's own footprint and on the big lobe's axis, which the
+	# bites are forbidden to reach and which the trunk therefore always
+	# connects to.
+	var seeds: Array[int] = []
+	_add_seed(seeds, lobes[0].z, lobes[0].w, rw, side)
+	for dz in w:
+		for dx in w:
+			_add_seed(seeds, dx, dz, rw, side)
+	var stack: Array[int] = []
+	for iy in crown_h:
+		for s in seeds:
+			var i2: int = iy * plane + s
+			if keep[i2] == 1:
+				keep[i2] = 2
+				stack.push_back(i2)
+
+	while not stack.is_empty():
+		var i3: int = stack.pop_back()
+		var ry := i3 / plane
+		var rem := i3 % plane
+		var rz := rem / side
+		var rx := rem % side
+		if rx > 0 and keep[i3 - 1] == 1:
+			keep[i3 - 1] = 2
+			stack.push_back(i3 - 1)
+		if rx < side - 1 and keep[i3 + 1] == 1:
+			keep[i3 + 1] = 2
+			stack.push_back(i3 + 1)
+		if rz > 0 and keep[i3 - side] == 1:
+			keep[i3 - side] = 2
+			stack.push_back(i3 - side)
+		if rz < side - 1 and keep[i3 + side] == 1:
+			keep[i3 + side] = 2
+			stack.push_back(i3 + side)
+		if ry > 0 and keep[i3 - plane] == 1:
+			keep[i3 - plane] = 2
+			stack.push_back(i3 - plane)
+		if ry < crown_h - 1 and keep[i3 + plane] == 1:
+			keep[i3 + plane] = 2
+			stack.push_back(i3 + plane)
+
+	for iy in crown_h:
+		var y := crown_base + iy
+		var base_i := iy * plane
+		for dz in range(-rw, rw + 1):
+			var row := base_i + (dz + rw) * side
+			for dx in range(-rw, rw + 1):
+				if keep[row + dx + rw] != 2:
+					continue
+				writer.set_block(bx + dx, y, bz + dz, id, true)
+				drawn += 1
+	return drawn
+
+
+## One plan cell of the flood's seed set, if it is inside the crown's box.
+##
+## The bound matters: a hero's trunk is four voxels square and its crown box can
+## be narrower than that, so a seed taken on faith would index past the array.
+static func _add_seed(seeds: Array[int], dx: int, dz: int, rw: int,
+		side: int) -> void:
+	if absi(dx) > rw or absi(dz) > rw:
+		return
+	var i := (dz + rw) * side + dx + rw
+	if not seeds.has(i):
+		seeds.append(i)
+
+
+## Is this cell inside any of the bites?
+##
+## A true sphere, because a bite is read as a scoop out of the side of a crown
+## and a scoop with flat sides is a chamfer. It costs two multiply-adds per
+## candidate cell, and it is the only thing in the beech that subtracts.
+static func _bitten(bites: Array[Vector4i], dx: int, dz: int, y: int) -> bool:
+	for b in bites:
+		var ex := dx - b.x
+		var ez := dz - b.y
+		var ey := y - b.z
+		if ex * ex + ez * ez + ey * ey <= b.w * b.w:
+			return true
+	return false
+
+
+## One leader of a forked beech: a narrow stem that steps sideways one block a
+## layer until it stands `dist` off the trunk, then rises straight.
+##
+## ONE STEP AT A TIME, AND THE BRIDGE BLOCKS ARE WHY. A one-wide column that
+## moves sideways at all between two layers touches the block below it at an
+## EDGE and at no face - the same floating block the dead stubs and the leader
+## nubs were fixed for in Stage 1, and the sweep caught it again here on ANY
+## step rather than only on a diagonal one. Two blocks in the upper layer - one
+## directly above the old offset, one across to the new one - make every step
+## face-connected. A two-wide column overlaps itself across a step and needs
+## none of this.
+static func _draw_leader(writer, bx: int, bz: int, y0: int, y1: int,
+		dir: Vector2i, dist: int, w: int, id: int) -> int:
+	var drawn := 0
+	var prev := Vector2i.ZERO
+	for y in range(y0, y1 + 1):
+		var off := _golden_offset(dir, mini(y - y0 + 1, maxi(dist, 0)))
+		if w < 2 and off != prev:
+			writer.set_block(bx + prev.x, y, bz + prev.y, id, false)
+			writer.set_block(bx + off.x, y, bz + prev.y, id, false)
+			drawn += 2
+		for dz in w:
+			for dx in w:
+				writer.set_block(bx + off.x + dx, y, bz + off.y + dz, id, false)
+				drawn += 1
+		prev = off
 	return drawn
 
 
@@ -1289,32 +1752,346 @@ static func _radius_jitter(cell: Vector2i, seed: int, layer: int) -> int:
 		_hash_keyed(cell, seed, SALT_JITTER, layer) % JITTER_STEPS.size()])
 
 
-## BIRCH. Slender, pale-barked, with a small loose crown you can see through.
+## The birch's crown, as fractions of TOTAL height: where it starts (hashed),
+## where its widest clump sits, how fast it narrows either side of that, and how
+## narrow it may get.
 ##
-## The trunk is drawn to FULL height rather than stopping inside the crown, and
-## that is the whole species: a birch is recognised by its bark, and a birch
-## whose trunk vanishes into foliage half way up is just a thin beech. The
-## crown is sparse for the same reason - light through the canopy is what a
-## stand of birch looks like.
-static func _draw_slender(writer, bx: int, ground: int, bz: int,
+## THE PALE TRUNK IS THE SPECIES (2.5), which is why the trunk is drawn to full
+## height and why the crown is not a crown so much as three to five small clumps
+## strung along the top half of the stem with sky between them. A birch whose
+## foliage closed over its own trunk would be a thin beech.
+const BIRCH_CROWN_BASE := 0.52
+const BIRCH_CROWN_JITTER := 0.03
+const BIRCH_WIDE := 0.65
+const BIRCH_WIDE_SPREAD := 0.50
+const BIRCH_NARROW := 0.80
+
+## The clumps: how many, how deep, and how much air between two of them.
+##
+## THREE TO FIVE, AND THE SPAN DECIDES WHICH, laid out DOWNWARDS from the top
+## exactly as the larch's ziggurat is - a crown laid out from the top can never
+## leave the tree with a bald tip, and where the stack runs out is where the
+## crown begins. The gap is the species: it is what "you can see through a
+## birch" means at a distance where a per-block hole is invisible.
+const CLUMP_MIN := 3
+const CLUMP_MAX := 5
+const CLUMP_DEEP := 4
+const CLUMP_SHALLOW := 2
+const CLUMP_GAP_MIN := 1
+const CLUMP_GAP_MAX := 2
+
+## The bow, in blocks, and the height above which a birch may take the second.
+##
+## B DOMINANT AND A ZERO - A BIRCH ARCHES, IT DOES NOT TILT. The drift curve the
+## research prices is `off(t) = A*t + B*4t(1-t)`: A leans the tree, B bows it,
+## and the two read completely differently at stand scale. A stand of leaning
+## trees is a windthrow; a stand of bowed ones is a birch wood. So A is zero and
+## the whole displacement is the single-peaked term, which returns the crown
+## over the root at the top. Never more than two blocks, and only on a tall one.
+const BIRCH_BOW_MIN := 1
+const BIRCH_BOW_MAX := 2
+const BIRCH_BOW_TALL := 20
+
+## The share of birches that grow as two stems from one base, how far aside the
+## second one stands, and the fill left in a clump once the shape carries the
+## openness.
+##
+## 0.80 AND CLUMPED, not 0.70 per block: see the table row. The holes are a
+## texture on a solid thing now, and the sky comes from the gaps between the
+## clumps, where the mesher charges nothing for it.
+const BIRCH_TWO_CHANCE := 0.40
+## How many arms a clump's edge is cut into. Three: a clump is small, and
+## more arms than that on a radius of three is a circle again.
+const BIRCH_ARMS := 3
+const BIRCH_STEM_MIN := 1
+const BIRCH_STEM_MAX := 2
+const BIRCH_FILL := 0.88
+
+
+## BIRCH. The pale trunk, full height and visible, with three to five small
+## clumps strung along the top half of it - and the whole stem BOWED along the
+## world's one wind direction.
+##
+## WHAT THIS REPLACES was a lollipop: one ellipsoid over the top 45%, its holes
+## hashed per block. Stage 0 measured SYMMETRY 0.78 and TWINS 0.99, and the 0.78
+## was not structure - it was per-block NOISE, the cheapest possible way to look
+## different and the most expensive one to draw (588 blocks bought 937 quads,
+## more than a max beech's whole crown). The noise is gone and real structure
+## replaces it: where the clumps sit, which way the tree bows, and whether it
+## grew one stem or two.
+##
+## Everything is hashed from the cell except the wind, which is hashed from the
+## SEED - see `params_for()`. Foliage goes through `_whorl_disc`, so the clumped
+## fill takes the flood-from-axis guarantee with it and nothing floats.
+static func _draw_birch(writer, bx: int, ground: int, bz: int,
 		params: Dictionary) -> int:
 	var h: int = params["height"]
-	var r: int = params["crown"]
-	var crown_base := ground + maxi(1, int(round(float(h) * 0.55)))
+	var table_r: int = maxi(int(params["crown"]), 1)
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_BIRCH)
+	var roll2 := _hash_keyed(cell, seed, SALT_BIRCH, 2)
 	var top := ground + h
-	var crown_h := maxi(top - crown_base, 1)
-	var centre := float(crown_base) + float(crown_h) * 0.5
-	var ry := maxf(float(crown_h) * 0.5, 1.0)
+
+	# THE WHOLE WOOD BOWS ONE WAY, and one step of variation off it is all a
+	# tree gets. Correlation beats variation at stand scale (trees research 3,
+	# lever 12): a treeline that combed in thirteen directions would read as
+	# thirteen accidents rather than as weather.
+	#
+	# THE BOW, THE SPLAY AND THE CLUMP OFFSET SPEND ENVELOPE, and they spend
+	# it outside the birch's own table crown - eleven blocks of Chebyshev
+	# reach against the row's five. That is the spruce's precedent from Stage
+	# 1, where the drift is added on top of a spire already at the table
+	# radius: the bound the world actually widens its candidate scan by is
+	# `max_reach()`, which is the WIDEST species' crown plus the widest trunk
+	# - twenty-eight blocks - and a birch at eleven is nowhere near it. The
+	# beech, which IS one of the wide species, stays strictly inside its own.
+	var wind := (int(params.get("wind_dir", 0)) + GOLDEN_N
+		+ int(roll % 3) - 1) % GOLDEN_N
+	var bow_dir: Vector2i = GOLDEN_DIRS[wind]
+	var bow := BIRCH_BOW_MIN
+	if h >= BIRCH_BOW_TALL:
+		bow += int((roll >> 4) % (BIRCH_BOW_MAX - BIRCH_BOW_MIN + 1))
+
+	var cb_frac := BIRCH_CROWN_BASE + BIRCH_CROWN_JITTER \
+		* (float((roll >> 8) & 0xFF) / 127.5 - 1.0)
+	var crown_lo := ground + maxi(1, int(round(float(h) * cb_frac)))
+	var span := maxi(top - crown_lo + 1, CLUMP_SHALLOW)
+	# THE LAYOUT IS THE ONE THAT FILLS THE MOST OF THE CROWN, and where two
+	# fill the same it is the one with MORE clumps (judge round 4).
+	#
+	# Two rounds of picking the count first and letting the depth fall out of
+	# it, and two of the reverse, and both are wrong for the same reason: the
+	# span is small - eleven to thirteen layers on an ordinary birch - and
+	# every arrangement that fits trades depth against count almost exactly.
+	# Three clumps of three fill nine layers of thirteen; four of two fill
+	# eight. A tree read as bare poles with bracket fungus on one side either
+	# way, because the layout was never what was starving it - the WIDTH was.
+	# So this searches the nine arrangements and keeps the fullest, the width
+	# below takes the table radius, and the gaps take whatever is left, which
+	# is one layer nearly always.
+	var deep := CLUMP_SHALLOW
+	var n := CLUMP_MIN
+	var best := -1
+	for d in range(CLUMP_SHALLOW, CLUMP_DEEP + 1):
+		for c in range(CLUMP_MIN, CLUMP_MAX + 1):
+			if c * d + (c - 1) * CLUMP_GAP_MIN > span:
+				continue
+			if c * d > best or (c * d == best and c > n):
+				best = c * d
+				deep = d
+				n = c
+	if best < 0:
+		# A tree too short for even three clumps: take what the span will hold.
+		n = clampi((span + CLUMP_GAP_MIN) / (CLUMP_SHALLOW + CLUMP_GAP_MIN),
+			1, CLUMP_MAX)
+
+	var gaps: Array[int] = []
+	var stack_h := n * deep
+	var remain := span - stack_h
+	for k in maxi(n - 1, 0):
+		var left := n - 1 - k
+		var g := clampi(remain / maxi(left, 1), CLUMP_GAP_MIN, CLUMP_GAP_MAX)
+		if g < CLUMP_GAP_MAX and remain - g * left > 0 \
+				and ((roll2 >> (8 + k)) & 1) == 1:
+			g += 1
+		g = clampi(g, CLUMP_GAP_MIN,
+			maxi(remain - (left - 1) * CLUMP_GAP_MIN, CLUMP_GAP_MIN))
+		gaps.append(g)
+		stack_h += g
+		remain -= g
+
+	# Where each clump's bottom layer sits, worked out before anything is drawn
+	# so the second stem can stop at the top of the last clump it carries.
+	var floors: Array[int] = []
+	var y := maxi(top - stack_h + 1, ground + 2)
+	for k in n:
+		floors.append(y)
+		y += deep
+		if k < n - 1:
+			y += gaps[k]
+	# AND THE TOP CLUMP IS A CAP: it sits ON the stem top, and it never sits
+	# off to one side (judge round 4). The stack is laid out from the top
+	# already, so this only bites on a tree short enough for the clamp above
+	# to have pushed the whole stack down - and when it does bite, the tree
+	# ends in a bare spike, which is the one thing no birch may do. The gap a
+	# birch is for lives BETWEEN the clumps, never over the last one.
+	floors[n - 1] = maxi(floors[n - 1], top - deep + 1)
+
+	# TWO STEMS FROM ONE BASE, on two birches in five. The second is shorter,
+	# carries the lowest clump or two, and steps aside ONE BLOCK A LAYER so its
+	# foot is against the first one's rather than beside it in the air.
+	var two := (roll2 & 0xFF) < int(BIRCH_TWO_CHANCE * 256.0)
+	var take := 0
+	var side_dir: Vector2i = GOLDEN_DIRS[(wind + 3) % GOLDEN_N]
+	var side_d := 0
+	if two and n >= 2:
+		take = mini(1 + int((roll2 >> 20) & 1), n - 1)
+		side_d = BIRCH_STEM_MIN \
+			+ int((roll2 >> 22) % (BIRCH_STEM_MAX - BIRCH_STEM_MIN + 1))
+
+	var drawn := _draw_bowed_stem(writer, bx, ground, bz, ground + 1, top - 1,
+		bow_dir, bow, h, side_dir, 0, params)
+	if take > 0:
+		drawn += _draw_bowed_stem(writer, bx, ground, bz, ground + 1,
+			mini(floors[take - 1] + deep, top - 1), bow_dir, bow, h,
+			side_dir, side_d, params)
+
+	var id: int = params["leaves"]
+	if id == Block.AIR:
+		return drawn
+	var limits: Array[int] = []
+	limits.resize(GOLDEN_N)
+	for k in n:
+		var stem_off := _golden_offset(side_dir, side_d) if k < take \
+			else Vector2i.ZERO
+		var soff := stem_off
+		var mid := floors[k] + deep / 2
+		# WIDEST AT TWO THIRDS OF THE TREE, not of the crown. The crown is the
+		# top half, so a profile read against the crown would put the widest
+		# clump in the middle of it and the birch back on the lollipop.
+		var u := (float(mid - ground) / float(maxi(h, 1)) - BIRCH_WIDE) \
+			/ BIRCH_WIDE_SPREAD
+		var wgt := clampf(1.0 - u * u, BIRCH_NARROW, 1.0)
+		# THE DEPTH SETS THE WIDTH, AND IT SETS IT TWO BLOCKS OVER (judge
+		# rounds 1-4). At the table's own radius a clump is nine blocks across
+		# and reads as a PLATE bolted to the stem - the first vary row was a
+		# bonsai, not a birch. But narrowing it was the wrong half of the
+		# answer twice over: at the depth exactly, and even at depth plus one,
+		# the crown was a rounding error on a pole. With four or five clumps a
+		# layer apart the mass has to come from somewhere, and width is where
+		# the quads are cheapest - a wide clump greedy-meshes into long runs
+		# where a tall one is all rim.
+		#
+		# THREE OVER THE DEPTH, WHICH MAKES THE TABLE RADIUS THE REAL CEILING.
+		# With the count biased to four or five the depth lands at two on every
+		# ordinary birch, so a cap of depth-plus-two held the crown to four
+		# blocks against a table radius of five and the tree stayed bald. The
+		# depth still governs - it is what keeps a two-layer clump from being
+		# nine blocks across on a shrub - but on a full-grown birch the table
+		# is what binds, which is where it should have been all along.
+		var rk := clampi(int(round(float(mini(table_r, deep + 3)) * wgt))
+			+ _radius_jitter(cell, seed, k), 3, table_r)
+		# AND A CLUMP SITS OFF THE STEM (judge rounds 1 and 2). Concentric
+		# clumps on one axis are a stack of PLATES however round each one is,
+		# and two rounds of narrowing them only made the pagoda thinner. The
+		# offset is what makes a stem read as STRUNG with foliage rather than
+		# skewered through it, and two clumps at nearly one height on opposite
+		# sides read as a crown rather than as a rung.
+		#
+		# ONE BLOCK, ON ONE OF THE FOUR AXES, AND NEVER ON THE CAP (judge round
+		# 4). Two blocks was too far: a clump standing that far out reads as a
+		# SHELF bolted to the side of the stem rather than a mass the stem
+		# passes through, which is the whole difference between a birch and a
+		# bracket fungus. One block still breaks the concentric stack, which is
+		# what the offset was for.
+		#
+		# A block is inside `rk - 1` of the clump's centre, which `_arm_limits`
+		# holds solid, so the offset clump still covers the stem cell each
+		# layer's flood is seeded from - which is the whole of why a clump is
+		# attached to the tree rather than hanging beside it. A DIAGONAL offset
+		# would not do: two blocks meeting at a corner meet at no face, which
+		# is Stage 1's lesson three times over.
+		var croll := _hash_keyed(cell, seed, SALT_BIRCH, 16 + k)
+		if k < n - 1 and int(croll % 3) > 0:
+			soff += NUB_DIRS[int((croll >> 2) % NUB_DIRS.size())] \
+				* mini(1, maxi(rk - 1, 0))
+		for j in deep:
+			var yy := floors[k] + j
+			if yy > top:
+				break
+			var off := _bow_at(bow_dir, bow, yy - ground, h) + soff
+			# ONLY THE TOP LAYER TAPERS (judge round 4). A clump built as
+			# `rk - 1, rk, rk - 1` is at its full width on ONE layer of three,
+			# and from the side that reads as a thin plate with a bevel - which
+			# is exactly what the vary row was showing. The down-point under
+			# every tier is a CONIFER's rule; a birch clump is a mass of leaves
+			# and wants to be full to its underside.
+			var ri := rk if j < deep - 1 else maxi(rk - 1, 1)
+			# THE CLUMP'S EDGE IS THE WHORL EDGE (judge round 2). A full
+			# octagon is a plate whatever its radius; the arms that give a
+			# spruce tier its jagged outline cost nothing here and are the
+			# difference between a disc of leaves and a clump of them. Every
+			# layer of one clump takes the SAME pattern, so a clump is one solid
+			# thing and not a stack of loose rings.
+			#
+			# AND THE ARMS ARE PAID FOR OUT OF A BLOCK OF EXTRA RADIUS WHERE THE
+			# TABLE ALLOWS ONE (judge round 4). `_arm_limits` holds the body at
+			# `r - 1` and lets the arms own the outermost block - right for a
+			# spruce tier, where the radius IS the envelope, and a straight
+			# block of width off a birch clump that is only four wide to begin
+			# with. Asking for one more leaves the body at `ri` and the arms
+			# outside it.
+			var ra := mini(ri + 1, table_r)
+			_arm_limits(limits, ra, cell, seed, k, BIRCH_ARMS,
+				int(roll >> 12) % GOLDEN_N)
+			drawn += _whorl_disc(writer, bx + off.x, yy, bz + off.y, ra,
+				limits, params, k, ra)
+		# THE WAIST: one block of foliage through the gap, on the stem (judge
+		# round 4). Clumps with clear air between them are three SLABS on a
+		# pole - they read as separate objects, and a crown that reads as
+		# separate objects is not a crown. A three-wide column through the gap
+		# makes the whole thing one body with wide lobes and narrow waists,
+		# and it costs the sky nothing: the lobes are nine blocks across, so
+		# there are still three blocks of daylight either side of every waist.
+		# It is the larch's spine, doing the same job one species over, and it
+		# is never holed - SPARSE_CORE is what `_clump_void` protects.
+		if k < n - 1:
+			for s2 in GOLDEN_N:
+				limits[s2] = SPARSE_CORE
+			for wy in range(floors[k] + deep, mini(floors[k + 1], top + 1)):
+				var woff := _bow_at(bow_dir, bow, wy - ground, h) + stem_off
+				drawn += _whorl_disc(writer, bx + woff.x, wy, bz + woff.y,
+					SPARSE_CORE, limits, params, k, SPARSE_CORE)
+	return drawn
+
+
+## The bow: how far a stem stands off its root, `i` blocks up a tree `n` tall.
+##
+## SINGLE-PEAKED, AND NOWHERE ALTERNATING. `4t(1-t)` is one at the middle and
+## zero at both ends, so the stem leaves the root plumb, leans out over the
+## middle of its height and comes back under its own crown. The conifers'
+## `_drift_at` is the other half of the same idea - monotone, a tree that grew
+## towards the light - and between them they are the whole of "asymmetry needs a
+## cause". Per-layer alternating offsets, which neither of them does, read as
+## damage.
+static func _bow_at(dir: Vector2i, bow: int, i: int, n: int) -> Vector2i:
+	if bow <= 0 or n <= 1:
+		return Vector2i.ZERO
+	var t := float(clampi(i, 0, n - 1)) / float(n - 1)
+	return _golden_offset(dir, int(round(float(bow) * 4.0 * t * (1.0 - t))))
+
+
+## One stem of a birch: a column following the bow, which - if it is the second
+## stem - also steps sideways one block a layer until it stands `dist` off the
+## root.
+##
+## THE BRIDGE BLOCKS ARE THE SAME FIX THE LEADERS TAKE, AND THE SWEEP IS WHY
+## THEY ARE ON EVERY STEP. The first version bridged only a DIAGONAL step, on
+## the reasoning that an axis step still touches - and it does not: a one-wide
+## column at (0, y) and (-1, y + 1) shares an edge and no face. The Stage 2
+## sweep counted 9,813 loose blocks over 1,673 birches, nearly all of them
+## whole bowed stems adrift above their own foot. Any change of offset now
+## bridges. A two-wide stem overlaps itself across a step and needs none of it.
+static func _draw_bowed_stem(writer, bx: int, ground: int, bz: int,
+		y0: int, y1: int, dir: Vector2i, bow: int, n: int,
+		side_dir: Vector2i, dist: int, params: Dictionary) -> int:
+	var id: int = params["trunk_id"]
+	var w: int = maxi(int(params.get("trunk_width", 1)), 1)
 	var drawn := 0
-
-	drawn += _draw_trunk(writer, bx, ground, bz, top - 1, params)
-
-	for y in range(crown_base, top + 1):
-		var dy := (float(y) - centre) / ry
-		if absf(dy) > 1.0:
-			continue
-		var ri := int(round(float(r) * sqrt(maxf(1.0 - dy * dy, 0.0))))
-		drawn += _disc(writer, bx, y, bz, ri, params)
+	var prev := Vector2i.ZERO
+	for y in range(y0, y1 + 1):
+		var off := _bow_at(dir, bow, y - ground, n) \
+			+ _golden_offset(side_dir, mini(y - y0 + 1, maxi(dist, 0)))
+		if w < 2 and off != prev:
+			writer.set_block(bx + prev.x, y, bz + prev.y, id, false)
+			writer.set_block(bx + off.x, y, bz + prev.y, id, false)
+			drawn += 2
+		for dz in w:
+			for dx in w:
+				writer.set_block(bx + off.x + dx, y, bz + off.y + dz, id, false)
+				drawn += 1
+		prev = off
 	return drawn
 
 
@@ -1408,6 +2185,26 @@ static func _in_plan(dx: int, dz: int, r: int) -> bool:
 	if r >= OCTAGON_MIN:
 		return ax + az <= r + (r >> 1)
 	return dx * dx + dz * dz <= r * r + 1
+
+
+## Is this offset inside an ELLIPTICAL plan of semi-axes `ra` (along x) and `rb`
+## (along z)?
+##
+## The same chamfer `_in_plan` takes, generalised: the octagon's `ax + az <= r +
+## r/2` becomes `ax/ra + az/rb <= 1.5` cleared of its divisions, and the circle
+## below three blocks becomes the ellipse. With ra = rb it agrees with
+## `_in_plan` cell for cell, which is what lets the beech's lobes and the
+## conifers' whorls be the same house plan shape at different aspect ratios.
+static func _in_plan_ab(dx: int, dz: int, ra: int, rb: int) -> bool:
+	if ra <= 0 or rb <= 0:
+		return dx == 0 and dz == 0
+	var ax := absi(dx)
+	var az := absi(dz)
+	if ax > ra or az > rb:
+		return false
+	if maxi(ra, rb) >= OCTAGON_MIN:
+		return ax * rb + az * ra <= ra * rb + (ra * rb) / 2
+	return ax * ax * rb * rb + az * az * ra * ra <= ra * ra * rb * rb + ra * rb
 
 
 ## The thirteen per-sector radii one crown layer is drawn out to.
