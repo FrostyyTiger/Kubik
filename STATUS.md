@@ -1,6 +1,73 @@
 # Status
 
-The latest run is **distance v2, both nights**, on `feat/distance-v2`:
+The latest run is **trees v1**, one night, on `feat/trees-v1`:
+`docs/status/trees-v1.md`. **No two alike, and the ziggurat arrives** - all
+seven tree species re-authored against `docs/research/art-direction.md` §2.5
+"Forest", which look v2 wrote and parked. Marcel's ask was "no variation,
+they're all symmetrical, a bit boring - let's sort of nail this so we won't
+have to think about it for a while", and Stage 0's instruments found it was
+worse than the complaint: **TWINS 1.00 on spruce and beech**, meaning two trees
+hashed from two different cells were the SAME TREE down to the pixel, from
+every azimuth.
+
+Now: the §2.5 spire, whose tiers are whorl ARMS of unequal length around a
+solid core, each yawed a golden-angle step from the one below; the larch as a
+**ziggurat**, four to six shelves with real air between them, so its sky shows
+through the GAPS and not through the crown volume; the beech as a lobed oblate
+scallop, bitten from outside, that has stopped being a solid of revolution; a
+birch that bows rather than tilts and never closes its foliage over its own
+pale bark; a wind-flagged krummholz cushion, and every one in a world combs the
+same way off a wind direction hashed once from the seed; three snags; and a
+hero that is no longer its parent scaled. Then a second colour: **authored
+slivers under the whorls**, where a shelf stands proud of the one below.
+
+**Nothing about where a tree stands moved, at any stage** - heightmap
+`76cccdb6`, 28,383 trees, the species mix to the decimal, spawn `(-44, -124)`.
+`tree_placement.gd` was never opened and neither were the `far_*` files.
+
+Five things worth reading even if you read nothing else:
+
+- **TWINS is 0.72 or better on all seven species and no species pair is over
+  0.56.** SYMMETRY is met on five of seven; the spruce misses at 0.86 against a
+  0.80 target and was **priced deliberately** - §2.5 says a conifer is a dark
+  cut-out with a jagged edge and a SOLID body, and a solid body is a
+  symmetrical one.
+- **The sparse species are 24-65% CHEAPER in quads than they began**, and the
+  whole gallery sheet fell 21,582 quads to 15,608 with the second colour on.
+  Per-block holes are the worst input greedy meshing can be handed; the
+  openness moved into the shape, where the mesher charges nothing for it.
+- **There is not one floating block left in the forest.**
+  `scripts/tools/loose_check.gd` is a committed tool now and reports 0 on all
+  seven species over 1,673 specimens each. It found 3,002 on spruce, 18,548 on
+  larch, 9,813 on birch and 1,076 on krummholz on the way there. The mechanism
+  is a flood from the tree's own axis - build the set, flood it, write only
+  what the flood reached.
+- **An authored dark colour does not land where it was authored.** The sliver's
+  first hex was `#2A2F3E` (H225 S32) and it photographed at H270 S6 - a neutral
+  black band. This world's noon sun lands on the channels at ~(0.72, 0.54,
+  0.38), so blue arrives at 53% of red. `#1F2A46` is that transform run
+  backwards, and the finding is in `block.gd` beside the entry because the next
+  authored dark colour will hit it too.
+- **Streaming did not move**: ABAB, three runs each against pre-epic
+  `93b32bd`, on ganymede, both medians inside the other side's range on both
+  legs, holes 0 in all six runs. The only frame over 33 ms was on the pre-epic
+  side.
+
+**The one failed gate is canopy closure, and it is item 2 below with new
+numbers.** Old growth **0.694 -> 0.648**, grove **0.523 -> 0.481**, between
+groves 0.373 -> 0.354. The plan's self-fail clause says closure must not get
+WORSE where the design said fuller, and it did. It ships anyway: §2.5's spire
+proportion - max width one third of height - narrowed old-growth spruce crowns
+by about 30% of disc area, §2.5 is the taste authority, and the visual
+acceptance frames improved from the same change (the forest interior reads as
+trees rather than columns; `15-under-canopy` shows a closed roof).
+**The reconciliation is stem DENSITY, not fatter trees** - more trunks at the
+same proportion closes a canopy without contradicting §2.5 - and density is
+placement, which this epic's rules forbade it to touch. It is exactly the open
+`TODO(marcel)` at `WorldgenConfig.grove_floor` (with `old_growth_keep` as its
+other half), which now has a second measurement feeding it. **Marcel decides.**
+
+The run before it is **distance v2, both nights**, on `feat/distance-v2`:
 `docs/status/distance-v2.md`. **The far country is made of blocks too** - one
 height per far-field cell, quantised to that ring's own cell width, with the
 difference to each lower neighbour drawn as a vertical riser. 4 m steps at the
@@ -64,7 +131,7 @@ do not appear in distance v2's diff at all, `scripts/world/look.gd` was never
 opened by it, and the two `game.gd` / `debug_hud.gd` edits it did make were pure
 appends. The merge conflicted in one paragraph of this file and nowhere else.
 
-The run before it is **character v2**, on `feat/character-v2`:
+The run before that is **character v2**, on `feat/character-v2`:
 `docs/status/character-v2.md`. Fourteen stages over two nights - the model grid
 from 64 to 96 voxels, a liner slot that ended four black shirts, a knee and an
 elbow, the lizardfolk rebuilt until **no two races' silhouettes overlap by more
@@ -113,6 +180,17 @@ right, so the mechanism works and the magnitudes do not. The third is the one
 that matters: the wood between groves no longer opens, because the same 35% of
 candidates now grow trees three times the volume. `TODO(marcel)` at
 `WorldgenConfig.grove_floor` has the argument and the command to re-measure.
+
+**Trees v1 re-measured it under the new tree shapes and all three numbers went
+DOWN: 0.648 / 0.481 / 0.354.** That is the epic's one failed gate - closure got
+worse where the design said fuller - and it ships, because §2.5's spire
+proportion (max width one third of height) narrowed old-growth spruce crowns by
+~30% of disc area and §2.5 outranks the number, while the visual acceptance
+frames improved from the same change. **So this item now has two measurements
+under two different trees, and the lever it wants has not changed: stem
+DENSITY.** More trunks at the same proportion closes a canopy without
+contradicting the art direction; wider crowns contradict it. `grove_floor` and
+`old_growth_keep` are that lever, and the decision is still Marcel's.
 
 **3. ~~The pair probe's prediction error needs a machine that holds 60 fps.~~
 SETTLED on Forward+, PASS.** Stage 10 closed the carried ticket — clients send

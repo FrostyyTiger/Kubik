@@ -49,7 +49,7 @@ differently.
    voxel world, and the seam between them is owned rather than hidden.
 4. **Forms are stepped and chamfered.** Heads lose their vertical edges to a
    chamfer, shoulders step, hair is a geometric mass. Trees are cones and
-   ziggurats (not yet - see IDEAS).
+   ziggurats.
 5. **One accent.** Gold `#C9A24A`: UI rules, the sun disc, later the
    campfire's light. Nothing else in the world is gold. The gold has an hour:
    `Look.accent_color()` reads the keyframe table, dawn `#F2A80D` through noon
@@ -77,6 +77,23 @@ stand; these bind on top of them.
    through it: `godot --path . scenes/character/gallery.tscn -- --sheet
    swatches --strict`. Every swatch within 6 sRGB units of `Look.predict()`, or
    the stage is not done.
+
+**Trees v1 (2026-08-30) is rule 4 on the forest, and it is why "not yet" came
+out of it.** A conifer is a notched spire - max width one third of its height -
+built from whorl ARMS of unequal length around a solid core, each tier yawed a
+golden-angle step from the one below; the larch is the ziggurat, four to six
+shelves with real air between them, so its sky shows through the GAPS and never
+through the crown volume. A beech is an oblate scallop of two to four
+overlapping lobes in a big/medium/small hierarchy, bitten once or twice from
+outside, on a clean trunk with a limb entering the crown underside; a birch is
+a bowed pale stem the foliage never closes over; a krummholz is a wind-flagged
+cushion, twice as wide as tall, and every one in a world combs the same way.
+The hero is re-proportioned rather than its parent scaled. Every conifer
+carries the second colour as **authored slivers** on the whorl underside, where
+a shelf stands proud of the one below - never scattered through the crown.
+The taste authority is `docs/research/art-direction.md` §2.5 "Forest"; the
+variation machinery and the measured cost model are in
+`docs/research/trees.md`, and the run is `docs/status/trees-v1.md`.
 
 ### The pipeline: linear maths, sRGB on the wire
 
