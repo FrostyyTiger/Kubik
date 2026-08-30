@@ -152,13 +152,21 @@ const SALT_CROWN := 204
 const SALT_SHADE := 210
 const SALT_HERO_PARENT := 211
 const SALT_HERO_SCALE := 212
+## RETIRED AT TREES V1 STAGE 3, and the number stays claimed. It salted the
+## krummholz's one-block lean, which the wind flag replaced - and the lean was
+## also the loose-block bug the whole time, because it stepped the trunk out
+## from under the crown it was carrying.
 const SALT_LEAN := 213
 const SALT_STUBS := 214
-## Salts the PER-BLOCK holes in a sparse crown. Hashed from the block's own
-## world position, not from the cell, so a larch is sparse the same way in
-## every chunk that draws it - and two larches standing next to each other are
-## sparse differently.
+## RETIRED AT TREES V1 STAGE 3, and the number stays claimed. It salted the
+## PER-BLOCK holes in a sparse crown, hashed from the block's own world position
+## so that every chunk drawing one larch punched the same holes in it. The
+## krummholz was the last species still asking it, and with the cushion drawn
+## through `_whorl_disc` there is no per-block hole left anywhere in the file -
+## which is what plan rule 6 asked for and what took the sparse species from
+## dearer in quads than a solid beech to cheaper than they have ever been.
 const SALT_SPARSE := 215
+## Never used. Free.
 const SALT_MOUND := 216
 
 ## Salts the COHERENT holes in a sparse crown (trees v1 Stage 1), which is what
@@ -170,10 +178,11 @@ const SALT_MOUND := 216
 ## not static) and roughly a fivefold cut in quads, because per-block holes are
 ## the worst input greedy meshing can be handed.
 ##
-## THE SERIES IS 217 + key * 7919 AND IT CANNOT MEET SALT_SPARSE'S. That one is
-## 215 + y * 7919: same stride, and the two offsets differ by 2, which no
-## multiple of 7919 is. Both live in one world until every sparse species has
-## moved over, and a collision would give two species the same holes.
+## THE SERIES IS 217 + key * 7919 AND IT COULD NOT MEET SALT_SPARSE'S. That one
+## was 215 + y * 7919: same stride, and the two offsets differ by 2, which no
+## multiple of 7919 is. They shared a world until every sparse species had moved
+## over, which finished at Stage 3 - the hazard is historical now, and the rule
+## that no new salt may land on either series is not.
 const SALT_CLUMP := 217
 ## Per-tier whorl arms: how many, how long each one is.
 const SALT_WHORL := 218
@@ -201,6 +210,22 @@ const SALT_BIRCH := 224
 const SALT_WIND := 225
 ## The limb blocks entering a beech's crown underside.
 const SALT_LIMB := 226
+
+## Everything a krummholz decides once (trees v1 Stage 3): how oblate its
+## cushion is, one step of wind off the world's, and the ragged edge of its plan.
+const SALT_KRUMM := 227
+## Per-spar: which way off the axis it stands, how far, and how proud of the
+## cushion it finishes.
+const SALT_SPAR := 228
+## Everything a snag decides: which of the three it is, where it broke, which
+## way it leans, and the one direction neighbourhood its stubs all come out of.
+const SALT_SNAG := 229
+## Everything a hero decides once: which dead element it carries, where it
+## forks, how many lobes, and the azimuth the whole crown is laid out from.
+const SALT_HERO := 230
+## Per-lobe and per-limb: how high up the crown a lobe rides and how long the
+## limb that carries it runs.
+const SALT_HERO_LOBE := 231
 
 
 ## One row per species.
@@ -438,10 +463,14 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 	var leaves_row := row
 
 	if species == HERO:
-		# THE HERO IS ITS PARENT, SCALED. It is not an eighth shape - it is the
-		# same beech or spruce grown to a size nothing else in the world
-		# reaches, which is what makes one standing alone in a meadow read as
-		# remarkable rather than as a different kind of tree.
+		# THE HERO TAKES ITS PARENT'S SIZE RANGE AND IDS, NOT ITS SHAPE (trees
+		# v1 Stage 3). It used to be the same beech or spruce scaled, and a
+		# scaled parent is exactly what the poster tradition says a big tree
+		# must never be - bigness reads through changed PROPORTIONS, not
+		# through magnification. What survives of the parent is which of the
+		# two archetypes the hero is, the leaf and trunk ids that go with it,
+		# and the height and crown roll the scale is applied to; `_draw_hero`
+		# is the rest.
 		var parent := BEECH if WorldHash.hash01(cell_x, cell_z, world_seed,
 			SALT_HERO_PARENT) < 0.6 else SPRUCE
 		var parent_row: Dictionary = rows[parent]
@@ -535,7 +564,14 @@ const TREE_BLOCKS := [
 ## it; the world ignores it.
 static func draw(writer, species: int, bx: int, ground: int, bz: int,
 		params: Dictionary, config: WorldgenConfig) -> int:
-	var shape: int = table(config)[params.get("draw", species)]["shape"]
+	# THE HERO HAS ITS OWN SHAPE AGAIN (trees v1 Stage 3). Until tonight
+	# SHAPE_HERO was a row in the table that nothing ever dispatched: the hero
+	# took its PARENT's shape entry and drew as a scaled beech or spruce, which
+	# is the one thing the poster tradition says a big tree must not be. It
+	# keeps the parent for the leaf and trunk ids and for the broad archetype -
+	# broadleaf or conifer - and nothing else.
+	var shape: int = SHAPE_HERO if species == HERO \
+		else table(config)[params.get("draw", species)]["shape"]
 	match shape:
 		SHAPE_WHORL_CONE:
 			return _draw_whorl_cone(writer, bx, ground, bz, params)
@@ -547,6 +583,8 @@ static func draw(writer, species: int, bx: int, ground: int, bz: int,
 			return _draw_birch(writer, bx, ground, bz, params)
 		SHAPE_BARE:
 			return _draw_bare(writer, bx, ground, bz, params)
+		SHAPE_HERO:
+			return _draw_hero(writer, bx, ground, bz, params)
 	return 0
 
 
@@ -1595,52 +1633,198 @@ static func _draw_leader(writer, bx: int, bz: int, y0: int, y1: int,
 	return drawn
 
 
-## KRUMMHOLZ. A low ragged mound, wider than tall, on a stub of a trunk.
+# --- The krummholz cushion (trees v1 Stage 3) --------------------------------
+#
+# art-direction 2.5, in one sentence: "a cushion 2.0-2.5x wider than tall, flat
+# top, no spike". The consts below are what that costs in numbers.
+
+## Width : height of the cushion. THE PROPORTION IS THE SHAPE and the table's
+## crown radius is only the ceiling it may not pass - the discipline the
+## spruce's spire and the beech's scallop both take. A tall krummholz is
+## therefore held to the table and comes out flatter than 2.0; a short one is
+## the full cushion.
+const CUSHION_MIN := 2.0
+const CUSHION_MAX := 2.5
+
+## How much of its DOWNWIND radius the cushion keeps on the UPWIND side.
+##
+## THE FLAG IS THE SPECIES, AND IT IS THE ONLY ASYMMETRY THAT MAY BE SHARED.
+## Every krummholz in a world combs the same way, because `params["wind_dir"]`
+## is hashed from the seed alone - a treeline that flagged in thirteen
+## directions would read as thirteen accidents rather than as weather (trees
+## research 3, lever 12). One step of its own off the world's is all a tree
+## gets, which is the birch's precedent from Stage 2.
+const FLAG_UPWIND := 0.60
+
+## How much of its own plan radius a sector still holds at the TOP layer.
+##
+## FLAT TOP AND NO SPIKE (2.5). Upwind the cushion keeps nearly its whole width
+## all the way up, so the top is a plateau and the windward face is steep;
+## downwind it falls to a one-block skirt, which is the flag. A half-ellipsoid
+## - what this replaces - closes to a point at the top, which is the one
+## silhouette 2.5 names and rejects.
+const FLAG_TOP_UP := 0.85
+const FLAG_TOP_DOWN := 0.10
+
+## How far a sector's edge may run in or out of its nominal radius. One block,
+## hashed per direction and held for the whole tree, so the taper up any one
+## sector stays monotone and the cushion never overhangs itself.
+const CUSHION_EDGE := 1
+
+## The bare dead spars: how many, and how far proud of the mass they finish.
+##
+## THREE VOXELS, AND AN ENORMOUS READ. A cushion is a blob at any distance; one
+## grey spike out of it is a tree that has been up there a long time and lost
+## an argument with the weather. They are drawn from the GROUND up in
+## TRUNK_DEAD rather than hung off the surface - the buried half costs four
+## blocks and is what makes a spar part of the shrub instead of a chip in the
+## sky.
+## ONE SPAR ON THREE TREES IN FOUR (judge round 2). Two spars two blocks proud
+## on every cushion photographed as a graveyard: the round-1 stand was a dozen
+## shrubs behind two dozen pale posts, and the posts were the subject. A spar is
+## punctuation, and punctuation on every word is not punctuation.
+const SPAR_MIN := 1
+const SPAR_MAX := 2
+const SPAR_TWO_CHANCE := 0.25
+const SPAR_PROUD_MIN := 1
+const SPAR_PROUD_MAX := 2
+
+
+## KRUMMHOLZ. A wind-flagged cushion: wider than tall, flat on top, steep and
+## thick on the windward side, tapering to a one-block skirt downwind, with one
+## or two bare dead spars standing proud of it.
 ##
 ## This is the tree that makes a treeline read as a treeline rather than as a
 ## line. Above the last upright spruce, real mountainsides carry wind-flattened
 ## pine that is more shrub than tree, and it thins out over a hundred metres
-## instead of stopping. It leans, because everything up there leans.
+## instead of stopping.
+##
+## WHAT THIS REPLACES was a half-ellipsoid on a leaning stub: the most
+## symmetric thing left in the file at Stage 2 (SYMMETRY 0.99, TWINS 0.97), and
+## the only species the loose-block sweep was still red on - about a thousand
+## floating blocks, two per tree at worst, because the lean stepped the trunk
+## one block sideways and the dome it carried shed cells off the bottom edge on
+## the far side. Both are gone for the same reason: the mound goes through
+## `_whorl_disc` now, which builds every layer as a SET and floods it from its
+## own axis before writing, so a cell the flood could not reach is never drawn.
+## The axis column is solid from the ground up - the spine is never a hole -
+## so a layer connected to its own axis is connected to the trunk.
 static func _draw_mound(writer, bx: int, ground: int, bz: int,
 		params: Dictionary) -> int:
-	var h: int = params["height"]
-	var r: int = params["crown"]
+	var h: int = maxi(int(params["height"]), 1)
+	var table_r: int = maxi(int(params["crown"]), 1)
 	var cell: Vector2i = params["cell"]
 	var seed: int = params["seed"]
-	var drawn := 0
+	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_KRUMM)
+	var roll2 := _hash_keyed(cell, seed, SALT_KRUMM, 2)
 
-	# A short trunk, one or two blocks, which may step sideways at its top -
-	# the lean.
-	var lean_roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_LEAN)
-	var lean: Vector2i = LEAN_DIRS[lean_roll % LEAN_DIRS.size()]
-	var trunk_h := 1 + (lean_roll >> 8) % 2
-	var cx := bx
-	var cz := bz
-	for i in trunk_h:
-		# The lean is IN THE TRUNK. Offsetting only the crown would give a
-		# straight stem with its foliage slid off to one side, which reads as
-		# a bug rather than as a tree the wind has been at.
-		if i > 0:
-			cx = bx + lean.x
-			cz = bz + lean.y
-		writer.set_block(cx, ground + 1 + i, cz, params["trunk_id"], false)
-		drawn += 1
+	var ratio := lerpf(CUSHION_MIN, CUSHION_MAX, float(roll & 0xFF) / 255.0)
+	var r := clampi(int(round(float(h) * ratio * 0.5)), 1, table_r)
+	# AND THE HEIGHT COMES BACK OUT OF THE RATIO (judge round 2). The width is
+	# capped by the table, so a tall krummholz that kept its table height came
+	# out at four wide by five tall - which is not a cushion, it is a bush, and
+	# 2.5 names that silhouette to reject it. Inverting the ratio against the
+	# width the table actually allowed is what makes the proportion true for
+	# every size rather than only the small ones. It can only ever SHORTEN the
+	# tree.
+	h = clampi(int(round(2.0 * float(r) / ratio)), 1, h)
 
-	for y in range(1, h + 1):
-		# A half-ellipsoid sitting on the ground: full radius at the base,
-		# closing to nothing at the top.
-		var dy := float(y) / float(maxi(h, 1))
-		var ri := int(round(float(r) * sqrt(maxf(1.0 - dy * dy, 0.0))))
-		drawn += _disc(writer, cx, ground + y, cz, ri, params)
+	var wind := (int(params.get("wind_dir", 0)) + GOLDEN_N
+		+ int((roll >> 8) % 3) - 1) % GOLDEN_N
+	var wv: Vector2i = GOLDEN_DIRS[wind]
+
+	# The cushion, as thirteen (base radius, top radius) pairs.
+	#
+	# A DOT PRODUCT, NOT AN ANGLE. Both vectors are authored at magnitude eight,
+	# so their dot over 64 is the cosine between them without a line of trig -
+	# and trig in shape code is forbidden anyway, because two machines stamp the
+	# same chunk independently. `u` is 1 straight downwind and 0 straight into
+	# the wind.
+	var base_r: Array[int] = []
+	var top_r: Array[int] = []
+	base_r.resize(GOLDEN_N)
+	top_r.resize(GOLDEN_N)
+	for s in GOLDEN_N:
+		var d: Vector2i = GOLDEN_DIRS[s]
+		var u := clampf(
+			(float(d.x * wv.x + d.y * wv.y) / 64.0 + 1.0) * 0.5, 0.0, 1.0)
+		# Two bits per sector: in, out, and twice unchanged, so an edge holds
+		# still more often than it moves - `_shelf_limits`' rule, one species
+		# over. Hashed ONCE for the tree rather than per layer, which is what
+		# keeps every sector's taper monotone: a cell present at one layer is
+		# present at the layer below it, so the cushion never overhangs.
+		var step := int((roll2 >> (s * 2)) & 3)
+		var j := 0
+		if step == 0:
+			j = -CUSHION_EDGE
+		elif step == 3:
+			j = CUSHION_EDGE
+		var rb := clampi(int(round(float(r) * lerpf(FLAG_UPWIND, 1.0, u))) + j,
+			1, r)
+		base_r[s] = rb
+		top_r[s] = mini(int(round(float(rb)
+			* lerpf(FLAG_TOP_UP, FLAG_TOP_DOWN, u))), rb)
+
+	# A stub of a trunk, one or two blocks, and PLUMB. The lean is in the plan
+	# now, where it cannot strand anything.
+	var drawn := _draw_trunk(writer, bx, ground, bz,
+		ground + 1 + int((roll >> 16) & 1), params)
+	drawn += _draw_spars(writer, bx, ground, bz, h, base_r, top_r, wv, params)
+
+	var limits: Array[int] = []
+	limits.resize(GOLDEN_N)
+	for i in h:
+		var v := float(i) / float(maxi(h - 1, 1))
+		var widest := 0
+		for s in GOLDEN_N:
+			limits[s] = int(round(lerpf(float(base_r[s]), float(top_r[s]), v)))
+			widest = maxi(widest, limits[s])
+		drawn += _whorl_disc(writer, bx, ground + 1 + i, bz, widest, limits,
+			params, 0, widest)
 	return drawn
 
 
-## Which way a krummholz may lean. Four directions, not eight: a diagonal lean
-## on a block lattice is two steps, and at three to six blocks tall the tree is
-## not big enough to spend two on it.
-const LEAN_DIRS := [
-	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
-]
+## The one or two dead spars a krummholz carries.
+##
+## ON THE UPWIND HALF, SNAPPED TO AN AXIS, AND DRAWN FROM THE GROUND. Upwind is
+## where the cushion is thick, so a spar there stands out of a mass rather than
+## out of the skirt; the axis snap is Stage 1's dead-stub lesson (a diagonal
+## offset touches the column beside it at an edge and at no face); and starting
+## at the ground rather than at the surface is four buried blocks bought
+## against any chance of a spar hanging in the air.
+##
+## `surf` is where the cushion's own surface is at that plan cell, computed from
+## the same thirteen numbers the layers are drawn from - pure, and never read
+## back from the writer.
+static func _draw_spars(writer, bx: int, ground: int, bz: int, h: int,
+		base_r: Array[int], top_r: Array[int], wv: Vector2i,
+		params: Dictionary) -> int:
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var roll := _hash_keyed(cell, seed, SALT_SPAR, 0)
+	var n := SPAR_MIN
+	if int(roll & 0xFF) < int(SPAR_TWO_CHANCE * 256.0):
+		n = SPAR_MAX
+	var up := Vector2i(-signi(wv.x), 0) if absi(wv.x) >= absi(wv.y) \
+		else Vector2i(0, -signi(wv.y))
+	var perp := Vector2i(-up.y, up.x)
+	var drawn := 0
+	for j in n:
+		var sr := _hash_keyed(cell, seed, SALT_SPAR, 1 + j)
+		var off := up * (1 + int(sr % 2)) + perp * (int((sr >> 3) % 3) - 1)
+		var s := _sector_of(off.x, off.y)
+		var surf := 1
+		for i in h:
+			var v := float(i) / float(maxi(h - 1, 1))
+			if _in_plan(off.x, off.y, int(round(
+					lerpf(float(base_r[s]), float(top_r[s]), v)))):
+				surf = i + 1
+		var proud := SPAR_PROUD_MIN + int((sr >> 6)
+			% (SPAR_PROUD_MAX - SPAR_PROUD_MIN + 1))
+		for y in range(ground + 1, ground + surf + proud + 1):
+			writer.set_block(bx + off.x, y, bz + off.y, Block.TRUNK_DEAD, false)
+			drawn += 1
+	return drawn
 
 
 # --- The golden-angle direction table (trees v1 Stage 1) ---------------------
@@ -1656,7 +1840,7 @@ const LEAN_DIRS := [
 # THE VECTORS ARE AUTHORED, AT MAGNITUDE 8. sin/cos are not bit-identical
 # across platforms and two machines stamp the same chunk independently, so
 # there is no trig anywhere in shape code - a table in the source is the whole
-# answer, exactly as LEAN_DIRS is.
+# answer, exactly as NUB_DIRS is.
 
 const GOLDEN_N := 13
 const GOLDEN_STEP := 5
@@ -2095,7 +2279,57 @@ static func _draw_bowed_stem(writer, bx: int, ground: int, bz: int,
 	return drawn
 
 
-## SNAG. A dead trunk with a few stubs and no leaves at all.
+# --- The snag (trees v1 Stage 3) ---------------------------------------------
+#
+# trees research 2: "dead trees are the one archetype where lopsidedness is the
+# subject - 3-7 straight segments, blunt broken ends, half with snapped tops,
+# and taller than their neighbours". A snag's job is to puncture the canopy
+# line, and it did that already: Stage 0 measured it at SYMMETRY 0.21, TWINS
+# 0.37, the best numbers in the file by a wide margin. THIS STAGE IS ABOUT
+# VARIETY, NOT METRICS - three snags in a wood should be three different
+# accidents, and until tonight they were one accident with the stubs moved.
+
+## The three snags, as shares of the population. Broken-jagged is the majority;
+## what is left over after the lean is the low stump.
+const SNAG_BROKEN := 0.60
+const SNAG_LEAN := 0.25
+
+## The leaning snag's total drift, in blocks - monotone up the stem, which is
+## `_drift_at`'s curve and the "asymmetry needs a cause" rule it exists for.
+const SNAG_DRIFT := 2
+
+## The broken top: how far the stem's short side finishes below its splinter.
+## ONE OR TWO BLOCKS, NEVER A FLAT CUT. A one-wide dead trunk that simply stops
+## reads as a fence post; a splinter beside the break reads as a tree that came
+## down in a storm, and it costs two blocks.
+const SNAG_BREAK_MIN := 1
+const SNAG_BREAK_MAX := 2
+
+## The low stump: how tall, and how far the four corners of its 2 x 2 top may
+## differ. THE STUMP IS 2 x 2 WHATEVER THE TABLE ROLLED - it is the bottom of a
+## tree that broke off, so it carries the diameter of a tree, not of a stick.
+const SNAG_STUMP_MIN := 2
+const SNAG_STUMP_MAX := 4
+
+## The stubs: how many, and how long a run each one makes.
+##
+## ANGLES CONSISTENT WITHIN ONE TREE. Every stub comes out of the same
+## neighbourhood of the thirteen directions - one step either side of the
+## tree's own - so a snag is lopsided rather than spiky, which is what the
+## poster tradition asks of the one archetype it lets look damaged. Stubs in
+## thirteen directions read as a bottle brush.
+const SNAG_STUB_MIN := 1
+const SNAG_STUB_MAX := 3
+const SNAG_STUB_LEN_MIN := 2
+const SNAG_STUB_LEN_MAX := 4
+
+## Where up the stem the stubs land. Upper half only: a stub at ankle height
+## reads as a mistake.
+const SNAG_STUB_LO := 0.45
+
+
+## SNAG. A dead trunk in one of three shapes - broken-jagged, leaning, or a low
+## stump - with one to three sloping stubs off one side of it.
 ##
 ## Cheap in blocks and worth more than it costs. A forest of nothing but
 ## healthy trees reads as planted; a scatter of grey trunks says the place has
@@ -2105,67 +2339,606 @@ static func _draw_bowed_stem(writer, bx: int, ground: int, bz: int,
 ## fifteenth of the world's trees near spawn and a fifth at the far corner.
 static func _draw_bare(writer, bx: int, ground: int, bz: int,
 		params: Dictionary) -> int:
-	var h: int = params["height"]
+	var h: int = maxi(int(params["height"]), 2)
 	var cell: Vector2i = params["cell"]
 	var seed: int = params["seed"]
 	var id: int = params["trunk_id"]
-	var drawn := _draw_trunk(writer, bx, ground, bz, ground + h, params)
-
 	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_STUBS)
-	var stubs := 1 + roll % 3
-	for i in stubs:
-		# Each stub gets its own bits of the same hash rather than its own
-		# hash call: three stubs need six independent small numbers and one
-		# 31-bit value has them.
-		var shift := 4 + i * 6
-		var frac := float((roll >> shift) & 0x1F) / 32.0
-		# Upper half only. A stub at ankle height reads as a mistake.
-		var y := ground + int(round(lerpf(float(h) * 0.45, float(h) - 1.0, frac)))
-		var dir: Vector2i = LEAN_DIRS[(roll >> (shift + 5)) % LEAN_DIRS.size()]
-		writer.set_block(bx + dir.x, y, bz + dir.y, id, true)
+	var roll2 := WorldHash.hash2(cell.x, cell.y, seed, SALT_SNAG)
+
+	# WHICH OF THE THREE, from one byte. The order matters only in that the
+	# stump is what is left over, so widening either of the first two never
+	# leaves a share unspoken for.
+	var pick := int(roll2 & 0xFF)
+	if pick >= int((SNAG_BROKEN + SNAG_LEAN) * 256.0):
+		return _draw_snag_stump(writer, bx, ground, bz, roll2, params)
+
+	var leaning := pick >= int(SNAG_BROKEN * 256.0)
+	var drift_dir: Vector2i = GOLDEN_DIRS[int((roll2 >> 8) % GOLDEN_N)]
+	var drift := SNAG_DRIFT if leaning else 0
+	var top := ground + h
+	var brk := 0
+	if not leaning:
+		brk = SNAG_BREAK_MIN \
+			+ int((roll2 >> 13) % (SNAG_BREAK_MAX - SNAG_BREAK_MIN + 1))
+
+	# The stem stops `brk` blocks short and the splinter carries the last of
+	# the height, so a broken snag is never taller than the table said.
+	var drawn := _draw_snag_stem(writer, bx, ground, bz, top - brk,
+		drift_dir, drift, h, params)
+	if brk > 0:
+		# THE SPLINTER OVERLAPS THE BREAK. It runs from one block below the
+		# stem's top to the tree's own top, so every one of its blocks has a
+		# face against the stem beside it for the first two layers - a spike
+		# that started at the break would touch the stem at one corner and
+		# nothing else.
+		var step: Vector2i = NUB_DIRS[int((roll2 >> 16) % NUB_DIRS.size())]
+		var w: int = maxi(int(params.get("trunk_width", 1)), 1)
+		var sx := (w if step.x > 0 else step.x)
+		var sz := (w if step.y > 0 else step.y)
+		for y in range(top - brk - 1, top + 1):
+			var soff := _drift_at(drift_dir, drift, y - ground - 1, h)
+			writer.set_block(bx + soff.x + sx, y, bz + soff.y + sz, id, false)
+			drawn += 1
+
+	drawn += _draw_snag_stubs(writer, bx, ground, bz, h, top - brk,
+		drift_dir, drift, roll, params)
+	return drawn
+
+
+## The low stump: two to four blocks of 2 x 2 trunk with a splintered top.
+##
+## The four corners finish at their own heights, so the top is a broken plane
+## rather than a sawn one. Every column starts at the ground, so nothing here
+## can float however the hash falls.
+static func _draw_snag_stump(writer, bx: int, ground: int, bz: int,
+		roll: int, params: Dictionary) -> int:
+	var id: int = params["trunk_id"]
+	var hh := SNAG_STUMP_MIN \
+		+ int((roll >> 8) % (SNAG_STUMP_MAX - SNAG_STUMP_MIN + 1))
+	var drawn := 0
+	for dz in 2:
+		for dx in 2:
+			var k := dz * 2 + dx
+			var top := maxi(hh + int((roll >> (12 + k * 2)) % 3) - 1, 1)
+			for y in range(ground + 1, ground + top + 1):
+				writer.set_block(bx + dx, y, bz + dz, id, false)
+				drawn += 1
+	return drawn
+
+
+## One snag stem: a column following `_drift_at`'s monotone lean, bridged on
+## every step.
+##
+## THE BRIDGE IS THE SAME FIX THE BOWED STEMS TOOK IN STAGE 2. A one-wide
+## column at (0, y) and (-1, y + 1) shares an edge and no face, so any change
+## of offset - diagonal or not - strands everything above it. A two-wide stem
+## overlaps itself across a step and needs none of this.
+static func _draw_snag_stem(writer, bx: int, ground: int, bz: int, top_y: int,
+		dir: Vector2i, drift: int, n: int, params: Dictionary) -> int:
+	var id: int = params["trunk_id"]
+	var w: int = maxi(int(params.get("trunk_width", 1)), 1)
+	var drawn := 0
+	var prev := Vector2i.ZERO
+	for y in range(ground + 1, top_y + 1):
+		var off := _drift_at(dir, drift, y - ground - 1, n)
+		if w < 2 and off != prev:
+			writer.set_block(bx + prev.x, y, bz + prev.y, id, false)
+			writer.set_block(bx + off.x, y, bz + prev.y, id, false)
+			drawn += 2
+		for dz in w:
+			for dx in w:
+				writer.set_block(bx + off.x + dx, y, bz + off.y + dz, id, false)
+				drawn += 1
+		prev = off
+	return drawn
+
+
+## The one to three stubs, all out of one neighbourhood of the thirteen
+## directions and each rising one block over its run.
+static func _draw_snag_stubs(writer, bx: int, ground: int, bz: int, h: int,
+		top_y: int, drift_dir: Vector2i, drift: int, roll: int,
+		params: Dictionary) -> int:
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var id: int = params["trunk_id"]
+	var w: int = maxi(int(params.get("trunk_width", 1)), 1)
+	var n := SNAG_STUB_MIN + int(roll % (SNAG_STUB_MAX - SNAG_STUB_MIN + 1))
+	var d0 := int((roll >> 3) % GOLDEN_N)
+	var drawn := 0
+	for i in n:
+		var sr := _hash_keyed(cell, seed, SALT_SNAG, 8 + i)
+		var y := ground + int(round(lerpf(float(h) * SNAG_STUB_LO,
+			float(h) - 1.0, float(sr & 0x1F) / 31.0)))
+		y = mini(y, top_y)
+		var dir: Vector2i = GOLDEN_DIRS[
+			(d0 + GOLDEN_N + int((sr >> 6) % 3) - 1) % GOLDEN_N]
+		var length := SNAG_STUB_LEN_MIN + int((sr >> 8)
+			% (SNAG_STUB_LEN_MAX - SNAG_STUB_LEN_MIN + 1))
+		var soff := _drift_at(drift_dir, drift, y - ground - 1, h)
+		drawn += _draw_branch(writer, bx + soff.x, y, bz + soff.y,
+			_branch_foot(dir, w), dir, length, 1, id)
+	return drawn
+
+
+## Where a branch's first block goes, given the width of the trunk it leaves.
+##
+## ONE AXIS, NOT TWO (Stage 1, judge round 3). A foot taken down a diagonal
+## golden direction lands off the CORNER of the trunk, touching it at an edge
+## and at no face, which is a block floating in the air by every rule this file
+## has. Snapped to the dominant axis it is always against a trunk face, and the
+## branch's own steps take the angle back from there.
+static func _branch_foot(dir: Vector2i, w: int) -> Vector2i:
+	if absi(dir.x) >= absi(dir.y):
+		return Vector2i(w if dir.x > 0 else -1, 0)
+	return Vector2i(0, w if dir.y > 0 else -1)
+
+
+## One branch: a one-wide line stepping out along a golden direction and RISING
+## `rise` blocks over its run.
+##
+## A BRANCH SLOPES, AND THAT IS THE WHOLE DETAIL. A horizontal one-block spur -
+## which is what a snag stub was until tonight - reads as a peg; two to four
+## blocks with a lift in them read as a branch, and on a hero the same helper
+## draws the limbs the crown hangs off.
+##
+## EVERY STEP IS BRIDGED, sideways and upwards. `_golden_offset` moves
+## diagonally on nine of the thirteen directions, and two cells meeting at a
+## corner meet at no face - Stage 1's dead stubs, Stage 1's leader nubs and
+## Stage 2's bowed stems are one lesson learned three times. The bridge is one
+## extra cell per diagonal step and one more per rise.
+static func _draw_branch(writer, bx: int, y0: int, bz: int, foot: Vector2i,
+		dir: Vector2i, length: int, rise: int, id: int) -> int:
+	var drawn := 0
+	var prev := foot
+	var y := y0
+	writer.set_block(bx + foot.x, y, bz + foot.y, id, false)
+	drawn += 1
+	var lifts := maxi(rise, 0)
+	for d in range(1, length):
+		var off := foot + _golden_offset(dir, d)
+		# At most one lift per step, because `lifts` never exceeds the run.
+		var ny := y0 + (lifts * d) / maxi(length - 1, 1)
+		# THE WHOLE RISER IS DRAWN, not just its top block (judge round 3). A
+		# hero's limb climbs further than it runs - the envelope is narrow and
+		# the crown is tall - so a step can be several blocks of lift, and a
+		# lift that only placed its last block would leave the branch in
+		# pieces.
+		while ny > y:
+			y += 1
+			writer.set_block(bx + prev.x, y, bz + prev.y, id, false)
+			drawn += 1
+		if off.x != prev.x and off.y != prev.y:
+			writer.set_block(bx + off.x, y, bz + prev.y, id, false)
+			drawn += 1
+		writer.set_block(bx + off.x, y, bz + off.y, id, false)
 		drawn += 1
+		prev = off
+	return drawn
+
+
+## Where `_draw_branch` finishes, without drawing it.
+##
+## The hero hangs a lobe on every limb tip and has to know where the tips are
+## before it lays the crown out. Same arithmetic, same inputs, no writer.
+static func _branch_tip(foot: Vector2i, dir: Vector2i, length: int,
+		rise: int) -> Vector3i:
+	var off := foot + _golden_offset(dir, maxi(length - 1, 0))
+	return Vector3i(off.x, maxi(rise, 0), off.y)
+
+
+# --- The hero (trees v1 Stage 3) ---------------------------------------------
+#
+# trees research 2, and it is the flattest statement in that document: "A HERO
+# TREE MUST NOT BE A SCALED PARENT. Bigness reads through changed proportions:
+# a massive trunk, 2-4 limbs readable against the sky before any foliage, a
+# crown broken into 3-5 lobes with real sky between them, a flattened top, one
+# dead element, a root flare - and placement in a clearing, ringed by ordinary
+# trees." Placement is `tree_placement.gd`'s and read-only tonight; the other
+# six are this section.
+#
+# EVERYTHING FITS INSIDE THE ENVELOPE THE TABLE ALREADY DECLARED. The hero is
+# the species that sets `max_reach()` at 28 and `max_height()` at 129 - the
+# margin every column in the world widens its candidate scan by, and half of
+# worldgen's cost. It may get cheaper, and it does; it may not get bigger.
+
+## Where a broadleaf hero's crown starts, as a fraction of total height, hashed.
+## Four tenths of the tree in bare trunk is the sky gap and the read: a hero is
+## a trunk you could not put your arms around, with the weather up above it.
+const HERO_BASE := 0.36
+const HERO_BASE_JITTER := 0.06
+
+## THE ROOT FLARE: how many of the four axes the collar grows to. One block
+## wider than the trunk, one or two blocks tall per direction so the collar is
+## ragged rather than a plinth. It reads under 25 m, which is where players
+## live (trees research 3, lever 13), and it costs about twenty blocks.
+const HERO_FLARE_MIN := 2
+const HERO_FLARE_MAX := 4
+
+## Lobes, and the limbs that carry them.
+##
+## ONE LOBE PER CARRIER, AND THE CARRIER IS DRAWN FIRST. The crown is not a
+## union of overlapping blobs the way a beech's is - it is three to five
+## SEPARATE masses with sky between them, each one blobbed around the endpoint
+## of the limb that holds it up (Minecraft's fancy oak does exactly this, and
+## it is why an old oak reads as an oak). Lobe zero rides the fork; the rest
+## ride one-wide limbs. Nothing here needs the beech's flood: a lobe is convex
+## and contains its own carrier's last block, so it cannot strand anything and
+## it cannot come adrift.
+const HERO_LOBE_MIN := 3
+const HERO_LOBE_MAX := 5
+const HERO_LIMB_MAX := 4
+
+## Each lobe's plan radius as a fraction of the crown's half-width, biggest
+## first - the big/medium/small hierarchy, held well under a half so that two
+## lobes at one height still have daylight between them.
+## THE LOBES CARRY THE CROWN OR THERE IS NO CROWN (judge round 2). At 0.44 and
+## under, three lobes on a fifty-eight-block hero photographed as dinner plates
+## on a telegraph pole: the crown was a seventh of the tree's own bounding box
+## and the trunk was the whole read. The hero's envelope is TALL AND NARROW -
+## the table gives it 84 blocks of height against 32 of width - so the sky
+## between the lobes has to come from their spread up the crown rather than
+## across it, and every lobe has to reach the envelope sideways or the tree has
+## no shoulders at all.
+const HERO_LOBE_A := [0.52, 0.52, 0.48, 0.46, 0.44]
+
+## And how FLAT a lobe is: its vertical semi-axis over its plan radius. Under
+## one, because an old crown spreads sideways - and because the flattened top
+## is the proportion that says "old" at ninety metres, where nothing else does.
+const HERO_LOBE_FLAT := 0.85
+
+## Where up the crown a limb leaves the trunk, as a fraction of the crown's own
+## height. Clamped to the fork below it: a limb whose foot was above the fork
+## would leave a trunk that is no longer there.
+const HERO_LIMB_LO := 0.00
+const HERO_LIMB_HI := 0.55
+
+## How far a limb CLIMBS, as a fraction of the crown's height.
+##
+## MORE THAN IT RUNS, AND THAT IS NOT A COMPROMISE (judge round 3). A limb foot
+## may only sit between the crown base and the fork - above the fork there is no
+## trunk left to leave from - so with the rise tied to the run every lobe but
+## the fork's sat in the bottom third of the crown and got its underside sliced
+## off flat by the crown base. Every one of them photographed as a dinner plate.
+## An old broadleaf's limbs do sweep up steeply; this is that, and it is what
+## spreads the lobes over the whole crown.
+const HERO_LIMB_RISE_LO := 0.15
+const HERO_LIMB_RISE_HI := 0.50
+
+## Where the crown's UNDERSIDE may hang to, as a fraction of total height.
+##
+## Below the crown base, and deliberately: the sky gap under a hero is made by
+## where the lowest lobe's own underside falls away, not by a horizontal cut
+## through it. A lobe clipped square across the bottom is a plate.
+const HERO_UNDER := 0.32
+
+## The fork: where, and how far apart the two leaders finish. MANDATORY, unlike
+## the beech's two in five - a tree this old has lost its single leader.
+const HERO_FORK_LO := 0.55
+const HERO_FORK_HI := 0.75
+const HERO_FORK_MIN := 2
+const HERO_FORK_MAX := 3
+
+## THE ONE DEAD ELEMENT, and exactly one. Either a bare spike out of the top of
+## the crown - which on the conifer is the lost leader, the thing that most
+## says "old spruce" - or one whole limb carrying no foliage. More than one and
+## the tree reads as dying rather than as old.
+const HERO_SPIKE_CHANCE := 0.55
+const HERO_SPIKE_MIN := 3
+const HERO_SPIKE_MAX := 6
+
+## The bare limb, when that is the dead element: how far it runs.
+const HERO_DEAD_LIMB_MIN := 4
+const HERO_DEAD_LIMB_MAX := 6
+
+## The conifer hero: where the crown starts, and the shelf ratio.
+##
+## LARCH-ADJACENT, NOT SPRUCE-ADJACENT. An ordinary spruce is a notched spire
+## one sixth of its height wide with the whorls touching; a four-hundred-year
+## spruce is a stack of heavy separated platforms on a bare column, and the
+## column is most of what you see. So the ziggurat, at the larch's fifth rather
+## than the spruce's sixth, with gaps three layers deep instead of one.
+const HERO_CONIFER_BASE := 0.26
+const HERO_SHELF_RATIO := 5.5
+const HERO_SHELF_MIN := 5
+const HERO_SHELF_MAX := 6
+const HERO_SHELF_DEEP_MIN := 3
+const HERO_SHELF_DEEP_MAX := 4
+const HERO_SHELF_GAP := 3
+const HERO_SHELF_GAP_MAX := 5
+const HERO_SHELF_TOP := 3
+
+## Arms per whorl on a conifer hero - the top of the spruce's own range, since
+## this is the widest whorl in the world and a four-armed one that wide is a
+## star rather than a tier.
+const HERO_ARMS := 6
+
+
+## THE HERO. Not a scaled parent: a re-proportioned tree that keeps its
+## parent's leaf and trunk ids and its broad archetype and nothing else.
+static func _draw_hero(writer, bx: int, ground: int, bz: int,
+		params: Dictionary) -> int:
+	if int(params.get("draw", BEECH)) == SPRUCE:
+		return _draw_hero_conifer(writer, bx, ground, bz, params)
+	return _draw_hero_broadleaf(writer, bx, ground, bz, params)
+
+
+## THE BROADLEAF HERO. A massive flared trunk to a mandatory fork, two leaders
+## carrying the top lobe, two to four one-wide limbs carrying the rest, real sky
+## between all of them, a flat top, and one dead element.
+##
+## WHAT THIS REPLACES is the most expensive tree in the world and the least
+## interesting: a beech's crown at twice the size on a very long stick - 28,255
+## blocks before the epic, 13,720 after Stage 2 halved it, and a ball either
+## way. `build/gallery/memo-baseline/species-hero.png` is the picture.
+static func _draw_hero_broadleaf(writer, bx: int, ground: int, bz: int,
+		params: Dictionary) -> int:
+	var h: int = maxi(int(params["height"]), 8)
+	var rw: int = maxi(int(params["crown"]), 2)
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var w: int = maxi(int(params.get("trunk_width", 3)), 1)
+	var tid: int = params["trunk_id"]
+	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_HERO)
+	var roll2 := _hash_keyed(cell, seed, SALT_HERO, 2)
+	var top := ground + h
+
+	var base_frac := HERO_BASE \
+		+ HERO_BASE_JITTER * (float(roll & 0xFF) / 127.5 - 1.0)
+	var crown_base := ground + maxi(2, int(round(float(h) * base_frac)))
+	# The dead element, decided first because the spike is what the crown's
+	# ceiling is measured down from - it REPLACES crown, it never adds height.
+	var spike := (roll2 & 0xFF) < int(HERO_SPIKE_CHANCE * 256.0)
+	var spike_len := 0
+	if spike:
+		spike_len = HERO_SPIKE_MIN + int((roll2 >> 8)
+			% (HERO_SPIKE_MAX - HERO_SPIKE_MIN + 1))
+	var crown_top := maxi(top - spike_len, crown_base + 3)
+	var crown_h := maxi(crown_top - crown_base + 1, 4)
+
+	var n_lobes := HERO_LOBE_MIN \
+		+ int((roll >> 8) % (HERO_LOBE_MAX - HERO_LOBE_MIN + 1))
+	# One limb per lobe that is not the fork's, plus the bare one when the dead
+	# element is a limb rather than a spike.
+	var n_limbs := clampi(n_lobes - 1 + (0 if spike else 1), 1, HERO_LIMB_MAX)
+	var d0 := int((roll >> 12) % GOLDEN_N)
+
+	var fork_y := clampi(ground + int(round(float(h)
+		* lerpf(HERO_FORK_LO, HERO_FORK_HI,
+			float((roll >> 16) & 0xFF) / 255.0))),
+		crown_base + 1, maxi(crown_top - 3, crown_base + 1))
+
+	var drawn := _draw_trunk(writer, bx, ground, bz, fork_y, params)
+	drawn += _draw_root_flare(writer, bx, ground, bz, w, roll, tid)
+
+	# Lobe zero rides the fork, and its top is CUT by the crown's ceiling -
+	# which is the flattened top, and the cheapest possible way to say "no dome
+	# apex" on a shape built out of ellipsoids.
+	var lr0 := maxi(int(round(float(rw) * float(HERO_LOBE_A[0]))), 2)
+	var vr0 := maxi(int(round(float(lr0) * HERO_LOBE_FLAT)), 2)
+	var cy0 := clampi(crown_top - maxi(vr0 / 2, 1), fork_y + 2, crown_top)
+	var lw := maxi(w - 1, 2)
+	var fork_d := HERO_FORK_MIN \
+		+ int((roll >> 24) % (HERO_FORK_MAX - HERO_FORK_MIN + 1))
+	for i in 2:
+		# Opposite sides: six of thirteen is 166 degrees.
+		var ldir: Vector2i = GOLDEN_DIRS[(d0 + i * 6) % GOLDEN_N]
+		drawn += _draw_leader(writer, bx, bz, fork_y + 1,
+			maxi(cy0 - i, fork_y + 1), ldir, fork_d, lw, tid)
+
+	if spike:
+		# Straight on up out of the first leader, in dead wood. It is inside
+		# the foliage for its lower half and clear of it above, which is the
+		# whole of what "one dead element" has to look like.
+		var soff := _golden_offset(GOLDEN_DIRS[d0], fork_d)
+		for y in range(cy0 + 1, top + 1):
+			writer.set_block(bx + soff.x, y, bz + soff.y, Block.TRUNK_DEAD,
+				false)
+			drawn += 1
+
+	# The limbs, and the lobes they carry. Drawn in trunk id BEFORE any
+	# foliage, so a limb is readable against the sky where the crown has none
+	# and the leaves - which go over air only - can never paint over it.
+	var centres: Array[Vector3i] = []
+	var radii: Array[int] = []
+	for i in n_limbs:
+		var lrl := _hash_keyed(cell, seed, SALT_HERO_LOBE, i)
+		var dir: Vector2i = GOLDEN_DIRS[(d0 + 2 + i * GOLDEN_STEP) % GOLDEN_N]
+		# THE LOBE IS HELD SO THE LIMB STILL HAS A BLOCK TO RUN ALONG, which is
+		# also what makes the envelope arithmetic below exact rather than
+		# nearly right.
+		var lrad := clampi(int(round(float(rw)
+			* float(HERO_LOBE_A[mini(i + 1, HERO_LOBE_A.size() - 1)]))),
+			2, maxi(rw - w - 1, 2))
+		var bare := (not spike) and i == n_limbs - 1
+		var foot := _branch_foot(dir, w)
+		# THE LIMB IS EXACTLY AS LONG AS THE ENVELOPE HAS LEFT. `_golden_offset`
+		# never returns a component longer than the distance asked of it, so a
+		# tip at `rw - lrad` puts the lobe's outermost block at `rw` - the crown
+		# radius the table declared, and not one block past it.
+		var length := maxi(rw - lrad - w + 1, 1)
+		if bare:
+			length = clampi(HERO_DEAD_LIMB_MIN + int((lrl >> 16) % (
+				HERO_DEAD_LIMB_MAX - HERO_DEAD_LIMB_MIN + 1)), 2, rw - w + 1)
+		var fy := clampi(crown_base + int(round(float(crown_h - 1)
+			* lerpf(HERO_LIMB_LO, HERO_LIMB_HI,
+				float(lrl & 0xFF) / 255.0))), crown_base, fork_y)
+		var rise := clampi(int(round(float(crown_h) * lerpf(
+			HERO_LIMB_RISE_LO, HERO_LIMB_RISE_HI,
+			float((lrl >> 8) & 0xFF) / 255.0))), 1, maxi(crown_top - fy - 2, 1))
+		drawn += _draw_branch(writer, bx, fy, bz, foot, dir, length, rise,
+			Block.TRUNK_DEAD if bare else tid)
+		if bare:
+			continue
+		var tip := _branch_tip(foot, dir, length, rise)
+		centres.append(Vector3i(tip.x, fy + tip.y, tip.z))
+		radii.append(lrad)
+
+	var under := ground + int(round(float(h) * HERO_UNDER))
+	drawn += _draw_hero_lobe(writer, bx, bz, Vector3i(0, cy0, 0), lr0, vr0,
+		under, crown_top, params)
+	for i in centres.size():
+		var lrad: int = radii[i]
+		drawn += _draw_hero_lobe(writer, bx, bz, centres[i], lrad,
+			maxi(int(round(float(lrad) * HERO_LOBE_FLAT)), 2),
+			under, crown_top, params)
+	return drawn
+
+
+## THE CONIFER HERO. The ziggurat again, at hero scale: five or six heavy
+## whorls three or four layers deep with three to five layers of air between
+## them, hung off a trunk that runs the whole height and is meant to be SEEN
+## through the gaps, a blunt cap where an ordinary spruce has a leader, a root
+## flare, and one dead element.
+static func _draw_hero_conifer(writer, bx: int, ground: int, bz: int,
+		params: Dictionary) -> int:
+	var h: int = maxi(int(params["height"]), 8)
+	var table_r: int = maxi(int(params["crown"]), 2)
+	var cell: Vector2i = params["cell"]
+	var seed: int = params["seed"]
+	var w: int = maxi(int(params.get("trunk_width", 3)), 1)
+	var tid: int = params["trunk_id"]
+	var roll := WorldHash.hash2(cell.x, cell.y, seed, SALT_HERO)
+	var roll2 := _hash_keyed(cell, seed, SALT_HERO, 2)
+	var top := ground + h
+
+	var spike := (roll2 & 0xFF) < int(HERO_SPIKE_CHANCE * 256.0)
+	var spike_len := 0
+	if spike:
+		spike_len = HERO_SPIKE_MIN + int((roll2 >> 8)
+			% (HERO_SPIKE_MAX - HERO_SPIKE_MIN + 1))
+	var crown_top := top - spike_len
+	var crown_base := ground + maxi(2,
+		int(round(float(h) * HERO_CONIFER_BASE)))
+	var span := maxi(crown_top - crown_base + 1, HERO_SHELF_DEEP_MIN)
+
+	# The same layout the larch's ziggurat takes, with the sky slots reserved
+	# before anything is spent on shelf depth - see SHELF_MIN_LAYERS.
+	var n := clampi(span / (HERO_SHELF_DEEP_MIN + HERO_SHELF_GAP),
+		HERO_SHELF_MIN, HERO_SHELF_MAX)
+	while n > 1 and n * HERO_SHELF_DEEP_MIN + (n - 1) * HERO_SHELF_GAP > span:
+		n -= 1
+	var thick := HERO_SHELF_DEEP_MAX
+	while thick > HERO_SHELF_DEEP_MIN \
+			and n * thick + (n - 1) * HERO_SHELF_GAP > span:
+		thick -= 1
+
+	var gaps: Array[int] = []
+	var stack := n * thick
+	var remain := span - stack
+	for k in maxi(n - 1, 0):
+		var left := n - 1 - k
+		var g := clampi(remain / maxi(left, 1), HERO_SHELF_GAP,
+			HERO_SHELF_GAP_MAX)
+		if g < HERO_SHELF_GAP_MAX and remain - g * left > 0 \
+				and ((roll2 >> (12 + k)) & 1) == 1:
+			g += 1
+		g = clampi(g, HERO_SHELF_GAP,
+			maxi(remain - (left - 1) * HERO_SHELF_GAP, HERO_SHELF_GAP))
+		gaps.append(g)
+		stack += g
+		remain -= g
+
+	# Downwards from the cap. Whatever the shelves did not spend stays as bare
+	# trunk under them, which on a hero is not waste - it is the read.
+	var start := maxi(crown_top - stack + 1, crown_base)
+	# THE TRUNK RUNS TO THE CAP, and that is what holds a ziggurat with
+	# three-layer gaps together. An ordinary larch threads a one-wide leaf
+	# spine through its gaps; a hero has a four-voxel column there already,
+	# and it is the single most hero-like thing in the silhouette.
+	var drawn := _draw_trunk(writer, bx, ground, bz, crown_top - 1, params)
+	drawn += _draw_root_flare(writer, bx, ground, bz, w, roll, tid)
+	if spike:
+		for y in range(crown_top, top + 1):
+			writer.set_block(bx, y, bz, Block.TRUNK_DEAD, false)
+			drawn += 1
+	else:
+		var ddir: Vector2i = GOLDEN_DIRS[int((roll >> 12) % GOLDEN_N)]
+		var dlen := HERO_DEAD_LIMB_MIN + int((roll2 >> 20)
+			% (HERO_DEAD_LIMB_MAX - HERO_DEAD_LIMB_MIN + 1))
+		drawn += _draw_branch(writer, bx,
+			start + (crown_top - start) / 3, bz, _branch_foot(ddir, w),
+			ddir, dlen, 1, Block.TRUNK_DEAD)
+
+	var r_base := clampi(int(round(float(h) / HERO_SHELF_RATIO)), 1, table_r)
+	var r_top := mini(HERO_SHELF_TOP, r_base)
+	var arm_phase := int((roll >> 20) % GOLDEN_N)
+	var limits: Array[int] = []
+	limits.resize(GOLDEN_N)
+	var y := start
+	for k in n:
+		var rk := int(ceil(lerpf(float(r_base), float(r_top),
+			float(k) / float(maxi(n - 1, 1)))))
+		for j in thick:
+			# Only the topmost layer of a shelf sits at its full radius, so the
+			# crown underside is a row of DOWN-POINTS and never a horizontal
+			# cut (trees research 2).
+			var ri := rk if j == thick - 1 else maxi(rk - 1, 1)
+			_arm_limits(limits, ri, cell, seed, k, HERO_ARMS, arm_phase)
+			drawn += _whorl_disc(writer, bx, y, bz, ri, limits, params, k, ri)
+			y += 1
+		if k < n - 1:
+			y += gaps[k]
+	return drawn
+
+
+## The root flare: a collar one block wider than the trunk, on two to four of
+## the four axes, one or two blocks tall each.
+##
+## ON AXES AND NOT ON THE THIRTEEN DIRECTIONS, for the reason every one-block
+## detail in this file is: a collar block off the CORNER of a trunk touches it
+## at an edge and at no face.
+static func _draw_root_flare(writer, bx: int, ground: int, bz: int, w: int,
+		roll: int, id: int) -> int:
+	var n := HERO_FLARE_MIN \
+		+ int((roll >> 3) % (HERO_FLARE_MAX - HERO_FLARE_MIN + 1))
+	var d0 := int((roll >> 6) & 3)
+	var drawn := 0
+	for j in n:
+		var step: Vector2i = NUB_DIRS[(d0 + j) % NUB_DIRS.size()]
+		var lay := 1 + int((roll >> (8 + j)) & 1)
+		for y in range(ground + 1, ground + lay + 1):
+			for k in w:
+				var fx := k
+				var fz := k
+				if step.x != 0:
+					fx = w if step.x > 0 else -1
+				else:
+					fz = w if step.y > 0 else -1
+				writer.set_block(bx + fx, y, bz + fz, id, false)
+				drawn += 1
+	return drawn
+
+
+## One lobe of a hero's crown: a FLATTENED ellipsoid centred on the block its
+## carrier ends at, cut off at the crown's ceiling.
+##
+## Convex, nested layer over layer, and it always contains the limb tip or the
+## leader top it was centred on - so it is connected to the tree and internally
+## connected, without any of the beech's flood machinery. The cut at `y_hi` is
+## the flat top; the cut at `y_lo` is the sky gap under the crown.
+static func _draw_hero_lobe(writer, bx: int, bz: int, c: Vector3i, lr: int,
+		vr: int, y_lo: int, y_hi: int, params: Dictionary) -> int:
+	var id: int = params["leaves"]
+	if id == Block.AIR:
+		return 0
+	var drawn := 0
+	for dy in range(-vr, vr + 1):
+		var y := c.y + dy
+		if y < y_lo or y > y_hi:
+			continue
+		var f := sqrt(maxf(1.0 - float(dy * dy) / float(maxi(vr * vr, 1)), 0.0))
+		var ri := int(round(float(lr) * f))
+		for dz in range(-ri, ri + 1):
+			for dx in range(-ri, ri + 1):
+				if not _in_plan(dx, dz, ri):
+					continue
+				writer.set_block(bx + c.x + dx, y, bz + c.z + dz, id, true)
+				drawn += 1
 	return drawn
 
 
 # --- Shared drawing helpers -------------------------------------------------
-
-## One horizontal disc of leaves.
-##
-## The +1 in the radius test rounds the corners off, so a crown is a cone or a
-## dome rather than a stepped pyramid of squares - kept from the original stamp
-## because it is what stops every tree in the world from looking cubic.
-static func _disc(writer, cx: int, y: int, cz: int, r: int,
-		params: Dictionary) -> int:
-	if r < 0:
-		return 0
-	var id: int = params["leaves"]
-	if id == Block.AIR:
-		return 0
-	var fill: float = params["fill"]
-	var seed: int = params["seed"]
-	var drawn := 0
-	for dz in range(-r, r + 1):
-		for dx in range(-r, r + 1):
-			if dx * dx + dz * dz > r * r + 1:
-				continue
-			if fill < 1.0:
-				# HASHED FROM THE BLOCK'S WORLD POSITION, not from a counter.
-				# Every chunk that draws this larch has to punch the same
-				# holes in it, and a counter would depend on where the loop
-				# started - which differs per chunk.
-				#
-				# The layer varies the SALT rather than being folded into the
-				# z coordinate. Folding it in is the obvious trick and it
-				# aliases: with z running over six thousand blocks, (y << 8)
-				# + z collides between different layers of different trees,
-				# and the holes would line up between them.
-				if WorldHash.hash01(cx + dx, cz + dz, seed,
-						SALT_SPARSE + y * 7919) >= fill:
-					continue
-			writer.set_block(cx + dx, y, cz + dz, id, true)
-			drawn += 1
-	return drawn
-
 
 ## Is this offset inside a plan of radius `r`?
 ##

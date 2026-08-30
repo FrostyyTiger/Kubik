@@ -30,11 +30,16 @@ extends SceneTree
 ## because the bridging that keeps a one-wide stem connected was firing only on
 ## a diagonal step when an axis step strands it just as thoroughly.
 ##
-## WHAT IT KNOWS IS STILL BROKEN. `krummholz` reports about a thousand loose
-## blocks over the sweep, two per tree at worst: `_draw_mound` leans its trunk
-## one block sideways and the half-ellipsoid it carries can shed a cell off the
-## bottom edge. Krummholz belongs to trees v1 Stage 3, which is where that gets
-## fixed - it is recorded here rather than silently tolerated.
+## Stage 3: the krummholz, which this file recorded as knowingly broken through
+## two stages - about a thousand loose blocks over the sweep, two per tree at
+## worst, because `_draw_mound` leaned its trunk one block sideways and the
+## half-ellipsoid it carried shed cells off the bottom edge on the far side.
+## The cushion that replaced it goes through `_whorl_disc`, whose per-layer
+## flood settles the question by construction rather than by argument.
+##
+## WHAT IT KNOWS IS STILL BROKEN: nothing. All seven species are green, and the
+## rule from here is that they stay that way - a shape stage that turns one of
+## them red is not done.
 ##
 ## THE SAMPLE IS THE GALLERY'S, PLUS A SWEEP. The exact specimens the gallery
 ## photographs - three sizes, eight `--vary` cells, twelve `--stand` cells - so
