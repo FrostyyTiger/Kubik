@@ -249,6 +249,7 @@ const SPECIES := [
 		"read": 1.0, "name": "spruce", "height": Vector2i(13, 21), "crown": Vector2i(2, 4),
 		"shape": SHAPE_WHORL_CONE, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
+		"sliver": Block.LEAVES_SLIVER,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
@@ -271,6 +272,7 @@ const SPECIES := [
 		# params_for() hands the writer.
 		"shape": SHAPE_WHORL_CONE, "fill": SHELF_FILL,
 		"leaves": Block.LEAVES_LARCH, "leaves_b": Block.LEAVES_LARCH_B,
+		"sliver": Block.LEAVES_SLIVER,
 		"trunk_id": Block.TRUNK, "slope": 40.0,
 	},
 	{
@@ -306,6 +308,7 @@ const SPECIES := [
 		"read": 1.0, "name": "hero", "height": Vector2i(16, 42), "crown": Vector2i(3, 8),
 		"shape": SHAPE_HERO, "fill": 1.0,
 		"leaves": Block.LEAVES, "leaves_b": Block.LEAVES_SPRUCE_B,
+		"sliver": Block.LEAVES_SLIVER,
 		"trunk_id": Block.TRUNK, "slope": 30.0,
 	},
 ]
@@ -513,6 +516,13 @@ static func params_for(species: int, cell_x: int, cell_z: int,
 		"crown": crown,
 		"fill": float(leaves_row["fill"]),
 		"leaves": leaves_row["leaves"] if shade == 0 else leaves_row["leaves_b"],
+		# THE SECOND COLOUR IS NOT A THIRD SHADE (trees v1 Stage 4). It does
+		# not take the A/B roll: A and B are two trees of one species catching
+		# the same light, and the sliver is the SHADOW under a whorl, which is
+		# the same shadow on both of them. Absent (AIR) for every species whose
+		# crown has no shelves to shade the one below - the broadleaves, the
+		# cushion, the snag - and the shape code draws nothing where it is AIR.
+		"sliver": leaves_row.get("sliver", Block.AIR),
 		"trunk_id": leaves_row["trunk_id"],
 		# Hero trunks are ALWAYS 2 x 2, whatever the height rule says. A tree
 		# twice the size of everything around it standing on the same stalk as
@@ -549,6 +559,7 @@ const TREE_BLOCKS := [
 	Block.LEAVES_PINE, Block.LEAVES_PINE_B,
 	Block.LEAVES_BIRCH, Block.LEAVES_BIRCH_B,
 	Block.TRUNK, Block.TRUNK_BIRCH, Block.TRUNK_DEAD,
+	Block.LEAVES_SLIVER,
 ]
 
 
@@ -682,6 +693,53 @@ const SPARSE_CORE := 1
 
 ## Radius at which a plan stops being round and becomes an octagon (§2.5).
 const OCTAGON_MIN := 3
+
+# --- The second colour (trees v1 Stage 4) -----------------------------------
+#
+# §2.5: "Two colours per tree, and the second lives on the whorl underside -
+# detached blue-violet slivers where a shelf shades the one below, never
+# scattered through the crown. At range one flat triangle in one colour."
+#
+# THE SLIVER IS A GEOMETRIC FACT, NOT A HASH. A cell is drawn in
+# `Block.LEAVES_SLIVER` when two things are true of it, and both come out of
+# radii the shape has already computed for this layer and the one below it:
+#
+#   1. it is on this layer's OUTERMOST RING - inside `limits[s]` and outside
+#      `limits[s] - 1` for its own sector; and
+#   2. the cell directly beneath it is OUTSIDE the layer below's plan - which
+#      is to say this layer overhangs that one by at least a block, right here.
+#
+# Nothing is hashed, nothing is read back from the writer, and no cell moves:
+# a sliver is a block that was already going to be drawn, drawn in a different
+# colour. `loose_check` therefore cannot change, and neither can the masks.
+#
+# WHY BOTH CONDITIONS. Condition 2 alone paints the whole underside of a
+# larch's shelf, which is a violet tree with a gold lid; condition 1 alone
+# paints every rim of every layer, which is the "scattered through the crown"
+# §2.5 forbids. Together they are exactly the shelf edge where it stands proud
+# of what is under it - and because a conifer tier's arms are yawed a golden
+# step from the tier below, the ring is INTERRUPTED wherever the tier below
+# happens to have an arm of its own. That is where "detached" comes from: it
+# is not imposed, it falls out of the whorl geometry.
+#
+# WHERE IT IS NOT DRAWN. The bottom layer of a crown has nothing below it to
+# overhang, so the skirt's own underside stays green; the spruce's leader and
+# nubs are single blocks and stay green; the larch and the hero draw slivers on
+# a shelf's BOTTOM layer only, because their shelves are built the other way up
+# from the spruce's (the top layer is the widest, so it overhangs too, and
+# painting both would leave a shelf with no lit edge at all).
+#
+# AND THE LARCH KEEPS THEM. §2.5 calls it "the warm accent among blue-greens;
+# protect it", and a violet line under every shelf could as easily have muddied
+# the one warm thing in the forest, so the stage rendered the species both ways
+# (`trees-4-larchA` against `trees-4-larchB`) and the close-ups settled it. The
+# sliver is the drawn line under a shelf's lip: the ziggurat gets its edges
+# back, and the gold TOP faces - which is where the accent actually lives - are
+# never touched. Without it the shelves blur into the mauve the shade ink makes
+# of the gold, and four to six of them read as one mass.
+
+## What `_whorl_disc()` is handed for "there is no layer below this one".
+const EMPTY_LIMITS: Array[int] = []
 
 ## THE ZIGGURAT (judge round 2). A larch crown is four to six SHELVES, two to
 ## four layers deep - the top layer at the shelf's radius, everything under it
@@ -874,6 +932,15 @@ static func _draw_spruce_spire(writer, bx: int, ground: int, bz: int,
 	# back a plain disc.
 	var limits: Array[int] = []
 	limits.resize(GOLDEN_N)
+	# THE LAYER BELOW, CARRIED FORWARD (Stage 4). Two arrays swapped rather
+	# than one duplicated per layer: a tall spruce is thirty layers and this
+	# runs for every tree in the world. `has_under` is false only for the
+	# skirt's own bottom layer, which is the one layer with nothing under it
+	# to overhang.
+	var under: Array[int] = []
+	under.resize(GOLDEN_N)
+	var has_under := false
+	var prev_off := Vector2i.ZERO
 
 	# THE TAPER RUNS OUT AT ONE, NOT AT NOTHING, and it runs out at the foot of
 	# the leader rather than at the top of the tree. Tapering to zero over the
@@ -916,11 +983,22 @@ static func _draw_spruce_spire(writer, bx: int, ground: int, bz: int,
 		var cz := bz + off.y
 
 		_arm_limits(limits, ri, cell, seed, i / NOTCH_SPRUCE, arms, arm_phase)
-		drawn += _whorl_disc(writer, cx, y, cz, ri, limits, params, 0, ri)
+		drawn += _whorl_disc(writer, cx, y, cz, ri, limits, params, 0, ri,
+			under if has_under else EMPTY_LIMITS,
+			Vector2i(off.x - prev_off.x, off.y - prev_off.y))
 
 		if i >= body - NUB_LAYERS and i < body:
 			drawn += _leader_nubs(writer, cx, y, cz, ri, limits, cell, seed, i,
 				params)
+
+		# LAST, because `_leader_nubs` reads `limits` too. After the swap
+		# `limits` holds the layer before last, which `_arm_limits` overwrites
+		# entry for entry at the top of the next pass.
+		var carry := limits
+		limits = under
+		under = carry
+		has_under = true
+		prev_off = off
 	return drawn
 
 
@@ -1067,8 +1145,18 @@ static func _draw_larch_ziggurat(writer, bx: int, ground: int, bz: int,
 			var ri := rk if j == thick - 1 else maxi(rk - 1, 1)
 			var off := _drift_at(drift_dir, drift, y - start, stack)
 			var widest := _shelf_limits(limits, ri, r_base, cell, seed, k)
+			# THE SHELF'S BOTTOM LAYER, AND ONLY IT (Stage 4). Under it is the
+			# one-wide spine crossing the air gap - or, under the lowest shelf,
+			# the trunk - so its whole rim stands proud of nothing, which is
+			# the underside §2.5 asks for. The layers above it inside the same
+			# shelf overhang too, the shelf being built widest-on-top; painting
+			# those as well would leave a larch with no lit gold edge at all.
+			var below := _drift_at(drift_dir, drift, maxi(y - 1 - start, 0),
+				stack)
 			drawn += _whorl_disc(writer, bx + off.x, y, bz + off.y, widest,
-				limits, params, k, ri)
+				limits, params, k, ri,
+				spine if j == 0 else EMPTY_LIMITS,
+				Vector2i(off.x - below.x, off.y - below.y))
 			y += 1
 		if k < n - 1:
 			for _g in gaps[k]:
@@ -2865,6 +2953,11 @@ static func _draw_hero_conifer(writer, bx: int, ground: int, bz: int,
 	var arm_phase := int((roll >> 20) % GOLDEN_N)
 	var limits: Array[int] = []
 	limits.resize(GOLDEN_N)
+	# A HERO'S GAPS ARE REAL AIR - the trunk crosses them, no leaf spine does -
+	# so the plan under a shelf's bottom layer is the empty one: thirteen
+	# zeroes, which admits the axis cell and nothing else.
+	var gap_plan: Array[int] = []
+	gap_plan.resize(GOLDEN_N)
 	var y := start
 	for k in n:
 		var rk := int(ceil(lerpf(float(r_base), float(r_top),
@@ -2875,7 +2968,9 @@ static func _draw_hero_conifer(writer, bx: int, ground: int, bz: int,
 			# cut (trees research 2).
 			var ri := rk if j == thick - 1 else maxi(rk - 1, 1)
 			_arm_limits(limits, ri, cell, seed, k, HERO_ARMS, arm_phase)
-			drawn += _whorl_disc(writer, bx, y, bz, ri, limits, params, k, ri)
+			# The shelf's bottom layer only, for the larch's reason.
+			drawn += _whorl_disc(writer, bx, y, bz, ri, limits, params, k, ri,
+				gap_plan if j == 0 else EMPTY_LIMITS)
 			y += 1
 		if k < n - 1:
 			y += gaps[k]
@@ -3046,8 +3141,14 @@ static func _arm_limits(limits: Array[int], r: int, cell: Vector2i, seed: int,
 ## in half whenever the shelf happens to start on an odd block. Keyed by the
 ## shelf, both of its layers lose exactly the same clumps, the pair merges
 ## vertically, and the clump is 2 x 2 x 2 aligned to the SHAPE.
+## `under` is the layer BELOW's own thirteen radii, and `under_off` is this
+## layer's axis minus that layer's axis - the drift moves an axis a block at a
+## time, so a cell at `(dx, dz)` here sits over `(dx, dz) + under_off` there.
+## An EMPTY `under` means there is no layer below and no slivers are drawn.
+## See "The second colour" above.
 static func _whorl_disc(writer, cx: int, y: int, cz: int, r: int,
-		limits: Array[int], params: Dictionary, clump_key: int, rim: int) -> int:
+		limits: Array[int], params: Dictionary, clump_key: int, rim: int,
+		under: Array[int] = [], under_off := Vector2i.ZERO) -> int:
 	if r < 0:
 		return 0
 	var id: int = params["leaves"]
@@ -3055,6 +3156,8 @@ static func _whorl_disc(writer, cx: int, y: int, cz: int, r: int,
 		return 0
 	var fill: float = params["fill"]
 	var seed: int = params["seed"]
+	var sliver: int = params.get("sliver", Block.AIR)
+	var two_tone := sliver != Block.AIR and not under.is_empty()
 	# The series cannot meet SALT_SPARSE's: see SALT_CLUMP.
 	var clump_salt := SALT_CLUMP + clump_key * 7919
 	var drawn := 0
@@ -3068,7 +3171,9 @@ static func _whorl_disc(writer, cx: int, y: int, cz: int, r: int,
 			for dx in range(-r, r + 1):
 				if not _in_plan(dx, dz, limits[_sector_of(dx, dz)]):
 					continue
-				writer.set_block(cx + dx, y, cz + dz, id, true)
+				writer.set_block(cx + dx, y, cz + dz,
+					sliver if two_tone and _overhangs(dx, dz, limits, under,
+						under_off) else id, true)
 				drawn += 1
 		return drawn
 
@@ -3126,9 +3231,27 @@ static func _whorl_disc(writer, cx: int, y: int, cz: int, r: int,
 		for dx in range(-r, r + 1):
 			if keep[(dz + r) * side + dx + r] != 2:
 				continue
-			writer.set_block(cx + dx, y, cz + dz, id, true)
+			writer.set_block(cx + dx, y, cz + dz,
+				sliver if two_tone and _overhangs(dx, dz, limits, under,
+					under_off) else id, true)
 			drawn += 1
 	return drawn
+
+
+## Is this cell an underside sliver - outermost ring of its own layer, and
+## standing over nothing the layer below drew?
+##
+## Both halves are pure integer geometry over radii the caller already has. The
+## outward face of a sliver is what carries it in the silhouette; the downward
+## face is what §2.5 is actually describing, and the shade ink takes that one
+## whichever side of the tree it is on.
+static func _overhangs(dx: int, dz: int, limits: Array[int],
+		under: Array[int], under_off: Vector2i) -> bool:
+	if _in_plan(dx, dz, limits[_sector_of(dx, dz)] - 1):
+		return false
+	var ux := dx + under_off.x
+	var uz := dz + under_off.y
+	return not _in_plan(ux, uz, under[_sector_of(ux, uz)])
 
 
 ## Is this cell's 2 x 2 clump a hole?

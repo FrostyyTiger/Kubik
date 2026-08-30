@@ -46,6 +46,21 @@ enum {
 	LEAVES_BIRCH_B = 20,
 	TRUNK_BIRCH = 21,
 	TRUNK_DEAD = 22,
+
+	# --- Trees v1 Stage 4: the second colour -------------------------------
+	#
+	# ONE id, not one per species. art-direction.md 2.5 asks for "two colours
+	# per tree, and the second lives on the whorl underside - detached
+	# blue-violet slivers where a shelf shades the one below". The underside is
+	# a SHADOW, and look v2's shade ink is one colour for the whole world; an
+	# authored shadow that changed hue by species would be arguing with it. So
+	# the spruce, the larch and the conifer hero all take the same violet, and
+	# the species keeps its own two greens (or golds) for everything the sun
+	# can reach.
+	#
+	# It is a THIRD id and not a third shade: the A/B per-tree roll still picks
+	# the crown's colour, and this rides on top of whichever it picked.
+	LEAVES_SLIVER = 23,
 }
 
 ## The palette. These ARE the look of the game - there are no textures, so a
@@ -110,6 +125,19 @@ const COLORS := [
 	Color(0.2874, 0.4452, 0.1384),   # LEAVES_BIRCH_B  #92B268  birch, shade B
 	Color(0.6654, 0.6445, 0.5520),   # TRUNK_BIRCH      #D5D2C4  birch bark
 	Color(0.3419, 0.3185, 0.2789),   # TRUNK_DEAD      #9E9990  snag, weathered
+	# AUTHORED BLUER THAN IT LOOKS ON SCREEN, and that is the whole of trees v1
+	# Stage 4's judge round 1. The first take was #2A2F3E - H225 S32, the value
+	# the brief asks for - and it photographed at H270 S6: a neutral black band,
+	# not a blue-violet sliver. The noon sun in this world is warm, and measured
+	# off a lit crown face it lands on the three channels as roughly
+	# (0.72, 0.54, 0.38): blue arrives at 53% of red, so a third of the authored
+	# hue is cancelled on the way to the screen. #1F2A46 is that transform run
+	# backwards from the colour the picture wanted. Measured on the lit side of
+	# a Stage 4 spruce it renders H219 S36 V15, against the H213 S28 V13 the
+	# shade ink makes of the same tree's dark side - which is the design: a lit
+	# sliver reads as the shadow the ink would have drawn there, and a sliver on
+	# the shade side has nothing to give itself away against.
+	Color(0.0137, 0.0232, 0.0612),   # LEAVES_SLIVER   #1F2A46  the whorl underside
 ]
 
 const NAMES := [
@@ -122,6 +150,7 @@ const NAMES := [
 	"leaves_pine", "leaves_pine_b",
 	"leaves_birch", "leaves_birch_b",
 	"trunk_birch", "trunk_dead",
+	"leaves_sliver",
 ]
 
 
