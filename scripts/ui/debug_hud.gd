@@ -111,6 +111,7 @@ const LOCAL_TUNING_ROWS := [
 	# UP: a riser above 1.0 LIFTS an away-facing slope off the shade band, which
 	# is what the black crush in the treeline band wants. See the status doc.
 	["far_riser_shade", "distance: riser shade", 0.0, 1.5, 0.05],
+	["far_riser_lift", "distance: riser lift (away)", 1.0, 2.5, 0.05],
 ]
 
 var config: WorldgenConfig = null

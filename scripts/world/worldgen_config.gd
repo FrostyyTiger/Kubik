@@ -1017,6 +1017,45 @@ const FOG_START_RATIO := 0.4
 ## 0.50 and 0.70 tours on disk.
 @export var far_riser_shade := 1.0
 
+## HOW MUCH A RISER FACING AWAY FROM THE SUN IS LIFTED. Distance v2 follow-up,
+## and the reason far_riser_shade above stays at an honest 1.0.
+##
+## THE PROBLEM, found by elimination rather than by theory. Terracing takes the
+## far band's dead-black share from 7.08% to 15.63%. It is NOT the altitude
+## bands - turning them off makes it worse, 15.63% - nor the impostors, which
+## were HIDING dark ground (worse again at 18.06%), nor the near field's own
+## behaviour arriving at range, because a near cliff measures 0.00%. It is the
+## risers, and three plausible explanations died to get there.
+##
+## GEOMETRY CANNOT FIX IT. A riser is as tall as the terrain's own height
+## difference to its neighbour, so its area is cell width x slope and the step
+## size only ROUNDS it. On anything steeper than 45 degrees the far country is
+## mostly vertical face by construction, and the cubic lock only makes actual
+## cubes on 45-degree ground.
+##
+## THE TRAP IN THE LIGHT. Look's ramp is three flat bands. On a slope facing
+## fully away from the sun the top (which carries the flank normal) and the
+## riser (horizontal) land in the SAME band, so nothing separates them and they
+## crush together into one flat black. A symmetric lift was measured at 1.30: it
+## moved the whole frame 15.64% -> 14.37% and the treeline band itself
+## 34.79% -> 34.11%, which is nearly nothing, while lifting the LIT side too -
+## where it is not needed and where a riser brighter than its own shelf top
+## starts to read as a cheat.
+##
+## SO THE LIFT GOES ONLY WHERE THE DARK IS. A riser facing the sun is drawn at
+## far_riser_shade, an honest voxel side face with no cheat in it; one facing
+## away is multiplied by this. The mesher already knows which is which - it is
+## the same dot against Block.SUN_ASPECT that aspect_tint uses - so it costs
+## nothing new. 1.0 disables it and restores a symmetric riser exactly.
+##
+## THE APPROXIMATION, stated rather than buried: SUN_ASPECT is a FIXED compass
+## direction, not the real sun, so this is right around noon and drifts at dawn
+## and dusk. That is the same approximation aspect_tint has shipped with since
+## look v1 - "any fixed direction would do" - and inheriting it is deliberate.
+##
+## LOCAL and unhashed, and read only where far_terrace emits a riser at all.
+@export var far_riser_lift := 1.6
+
 ## Real seconds per in-game day.
 @export var day_seconds := 480.0
 
@@ -1264,7 +1303,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
-	"far_terrace", "far_riser_shade",
+	"far_terrace", "far_riser_shade", "far_riser_lift",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

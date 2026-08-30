@@ -367,32 +367,62 @@ seven stages of "identical on every geometry row". Either the probe should take
 a frontier, or the far-mesh vertex count the WORLD prints at load should be a
 gate in its own right. The second is nearly free and would have caught it.
 
-**14. Terracing more than doubles the dead-black area of the far country.** On
-`6-postcard`, the share of the upper frame below luma 40 goes **7.08% with
-`far_terrace` off to 15.63% with it on**. The cause is structural rather than a
-constant: a slope facing away from the sun stops being a continuously shaded
-diagonal and becomes a wall of vertical risers that all land on the same bottom
-rung of the three-tone ramp, so the whole slope collapses to one flat black. In
-that frame it is the treeline band from about x 350 to x 950 - a lit brown slope
-with readable ground at `far_terrace 0`, a near-solid mass at 1, with the
-distant tree trunks inside it losing their bases and reading as floating sticks.
+**14. ~~Terracing more than doubles the dead-black area.~~ FIXED, 15.64% ->
+8.90% against a 7.08% terracing-off reference.** Three explanations were tested
+and died first: not the altitude bands (turning them off makes it worse), not
+the impostors (removing them worse still - they were HIDING dark ground), not
+the near field's own behaviour at range (a near cliff measures 0.00%). And
+geometry cannot fix it: a riser is as tall as the terrain's own height
+difference to its neighbour, so its area is cell width x slope and the step size
+only rounds it.
 
-**The riser lift was tried against it and does not fix it.** `far_riser_shade`
-1.00 -> 1.30 moves below-luma-40 on the band itself from 34.79% to 34.11% -
-nothing - though it does buy legibility inside the mass and is shipped for other
-reasons. What the crush wants is a different lever: a floor under the shade band
-for the mid distance, or a fog floor. Neither has been tried.
+The cause is a trap in the light. **Look's ramp is three flat bands, so on a
+slope facing fully away from the sun the top and the riser land in the SAME
+band** and nothing separates them. That is also why a symmetric lift was a weak
+lever - it lifts the lit side, where the light was never the problem.
 
-**15. The far summits read as a city skyline, not as peaks.** At the top of
-`6-postcard` the tall snow peak that is a clean triangle with a sharp apex at
-`far_terrace 0` is a stack of rectangular slabs at 1, and the slender spire
-beside it is a banded tower. Two independent reviewers raised it unprompted and
-called it a bigger aesthetic problem than either knob they were asked about. The
-16 m step at the fog is eating the one silhouette a travel poster most depends
-on. A step size that tapers back down in the top of the terrain's height range
-would keep the point; nobody has tried it. Related and smaller: terracing plus
-the ridge round-up invents a **one-block-wide pillar** on a thin crest in the
-same frame, which a minimum-footprint rule would remove.
+**`far_riser_lift` lifts only the risers whose azimuth faces away from the sun**,
+which the mesher already knows because it is the same dot against
+`Block.SUN_ASPECT` that `aspect_tint` has used since look v1. A sun-facing riser
+stays at `far_riser_shade` 1.0 and is an honest voxel side face. It closes 79%
+of the gap where a symmetric lift closed 15%, and keeps the step strength
+(4.805 against 4.426 unlifted). Approximation, stated: SUN_ASPECT is a fixed
+compass direction, so this is right around noon and drifts at dawn and dusk -
+the same approximation aspect_tint has always shipped with.
+
+**15. The far summits read as a city skyline. IMPROVED, NOT FIXED - and the next
+lever is horizontal, not vertical.** Summit cells now round up onto a quarter of
+their ring's step (4 m instead of 16 m at the horizon), which removes the worst
+overshoot (-30.28 blocks -> -6.28) and uncovers a pointed peak the old slab was
+clipping flat.
+
+**But the silhouette's character does not move**: same edge count (60 vs 60),
+same share of dead-flat columns (94.1% vs 94.1%), same riser scale. The
+"skyline" reading comes from **flat-top WIDTH and sheer-sided risers**, and the
+vertical grid touches neither - the centre peak's flat cap is 87 px wide after
+against 84 before. **Shelf size or riser treatment at summit cells is the next
+lever**; do not spend another pass on the vertical grid.
+
+It cost PEAK LOSS +13.40 -> +24.20 mean, because Stage 4's better mean was
+substantially overshoot luck. **`far_peak_gain` 0.85 buys it back to +15.00 and
+improves FIZZ and VALLEY GAIN at the same time** - measured, and deliberately
+not spent, because that is a distance v1 constant which also feeds the smooth
+mesh and moving it would break hard rule 1. A terrace-only gain in `_cell_h()`
+would get it cleanly. That is a decision, not a fix.
+
+**16. The ridge test finds any local maximum over 96 blocks - shore berms and
+lake rims, not only alpine summits.** 79% of what the finer summit grid does to
+`6-postcard` lands at the SHORELINE, where the far-mesh waterline goes from a
+razor-straight diagonal to a stepped one. Looked at rather than assumed: it is
+arguably more right, since the sand above it is already drawn in terraces and a
+banded surface with a smooth edge is internally contradictory. Named because it
+arrived as a side effect of a summit argument, not because it is wrong.
+
+Also worth keeping: **`_is_ridge` used `>=`, and on flat ground every cell is a
+"ridge"** (`h >= h` in all four directions), so seed 42's meadows and its 53 lake
+beds all qualified. Harmless under a round-up, ruinous under a finer grid - it
+quadrupled the shelf heights across the flattest parts of the map and took the
+far probe from four minutes to over forty. Now strictly `>`.
 
 Earlier runs, newest first:
 

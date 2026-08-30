@@ -649,10 +649,16 @@ func _terrace_row(s: Surface) -> String:
 		if not per_step.has(step):
 			per_step[step] = [0, 0, 0.0]   # on grid, total, worst deviation
 		var row: Array = per_step[step]
+		# RIDGE CELLS SIT ON A FINER GRID - a quarter of the ring's step, see
+		# FarFieldJob.RIDGE_SUBSTEP - so a corner is "on grid" if it is on
+		# either. Checked against the sub-step, which the ring's own step is a
+		# multiple of, so this still proves the height was quantised and no
+		# longer fails on the summits it is supposed to be proud of.
+		var fine := step / float(FarFieldJob.RIDGE_SUBSTEP)
 		var worst := 0.0
 		for k in 4:
 			var h := s.qy[i * 4 + k] - s.y_off_blocks
-			worst = maxf(worst, absf(h - round(h / step) * step))
+			worst = maxf(worst, absf(h - round(h / fine) * fine))
 		row[1] += 1
 		if worst <= TERRACE_EPS_BLOCKS:
 			row[0] += 1
@@ -662,8 +668,8 @@ func _terrace_row(s: Surface) -> String:
 	var parts := PackedStringArray()
 	for k in keys:
 		var row: Array = per_step[k]
-		parts.append("%d blk: %d/%d on grid, worst %.3f" % [
-			int(k), row[0], row[1], row[2]])
+		parts.append("%d blk (/%d): %d/%d on grid, worst %.3f" % [
+			int(k), FarFieldJob.RIDGE_SUBSTEP, row[0], row[1], row[2]])
 	return String("   ").join(parts)
 
 
