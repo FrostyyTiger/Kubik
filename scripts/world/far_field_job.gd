@@ -184,6 +184,35 @@ const TERRACE_LEVEL_RING := 0
 ## block of difference at the 400 m boundary.
 const RIDGE_SPAN_BLOCKS := 96
 
+## HOW MUCH FINER A RIDGE CELL'S STEP IS THAN ITS RING'S. Distance v2 follow-up,
+## and it replaces Stage 4's round-UP rather than joining it.
+##
+## Stage 4 rounded a local maximum up to the next whole step so a summit kept its
+## height. It works - PEAK LOSS went +29.40 to +13.40 - and it has two costs that
+## only showed up in the pictures. A summit's last 16 m collapses into ONE slab,
+## so the peaks read as a city skyline rather than as an alpine one; and a lone
+## crest cell is pushed a whole step above its neighbours, which is where the
+## one-block "needle" standing in front of the massif came from.
+##
+## Both are the same mistake: rounding UP is a bigger lie than rounding to
+## nearest, and at a summit it is told against the sky, where the eye is best at
+## catching it.
+##
+## So a ridge cell still rounds UP - that part is load-bearing, and dropping it
+## cost PEAK LOSS +13.40 -> +27.80 in one measurement - but it rounds up onto a
+## QUARTER of its ring's step: 1 m at ring 0 and 4 m at ring 2. The upward bias
+## that buys a summit its height back off a filtered pyramid is kept; what goes
+## is the OVERSHOOT, from up to a whole step down to at most a quarter of one.
+## The summit gets four treads where it had one slab, and a lone crest cell is
+## lifted 4 m rather than 16, which is no longer a needle.
+##
+## THE POWER-OF-TWO LADDER SURVIVES because a quarter of a power of two is one:
+## the sub-step is 2, 4 and 8 blocks against the rings' 8, 16 and 32, so a ridge
+## shelf is still on a grid every other cell's shelf is also on. What it is not
+## is on the RING's own grid, which is why the far probe's terrace check now
+## reports against the sub-step - see there.
+const RIDGE_SUBSTEP := 4
+
 var heightmap: Heightmap = null
 var generator: TerrainGenerator = null
 var config: WorldgenConfig = null
@@ -725,9 +754,8 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# as steps at exactly the range where the eye is looking for them.
 			# far_riser_shade is the margin that keeps them apart on both flanks,
 			# and it is a knob because how much of it is taste.
-			var riser := Color(color.r * config.far_riser_shade,
-				color.g * config.far_riser_shade,
-				color.b * config.far_riser_shade, color.a)
+			# The riser colour is now decided PER EDGE, inside the loop - see
+			# the note on far_riser_lift. Only the base is common to the quad.
 			for e in edges:
 				var nbx: int = bx0 + e[2]
 				var nbz: int = bz0 + e[3]
@@ -752,6 +780,37 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				# the terrace is fading in across the seam band (Stage 8) the two
 				# ends can differ, which is why the riser is a trapezoid rather
 				# than a rectangle.
+				# THE LIFT IS ASYMMETRIC, and this is the whole of the black
+				# crush fix. Measured: terracing takes the far band's dead-black
+				# share from 7.08% to 15.63%, and it is the RISERS - turning off
+				# the altitude bands makes it worse (15.63%) and turning off the
+				# impostors worse still (18.06%), so neither of those is the
+				# cause. Geometry cannot fix it either: a riser is as tall as the
+				# terrain's own height difference to its neighbour, so its area
+				# is cell width x slope and the step size only rounds it.
+				#
+				# That leaves light, and light has a trap: the ramp is three flat
+				# bands, so on a slope facing fully away from the sun the top and
+				# the riser land in the SAME band and nothing separates them.
+				# They crush together into one flat black.
+				#
+				# A symmetric lift was tried at 1.30 and is a weak lever - the
+				# treeline band moved 34.79% to 34.11% - because it lifts the lit
+				# side too, where it is not needed and where it starts to look
+				# like a cheat (a riser brighter than its own shelf top).
+				#
+				# So the lift goes only where the dark is. `e[4]`/`e[5]` are the
+				# edge's outward direction in cells, which is exactly what
+				# Block.aspect_shade already dots against SUN_ASPECT, so the
+				# mesher knows which risers face away without computing anything
+				# new. A riser facing the sun is drawn at far_riser_shade and is
+				# an honest voxel side face; one facing away is lifted off the
+				# shade floor by far_riser_lift.
+				var away := clampf(-(float(e[4]) * Block.SUN_ASPECT.x
+					+ float(e[5]) * Block.SUN_ASPECT.y), 0.0, 1.0)
+				var k: float = config.far_riser_shade \
+					* lerpf(1.0, config.far_riser_lift, away)
+				var riser := Color(color.r * k, color.g * k, color.b * k, color.a)
 				var da: float
 				var db: float
 				if _t_full:
@@ -956,10 +1015,21 @@ func _cell(i: int, j: int) -> int:
 		return at
 	var step := float(_t_step)
 	var h := _cell_h(i, j)
-	# STAGE 4, decision 9: round UP at a local maximum of the flank, to nearest
-	# everywhere else. Every result is still an exact multiple of the step, so
-	# the step ladder and Stage 1's gate are untouched.
-	_t_hq[at] = (ceil(h / step) if _is_ridge(i, j, h) else round(h / step)) * step
+	# DECISION 9, AND THE SHAPE IT ENDED UP IN. A local maximum of the flank
+	# rounds onto a FINER grid - see RIDGE_SUBSTEP - and everything else rounds
+	# to its ring's own step. Stage 4 rounded ridges UP instead; that kept the
+	# height and cost the summit its point.
+	if _is_ridge(i, j, h):
+		# ROUND UP, ON THE FINER GRID - and the round-up is not optional. Trying
+		# `round` here instead cost PEAK LOSS +13.40 -> +27.80: decision 9's
+		# upward bias is what buys a summit its height back off a filtered
+		# pyramid, and it turns out to be nearly the whole of the 76%
+		# improvement, not the cosmetic half. What the finer grid removes is the
+		# OVERSHOOT - a whole step became at most a quarter of one.
+		var fine := step / float(RIDGE_SUBSTEP)
+		_t_hq[at] = ceil(h / fine) * fine
+	else:
+		_t_hq[at] = round(h / step) * step
 	_t_t[at] = _terrace_at(i, j)
 	return at
 

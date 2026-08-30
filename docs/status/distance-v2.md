@@ -386,9 +386,10 @@ to stop dimming.
 
 Left on F4 as `distance: riser shade` so Marcel can overrule it in one spinbox.
 
-**AND IT WAS OVERRULED, UPWARD, AFTER THE MERGE.** The monotone trend above does
-not stop at 1.0: the useful direction is a **lift** past it. See "The riser
-lift" below - shipped at **1.30**, and the range on F4 now runs to 1.5.
+**AND THE MONOTONE TREND DOES NOT STOP AT 1.0.** The useful direction past it
+is a **lift**, and it ships as a separate constant applied only to the risers
+that face away from the sun - see "The riser lift" below. `far_riser_shade`
+itself stays at 1.0, which is the near field's own ratio and no cheat at all.
 
 ### Gate
 
@@ -1039,7 +1040,8 @@ Also on disk, all `far_terrace 1.0`, Forward+, seed 42:
 | constant | `f23c3f0` | shipped | why, in one line |
 | --- | --- | --- | --- |
 | `far_terrace` | - | **0.0**, on F4 | ships OFF; 1.0 is the epic and 0.0 is the way back |
-| `far_riser_shade` | - | **1.30**, on F4 (0-1.5) | the plan's 0.7 is a dimmer; 1.0 is the near field's own ratio; past it is a LIFT off the shade floor, and that is the direction that helps |
+| `far_riser_shade` | - | **1.0**, on F4 (0-1.5) | the plan's 0.7 is a dimmer; 1.0 is the near field's own ratio and the honest value |
+| `far_riser_lift` | - | **1.6**, on F4 (1-2.5) | the away-facing risers, and only those, are lifted off the shade floor |
 | `TERRACE_LEVEL_RING` | - | **0** (pyramid level 2) | swept 0/1/2/per-ring; chosen on PEAK LOSS and the seam dip |
 | `RIDGE_SPAN_BLOCKS` | - | **96** | `far_normal_m`'s half-span: a ridge read at the scale a flank is |
 | `TERRACE_FADE_CELLS` | - | **12** | three times the detail's fade; halves the seam artefact |
@@ -1164,7 +1166,9 @@ seventeen-shot tour on ganymede, seed 42, Forward+.
 | knob | shipped | photographed alternatives |
 | --- | --- | --- |
 | `far_terrace` | **0.0** | `n1-t0` / `n1-t0-gl` at 0, `final-t1` / `final-t1-gl` at 1, and `zonefix-t1` at 1 after the zone fix |
-| `far_riser_shade` | **1.30** | `d2-t1-rs050` (0.50), `d2-t1-rs070` (0.70), `zonefix-t1` (1.00), `rs130` (shipped) |
+| `far_riser_shade` | **1.0** | `d2-t1-rs050` (0.50), `d2-t1-rs070` (0.70), `rs130` (a symmetric 1.30, superseded) |
+| `far_riser_lift` | **1.6** | `fix-t1` (shipped), `rs130` is the symmetric 1.30 it replaced, `fix-t1-noridge` is the lift off |
+| `RIDGE_SUBSTEP` | **4** | `fix-t1-noridge` (on) against `zonefix-t1` (off), and the 3x crops `build/probe/pk-fine.png` / `pk-coarse.png` / `pk-ref.png` |
 | `far_band_step` | **0.03** | `bs015` (0.015), `bs060` (0.06) |
 
 ### The `far_band_step` sweep, and why it changes nothing
@@ -1279,6 +1283,119 @@ central ridge keeps its blue instead of going to black.
 
 `far_terrace 0.0` emits no risers at all, so this constant is unread there and
 hard rule 1 is untouched by it.
+
+### The black crush, fixed - and the skyline, improved but not fixed
+
+The two things two independent reviewers raised unprompted. One is essentially
+solved and one is not, and the difference is worth reading.
+
+#### The crush: 15.64% -> 8.90% against a 7.08% reference
+
+Three explanations were tested and all three died first. It is **not** the
+altitude bands (turning them off makes it *worse*, 15.63%), **not** the
+impostors (removing them worse still, 18.06% - they were *hiding* dark ground),
+and **not** the near field's own behaviour arriving at range (a near cliff,
+`2-summit`, measures **0.00%**).
+
+And **geometry cannot fix it**: a riser is as tall as the terrain's own height
+difference to its neighbour, so its area is `cell width x slope` and the step
+size only rounds it. On anything steeper than 45 degrees the far country is
+mostly vertical face by construction - the cubic lock only makes actual cubes on
+45-degree ground.
+
+That leaves light, and light has a trap: **Look's ramp is three flat bands, so
+on a slope facing fully away from the sun the top and the riser land in the same
+band.** Nothing separates them; they crush together. Which is exactly why the
+symmetric lift was a weak lever - it lifts the lit side too, where the light was
+never the problem.
+
+**So the lift goes only where the dark is.** `far_riser_lift` multiplies a riser
+whose azimuth faces away from the sun; one facing the sun is drawn at
+`far_riser_shade` and is an honest voxel side face with no cheat in it. The
+mesher already knows which is which - it is the same dot against
+`Block.SUN_ASPECT` that `aspect_tint` has used since look v1.
+
+| `6-postcard`, far band | below luma 40 | mean luma | step edge |
+| --- | --- | --- | --- |
+| terracing off (reference) | **7.08%** | 111.9 | 2.764 |
+| symmetric riser 1.00 | 15.64% | 105.4 | 4.426 |
+| symmetric riser 1.30 | 14.37% | 112.0 | 4.886 |
+| **asymmetric lift 1.6 (shipped)** | **8.90%** | 112.2 | 4.805 |
+| the ridge change alone, lift off | 15.64% | 105.8 | 4.394 |
+
+**It closes 79% of the gap where the symmetric lift closed 15%**, puts the
+brightness back at the reference, and keeps almost all the step strength. The
+last row is the control: the ridge change does nothing for the crush, so the
+lift is what did it.
+
+The approximation, stated: `SUN_ASPECT` is a fixed compass direction, not the
+real sun, so this is right around noon and drifts at dawn and dusk. That is the
+same approximation `aspect_tint` has shipped with since look v1.
+
+#### The skyline: better, and NOT fixed
+
+Summit cells now round up onto a **quarter** of their ring's step - 4 m instead
+of 16 m at the horizon - so a peak gets four treads where it had one slab.
+Judged independently against the terracing-off reference, and the verdict was
+ship it *while keeping the ticket open*, which is the right reading:
+
+- **What it buys.** The worst overshoot goes from **-30.28 blocks to -6.28** - a
+  peak drawn 30 blocks too high is not a taller mountain, it is a white
+  rectangle parked in front of a real summit, and lowering it *uncovers a
+  pointed cream peak that the slab had been clipping flat*. One massif right of
+  centre gains a genuine staircase (y105 -> 72 -> 60 -> 51 -> 39 where it had
+  one sheer face). The dusk view loses a one-column needle.
+- **What it does not buy.** The silhouette's *character* does not move at all:
+  same edge count (60 vs 60), same share of dead-flat columns (94.1% vs 94.1%),
+  same riser scale. **The "skyline" reading comes from flat-top WIDTH and
+  sheer-sided risers, and this change touches neither** - the centre peak's flat
+  cap is 87 px wide after against 84 before, very slightly *wider*. It lowers
+  the caps; it does not point them.
+
+**So the next lever is horizontal, not vertical** - shelf size or riser
+treatment at summit cells. Recorded so nobody spends another night on the
+vertical grid.
+
+#### What it cost, and the one number that would buy it back
+
+PEAK LOSS at 600 m goes **+13.40 -> +24.20** mean. Stage 4's better mean was
+substantially *overshoot luck*: rounding up to a 32-block grid added back a
+random 0-32 blocks that happened to average out, which is what the -30.28
+outlier was. The finer grid is more honest and lands lower.
+
+**`far_peak_gain` buys it back almost for free, and it is deliberately not
+spent.** Measured with the fine grid:
+
+| `far_peak_gain` | PEAK LOSS mean | worst | FIZZ rms | VALLEY GAIN |
+| --- | --- | --- | --- | --- |
+| **0.60 (shipped)** | +24.20 | +49.85 | 1.260 | -6.53 |
+| 0.75 | +20.20 | +41.85 | 1.267 | -4.93 |
+| 0.85 | **+15.00** | +33.85 | **1.249** | **-4.93** |
+
+0.85 recovers nearly all of it *and* improves FIZZ and VALLEY GAIN. It is not
+shipped because `far_peak_gain` is a **distance v1** constant that also feeds
+the smooth mesh through `_filtered()`, so moving it would break hard rule 1 and
+re-open a value distance v1 chose with its own evidence. A terrace-only gain in
+`_cell_h()` would get it cleanly, and that is a decision rather than a fix.
+
+#### Two things found on the way, both worth knowing
+
+**`_is_ridge` used `>=`, and on flat ground every cell is a "ridge"** - `h >= h`
+is true in all four directions, so seed 42's meadows and its 53 lake beds all
+qualified. Under Stage 4's round-up that was nearly harmless; under a finer
+ridge grid it quadrupled the distinct shelf heights across the flattest and
+largest parts of the map and took the far probe from four minutes to over forty.
+Now strictly `>`. A summit is strictly higher than its surroundings; flat is not
+a summit.
+
+**The ridge test finds any local maximum over 96 blocks, which includes shore
+berms and lake rims** - not only alpine summits. **79% of what the fine grid
+does to `6-postcard` lands at the SHORELINE**, where the far-mesh waterline goes
+from a razor-straight diagonal to a stepped one. Looked at rather than assumed:
+it is arguably *more* right, because the sand above it is already drawn in
+terraces and a banded surface with a smooth edge is internally contradictory.
+But it arrived as a side effect of a summit argument and it is named here rather
+than left to be discovered.
 
 ### Carried forward
 
