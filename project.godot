@@ -29,6 +29,24 @@ Net="*res://scripts/net/net_manager.gd"
 window/size/viewport_width=1280
 window/size/viewport_height=720
 
+; UI V1 STAGE 1. THE POSTER SCALES; IT DOES NOT REFLOW.
+;
+; Until this line every Control in the game was raw 1280x720 pixels, so a
+; window of any other size moved the type and left the ornaments where they
+; were. `canvas_items` scales the whole logical canvas uniformly, which is what
+; a printed poster does when you print it larger - the deliberately absolute
+; sizes in Deco (a 9 px rule, a 14 px corner radius, a 44 px button) become
+; LOGICAL pixels and keep their proportion to the type they frame.
+;
+; `expand` rather than `keep`: it gives back the extra as logical canvas rather
+; than as black bars, and the scale factor it picks is the SMALLER of the two
+; ratios - so the logical canvas is never smaller than 1280x720 in either
+; dimension. A wider window gains logical width, a taller one gains logical
+; height, and no screen in the game ever has to lay out into less room than it
+; was designed for. That is the whole of the audit the design doc asked for.
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
 [gui]
 
 ; The poster. Every Control in the game inherits it; a screen opts OUT of the

@@ -85,6 +85,17 @@ func _apply_launch_args() -> void:
 		_shoot_ui()
 		return
 
+	# THE HUD HARNESS SKIPS THIS SCREEN ENTIRELY (ui v1 Stage 4). Straight
+	# into the game scene rather than through _on_host_pressed(), because
+	# game.gd falls back to Net.host_offline() when nothing is online - so
+	# the driver hosts with zero clients and BINDS NO PORT. That matters on
+	# a box where another lane may already be hosting on the default one:
+	# the tour's failure mode is sitting on this menu having printed
+	# "Couldn't create an ENet host" into a log nobody was watching.
+	if UiShot.hud_wanted():
+		_enter_game()
+		return
+
 	var args := OS.get_cmdline_user_args()
 	# The screenshot tour is a host session that drives itself, so it implies
 	# --host rather than needing both spelled out.
@@ -186,4 +197,17 @@ func _place_band() -> void:
 	var r := _title.get_global_rect()
 	if r.size.y <= 0.0:
 		return
-	_backdrop.set_title_band(r)
+	# INTO THE BACKDROP'S OWN SPACE, and until ui v1 Stage 1 this crossed by
+	# luck. set_title_band() takes a rectangle it will draw in its own _draw(),
+	# which is backdrop-local; what arrives here is global. The two happened to
+	# agree because the Backdrop is a full-rect Control sitting at the origin,
+	# so its transform was the identity - and a screen with a margin, an offset
+	# or a scale on the backdrop would have painted the band somewhere the type
+	# is not, with nothing to say why.
+	#
+	# The affine inverse rather than a position subtraction: it is the same
+	# answer when the transform is a translation and the right one when it is
+	# not.
+	var to_local := _backdrop.get_global_transform().affine_inverse()
+	_backdrop.set_title_band(Rect2(
+		to_local * r.position, r.size * to_local.get_scale()))

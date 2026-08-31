@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=14 format=3]
 
 [ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
 [ext_resource type="Script" path="res://scripts/world/world.gd" id="2_world"]
@@ -7,6 +7,9 @@
 [ext_resource type="Script" path="res://scripts/world/sky_cycle.gd" id="5_sky"]
 [ext_resource type="Script" path="res://scripts/world/flora/far_trees.gd" id="6_fartrees"]
 [ext_resource type="Script" path="res://scripts/ui/character_debug.gd" id="7_chardebug"]
+[ext_resource type="Script" path="res://scripts/ui/hud.gd" id="8_hud"]
+[ext_resource type="Script" path="res://scripts/ui/hud_tuner.gd" id="9_hudtuner"]
+[ext_resource type="Script" path="res://scripts/ui/character_screen.gd" id="10_sheet"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 
@@ -41,6 +44,7 @@ script = ExtResource("6_fartrees")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 60, 0)
 
 [node name="HUD" type="CanvasLayer" parent="."]
+script = ExtResource("8_hud")
 
 [node name="Status" type="Label" parent="HUD"]
 offset_left = 16.0
@@ -57,3 +61,9 @@ script = ExtResource("5_sky")
 
 [node name="CharacterDebug" type="CanvasLayer" parent="."]
 script = ExtResource("7_chardebug")
+
+[node name="HudTuner" type="CanvasLayer" parent="."]
+script = ExtResource("9_hudtuner")
+
+[node name="CharacterScreen" type="CanvasLayer" parent="."]
+script = ExtResource("10_sheet")

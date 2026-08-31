@@ -26,6 +26,9 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _world: World = $World
 @onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
+@onready var _hud: Hud = $HUD
+@onready var _hud_tuner: HudTuner = $HudTuner
+@onready var _sheet: CharacterScreen = $CharacterScreen
 @onready var _players_root: Node3D = $Players
 
 ## Built in code rather than put in the scene, because it only ever has
@@ -76,6 +79,22 @@ var _sims := {}
 
 ## HOST ONLY. See journal.gd - habit 2 of the three.
 var _journal := Journal.new()
+
+## HOST ONLY. Health, stamina and mana for everybody - see stats.gd, habit 1.
+##
+## Beside _states rather than inside it, because the two have different
+## lifetimes and different authorities: a state row is rewritten off a body
+## twenty times a second, and a stat only ever changes because something
+## happened. They MEET on the wire - _publish_stats() merges the three numbers
+## into each peer's state row - which is the whole of Decision 1: no new
+## channel, no reliable-on-change RPC, three floats on a packet that was going
+## out anyway.
+var _stats := StatsTable.new()
+
+## CLIENT ONLY. The last whole table the host sent, kept so a client can read
+## ANOTHER peer's stats - the party icons need a friend's health, and
+## _last_authority is only ever our own row.
+var _last_states := {}
 
 ## CLIENT ONLY. The part of a correction not yet applied, and how long is
 ## left to apply it in. An OFFSET rather than a destination, because the body
@@ -133,6 +152,12 @@ func _ready() -> void:
 		Engine.physics_ticks_per_second])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	# THE PLAY HUD (ui v1 Stage 4). Same shape as the line above it: this
+	# node asks these four for numbers and never tells them anything.
+	_hud.setup(_sky, _world, _player, self)
+	_hud_tuner.setup(_hud)
+	_debug.set_hud(_hud)
+	_sheet.setup(_player, _hud)
 	# The session's config, which may carry CLI overrides the saved file does
 	# not - so the far plane matches the fog this run actually uses.
 	_player.apply_view_config(config)
@@ -177,6 +202,12 @@ func _ready() -> void:
 	_body_field.name = "Bodies"
 	add_child(_body_field)
 	_body_field.setup(Net.is_host(), config.block_size, _world, _journal)
+	# THE SAME INJECTION SITE, three lines apart, because they are the same
+	# kind of wiring: the host's journal reaching the two things that have
+	# events worth recording. World's is Decision 10 - block edits are
+	# CLAUDE.md's own first example of habit 2 and were still not journalled.
+	_stats.set_journal(_journal)
+	_world.set_journal(_journal)
 	# See _physics_process: the push must be collected after the bodies that
 	# make the contacts have moved.
 	process_physics_priority = 100
@@ -201,6 +232,9 @@ func _ready() -> void:
 	# DISTANCE V1 STAGE 0, appended at the end of the chain.
 	elif "--far-probe" in OS.get_cmdline_user_args():
 		_start_far_probe.call_deferred()
+	# UI V1 STAGE 4, appended after it.
+	elif UiShot.hud_wanted():
+		_start_hud_shots.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -299,6 +333,11 @@ func _process(delta: float) -> void:
 		# streams around the local player, so a peer 500 m away has nothing to
 		# stand on until the host builds it. See WorldgenConfig.sim_radius_chunks.
 		_world.set_sim_centres(_sim_columns())
+		# ...and how everybody is doing. THREE FLOATS PER PEER ON A PACKET THAT
+		# WAS GOING OUT ANYWAY (Decision 1). Merged rather than assigned, the
+		# same contract p/v/s obey: a `_states[who] = {...}` here would wipe
+		# appearance and name twenty times a second.
+		_publish_stats()
 		# The host is the only one that assembles and distributes the table.
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
@@ -316,7 +355,15 @@ func _on_far_trees_rebuilt(count: int, elapsed_ms: int) -> void:
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	_chunk_count = chunk_count
 	_build_ms = elapsed_ms
-	_update_status()
+	# The host's own row. Here rather than in _ready because a host is only
+	# really in the world once the world exists, and because solo play is a
+	# host with zero clients - so this is the line that gives a single player
+	# a set of bars at all.
+	if Net.is_host():
+		_stats.ensure_row(Net.local_peer_id())
+	# The load message has been answered. The status line is transient now
+	# (Decision 5) and a transient line that never clears is a permanent one.
+	_status.text = ""
 
 
 # --- Spawning ---------------------------------------------------------------
@@ -479,6 +526,257 @@ func _start_far_probe() -> void:
 ## The loaded frontier moved: hand the impostor ring the new one. The ring
 ## rebuilds on its own schedule (REBUILD_STEP_M); this only keeps the array it
 ## will use current.
+# --- The HUD shot harness (ui v1 Stage 4) -----------------------------------
+#
+#     xvfb-run -a godot --path . -- --shot-hud ui-v1-hud --seed 42
+#
+# writes build/ui/ui-v1-hud/{safe-noon,night,hurt,...}.png and quits.
+#
+# THE HARNESS COMES WITH THE HUD, NOT AFTER IT. Every stage from here on is
+# judged on one of these PNGs, so the thing that takes them is built first -
+# the alternative is three stages of work whose only evidence is that it
+# compiled.
+#
+# It drives the game rather than a mock of it: the real HUD, the real stats
+# table, the real fade, on the real world at seed 42. What it stages is the
+# SITUATION - noon, midnight, thirty points of damage - and it stages each one
+# through the same seam the game uses. There is no "shot mode" inside the HUD.
+
+## Seconds of simulated fade to settle before each capture. Comfortably past
+## fade_grace_s and either ease, so what is photographed is a steady state
+## rather than a moment somewhere inside a 1.4 s transition - and a state the
+## game can genuinely reach, because the settle runs the HUD's own _process.
+const HUD_SHOT_SETTLE_S := 20.0
+
+
+func _start_hud_shots() -> void:
+	var label := UiShot.hud_label()
+	print("[HudShot] %s: waiting for the world" % label)
+	# The debug layers stay out of every frame. They are tools, not the field
+	# register, and a photograph of the HUD with the F3 readout over it is a
+	# photograph of the F3 readout.
+	_debug.visible = false
+	$CharacterDebug.visible = false
+	_hud_tuner.visible = false
+	# The status line is a transient message line now (Decision 5) and it is
+	# still showing the world-load message; it is not part of the field
+	# register and must not be in the picture.
+	_status.visible = false
+
+	await _hud_shot_wait_for_world()
+	# THE CLOCK STOPS. A day is eight minutes and these shots take longer than
+	# that on a busy box, so without this the "noon" shot would be photographed
+	# at whatever hour rendering happened to reach - which is exactly the bug
+	# SkyCycle.frozen was added for, and the tour already leans on it.
+	_sky.frozen = true
+
+	await _hud_shot("safe-noon", 0.5)
+	await _hud_shot("night", 0.0)
+	# THIRTY POINTS, through apply_delta like everything else - so the journal
+	# records it and the bar reads 0.70 of its track, which is a COUNT the
+	# acceptance test can check rather than an impression.
+	_stats.apply_delta(Net.local_peer_id(), "hp", -30.0, "shot")
+	await _hud_shot("hurt", 0.5)
+
+	# THE PARTY, STAGED. A second peer is injected through the NORMAL path -
+	# _merge_state into the authoritative table, then _apply_states, which is
+	# the same function the sync tick calls - so the icons and the chevron are
+	# built from a row that arrived the way every row arrives. A fake set
+	# straight into the icons would photograph the icons and prove nothing
+	# about the wire.
+	await _hud_shot_party("party")
+
+	# AND THE HELD THING ACTS. Slot 1 is the slab tool; using it drives
+	# world.request_set_block through the one mutation path, which journals.
+	# The dump below is what that is judged on.
+	_hud.select_slot(0)
+	use_slab_tool()
+	await get_tree().process_frame
+
+	# THE CHARACTER SHEET. Opened through the same set_open() the C key calls,
+	# and the label dump printed beside it: the acceptance test COUNTS six
+	# sockets and five skills rather than reading them out of a PNG, because
+	# there is no OCR on this box.
+	await _hud_shot_sheet("sheet")
+
+	# THE F8 PANEL, ON SCREEN, AT 720 LOGICAL. Stage 1 replaced its hard-coded
+	# 352x640 scroll box with anchors and offsets and could not photograph the
+	# result, because F8 lives in this scene and this scene had no camera on it
+	# until now. The debt is discharged here rather than left in the status doc.
+	await _hud_shot_panel("panel-f8")
+
+	# THE ONE SHOT THAT IS NOT A MEASUREMENT.
+	#
+	# Every other picture in this run answers a count: is the ink gone, is the
+	# bar at 0.70, is the chevron east of centre. This one answers the question
+	# the acceptance test ends on, which no count can - do the strip, the bars
+	# and the world read as ONE POSTER, or does the UI look pasted on? It is
+	# framed, named, and left for Marcel.
+	#
+	# Sunset, t = 0.75, where dusk_amount peaks and night_amount has just
+	# crossed fade_night_max - so the instruments are coming in exactly as the
+	# light goes, which is the whole thesis of the fade in one frame.
+	await _hud_shot("dusk-poster", 0.76)
+
+	_dump_journal("after the scripted sequence")
+	print("[HudShot] done: %d shots in build/ui/%s" % [_hud_shots_taken, label])
+	await _hud_shot_shutdown()
+
+
+var _hud_shots_taken := 0
+
+
+## One shot: set the hour, settle the fade, capture.
+func _hud_shot(name: String, time_of_day: float) -> void:
+	_sky.time_of_day = time_of_day
+	_sky.apply()
+	# The fade reads the hour it was just given, so the settle has to come
+	# after it - and it is simulated rather than waited out, because
+	# fade_grace_s alone would be six seconds of wall clock per shot.
+	_hud.settle(HUD_SHOT_SETTLE_S)
+	print("[HudShot] %s: %s" % [name, _hud.fade_line()])
+	print("[HudShot]   %s" % _hud.layout_line())
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+
+## A staged second peer, 20 m due east, hurt, and photographed.
+##
+## KIRA at 60 health is not a decoration: the icon draws its hurt arc only
+## below full, the chevron's bearing is computed from this position against the
+## player's, and the hue is color_for_peer(2) - a number the acceptance test
+## can compute independently as fposmod(2 * 0.61803398875, 1.0).
+##
+## DUE EAST because east is +X under the compass's NORTH_IS_MINUS_Z, so the
+## chevron must land in the east half of the strip. A bearing that came out
+## west would mean the cardinal convention disagrees with itself, which is
+## exactly the class of bug a single named constant is supposed to prevent and
+## exactly the one nobody notices without a picture.
+func _hud_shot_party(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	var here := _player.global_position
+	# KIRA, DUE EAST AND HURT. East is +X under NORTH_IS_MINUS_Z, so her
+	# chevron must land in the east half of the strip; at 60 health her icon
+	# must grow the hurt arc a healthy partner does not have.
+	_merge_state(2, {
+		"p": here + Vector3(20.0, 0.0, 0.0), "y": 0.0, "v": Vector3.ZERO,
+		"s": 1, "l": 0.0, "n": "KIRA",
+		"a": CharacterDef.new().to_bytes(),
+		"hp": 60.0, "sp": 100.0, "mp": 100.0,
+	})
+	# TORV, DUE NORTH AND UNHURT, WHICH IS THE ONE THE NAMETAG CHECK NEEDS.
+	# The player spawns facing north, so this body is in frame - and a body in
+	# frame is the only way to photograph the ABSENCE of a floating Label3D
+	# over its head. Kira, off to the east, is outside a 68 degree fov and
+	# proves nothing about a tag either way.
+	#
+	# He is also the second icon, so the row lays out more than one - a cap of
+	# four that has only ever been asked to draw one is a cap nobody has tested.
+	_merge_state(3, {
+		"p": here + Vector3(0.0, 0.0, -8.0), "y": 0.0, "v": Vector3.ZERO,
+		"s": 1, "l": 0.0, "n": "TORV",
+		"a": CharacterDef.new().to_bytes(),
+		"hp": 100.0, "sp": 100.0, "mp": 100.0,
+	})
+	# Through the same function the sync tick uses, so the RemotePlayer is
+	# spawned by the code that spawns every RemotePlayer.
+	_apply_states(_states)
+	_hud.settle(HUD_SHOT_SETTLE_S)
+	print("[HudShot] %s: %s" % [name, _hud.party_line()])
+	# WHERE TORV'S HEAD IS, IN PIXELS, so the nametag check has a named band to
+	# sample rather than an eyeballed one. A tag would have floated just above
+	# this point; the acceptance test asserts there is nothing there.
+	var head := _player.get_camera().unproject_position(
+		here + Vector3(0.0, 1.9, -8.0))
+	print("[HudShot] %s: torv head at %s, tag band would be rows %d-%d" % [
+		name, head, int(head.y) - 44, int(head.y) - 4])
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+
+## The character sheet, open, over the world.
+##
+## AND THE ESCAPE TEST, WHICH IS HARD RULE 10 AS AN ASSERTION RATHER THAN AS A
+## PARAGRAPH. An unconsumed ui_cancel from the open sheet walks up to this
+## node's _unhandled_input, which calls Net.leave() and changes scene - one
+## missed consume between a player pressing Escape on their inventory and being
+## dropped out of their friend's world. The driver sends the event and then
+## checks that the sheet closed AND that we are still in the game scene.
+func _hud_shot_sheet(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	_sheet.set_open(true)
+	# Pinned rather than left spinning, so the shot is comparable run to run
+	# for the same reason the creation screen's is.
+	_sheet.pin_preview(PI)
+	await get_tree().process_frame
+	print("[HudShot] %s: %s" % [name, _sheet.label_dump()])
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+	var escape := InputEventAction.new()
+	escape.action = "ui_cancel"
+	escape.pressed = true
+	Input.parse_input_event(escape)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var still_here := get_tree().current_scene == self
+	print("[HudShot] esc from the open sheet: sheet open %s, still in the game scene %s" % [
+		_sheet.is_open(), still_here])
+	if _sheet.is_open() or not still_here:
+		push_error("[HudShot] HARD RULE 10 FAILED: esc did not close the sheet, or left the session")
+	_sheet.set_open(false)
+
+
+## The F8 character panel, open, over the world. Not part of the field register
+## - it is a tool - so it is shot on its own and the play HUD stays out of it.
+func _hud_shot_panel(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	$CharacterDebug.visible = true
+	$CharacterDebug.set_panel_open(true)
+	var panel: Control = $CharacterDebug.get_child(0)
+	print("[HudShot] %s: panel rect %s in a %s canvas" % [
+		name, panel.get_global_rect(), get_viewport().get_visible_rect().size])
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+	$CharacterDebug.set_panel_open(false)
+	$CharacterDebug.visible = false
+
+
+## Everything the host wrote down, printed. The `use` step in Stage 5 is judged
+## on this, and the H key's stat_changed shows up here too.
+func _dump_journal(why: String) -> void:
+	var events := _journal.dump()
+	print("[HudShot] journal %s: %d events" % [why, events.size()])
+	for event in events:
+		print("[HudShot]   %s" % event)
+
+
+func _hud_shot_wait_for_world() -> void:
+	var frames := 0
+	# The same ceiling the tour uses. A world that has not settled in this many
+	# frames is a world with something wrong with it, and hanging forever is
+	# the worse of the two failures.
+	while frames < 5400:
+		if _world.is_world_ready() and _world.is_idle() and not _awaiting_ground:
+			return
+		await get_tree().process_frame
+		frames += 1
+	push_warning("[HudShot] gave up waiting for the world after %d frames" % frames)
+
+
+func _hud_shot_shutdown() -> void:
+	# Put the world down before ending the main loop, for the reason the tour
+	# gives at length: without it the process sits at 100% of several cores
+	# after writing its last image and never exits.
+	if _world != null and is_instance_valid(_world):
+		_world.reset()
+	await get_tree().process_frame
+	get_tree().quit()
+
+
 func _on_frontier_moved() -> void:
 	if _far_trees != null:
 		_far_trees.frontier = _world.loaded_frontier()
@@ -656,6 +954,50 @@ func _publish_sim_states() -> void:
 			"s": st.to_state_byte(), "l": st.look_yaw})
 
 
+## Every stat row into the table that goes on the wire.
+##
+## DECISION 1, and the reason there is no stats RPC in this file: the three
+## numbers ride the 20 Hz `_cl_sync_players` broadcast as three more per-tick
+## fields on a row every client already receives and retains. RemotePlayer's
+## set_target() ignores keys it does not know by construction, so a peer on an
+## older build sees a friend standing in the right place and no error.
+##
+## Rewritten every tick even though a stat changes rarely. That is the cheap
+## and correct choice: three floats against a Vector3 and a Transform already
+## in the row, and a change-detecting sender would need an acknowledgement path
+## to survive the packet loss unreliable_ordered exists to tolerate.
+func _publish_stats() -> void:
+	for peer_id in _stats.peer_ids():
+		var row := _stats.get_row(peer_id)
+		_merge_state(peer_id, {
+			"hp": row["hp"], "sp": row["sp"], "mp": row["mp"]})
+
+
+## One peer's stats, wherever this machine's copy of them lives.
+##
+## The host reads its own table. A client reads the last row the host sent -
+## which is DISPLAY ONLY and says so: there is no client write path to a stat
+## anywhere in this game, and no prediction to reconcile, because a stat is not
+## a position. Empty until the first packet arrives, and the bars draw full
+## against an empty row rather than empty, which is the right way round for a
+## number that has not been contradicted yet.
+func peer_stats(peer_id: int) -> Dictionary:
+	if Net.is_host():
+		return _stats.get_row(peer_id)
+	var row: Dictionary = _last_states.get(peer_id, {})
+	var out := {}
+	for stat in StatsTable.ORDER:
+		if row.has(stat):
+			out[stat] = row[stat]
+	return out
+
+
+## HOST ONLY, and read by the self-test and the shot driver. The table itself
+## stays private for the same reason _states does: apply_delta is the seam.
+func stats() -> StatsTable:
+	return _stats
+
+
 ## A CLIENT SAYS WHAT IT LOOKS LIKE. Once on joining, and again if it changes.
 ##
 ## THE HOST VALIDATES EVERY CLAIM, and stores the RE-ENCODED bytes rather than
@@ -715,6 +1057,10 @@ func _cl_sync_players(states: Dictionary, bodies: Dictionary = {}) -> void:
 
 
 func _apply_states(states: Dictionary) -> void:
+	# THE WHOLE TABLE, KEPT. _last_authority is our own row only, and the party
+	# icons need a FRIEND's health - which is in this table and nowhere else on
+	# a client. One line, and it is what makes Stage 5 need no new traffic.
+	_last_states = states
 	var me := Net.local_peer_id()
 	for pid in states:
 		if pid == me:
@@ -833,6 +1179,7 @@ func _on_host_disconnected() -> void:
 
 func _on_peer_joined(peer_id: int) -> void:
 	if Net.is_host():
+		_stats.ensure_row(peer_id)
 		_journal.log_event("peer_joined", {"peer": peer_id})
 
 
@@ -842,6 +1189,7 @@ func _on_peer_left(peer_id: int) -> void:
 	_states.erase(peer_id)
 	_remove_player(peer_id)
 	if Net.is_host():
+		_stats.erase(peer_id)
 		_journal.log_event("peer_left", {"peer": peer_id})
 		if _sims.has(peer_id):
 			_sims[peer_id].queue_free()
@@ -879,6 +1227,36 @@ func _sim_columns() -> Array[Vector2i]:
 ## the pair probe; the table itself stays private.
 func peer_row(peer_id: int) -> Dictionary:
 	return _states.get(peer_id, {})
+
+
+## Everybody except us, as {peer, row} pairs, wherever this machine's copy of
+## the table lives (ui v1 Stage 5).
+##
+## The host reads its own `_states`; a client reads the whole table the host
+## last sent. The party icons and the compass chevrons are built from this and
+## from nothing else, which is what makes them cost NO NEW NETWORK TRAFFIC: a
+## bearing comes out of a position the sync has always carried, and a friend's
+## health out of the three floats Stage 3 put on the same packet.
+func other_peer_rows() -> Array:
+	var me := Net.local_peer_id()
+	var table: Dictionary = _states if Net.is_host() else _last_states
+	var out := []
+	for peer_id in table:
+		if peer_id == me:
+			continue
+		out.append({"peer": peer_id, "row": table[peer_id]})
+	return out
+
+
+## THE HOTBAR'S SLOT 1 ACTS. Called by the HUD, and it is the same call the G
+## key used to make - a request through the one mutation path, which the host
+## validates, applies, broadcasts and (since Stage 3) journals.
+##
+## The point of a stand-in item before Items v1 exists: select-and-use is
+## proven end to end through the real chain rather than asserted about a chain
+## nobody has driven.
+func use_slab_tool() -> void:
+	_toggle_debug_slab()
 
 
 ## What the host's body for that peer was last told. Probe diagnostics only.
@@ -1047,12 +1425,32 @@ func _on_config_reload_requested() -> void:
 
 # --- HUD and debug ----------------------------------------------------------
 
+## THE PERMANENT LINE IS GONE (ui v1 Stage 4, Decision 5).
+##
+## It used to say peer id, chunk count, seed and the keybind crib, always, in
+## the top left of every frame - a dev convenience from before there was a HUD,
+## and the thing this whole plan exists to replace. Every one of those facts is
+## on the F3 readout now, where the rest of the instruments are.
+##
+## What is left is a TRANSIENT MESSAGE LINE: the reroll notice, the config
+## message, "only the host can reroll". Those are answers to something you just
+## did and they belong on screen for a moment. The line is left where it is,
+## and it is empty until something has something to say.
 func _update_status() -> void:
-	if not _world.is_world_ready():
-		return
-	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space jump, [F] fly, [G] slab, [F3] debug, Esc" % [
+	pass
+
+
+## The line the crib used to be, for the F3 readout to print.
+func status_line() -> String:
+	return "%s (peer %d) | %d others | %d chunks in %d ms | seed %d" % [
 		_role_name(), Net.local_peer_id(), _players.size(),
 		_chunk_count, _build_ms, _world.world_seed]
+
+
+## The keys, for the same readout. Kept as data next to the line it prints on,
+## and the one place a new binding has to be written down.
+func keybind_line() -> String:
+	return "WASD+mouse, Space jump, [1-5]/wheel hotbar, LMB use, [F] fly, [H] hurt, [C] sheet, Esc"
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1063,13 +1461,29 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 		return
 
-	# TEMPORARY until we have block interaction (raycast + break/place).
-	# Exists so the authority chain can be verified end to end: press G on the
-	# CLIENT and the slab appears on both machines, because the client only
-	# sent a request and the host broadcast the result back.
+	# UI V1 STAGE 5 RETIRED THE G BINDING. The slab is hotbar slot 1 now and it
+	# is used by selecting it and clicking, which drives this same request
+	# through the same one mutation path - so the authority chain is still
+	# verified end to end, and now by the thing a player would actually do
+	# rather than by a key nothing will ever ship. See use_slab_tool().
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_G:
-			_toggle_debug_slab()
+		# TEMPORARY, AND ON THE SAME CONTRACT THE SLAB IS ON. THE COMBAT PLAN
+		# DELETES THIS KEY (ui v1 Stage 3, Decision 6).
+		#
+		# Nothing in the game changes a stat yet, and the bars, the fade, the
+		# hurt icon on a partner and the stat_changed journal event cannot be
+		# DEMONSTRATED - let alone photographed - without something that does.
+		# H takes 10 health off whoever presses it, host-side, through
+		# apply_delta like everything else will.
+		#
+		# Host-only on purpose: a client key that took a client's own health
+		# would be the one thing DESIGN.md's networking section forbids, and
+		# writing it "just for a test" is how that rule gets broken for real.
+		if event.physical_keycode == KEY_H and Net.is_host():
+			var left := _stats.apply_delta(
+				Net.local_peer_id(), "hp", -10.0, "debug")
+			print("[Game] debug damage: hp %.0f" % left)
+			return
 
 
 func _toggle_debug_slab() -> void:

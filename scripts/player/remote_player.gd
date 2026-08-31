@@ -11,11 +11,23 @@ extends Node3D
 ## sprinting, jumping and sitting is the same code path as the local player,
 ## driven from a different source. That was the point of LocomotionState.
 ##
-## THE PEER COLOUR SURVIVES ON THE TAG, NOT ON THE BODY. Before this stage
-## every player was a differently-coloured capsule, and the colour was the only
-## way to tell two of them apart. Now the character is, and tinting a dwarf
-## purple would throw away the appearance the player chose. The deterministic
-## colour still names the tag, which is where it was doing useful work.
+## THE BODY IS NEVER TINTED, AND THE PEER COLOUR LIVES ON THE PARTY ICON.
+##
+## Before the character redesign every player was a differently-coloured
+## capsule, and the colour was the only way to tell two of them apart. Now the
+## character is - so tinting a dwarf purple would throw away the appearance the
+## player chose, and that reasoning is unchanged. What changed in ui v1 Stage 5
+## is where the colour went: it used to outline a floating Label3D over this
+## body's head, and THAT TAG IS GONE (ui-v1.md, decision 5 - Marcel: it reads
+## Minecrafty and breaks immersion).
+##
+## In-world identity is now silhouette, palette and the character the player
+## built. The name and the hue are on the party icon at the edge of the HUD,
+## which is a screen-space answer to a screen-space question - "who else is
+## here" - rather than a label pinned to a body in the world. color_for_peer()
+## stays exactly where it is, static and deterministic, because the icon needs
+## the same colour this file always derived and neither machine has ever sent
+## a byte about it.
 
 ## Higher = snappier, lower = smoother but laggier looking.
 const SMOOTHING := 15.0
@@ -31,7 +43,10 @@ var _has_target := false
 var _built_from := PackedByteArray()
 
 @onready var _view: CharacterView = $View
-@onready var _nametag: Label3D = $Nametag
+
+## What the host says this peer is called. Stored rather than displayed: the
+## party icons read it, and nothing in the world does.
+var display_name := ""
 
 
 ## Call before add_child(). @onready vars do not exist yet at this point, so
@@ -42,13 +57,8 @@ func setup(p_peer_id: int) -> void:
 
 
 func _ready() -> void:
-	_nametag.text = "peer %d" % peer_id
-	# Paper on ink, in the poster's body face. The per-peer hue used to be the
-	# whole tag; it is now the outline, so two friends still tell each other
-	# apart at a glance and the type stays the type.
-	_nametag.font = Deco.font_of(&"SectionLabel")
-	_nametag.modulate = Deco.PAPER
-	_nametag.outline_modulate = color_for_peer(peer_id).darkened(0.55)
+	if display_name.is_empty():
+		display_name = "peer %d" % peer_id
 	# A remote character is never the one the close-camera hide applies to.
 	_view.local = false
 	# The default human until an appearance arrives. A REMOTE VIEW MUST NEVER
@@ -78,9 +88,7 @@ func set_target(st: Dictionary) -> void:
 	# those lines say "unnamed" - the name does not ride in the appearance
 	# bytes, it is a separate field.
 	if st.has("n"):
-		var wanted: String = st["n"]
-		if _nametag.text != wanted:
-			_nametag.text = wanted
+		display_name = st["n"]
 	if st.has("a"):
 		_apply_appearance(st["a"])
 
@@ -100,12 +108,8 @@ func _apply_appearance(bytes: PackedByteArray) -> void:
 	_built_from = bytes
 	var def := CharacterDef.from_bytes(bytes)
 	_view.build(def)
-	# The nametag sits above the head, and heads are at different heights: a
-	# 1.5 m dwarf's tag would otherwise float a metre over him and a 2.25 m
-	# elf's would be inside his skull.
-	_nametag.position.y = Races.height_m(def.race) + 0.3
 	print("[RemotePlayer] peer %d (%s) is a %s %s" % [
-		peer_id, _nametag.text, Races.BUILD_NAMES[def.build], Races.name_of(def.race)])
+		peer_id, display_name, Races.BUILD_NAMES[def.build], Races.name_of(def.race)])
 
 
 func _process(delta: float) -> void:

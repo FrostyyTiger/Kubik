@@ -20,14 +20,14 @@ signal reroll_requested(new_seed: int)
 signal config_changed()
 signal config_reload_requested()
 
-## True while a panel wants the mouse pointer.
+## UI V1 STAGE 2: THIS FLAG IS GONE, AND UiMouse HOLDS THE ANSWER NOW.
 ##
-## The camera grabs the cursor on any click, which would make the tuning panel
-## unusable - you would click a spinbox and the mouse would vanish. Cameras
-## check this flag before capturing. It is static because the camera has no
-## reference to the HUD and threading one through for a debug tool is not worth
-## it.
-static var ui_has_mouse := false
+## It was one static bool that every screen wanting the pointer wrote true and
+## then false, which cannot represent "somebody else still wants it": open F4,
+## open F8, close F8, and the cursor was recaptured with F4 still on screen and
+## still unclickable. See ui_mouse.gd. The reason the flag lived here at all -
+## that the camera has no reference to any UI - is unchanged, and UiMouse is
+## static for exactly it.
 
 ## property name, label, min, max, step. Wavelengths are shown as FREQUENCIES
 ## because that is what FastNoiseLite takes, but the label carries the
@@ -139,6 +139,23 @@ var sky: SkyCycle = null
 ## The impostor ring. A sibling of World in the game scene, so it is handed in
 ## separately rather than reached for through it.
 var far_trees: Node = null
+
+# UI V1 --------------------------------------------------------------------
+#
+# Appended, under the banner the plan asks for. Nothing above this line is
+# touched except the _set_panel_visible rewiring Stage 2 recorded, and nothing
+# here goes near TUNING_ROWS, LOCAL_TUNING_ROWS, _build_panel or _spin_row -
+# those belong to the concurrently-running distance lane.
+
+## The play HUD. Set by Game so the F3 readout can print what the fade is
+## thinking, and so the line the Status crib used to carry has somewhere to go
+## now that Decision 5 has retired it.
+var hud: Node = null
+
+
+func set_hud(p_hud: Node) -> void:
+	hud = p_hud
+
 
 ## Set false on clients in Stage 11 - a client that retunes its own terrain has
 ## silently left the host's world.
@@ -312,9 +329,38 @@ func _compose_readout() -> String:
 			ff.get("vertices", 0), ff.get("build_ms", 0),
 			ff.get("wall_ms", 0), ff.get("rebuilds", 0)])
 
+	# UI V1. The Status crib's permanent line moved here (Decision 5) - it
+	# was a dev convenience from before there was a HUD, and the HUD replacing
+	# it is the point of that plan. Plus what the fade is thinking, because
+	# "the HUD will not go away" is a question with four possible answers and
+	# an opacity cannot tell you which one is holding it in.
+	var game := _game_node()
+	if game != null:
+		lines.append("")
+		lines.append(game.status_line())
+	if hud != null and hud.has_method("fade_line"):
+		lines.append(hud.fade_line())
+	if game != null:
+		lines.append(game.keybind_line())
+
 	lines.append("")
-	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")
+	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll  [F8] character  [F9] hud")
 	return String("\n").join(lines)
+
+
+## Game, if this HUD is in a game scene. Reached through the tree rather than
+## injected, because setup() is on the never-touch side of this file's
+## contract and one lookup a frame against a cached node is free.
+func _game_node() -> Node:
+	if _game != null and is_instance_valid(_game):
+		return _game
+	var scene := get_tree().current_scene if get_tree() != null else null
+	if scene != null and scene.has_method("status_line"):
+		_game = scene
+	return _game
+
+
+var _game: Node = null
 
 
 ## The real zone, jitter and all, at the player's own position - so the readout
@@ -351,10 +397,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _set_panel_visible(on: bool) -> void:
 	_panel.visible = on
-	ui_has_mouse = on
-	# A panel you cannot click is not a panel. Release the cursor while it is
-	# open and hand it back to the camera when it closes.
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if on else Input.MOUSE_MODE_CAPTURED
+	# A panel you cannot click is not a panel. Take the cursor while it is open
+	# and give it back when it closes - but only give it back if nothing ELSE
+	# still wants it, which is the whole reason UiMouse is a set.
+	if on:
+		UiMouse.claim(self)
+	else:
+		UiMouse.release(self)
 
 
 func _do_reroll() -> void:

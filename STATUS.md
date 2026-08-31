@@ -77,7 +77,74 @@ resolution rather than a style** - four bands tuned against a 480 m span cover
 1,920 m, so the first band boundary moved from 400 m to 1,558 m. Neither was
 changed; both are one number.
 
-The run before it is **trees v1**, one night, on `feat/trees-v1`:
+The run before it is **UI v1**, one night, on `feat/ui-v1`:
+`docs/status/ui-v1.md` - the game's first real UI, below. **The two epics
+share no file that either of them wrote.** UI v1's diff touches nothing
+under `scripts/world/` but two appends to `world.gd`'s journal, and
+distance v3's touches `world.gd` not at all; the merge conflicted in one
+paragraph of this file and in nothing else, and `debug_hud.gd` took an
+append from each and merged itself.
+
+---
+
+# Previous: UI v1
+
+`docs/status/ui-v1.md`.
+**The screen stays clean so the world reads huge** - the game's first real UI,
+built to the design in `docs/plans/ui-v1.md` and the procedure in
+`docs/plans/ui-v1-tech.md`.
+
+The load-bearing idea is the **fade**: one furniture cluster at the bottom
+centre, one thin compass strip at the top, four empty corners - and when all
+four safety conditions hold at once (stats full, nothing changed a stat
+recently, daylight, low danger) it eases to **literally zero**. Cozy does not
+look like a warm-coloured HUD; it looks like a clean screen with a huge world
+behind it, and danger looks like instruments appearing. `safe-noon.png` is the
+acceptance test and it passes on a count: **zero HUD ink in any sampled bar
+region**.
+
+What else is in it: `canvas_items` stretch, so every Control finally scales;
+the host-authoritative stats table (hp/sp/mp) riding the existing 20 Hz packet
+as three more row keys; a five-slot hotbar with a stand-in slab tool that
+proves select-and-use end to end through the one mutation path; the compass
+strip, which declares **north is -Z** for the first time anywhere in this
+repo; party icons carrying the peer hue; the character sheet with its six
+armour sockets and five read-only skills; and **the floating `Label3D` nametag
+is gone**.
+
+Five things worth reading even if you read nothing else:
+
+- **Block edits are journalled now.** They were `CLAUDE.md`'s own first example
+  of habit 2 and were the one event still not being recorded. Two appends to
+  `world.gd` - `+25 lines, -0`, not one existing line touched.
+- **The shot harness found the bug the numbers could not.** The HUD cluster was
+  placed with `Control.position`, which is measured from the parent rect's
+  origin and not from the anchor, so it sat at `(-110, -57)` - off screen while
+  every fade number read correctly and the layer reported visible at full
+  opacity. It was built first for exactly this reason.
+- **The plan's 2x stretch gate was not measurable and is replaced.** The
+  capture reads the logical canvas *before* the stretch transform scales it, so
+  there is no 2x row to sample. What ran instead measures the thing that
+  matters: the logical canvas at 1280x720, 1280x1000 and 1900x720, never below
+  the design size in either dimension, with the title band tracking the type.
+- **Hard rule 10 is an assertion, not a paragraph.** The driver sends Escape
+  with the character sheet open and checks that the sheet closed *and* that we
+  are still in the game scene. One missed consume is the difference between
+  closing your inventory and being dropped out of your friend's world.
+- **Nineteen values were chosen by eye from screenshots on a box with no
+  monitor.** Every one is on the new **F9** panel and listed in the status doc
+  with its starting value. Five taste calls are left explicitly open for
+  Marcel, and `dusk-poster.png` is framed and left for him to disagree with.
+
+**Nothing about the world moved.** Heightmap `76cccdb6` and spawn `(-44, -124)`
+at every one of the eight stages; no file under `scripts/world/` was written
+except the two journal appends above, and `worldgen_config.gd` was never
+opened.
+
+---
+
+# Previous: trees v1
+
 `docs/status/trees-v1.md`. **No two alike, and the ziggurat arrives** - all
 seven tree species re-authored against `docs/research/art-direction.md` §2.5
 "Forest", which look v2 wrote and parked. Marcel's ask was "no variation,
