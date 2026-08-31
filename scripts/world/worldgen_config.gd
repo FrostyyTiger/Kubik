@@ -960,6 +960,38 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## HOW MUCH DARKER A RISER FACING ACROSS THE ASPECT AXIS IS, distance v3
+## Stage 3. 0 is distance v2's behaviour exactly.
+##
+## Distant Horizons bakes Minecraft's own per-direction shade multipliers into
+## vertex colour at build time - 1.0 up, 0.8 north/south, 0.6 east/west - and
+## the research doc calls it "the cheapest and most effective single thing
+## making the far field read as cubes rather than a surface"
+## (`docs/research/distant-horizons.md` §2e). Two of the three are already true
+## here: a riser carries its own horizontal normal, so Look's ramp lights it as
+## a voxel side face and `slope_tint` darkens it as a wall. What is missing is
+## the distinction between the two compass axes, and without it every riser on
+## a hillside is the same tone whichever way it faces.
+##
+## THE 0.8/0.6 CONSTANTS ARE NOT IMPORTED, and the plan says not to import them
+## blindly into a poster with its own lighting ramp. The near field's own value
+## spread between a sun-facing and an away-facing surface is what `aspect_tint`
+## produces, and it is measurable rather than a matter of opinion: at
+## aspect_tint 0.18 a face pointing at the sun comes out at Rec. 709 luma
+## x1.070 and one pointing away at x0.930, a ratio of 1.15. A cross-axis face
+## sits between the two, so half of that spread is the honest translation.
+## **0.08**, then, not Minecraft's 0.25 - the far country gets the near
+## country's own contrast, not another game's.
+##
+## THE DIRECTION IS `Block.SUN_ASPECT`, reused rather than re-picked, which is
+## the same fixed compass direction `aspect_tint` and `far_riser_lift` already
+## dot against. Three mechanisms, one axis: a riser facing the sun keeps
+## far_riser_shade, one facing away is lifted off the shade floor by
+## far_riser_lift, and one facing across is darkened by this.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed; it multiplies a colour and nothing else.
+@export var far_riser_axis := 0.08
+
 ## HOW HARD THE FAR COUNTRY'S BLOCK LATTICE IS PAINTED, distance v3 Stage 2.
 ##
 ## The near field's per-block colour variation is `grain_amount`, in the poster
@@ -1357,7 +1389,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
-	"far_vote", "far_grain",
+	"far_vote", "far_grain", "far_riser_axis",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

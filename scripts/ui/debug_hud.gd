@@ -117,6 +117,7 @@ const LOCAL_TUNING_ROWS := [
 	# standing still - which is the property the whole epic is judged by.
 	["far_vote", "distance: far vote (0/1)", 0.0, 1.0, 1.0],
 	["far_grain", "distance: far grain", 0.0, 0.2, 0.005],
+	["far_riser_axis", "distance: riser axis (cross)", 0.0, 0.3, 0.01],
 ]
 
 var config: WorldgenConfig = null

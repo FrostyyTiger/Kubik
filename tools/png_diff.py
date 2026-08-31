@@ -149,7 +149,8 @@ def luma_band(path: Path, rows: tuple[int, int] | None):
     return a[:, :, 0] * LUMA[0] + a[:, :, 1] * LUMA[1] + a[:, :, 2] * LUMA[2]
 
 
-def local_contrast(path: Path, rows: tuple[int, int] | None) -> dict:
+def local_contrast(path: Path, rows: tuple[int, int] | None,
+                   axis: str = "both") -> dict:
     """THE FLECK NUMBER: mean |dL| against the 4-neighbours, over the band.
 
     Averaged over every ADJACENT PAIR rather than over pixels, which is the
@@ -162,9 +163,17 @@ def local_contrast(path: Path, rows: tuple[int, int] | None) -> dict:
     lum = luma_band(path, rows)
     if lum.size == 0:
         return {"mean": 0.0, "n": 0, "p95": 0.0}
-    dh = np.abs(np.diff(lum, axis=1))
-    dv = np.abs(np.diff(lum, axis=0))
-    both = np.concatenate((dh.ravel(), dv.ravel()))
+    # HORIZONTAL AND VERTICAL SEPARATELY, because distance v2's riser
+    # instrument is a VERTICAL gradient - a tread and the riser under it - and
+    # distance v3 Stage 3's axis shading is a HORIZONTAL one, between two riser
+    # faces pointing different ways along the same shelf. Averaged together
+    # they hide each other.
+    parts = []
+    if axis in ("h", "both"):
+        parts.append(np.abs(np.diff(lum, axis=1)).ravel())
+    if axis in ("v", "both"):
+        parts.append(np.abs(np.diff(lum, axis=0)).ravel())
+    both = np.concatenate(parts)
     return {
         "mean": float(both.mean()),
         "n": int(both.size),
@@ -178,6 +187,13 @@ def local_contrast(path: Path, rows: tuple[int, int] | None) -> dict:
         # ground ones, so they say what happened to the country rather than to
         # the frame.
         "textured": float((both > 2.0).mean()),
+        # THE BLACK CRUSH, distance v2's carried item 14. Terracing more than
+        # doubled the share of the far band below luma 40 - 7.08% to 15.63% -
+        # because a slope facing away from the sun becomes a wall of risers
+        # that all land on the same rung of a three-band ramp. far_riser_lift
+        # took it back to 8.90%. Anything in this epic that DARKENS a riser has
+        # to be read against that number, so it is reported beside the fleck.
+        "dark40": float((lum < 40.0).mean()),
     }
 
 
@@ -215,16 +231,17 @@ def pngs(path: Path) -> list[Path]:
     return [path] if path.is_file() else sorted(path.glob("*.png"))
 
 
-def run_local_contrast(paths: list[Path], rows) -> int:
+def run_local_contrast(paths: list[Path], rows, axis: str) -> int:
     label = "rows %d-%d" % rows if rows else "whole frame"
-    print("%-38s %10s %8s %9s %10s  (%s)" % (
-        "shot", "fleck", "p95", "textured", "pairs", label))
+    print("%-38s %10s %8s %9s %8s %9s  (%s, %s)" % (
+        "shot", "fleck", "p95", "textured", "dark40", "pairs", label, axis))
     for path in paths:
         for png in pngs(path):
-            r = local_contrast(png, rows)
+            r = local_contrast(png, rows, axis)
             name = png.name if path.is_file() else "%s/%s" % (path.name, png.name)
-            print("%-38s %10.4f %8.2f %8.2f%% %10d" % (
-                name, r["mean"], r["p95"], 100.0 * r["textured"], r["n"]))
+            print("%-38s %10.4f %8.2f %8.2f%% %7.2f%% %9d" % (
+                name, r["mean"], r["p95"], 100.0 * r["textured"],
+                100.0 * r["dark40"], r["n"]))
     return 0
 
 
@@ -261,13 +278,18 @@ def main(argv: list[str]) -> int:
         i = argv.index("--rows")
         rows = parse_rows(argv[i + 1])
         del argv[i:i + 2]
+    axis = "both"
+    if "--axis" in argv:
+        i = argv.index("--axis")
+        axis = argv[i + 1]
+        del argv[i:i + 2]
     if "--local-contrast" in argv:
         argv = [a for a in argv if a != "--local-contrast"]
         paths = [Path(p) if Path(p).is_absolute() else ROOT / p for p in argv]
         if not paths:
             print(__doc__.strip().split("\n\n")[1])
             return 2
-        return run_local_contrast(paths, rows)
+        return run_local_contrast(paths, rows, axis)
     if len(argv) != 2:
         print(__doc__.strip().split("\n\n")[1])
         return 2

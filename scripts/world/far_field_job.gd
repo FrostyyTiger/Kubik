@@ -825,8 +825,17 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				# shade floor by far_riser_lift.
 				var away := clampf(-(float(e[4]) * Block.SUN_ASPECT.x
 					+ float(e[5]) * Block.SUN_ASPECT.y), 0.0, 1.0)
+				# THE AXIS TERM, distance v3 Stage 3. `cross` is 1 for a riser
+				# facing ACROSS the aspect axis and 0 for one facing along it -
+				# the perp dot of the edge's outward direction against
+				# Block.SUN_ASPECT, which is the same fixed direction aspect_tint
+				# has picked since look v1, so the far country and the near
+				# country disagree about nothing. See far_riser_axis.
+				var cross := absf(float(e[4]) * Block.SUN_ASPECT.y
+					- float(e[5]) * Block.SUN_ASPECT.x)
 				var k: float = config.far_riser_shade \
-					* lerpf(1.0, config.far_riser_lift, away)
+					* lerpf(1.0, config.far_riser_lift, away) \
+					* (1.0 - config.far_riser_axis * cross)
 				var riser := Color(color.r * k, color.g * k, color.b * k, color.a)
 				var da: float
 				var db: float

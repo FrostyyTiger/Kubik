@@ -549,3 +549,70 @@ already pays this price twice - `figure_material()` and `far_tree_material()`
 are the same trade for the same reason - and one of those was distance v1's,
 for a mesh with two thousand instances rather than one.
 
+---
+
+## Stage 3 - Faces shaded by axis
+
+**Shipped**, `far_riser_axis` default **0.08**, and it is the smallest thing in
+the epic.
+
+### The near field's own ratios, since the plan says not to import DH's
+
+DH bakes Minecraft's per-direction multipliers into vertex colour - 1.0 up,
+0.8 north/south, 0.6 east/west - and the research doc calls it "the cheapest
+and most effective single thing making the far field read as cubes rather than
+a surface". Two thirds of that is already true here and was true before this
+epic: a riser carries its own horizontal normal, so Look's three-band ramp
+lights it as a voxel side face and `slope_tint` darkens it as a wall. What was
+missing is the distinction between the two compass axes.
+
+**Minecraft's 0.8/0.6 is a 25% spread and this poster's own is 15%.** Read off
+`Block.aspect_shade` at the shipped `aspect_tint 0.18`: a face pointing at
+`SUN_ASPECT` comes out at Rec. 709 luma x1.070, one pointing away at x0.930, a
+ratio of 1.15. A cross-axis face sits between the two, so half that spread -
+**0.08** - is the honest translation. The direction is `Block.SUN_ASPECT`
+itself, reused rather than re-picked, so three mechanisms now share one axis: a
+sunward riser keeps `far_riser_shade`, an away-facing one is lifted off the
+shade floor by `far_riser_lift`, and a cross-facing one is darkened by this.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| the vertical-luma-gradient metric over the far band moves | **MET, and it moves DOWN by 1.3%** - see below |
+| A/B crops shot for Marcel | **MET** - `s2-grain` (0), `s3-axis` (0.08), `s3-axis20` (0.20) |
+| swatches identical | **MET** - this stage does not touch a shader; the term is a multiply in the mesher |
+| far probe deterministic | **MET** (Stage 4's run, which covers this commit's job as well) |
+| `far_riser_axis 0` reproduces Stage 2 | **MET, byte for byte** - `s3-axis00/6-postcard.png` against `s2-grain/6-postcard.png`, far band, mean \|dL\| **0.0000**, worst **0.0** |
+
+**`6-postcard`, far band, by axis of the measurement:**
+
+| `far_riser_axis` | fleck (v) | fleck (h) | dark40 | shift vs 0 |
+| --- | --- | --- | --- | --- |
+| 0 | 5.4736 | 3.7632 | 8.81% | - |
+| **0.08 (shipped)** | **5.4049** | **3.6701** | **8.83%** | **-0.87 levels** |
+| 0.20 | 5.3015 | - | 8.88% | -2.21 levels |
+
+### The honest reading, and it is not what the stage hoped for
+
+**The axis term is a uniform darkening, not a contrast.** On `6-postcard` the
+mean |dL| against `far_riser_axis 0` is 0.8659 and the SIGNED mean is -0.8659
+- the same number - which says the change is entirely "some faces got darker"
+and not at all "faces became more different from each other". The local
+contrast falls slightly, 1.3% vertically and 2.5% horizontally, and it falls
+further at 0.20.
+
+The mechanism is visible once stated: two risers of different axes belong to
+different EDGES of the same cell and meet at a corner, so they are rarely
+adjacent in screen space. Darkening one family therefore separates it from
+faces it is not next to. What it does do is make a cell's four sides four
+tones rather than three, which is a per-cube reading rather than a per-pixel
+one and is exactly the thing a local-contrast metric cannot see.
+
+**So this stage produces a picture and not a number**, the picture is in
+"For Marcel to rule on", and the plan's default ships. The one number that
+mattered defensively is the black crush: `dark40` over the far band goes
+8.81% -> 8.83% at 0.08 and 8.88% at 0.20, against distance v2's carried
+reference of 8.90% after the riser lift and 7.08% with terracing off.
+**Darkening the cross-axis risers does not reopen carried item 14.**
+

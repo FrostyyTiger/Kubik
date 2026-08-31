@@ -201,7 +201,7 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# DISTANCE V3, appended. Every one of them redraws the far mesh or the
 	# impostor ring and nothing else, which is what earns a place on this
 	# list - and being on it is what makes a knob judgeable standing still.
-	"far_vote", "far_grain",
+	"far_vote", "far_grain", "far_riser_axis",
 ]
 
 static var _knobs := {}
