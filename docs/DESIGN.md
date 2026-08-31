@@ -74,8 +74,8 @@ feature that cannot is drawn differently.
    row). The near field is painted voxels; the far field is the flat poster;
    the seam between them is owned rather than hidden.
 
-*Amended by distance v3 (2026-08-31), and the rule stands - what changed is
-   what is under the bands.* The far field is no longer a stacked backdrop: it
+   *Amended by distance v3 (2026-08-31), and the rule stands - what changed
+   is what is under the bands.* The far field is no longer a stacked backdrop: it
    is the same world made of BIGGER BLOCKS, 4 m at the seam through 8, 16 and
    32 to 64 m at the rim, terraced with lit tops and shaded risers, painted on
    a world-space block lattice that grows with distance so a hillside at 3 km

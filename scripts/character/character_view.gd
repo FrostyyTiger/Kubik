@@ -29,6 +29,7 @@ var animator: Animator = null
 
 var _config: CharacterConfig = null
 var _state := LocomotionState.new()
+var _purchased: PurchasedView = null
 
 
 func _ready() -> void:
@@ -78,6 +79,22 @@ func build(new_def: CharacterDef) -> void:
 		set_gear_placeholders(true)
 	# And whatever the character is wearing, which arrived in the def.
 	apply_armour()
+
+	# Opt-in demo stand-in from the purchased mount (see PurchasedView).
+	# The rig is still built and still owns appearance_bytes and the wire;
+	# only what is DRAWN changes, and only when the flag and the asset agree.
+	if _purchased != null:
+		_purchased.queue_free()
+		_purchased = null
+	if PurchasedView.enabled() and PurchasedView.available():
+		var pv := PurchasedView.new()
+		pv.name = "PurchasedView"
+		add_child(pv)
+		if pv.build(Races.height_m(def.race, def.build)):
+			_purchased = pv
+			rig.visible = false
+		else:
+			pv.queue_free()
 
 
 ## Hang everything `def` says this character is wearing.
@@ -141,6 +158,10 @@ func set_state(state: LocomotionState) -> void:
 func _process(delta: float) -> void:
 	if animator == null or rig == null:
 		return
+	if _purchased != null:
+		_purchased.drive(_state, delta)
+		_update_close_hide()
+		return
 	animator.update(_state, delta)
 	animator.apply(rig)
 	rig.set_blinking(animator.blinking())
@@ -168,7 +189,12 @@ func _update_close_hide() -> void:
 		return
 	var head: Node3D = rig.bones["head"]
 	var head_pos: Vector3 = rig.global_transform * rig.transform_to_rig(head).origin
-	rig.visible = cam.global_position.distance_to(head_pos) > _config.view_hide_m
+	var shown := cam.global_position.distance_to(head_pos) > _config.view_hide_m
+	if _purchased != null:
+		# The stand-in owns what is drawn; the rig stays hidden either way.
+		_purchased.visible = shown
+	else:
+		rig.visible = shown
 
 
 ## Hang the three Stage 10 placeholders on their sockets, or take them off.
