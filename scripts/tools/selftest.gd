@@ -63,6 +63,8 @@ func _ready() -> void:
 		# CREATURES V1
 		"behaviour library": _test_behaviour_library,
 		"species table": _test_species_table,
+		"senses bus": _test_senses_bus,
+		"pack board": _test_pack_board,
 	}
 	var failures := 0
 	for name in tests:
@@ -1911,4 +1913,208 @@ func _test_species_table():
 			Species.sight_m(species), Species.sight_deg(species),
 			Species.hear_m(species), Species.run_mps(species),
 			Species.territory_m(species), Species.home(species)])
+	return bad
+
+
+## THE SENSES BUS: the cone, the loudness, and the calibration between them.
+##
+## Hard rule 4 says a creature perceives through this and nothing else, which
+## makes these two functions the entire perceptual surface of every animal in
+## the game. They are pure arithmetic and they get a real test, because the
+## alternative is finding out from a five-run probe median that "the wolf never
+## noticed anything" and not knowing which half was wrong.
+func _test_senses_bus():
+	var bad := 0
+
+	# --- THE CONE. sight_deg is the FULL width, so 110 means 55 either side.
+	var eye := Vector3(10.0, 4.0, 10.0)
+	var north := Vector3(0.0, 0.0, -1.0)
+
+	var cases := [
+		# [label, target offset, sight_m, sight_deg, expected]
+		["dead ahead, close", Vector3(0, 0, -10), 40.0, 110.0, true],
+		["dead ahead, too far", Vector3(0, 0, -60), 40.0, 110.0, false],
+		["dead behind", Vector3(0, 0, 10), 40.0, 110.0, false],
+		["straight out to the side", Vector3(10, 0, 0), 40.0, 110.0, false],
+		# 50 degrees off the nose is inside a 110 degree cone (55 either side)
+		# and outside a 90 degree one (45 either side). This pair is the whole
+		# off-by-two check: a half-angle bug passes the first and fails this.
+		["50 deg off in a 110 cone", Vector3(0, 0, -10).rotated(Vector3.UP, deg_to_rad(50.0)),
+			40.0, 110.0, true],
+		["50 deg off in a 90 cone", Vector3(0, 0, -10).rotated(Vector3.UP, deg_to_rad(50.0)),
+			40.0, 90.0, false],
+		["60 deg off in a 110 cone", Vector3(0, 0, -10).rotated(Vector3.UP, deg_to_rad(60.0)),
+			40.0, 110.0, false],
+		# ALTITUDE IS IGNORED ON PURPOSE - the cone is flat. A target directly
+		# above at close range is seen, and when that stops being right it is
+		# because the eagle started asking.
+		["overhead, near", Vector3(0, 30, -2), 40.0, 110.0, true],
+		# Standing inside each other is seeing each other, not a normalise of
+		# the zero vector.
+		["exactly on top", Vector3.ZERO, 40.0, 110.0, true],
+	]
+	for c in cases:
+		var got := SensesBus.can_see(eye, north, eye + (c[1] as Vector3),
+			c[2], c[3])
+		if got != c[4]:
+			print("  cone: '%s' -> %s, wanted %s" % [c[0], got, c[4]])
+			bad += 1
+
+	# A creature facing nowhere sees nothing, rather than everything.
+	if SensesBus.can_see(eye, Vector3.ZERO, eye + Vector3(0, 0, -5), 40.0, 110.0):
+		print("  a creature with no facing could still see")
+		bad += 1
+
+	# --- LOUDNESS, AND THE CALIBRATION. The reference is a walking player, so
+	# a listener's hear_m IS its range against one.
+	var bus := SensesBus.new()
+	var here := Vector3.ZERO
+	var walker := {"peer": 7, "pos": Vector3(0, 0, -29.0),
+		"vel": Vector3(0, 0, -4.0), "state": 1}
+	bus.tick_player_noise([walker])
+	if bus.hear_events_for(here, 30.0).is_empty():
+		print("  a walking player at 29 m was inaudible to 30 m of hearing")
+		bad += 1
+	# ...and one metre past it is not.
+	walker["pos"] = Vector3(0, 0, -31.0)
+	bus.tick_player_noise([walker])
+	if not bus.hear_events_for(here, 30.0).is_empty():
+		print("  a walking player at 31 m was audible to 30 m of hearing")
+		bad += 1
+
+	# SPRINTING CARRIES HALF AGAIN AS FAR. This is the pair the whole
+	# `senses-honest` scenario rests on: the same position, heard or not
+	# heard depending only on what the player is doing.
+	walker["pos"] = Vector3(0, 0, -40.0)
+	walker["state"] = 1
+	bus.tick_player_noise([walker])
+	var walking_at_40 := bus.hear_events_for(here, 30.0).size()
+	walker["state"] = 1 | 2
+	walker["vel"] = Vector3(0, 0, -11.0)
+	bus.tick_player_noise([walker])
+	var sprinting_at_40 := bus.hear_events_for(here, 30.0).size()
+	if not (walking_at_40 == 0 and sprinting_at_40 == 1):
+		print("  at 40 m against 30 m hearing: walking heard %d, sprinting %d - wanted 0 and 1" % [
+			walking_at_40, sprinting_at_40])
+		bad += 1
+
+	# A STILL PLAYER IS QUIET, NOT ABSENT. Stealth is a skill, not a switch.
+	walker["pos"] = Vector3(0, 0, -8.0)
+	walker["state"] = 1
+	walker["vel"] = Vector3.ZERO
+	bus.tick_player_noise([walker])
+	if bus.hear_events_for(here, 30.0).is_empty():
+		print("  a still player at 8 m was completely silent to 30 m of hearing")
+		bad += 1
+
+	# BETTER EARS SCALE ALL OF IT TOGETHER - the marmot's 45 m against the
+	# wolf's 30 m, on one walking player at 40 m.
+	walker["pos"] = Vector3(0, 0, -40.0)
+	walker["vel"] = Vector3(0, 0, -4.0)
+	bus.tick_player_noise([walker])
+	if bus.hear_events_for(here, Species.hear_m(Species.MARMOT)).is_empty():
+		print("  the marmot could not hear a walking player at 40 m")
+		bad += 1
+	# ...and the deaf eagle hears nothing at all, at any range.
+	walker["pos"] = Vector3(0, 0, -1.0)
+	bus.tick_player_noise([walker])
+	if not bus.hear_events_for(here, Species.hear_m(Species.EAGLE)).is_empty():
+		print("  the eagle heard something, and its hearing is 0 m on purpose")
+		bad += 1
+
+	# A PEER WHO LEFT STOPS MAKING NOISE. Without this a disconnected player is
+	# an eternal sound at the place they vanished.
+	bus.tick_player_noise([])
+	if not bus.hear_events_for(here, 45.0).is_empty():
+		print("  a player who left is still audible")
+		bad += 1
+
+	# TRANSIENTS EXPIRE. A noise is a moment, not a state.
+	bus.emit_noise(Vector3(0, 0, -5.0), 30.0, "howl", 1)
+	if bus.hear_events_for(here, 30.0).is_empty():
+		print("  a howl 5 m away was not heard")
+		bad += 1
+	OS.delay_msec(SensesBus.TRANSIENT_MS + 60)
+	bus.prune()
+	if not bus.hear_events_for(here, 30.0).is_empty():
+		print("  a howl was still audible %d ms later" % SensesBus.TRANSIENT_MS)
+		bad += 1
+
+	print("senses bus: %d cone cases, loudness calibrated at %.0f m reference" % [
+		cases.size(), Species.NOISE["reference_m"]])
+	return bad
+
+
+## THE PACK BOARD reaches a second reader, and remembers.
+##
+## The point of the class is that a thing one creature learns is a thing every
+## member knows without anybody sending a message, so the test holds the board
+## from two sides - which is exactly how the pack holds it.
+func _test_pack_board():
+	var bad := 0
+
+	var board := PackBoard.new(Species.WOLF)
+	# A SECOND REFERENCE, not a copy. If PackBoard ever became a value type
+	# this line is what would notice.
+	var second_reader := board
+
+	if board.target_peer != -1:
+		print("  a fresh board already has a target")
+		bad += 1
+	if board.seconds_since_seen() != INF:
+		print("  a board that has seen nothing reports a time since it did")
+		bad += 1
+	if board.has_howled():
+		print("  a fresh board has already howled")
+		bad += 1
+
+	board.broadcast("spotted", {
+		"id": 11, "pos": Vector3(1, 0, 1), "target": 42,
+		"target_pos": Vector3(9, 0, 9), "range_m": 11.3,
+	})
+	if second_reader.target_peer != 42:
+		print("  the second reader did not see the target: %d" % second_reader.target_peer)
+		bad += 1
+	if second_reader.target_pos != Vector3(9, 0, 9):
+		print("  the second reader did not see where the target was")
+		bad += 1
+	if second_reader.seconds_since_seen() > 1.0:
+		print("  the sighting did not stamp last_seen_ms")
+		bad += 1
+
+	# THE HOWL CARRIES A BEARING, and that bearing is what the flank is
+	# measured off. A howl that did not record one would make every converge
+	# an offset from zero, which is a direction in the world rather than a
+	# direction relative to the target.
+	board.broadcast("howl", {
+		"id": 11, "pos": Vector3(1, 0, 1), "target": 42,
+		"target_pos": Vector3(9, 0, 9), "bearing_deg": 45.0,
+	})
+	if not second_reader.has_howled() or second_reader.howl_bearing_deg != 45.0:
+		print("  the howl did not reach the board: howled=%s bearing=%.1f" % [
+			second_reader.has_howled(), second_reader.howl_bearing_deg])
+		bad += 1
+
+	# `lost` IS MEMORY, AND IT DELIBERATELY DOES NOT ERASE THE TARGET.
+	# DESIGN.md rule 3: a pack keeps going to where you were.
+	board.broadcast("lost", {"id": 11, "pos": Vector3(1, 0, 1),
+		"target": 42, "seconds": 3.0})
+	if second_reader.target_peer != 42 or second_reader.target_pos != Vector3(9, 0, 9):
+		print("  losing sight erased the memory of the target")
+		bad += 1
+
+	# ...and leashing home does clear it, because the chase is over.
+	board.forget_target()
+	if second_reader.target_peer != -1 or second_reader.has_howled():
+		print("  forget_target left a target or a howl behind")
+		bad += 1
+
+	# A BROADCAST WITH NO POSITION IS DROPPED, not silently written as the
+	# origin - an event a director cannot place is worse than no event.
+	board.broadcast("spotted", {"target": 5})
+	if board.target_peer == 5:
+		print("  a broadcast with no id/pos was applied anyway")
+		bad += 1
+
+	print("pack board: broadcast reaches a second reader, memory survives 'lost'")
 	return bad

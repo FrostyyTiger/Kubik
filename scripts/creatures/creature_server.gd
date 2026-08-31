@@ -40,6 +40,10 @@ var game: Node = null
 ## the one block it already gave us.
 var centres: Callable = Callable()
 
+## THE ONLY WAY A CREATURE PERCEIVES ANYTHING - hard rule 4. Host only; a
+## client's copy stays null and nothing on a client ever asks.
+var senses: SensesBus = null
+
 var _is_host := false
 
 
@@ -51,6 +55,8 @@ func setup(p_is_host: bool, p_world: World, p_journal: Journal,
 	journal = p_journal
 	game = p_game
 	centres = p_centres
+	if _is_host:
+		senses = SensesBus.new()
 
 
 func is_host() -> bool:
@@ -66,6 +72,55 @@ func sim_centres_m() -> Array:
 	if not centres.is_valid():
 		return []
 	return centres.call()
+
+
+## Every player the host knows about: peer id, position, velocity, state byte.
+##
+## READ THROUGH `game.peer_row()`, WHICH IS PUBLIC, and that is the point. The
+## host's authoritative table already carries everything the senses bus needs -
+## where a player is, how fast, and the state byte that says whether they are
+## sprinting - so the alternative was for this lane to invent a second, worse
+## description of what a player is doing. The bound `centres` Callable is the
+## fallback, used only before the first sync tick has filled that table, and it
+## reports a still player because that is the quietest honest guess.
+func players() -> Array:
+	var out := []
+	if not _is_host:
+		return out
+	if game != null and game.has_method("peer_row"):
+		var ids := [Net.local_peer_id()]
+		ids.append_array(Net.other_peer_ids())
+		for peer_id in ids:
+			var row: Dictionary = game.peer_row(peer_id)
+			if row.is_empty() or not row.has("p"):
+				continue
+			out.append({
+				"peer": peer_id, "pos": row["p"],
+				"vel": row.get("v", Vector3.ZERO),
+				"state": int(row.get("s", 1)),
+			})
+	if not out.is_empty():
+		return out
+	# Before the first sync tick, or on a build where the table is not there.
+	var i := 0
+	for pos in sim_centres_m():
+		out.append({"peer": -1 - i, "pos": pos, "vel": Vector3.ZERO, "state": 1})
+		i += 1
+	return out
+
+
+## One server tick of perception: every player's footfall onto the bus, and
+## the expired noises off it.
+##
+## ONCE PER TICK, NOT ONCE PER CREATURE. Sixteen wolves asking sixteen times
+## what the same two players are doing is the same answer computed sixteen
+## times, and it is also how a bus quietly becomes a per-creature distance
+## check with extra steps.
+func tick_senses() -> void:
+	if not _is_host or senses == null:
+		return
+	senses.tick_player_noise(players())
+	senses.prune()
 
 
 ## Record one creature event. THE ONE PLACE a creature writes to the journal.

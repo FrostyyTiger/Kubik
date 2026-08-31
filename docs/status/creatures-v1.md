@@ -297,9 +297,112 @@ reading of "the one elif and the one banner block", and it is what landed.
 
 ---
 
+## Stage 3 - senses and signals
+
+Two files, and between them the entire perceptual and communicative surface of
+every animal in the game.
+
+### `senses.gd` - `class_name SensesBus`, host only
+
+**The interface is honest and the implementation is not**, which is design
+decision 3 and is the whole reason this exists before any creature does. What
+ships is a flat sight cone and a hearing radius; what does NOT ship is any
+tree that knows that, because hard rule 4 forbids a raw distance check inside
+one. "Make it honest later" therefore means replacing the inside of two
+functions.
+
+**Named deferrals, so nobody has to guess what "simplified" meant:**
+
+- **Occlusion.** A wolf currently sees you through a ridge. The fix is a
+  heightmap ray-march between two points - the heightmap is already the right
+  structure and it is cheap, so this is a stage, not a project. Deferred
+  because it moves the very numbers Stage 6 is tuning against, and doing both
+  at once leaves neither measurable.
+- **Scent, carried downhill on the wind** - DESIGN.md rule 1's "a wolf that
+  only notices you upwind is a wolf players learn".
+- **Darkness.** Sight range by time of day belongs with DESIGN.md § Night's
+  mild v1 boldness dial.
+
+**Loudness and hearing are calibrated against each other, and that took a
+constant.** A noise states its carry in metres (`emit_noise(pos, loudness_m,
+kind, source)`); a listener states its `hear_m`. Reconciling the two needs a
+reference, so `Species.NOISE["reference_m"] = 30.0` is defined as *the carry
+of a walking player*, and audibility is
+`distance <= hear_m * (loudness_m / reference_m)`.
+
+The alternative, `min(loudness_m, hear_m)`, was rejected: it makes a sprint
+and a walk **identical** to any listener whose hearing is the shorter of the
+two, which is every listener that matters. With the reference:
+
+| | wolf, `hear_m` 30 | marmot, `hear_m` 45 |
+| --- | --- | --- |
+| still player (0.3x, carries 9 m) | 9 m | 13.5 m |
+| walking (1.0x, 30 m) | 30 m | 45 m |
+| sprinting (1.5x, 45 m) | 45 m | 67.5 m |
+
+**A player is one standing noise, not an event stream.** Emitting a fresh
+transient twenty times a second would make the bus a landfill; standing noises
+are keyed by source and rewritten each server tick, so re-emitting replaces.
+A peer who disconnects has their entry dropped - otherwise a departed player
+is an eternal sound at the place they vanished and the pack investigates it
+forever. Transients (a howl) expire after `TRANSIENT_MS = 250`, two brain
+ticks: long enough that a creature whose turn comes just after the sound still
+hears it, short enough that nothing chases an echo.
+
+`hear_events_for` returns rows **loudest first**, each carrying `range_m` and
+`margin` - so an investigate can be about the sound rather than about a second
+distance check, which would be hard rule 4 in through the window.
+
+**Player state is read through `game.peer_row()`, which is public.** The
+host's authoritative table already carries position, velocity and the state
+byte; `CreatureServer.players()` reads it there rather than inventing a second,
+worse description of what a player is doing. The bound `centres` Callable is
+the fallback for the moment before the first sync tick, and it reports a still
+player - the quietest honest guess.
+
+### `pack_board.gd` - `class_name PackBoard`, host only
+
+Rule 2 (communication) and rule 3 (memory) in one object. **The whistle and
+the howl are the same mechanism** - design decision 2 - so this is a board,
+not a wolf thing, and night 2's marmot gets it for free.
+
+`broadcast(kind, data)` **writes the board and then journals**, in that order,
+because a reader woken by the journal must not be able to see an event about a
+board that has not been updated yet. `data` must carry `id` and `pos` -
+required, not defaulted: an event with no position is one a director cannot
+place, and silently writing a zero makes that failure invisible. Such a
+broadcast is dropped with a warning.
+
+**`lost` and `leash_turn` are journal-only on purpose.** They are things that
+happened and they deliberately do not erase `target_pos` / `last_seen_ms` -
+DESIGN.md rule 3, a pack keeps going to where you were. Only `forget_target()`,
+called when a pack leashes home, clears it.
+
+It is called `PackBoard` and not `Blackboard` because the vendored Beehave
+already declares a global class by that name.
+
+**Gates:** all three green, `heightmap# 76cccdb6`, spawn `(-44, -124)`,
+`walk` still passes. Two new selftests:
+
+- **`senses bus`** - nine cone cases including the off-by-two pair (50 degrees
+  off the nose is inside a 110-degree cone and outside a 90-degree one, which
+  is the test a half-angle bug passes then fails), a creature with no facing
+  seeing nothing, the walking-player audibility boundary at 29 m / 31 m
+  against 30 m of hearing, the pair the whole `senses-honest` scenario rests
+  on (at 40 m against 30 m hearing: walking heard 0, sprinting heard 1), a
+  still player at 8 m still audible, the marmot's better ears, the eagle
+  hearing nothing at 1 m, a departed peer going silent, and a transient
+  expiring.
+- **`pack board`** - a broadcast reaching a second reader, the howl's bearing
+  arriving, memory surviving `lost`, `forget_target` clearing it, and a
+  broadcast with no `id`/`pos` being dropped rather than written as the origin.
+
+---
+
 ## Deferred, night 1
 
-- LimboAI, per above.
+- LimboAI, per Stage 0.
+- **Senses honesty**: occlusion, scent + wind, darkness. Stage 3, named above.
 
 ## What night 2 inherits
 

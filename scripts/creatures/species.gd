@@ -48,10 +48,24 @@ const SPECIES_NAMES := ["wolf", "marmot", "eagle"]
 ## gear, a shifted boot. 0.3 means you can be found by standing in the wrong
 ## place, which is the difference between stealth being a skill and stealth
 ## being a switch.
+## ...and how far a walking player's noise carries, in metres.
+##
+## THE TWO HALVES ARE CALIBRATED AGAINST EACH OTHER, and this constant is what
+## makes that true. A noise states its carry in METRES - `emit_noise` takes
+## `loudness_m` and nothing has to know who is listening - and a listener's
+## `hear_m` is its range FOR A NOISE THAT CARRIES THIS FAR. So the audibility
+## test is `distance <= hear_m * (loudness_m / reference_m)`, and a wolf with
+## `hear_m` 30 hears a walking player at 30 m, a sprinting one at 45 and a
+## still one at 9, while the marmot's 45 scales all three up together.
+##
+## Without a reference the two units cannot be reconciled: `min(loudness_m,
+## hear_m)` makes a sprint and a walk identical to any listener whose hearing
+## is the shorter of the two, which is every listener that matters.
 const NOISE := {
 	"sprint": 1.5,
 	"move": 1.0,
 	"still": 0.3,
+	"reference_m": 30.0,
 }
 
 ## Brain ticks per second, staggered across the live creatures. Hard rule 8.
