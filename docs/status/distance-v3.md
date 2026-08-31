@@ -616,3 +616,227 @@ mattered defensively is the black crush: `dark40` over the far band goes
 reference of 8.90% after the riser lift and 7.08% with terracing off.
 **Darkening the cross-axis risers does not reopen carried item 14.**
 
+---
+
+## Stage 4 - The reach: rings 3 and 4, and the rim
+
+**Shipped.** Two new rings, and the top two view presets see the whole region.
+
+| ring | cells | covers | step height |
+| --- | --- | --- | --- |
+| 0 | 4 m | seam to 200 m | 4 m |
+| 1 | 8 m | 200-400 m | 8 m |
+| 2 | 16 m | 400-960 m | 16 m |
+| **3** | **32 m** | **960-1920 m** | **32 m** |
+| **4** | **64 m** | **1920 m to the fog** | **64 m** |
+
+`RING_OUTER_M` gains 960 and 1920; `RING_STEP_MULTIPLE` gains 8 and 16. Every
+v2 rule extends with them by construction rather than by being re-implemented -
+the cubic lock is `step = cell width` and both new steps are powers of two, so
+the subset property holds and a ring boundary still SUBDIVIDES a mountain's
+shelves; the ridge round-up, the skirts, the seam band, the terrace level and
+`ring_step_blocks()` all read the two tables and needed no edit at all.
+
+**The reach is preset-owned and nothing reads the world's size.** High and
+Ultra go to `fog_end 3200 m`, which puts the far field's own radius at 3,840 m
+(x `FOG_MARGIN`) and the camera's far plane at 4,000 m (x
+`Player.FAR_PLANE_RATIO`). The region is 3 x 3 km with a 4,243 m diagonal and a
+rim about 2.6 km from a valley floor, so the rim is inside the frame from
+anywhere a player can stand, with headroom. Low and Medium are untouched: their
+far radius runs out inside ring 2, the ladder stops there, and they cost
+exactly what they cost before. A preset reaching ten kilometres would want a
+sixth row in the table and nothing else.
+
+**`far_tree_m` does NOT follow the fog**, which is decision 6 and a departure
+from the rule the presets have carried since world feel v1 Stage 7 ("far_tree
+is the fog, at every preset"). High keeps 800 m of impostors under a 3,200 m
+fog. The rule it breaks exists because "fog past the far trees is a bald
+mountain in plain view, and the far field painted it forest-green: a mown
+slope" - and what closes that gap now is Stage 1's vote, which paints the
+ground past 800 m forest-green because it IS forest, at a cost of nothing per
+tree. Sixteen times the ring area for a forest two pixels tall is the trade
+decision 6 declined.
+
+### The budget arithmetic, and it holds
+
+The plan predicted "each new ring costs roughly what ring 2 cost... expect the
+far mesh to grow from ~200-260k vertices to ~300-350k for nearly 4x the visible
+distance. If Stage 4 lands far outside that envelope, stop and write down why."
+
+`ganymede, deterministic` for the vertices, `single run` for the wall:
+
+| | Stage 3 (fog 800 m) | Stage 4 (fog 3200 m) | |
+| --- | --- | --- | --- |
+| far mesh in game | 262,312 | **320,764** | **+22.3% for 4x the reach** |
+| far probe, spawn | 254,140 | 311,696 | +22.6% |
+| far probe, summit | 143,232 | 191,960 | +34.0% |
+| far probe, lake | 242,120 | 294,936 | +21.8% |
+| job ms, spawn | 2,380 | 3,065 | +28.8% |
+| job ms, summit | 1,296 | 1,821 | +40.5% |
+| job ms, lake | 2,364 | 2,997 | +26.8% |
+| first build, wall ms | 4,834 | 6,207 | +28.4% |
+
+**320,764 against a ~350,000 envelope: MET.** And the shape of the cost is the
+one the log-ring ladder promises - the visible radius went from 960 m to
+3,840 m, sixteen times the area, for 22% more vertices. Two of that 22% is
+ring 4 barely existing at spawn: the region is 3 x 3 km and ring 4 starts at
+1,920 m, so most of it is outside `heightmap.in_bounds` and emits nothing. The
+terrace-compliance row counts what actually got built - at spawn, **5,670**
+quads of 64-block cells and **51** of 128-block ones, against 9,345 of 32-block
+ones. At the summit, which is nearer a corner and looks across the whole map,
+ring 4 emits 922.
+
+**So the honest reading of the budget is that ring 3 is the one that cost
+anything and ring 4 is nearly free ON THIS REGION** - and on an unbounded world
+it would cost what ring 3 costs, which is what the ladder predicts and what the
+next epic will pay. Said here so nobody reads +22% as a general law.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| far mesh vertices within the envelope | **MET - 320,764 in game, 311,696 in the probe, against ~350,000** |
+| wall rebuild under 5 s | see below - **MET for a rebuild, NOT MET for the first build** |
+| far probe determinism, rings 0-4 | **MET - `PASS`, tables IDENTICAL, run 1 in 155,919 ms and run 2 in 155,783 ms** |
+| terrace compliance on the new rings | **MET - 100% at 64 blocks and 100% at 128 blocks, worst deviation 0.000, all three vantages** |
+| frontier rule untouched, stream probe zero holes | see below |
+| a valley-floor shot with the rim visible and terraced | see below |
+
+### The wall time, and the instrument the criterion needed
+
+The acceptance criterion is "wall rebuild under 5 s on ganymede", and until
+this stage **every wall number this project has ever printed was contended.**
+The first build waits behind 2,400 chunks on a pool that runs one GDScript task
+at a time; a rebuild during a screenshot tour waits behind whatever that
+vantage is streaming; the stream probe's rebuilds happen during a sprint, which
+is the worst case by construction. None of them is what the criterion is about,
+which is a person standing still moving a slider on F4 and watching the far
+country redraw.
+
+So two instruments were added here. `FarField` now prints a one-line summary of
+every rebuild's wall time at exit, so a seventeen-vantage tour is also a
+seventeen-sample measurement; and `--far-probe --cost` ends by loading the REAL
+world, waiting for it to go idle, and calling `rebuild_in_place()` three times
+the way `apply_far_knobs()` does.
+
+| what | ms | |
+| --- | --- | --- |
+| **idle rebuild, the F4 knob** | **3,347 (3,263-3,463)** | **the criterion. MET** |
+| job time, main thread, probe | 3,123 (1,874-3,209) | the work itself |
+| first build, during world generation | 6,267 | behind 2,400 chunks |
+| rebuild during a tour, median after the first | 5,679 | behind a vantage's streaming |
+| rebuild during a sprint, median | 6,095-6,365 | the worst case there is |
+
+**Under 5 s standing still, over 5 s while the world streams.** Both are true
+and the epic's judging instrument is the first one. The second is not
+cosmetic - see the holes, below, which are entirely caused by it.
+
+### THE STREAM PROBE FAILS. Hard rule 2 is broken at this stage.
+
+`--stream-probe --strict`, twice, `ganymede, single run` each:
+
+| run | holes | frames over 33 ms | verdict |
+| --- | --- | --- | --- |
+| 1 | **25** | 26 | **FAIL** |
+| 2 | **8** | 16 | **FAIL** |
+
+Distance v2 saw one hole sample in seven runs and called it unsettled. This is
+twenty-five in one run. **It is a real regression and this stage caused it.**
+
+**The mechanism, worked out rather than guessed.** The far mesh is a disc
+centred on `center`, with a hole cut to the frontier, and both are captured
+when a rebuild is SUBMITTED. A rebuild now takes 6.3 s of wall clock during a
+sprint. At 13 m/s the player has moved **82 m** by the time that mesh reaches
+the screen, so the disc on screen is centred 82 m behind them and its hole -
+128 blocks, 64 m, of radius - is centred there too. **In front of the player
+the hole has moved backwards and there is more cover than before. Behind them
+it sticks out**: the hole now reaches 64 + 82 = 146 m behind the player while
+the voxels only reach 96 m behind. Fifty metres of ground with neither.
+
+The `sprint back` leg carries 15 of the 25, which is what that explanation
+predicts.
+
+**It is not a frontier bug and `world.gd` is still in step.**
+`World.far_field_exclusion_m()` and `FarFieldJob` read the same
+`FRONTIER_OVERLAP_CELLS` and the same `built_frontier()`, which is distance v2's
+carried item 12 done right; the hole the probe reports is a hole that is really
+there. What changed is only that the rebuild got 3.3x slower, so the disc lags
+3.3x further.
+
+**The remedy is Stage 7, and Stage 7's plan needs one correction.** The plan
+says the far field should start at "~0.85 of the built frontier per sector".
+Our geometry: the voxel radius is 192 blocks and today's hole is
+`192 - 8 * far_step = 128` blocks, which is **0.67** of the frontier, so 0.85
+would be LESS overlap than today and would make this worse. DH's percentages
+are tuned against Minecraft's render distances and do not transfer as numbers.
+What the arithmetic above asks for is a hole radius under
+`voxel_radius - lag`, and with an 82 m lag against a 96 m radius that is
+**nearly zero: the far mesh has to cover the whole voxel disc.** That is
+affordable (about 1,800 ring-0 quads, under 2% of the mesh) and it is safe as
+long as the far mesh is SUNK below the voxel surface inside the frontier, which
+it currently is not - inside the seam band it deliberately computes the voxel
+surface exactly, and half the time that is above the voxels' own top face.
+Stage 7 does both.
+
+**Recorded here, not fixed here**, per the plan's rule for a gate that cannot
+be met as written. **Acceptance re-runs the full harness at Stage 7 and the
+epic does not merge until it is zero.**
+
+### The cost, ABAB
+
+`ganymede, ABAB median`, three runs each, interleaved A-B-A-B-A-B,
+`--far-probe --cost --set fog_end_m=800|3200`, run order as written. A is this
+epic at Stage 3's reach; B is Stage 4's.
+
+| | fog 800 m | fog 3200 m | delta |
+| --- | --- | --- | --- |
+| spawn, job ms | 2,458 (2,456-2,537) | 3,100 (3,098-3,116) | +26.1% |
+| summit, job ms | 1,338 (1,333-1,361) | 1,838 (1,835-1,842) | +37.4% |
+| lake, job ms | 2,444 (2,436-2,482) | 3,036 (2,992-3,042) | +24.2% |
+| **idle rebuild, wall ms** | **2,587 (2,574-2,666)** | **3,223 (3,222-3,230)** | **+24.6%** |
+| first build, wall ms | 4,994 (4,827-5,295) | 6,193 (6,096-6,508) | +24.0% |
+| far mesh in game | 262,312 | **320,764** | +22.3% |
+
+Every row lands between +22% and +37% for **sixteen times the visible ground**,
+and the three vantages and the two wall measurements agree with each other. The
+summit is the largest because it is the vantage where the new rings have the
+most world left to draw.
+
+### The fleck, and a warning for Stage 5
+
+The reach raises the fleck more than any other stage, for a reason that is not
+about paint: the far country now fills the frame where fog used to.
+
+| shot, far band | Stage 3 | Stage 4 | dark40, Stage 3 -> Stage 4 |
+| --- | --- | --- | --- |
+| **6-postcard** | 4.5768 | **5.2168** | 8.83% -> **20.13%** |
+| 5-lake | 2.9224 | 5.5764 | 0.30% -> 2.82% |
+| 14-postcard-dusk | 3.6224 | 3.8720 | 19.98% -> 28.73% |
+| 3-forest-slope | 4.0966 | 4.1323 | 10.38% -> 10.38% |
+| 9-treeline | 1.9027 | 1.9006 | 43.41% -> 43.41% |
+| 2-summit | 1.0874 | 1.0874 | 0.00% -> 0.00% |
+
+**And `dark40` on the postcard more than doubled, 8.83% to 20.13%.** That is
+distance v2's carried item 14 - the black crush - reopening, and it is not the
+axis term (Stage 3 moved it by 0.02 points). It is the fog: `fog_start_m` is
+`0.4 * fog_end_m`, so raising the reach moved the first fog band from 320 m to
+1,280 m and **a kilometre of mountain that used to be hazed is now drawn at
+full strength, including its shaded side.** Looking at
+`build/tour/s4-reach/6-postcard.png` beside `s3-axis/6-postcard.png`: the far
+range is deeper and there are whole massifs behind the old fog wall that were
+never drawn before, and they are hard, dark and airless.
+
+**This is Stage 5's job and it is now the most load-bearing stage in the epic.**
+"No fog wall" has been achieved by having no fog.
+
+### The rim, photographed
+
+`build/tour/s4-reach/6-postcard.png`: **the rim of the region is visible,
+terraced, and there is no fog wall anywhere in the frame.** Two thirds of the
+acceptance shot. It is not hazed, which is the third third and is Stage 5.
+
+`4-valley-floor` is NOT that shot and should not be read as one: it is a flat
+meadow whose horizon is its own ground, so no rim is in the frame at any reach.
+Its floating impostors and pale horizon band are identical at Stage 3 and at
+baseline; they are pre-existing and not this stage's.
+

@@ -64,11 +64,38 @@ const FOG_MARGIN := 1.2
 
 ## Where each level of detail ends, in metres. The last ring has no entry here:
 ## it runs from the final boundary out to the fog.
-const RING_OUTER_M := [200.0, 400.0]
+##
+## TWO MORE RINGS SINCE DISTANCE V3 STAGE 4, and they are what makes the whole
+## region visible - decision 3, the monumental pillar made literal.
+##
+## | ring | cells | covers        | step height |
+## | 0    | 4 m   | seam to 200 m | 4 m         |
+## | 1    | 8 m   | 200-400 m     | 8 m         |
+## | 2    | 16 m  | 400-960 m     | 16 m        |
+## | 3    | 32 m  | 960-1920 m    | 32 m        |
+## | 4    | 64 m  | 1920 m to the fog | 64 m    |
+##
+## EACH DOUBLING OF THE REACH COSTS ONE MORE RING AND ABOUT WHAT THE LAST ONE
+## COST. Ring area grows 4x per ring and cell area grows 4x with it, so the
+## quad count per ring is roughly constant - which is DH's "constant cells per
+## section with logarithmic ring spacing", and it is also exactly what an
+## unbounded world will need. Measured rather than trusted: the table is in
+## docs/status/distance-v3.md.
+##
+## POWERS OF TWO, so distance v2's subset property extends unchanged: every
+## 64 m shelf is also a 32 m shelf is also a 16 m one, and a ring boundary
+## SUBDIVIDES a mountain's shelves rather than moving them.
+##
+## NOTHING HERE READS THE WORLD'S SIZE. The rings are derived from the
+## configured far radius (fog_end_m x FOG_MARGIN) and stop at whichever one the
+## radius runs out inside - so Low and Medium simply never start rings 3 and 4,
+## and a preset that reached ten kilometres would want a sixth entry and
+## nothing else. CLAUDE.md, 2026-08-31.
+const RING_OUTER_M := [200.0, 400.0, 960.0, 1920.0]
 
 ## Blocks per vertex in each ring, as a multiple of config.far_step. At the
-## default far_step of 8 blocks that is 4, 8 and 16 metres per vertex.
-const RING_STEP_MULTIPLE := [1, 2, 4]
+## default far_step of 8 blocks that is 4, 8, 16, 32 and 64 metres per vertex.
+const RING_STEP_MULTIPLE := [1, 2, 4, 8, 16]
 
 ## How far a skirt hangs below its edge, as a multiple of that ring's step in
 ## BLOCKS. At 1.0 a skirt covers any mismatch up to a 45 degree slope across

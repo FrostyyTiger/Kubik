@@ -322,6 +322,46 @@ func _cost_table() -> void:
 	s_all.sort()
 	print("[FarProbe] cost ALL            median %6.0f ms  (%.0f-%.0f) over %d meshes" % [
 		s_all[s_all.size() / 2], s_all[0], s_all[s_all.size() - 1], s_all.size()])
+	await _idle_rebuild()
+
+
+## WHAT AN F4 KNOB COSTS, WITH THE POOL IDLE. Distance v3 Stage 4.
+##
+## The acceptance criterion is "wall rebuild under 5 s", and until this existed
+## every wall number any run printed was contended. The first build waits behind
+## 2,400 chunks; a rebuild during a screenshot tour waits behind whatever that
+## vantage is streaming; the stream probe's rebuilds happen during a sprint,
+## which is the worst case by construction. None of them is the thing the
+## criterion is about, which is a person standing still moving a slider and
+## watching the far country redraw - `FarField.apply_far_knobs()`, the property
+## distance v2 built the epic's judging instrument out of.
+##
+## So: the REAL world, fully loaded, the pool idle, `rebuild_in_place()` called
+## the way the F4 panel calls it, and the wall time FarField itself reports.
+## Three of them, median with range.
+func _idle_rebuild() -> void:
+	var far_field: Node = _world.get_node_or_null("FarField")
+	if far_field == null or not far_field.has_method("rebuild_in_place"):
+		print("[FarProbe] cost idle rebuild: no FarField to ask")
+		return
+	# The world has been idle since _go() waited for it, and this probe has run
+	# every mesh above on the MAIN thread, so the pool really is empty.
+	var walls := PackedFloat32Array()
+	for k in COST_REPEATS:
+		var before: int = far_field.stats()["rebuilds"]
+		if not far_field.rebuild_in_place():
+			print("[FarProbe] cost idle rebuild: FarField refused")
+			return
+		var frames := 0
+		while int(far_field.stats()["rebuilds"]) == before and frames < 100000:
+			await get_tree().process_frame
+			frames += 1
+		walls.append(float(far_field.stats()["wall_ms"]))
+	var sorted := walls.duplicate()
+	sorted.sort()
+	print("[FarProbe] cost idle rebuild   median %6.0f ms wall  (%.0f-%.0f) over %d rebuilds" % [
+		sorted[sorted.size() / 2], sorted[0], sorted[sorted.size() - 1],
+		sorted.size()])
 
 
 # --- The table ----------------------------------------------------------------

@@ -37,6 +37,10 @@ var _last_verts := 0
 var _rebuilds := 0
 var _started_us := 0
 
+## Every rebuild's wall time this session, for the summary printed at exit.
+## See the note where it is appended.
+var _walls := PackedInt32Array()
+
 
 func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
@@ -99,6 +103,17 @@ func _process(_delta: float) -> void:
 	if _rebuilds == 1:
 		print("[FarField] first build: %d vertices, %d ms job, %d ms wall" % [
 			_last_verts, _last_ms, _last_wall_ms])
+	# AND EVERY REBUILD'S WALL TIME, KEPT FOR THE SUMMARY AT EXIT. Distance v3
+	# Stage 4, because the first build is the WORST one and the acceptance
+	# criterion is about a rebuild.
+	#
+	# The first build happens while the world is generating: 2,400 chunks are
+	# queued on a worker pool that runs one GDScript task at a time, so its
+	# wall time is mostly a queue this job did not create. Every rebuild after
+	# it - the player crossing a chunk boundary, or a knob moving on F4 - runs
+	# against a nearly idle pool, and THAT is what "the far country redraws in
+	# under N seconds" has always meant. One number cannot be both.
+	_walls.append(_last_wall_ms)
 	mesh = ChunkMesher.arrays_to_mesh(_job.arrays)
 	# The frontier THIS MESH was cut to. Not the same as the world's current
 	# one: a rebuild takes a frame or two on a worker, and during that window
@@ -165,6 +180,33 @@ func drain() -> void:
 
 func _exit_tree() -> void:
 	drain()
+	_print_wall_summary()
+
+
+## What the far mesh cost over the whole session, printed once, at exit.
+##
+## Distance v3 Stage 4. The acceptance criterion is "wall rebuild under 5 s on
+## ganymede", and until this existed the only wall time any run printed was the
+## FIRST build's - which is the one that waits behind the whole world being
+## generated and is therefore the one number that cannot answer the question.
+##
+## Median and worst over every rebuild, with the first one broken out so it can
+## be seen rather than hidden inside the distribution. A screenshot tour visits
+## seventeen vantages and rebuilds at every one, so a tour is now also a
+## seventeen-sample measurement of what a rebuild costs.
+func _print_wall_summary() -> void:
+	if _walls.is_empty():
+		return
+	var sorted := _walls.duplicate()
+	sorted.sort()
+	var rest := 0
+	if _walls.size() > 1:
+		var tail := _walls.slice(1)
+		tail.sort()
+		rest = tail[tail.size() / 2]
+	print("[FarField] %d rebuilds: median %d ms wall, worst %d ms, first %d ms, median after the first %d ms" % [
+		_walls.size(), sorted[sorted.size() / 2], sorted[sorted.size() - 1],
+		_walls[0], rest])
 
 
 # --- THE KNOB THAT DOES NOT NEED F7, distance v2 Stage 0 ----------------------

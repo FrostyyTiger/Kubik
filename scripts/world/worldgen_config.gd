@@ -154,10 +154,32 @@ const VIEW_PRESETS := [
 	# High from 300 to 400 for this reason and did not close the gap; this
 	# closes it. What pays for it is the LOD ramp in FarTreesJob, which keeps
 	# the candidate count growing with the radius rather than with its square.
+	# AND FROM DISTANCE V3 STAGE 4 THE TOP TWO PRESETS SEE THE WHOLE REGION,
+	# which is decision 3 and the monumental north star as a number.
+	#
+	# The region is 3 x 3 km, so its diagonal is 4,243 m and its rim is about
+	# 2.6 km from a valley floor. fog_end 3200 m puts the far field's own radius
+	# at 3,840 m (x FOG_MARGIN) and the camera's far plane at 4,000 m
+	# (x Player.FAR_PLANE_RATIO), so the rim is inside the frame from anywhere a
+	# player can stand, with headroom. It costs one more ring per doubling and
+	# nothing at load - the far field has been logarithmic in reach since
+	# distance v1 Stage 4, and this is the first time anything has spent that.
+	#
+	# FAR_TREE DOES NOT FOLLOW IT, and that is decision 6 rather than an
+	# oversight: the impostor ring stays at 800 m and the forest beyond it is
+	# terrain colour. Eight hundred metres of impostors is already 1,016 trees at
+	# the postcard vantage; four times the radius is sixteen times the ring area,
+	# and a far forest at 3 km is two pixels tall. The three distances still have
+	# to AGREE - "fog past the far trees is a bald mountain in plain view" - and
+	# what makes them agree here is Stage 1's vote, which paints that ground
+	# forest-green because it IS forest, rather than a triangle drawn for nobody.
+	#
+	# Low and Medium are untouched. Their far radius runs out inside ring 2, so
+	# the ladder simply stops there and they cost exactly what they cost before.
 	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 400.0},
 	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 500.0},
-	{"name": "high", "radius": 12, "fog_end": 800.0, "far_tree": 800.0},
-	{"name": "ultra", "radius": 16, "fog_end": 1000.0, "far_tree": 1000.0},
+	{"name": "high", "radius": 12, "fog_end": 3200.0, "far_tree": 800.0},
+	{"name": "ultra", "radius": 16, "fog_end": 3200.0, "far_tree": 1000.0},
 ]
 
 ## view_distance value meaning "leave the numbers below exactly as they are".
