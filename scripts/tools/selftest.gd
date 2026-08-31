@@ -65,6 +65,7 @@ func _ready() -> void:
 		"stats table": _test_stats_table,
 		# DISTANCE V4 STAGE 1, appended at the end of the list.
 		"far parity": _test_far_parity,
+		"far pyramid parity": _test_far_pyramid_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -1959,7 +1960,7 @@ func _test_far_parity():
 	var wcfg: WorldgenConfig = world.config
 
 	var mesher := FarMesher.new()
-	if not mesher.setup(heightmap, generator, wcfg):
+	if not FarMesher.available() or not mesher.setup(heightmap, generator, wcfg):
 		print("far parity: c++ mesher absent/stub, 0 checks")
 		world.free()
 		return 0
@@ -2080,3 +2081,81 @@ func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
 	var text := "max diff pos %.9f normal %.9f colour %s, %d indices differ" % [
 		dv, dn, ("%.9f" % dc) if with_colors else "-", bad_i]
 	return {"ok": ok, "text": text}
+
+
+## THE PYRAMID CROSSES, EXPRESSION BY EXPRESSION. Distance v4 Stage 2.
+##
+## Ten thousand random (x, z, level) triples through five functions, C++ against
+## GDScript, and the gate is EXACT - not "close", not a tolerance. Both sides
+## compute in doubles off the same float32 arrays, and on one machine's libm the
+## same expression rounds the same way, so a difference here is a difference in
+## the expression and nothing else.
+##
+## THE SAMPLES DELIBERATELY GO OUTSIDE THE WORLD. Both implementations clamp,
+## and a clamp is exactly the kind of edge a transcription gets subtly wrong -
+## `mini(i0 + 1, cols - 1)` against `i0 + 1 < cols - 1 ? ... : ...` are the same
+## function and only one of them is obviously so. A quarter of the range is off
+## the map on each axis.
+##
+## LEVELS ARE CONTINUOUS, and half of them land within 0.0001 of an integer on
+## purpose: that is `_trilinear`'s early-out, and the branch either side of it
+## is where a level would silently become a different level.
+func _test_far_pyramid_parity():
+	var bad := 0
+	if not FarMesher.class_present():
+		print("far pyramid parity: c++ mesher absent, 0 checks")
+		return 0
+
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	if not mesher.setup(heightmap, world.generator, wcfg):
+		print("  the c++ mesher would not take the world")
+		world.free()
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 424242
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var worst := {"height": 0.0, "filtered": 0.0, "max": 0.0, "peak": 0.0,
+		"slope": 0.0}
+	var n := 10000
+	for k in n:
+		# Half again outside the map on each axis, so the clamps are exercised.
+		var bx := rng.randf_range(-half * 1.5, half * 1.5)
+		var bz := rng.randf_range(-half * 1.5, half * 1.5)
+		var level := rng.randf_range(0.0, float(Heightmap.MAX_LEVEL))
+		if k % 2 == 0:
+			# Land on an integer level, which is _trilinear's early-out.
+			level = float(rng.randi_range(0, Heightmap.MAX_LEVEL))
+		worst["height"] = maxf(worst["height"],
+			absf(heightmap.height_at(bx, bz) - mesher.h_at(bx, bz)))
+		worst["filtered"] = maxf(worst["filtered"],
+			absf(heightmap.height_filtered(bx, bz, level)
+				- mesher.h_filtered(bx, bz, level)))
+		worst["max"] = maxf(worst["max"],
+			absf(heightmap.height_max_filtered(bx, bz, level)
+				- mesher.h_max_filtered(bx, bz, level)))
+		worst["peak"] = maxf(worst["peak"],
+			absf(FarFieldJob.filtered_height(heightmap, wcfg, bx, bz, level)
+				- mesher.h_peak(bx, bz, level)))
+		worst["slope"] = maxf(worst["slope"],
+			absf(heightmap.slope_deg_at(bx, bz) - mesher.h_slope_deg(bx, bz)))
+
+	for key in worst:
+		if worst[key] != 0.0:
+			print("  %s differs: max %.17f over %d samples" % [key, worst[key], n])
+			bad += 1
+	print("far pyramid parity: %d samples x 5 functions, max diff %.17f" % [
+		n, maxf(maxf(worst["height"], worst["filtered"]),
+			maxf(worst["max"], maxf(worst["peak"], worst["slope"])))])
+	world.free()
+	return bad

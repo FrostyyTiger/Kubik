@@ -36,14 +36,19 @@ extends RefCounted
 const CLASS_NAME := "KubikFarMesher"
 
 
-## Is the compiled library present AND does it carry a mesher rather than the
-## stub? Both halves matter: Stage 0 shipped a class with nothing but `ping()`
-## on it, and a dispatch that trusted the class name alone would have built an
-## empty mesh and called it a far country.
+## Is the compiled library present and far enough along to be handed a world?
+##
+## Stage 0 shipped a class with nothing but `ping()` on it, so the class name
+## alone proves nothing - each of the three questions below asks for the method
+## that the caller is actually about to use.
+static func class_present() -> bool:
+	return ClassDB.class_exists(CLASS_NAME) \
+		and ClassDB.class_has_method(CLASS_NAME, "setup")
+
+
+## Can it build a whole mesh? This is the one the dispatch asks.
 static func available() -> bool:
-	if not ClassDB.class_exists(CLASS_NAME):
-		return false
-	return ClassDB.class_has_method(CLASS_NAME, "build")
+	return class_present() and ClassDB.class_has_method(CLASS_NAME, "build")
 
 
 ## Whether the C++ mesher paints as well as it shapes. False through Stage 3,
@@ -80,7 +85,8 @@ var _ready := false
 func setup(heightmap: Heightmap, generator: TerrainGenerator,
 		config: WorldgenConfig) -> bool:
 	_ready = false
-	if not available() or heightmap == null or generator == null or config == null:
+	if not class_present() or heightmap == null or generator == null \
+			or config == null:
 		return false
 	# THE PYRAMID IS BUILT ON THE CALLER'S THREAD, and that is a change of
 	# WHERE rather than of what: FarFieldJob.run() builds it on the worker
@@ -90,8 +96,12 @@ func setup(heightmap: Heightmap, generator: TerrainGenerator,
 	if _impl == null:
 		_impl = ClassDB.instantiate(CLASS_NAME)
 	_impl.setup(_world_data(heightmap, generator, config))
-	_ready = true
-	return true
+	# THE MESHER SAYS WHETHER IT GOT A WORLD IT CAN USE. `bilinear()` indexes
+	# the pyramid without a bounds check tens of millions of times a build, so
+	# a short marshal is a crash rather than a wrong mesh - and the answer to
+	# one is to keep GDScript, not to try.
+	_ready = _impl.is_ready()
+	return _ready
 
 
 ## Everything the mesher needs that does not change while a world is loaded.
@@ -197,3 +207,32 @@ func build(config: WorldgenConfig, center: Vector2i,
 	vertex_count = int(out.get("vertex_count", 0))
 	elapsed_ms = int(out.get("elapsed_ms", 0))
 	return true
+
+
+# --- Stage 2's micro-gate ----------------------------------------------------
+#
+# The pyramid, one expression at a time. A whole-mesh diff tells you the two
+# meshers disagree and never WHERE, and "where" is the only thing a port needs
+# from a failing gate - so each ported expression is also reachable on its own
+# and the self-test puts ten thousand random triples through both.
+
+func h_at(bx: float, bz: float) -> float:
+	return _impl.h_at(bx, bz)
+
+
+func h_filtered(bx: float, bz: float, level: float) -> float:
+	return _impl.h_filtered(bx, bz, level)
+
+
+func h_max_filtered(bx: float, bz: float, level: float) -> float:
+	return _impl.h_max_filtered(bx, bz, level)
+
+
+## FarFieldJob.filtered_height: the pyramid read, pulled towards the maxima by
+## far_peak_gain.
+func h_peak(bx: float, bz: float, level: float) -> float:
+	return _impl.h_peak(bx, bz, level)
+
+
+func h_slope_deg(bx: float, bz: float) -> float:
+	return _impl.h_slope_deg(bx, bz)
