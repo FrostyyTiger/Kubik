@@ -191,7 +191,7 @@ func pre_tick() -> void:
 		# and is somewhere the current target is still FOLLOWED.
 		var outside := Creature.flat_distance(p["pos"], board.den_pos) > border
 		var already_chasing := board.target_peer == int(p["peer"]) \
-			and board.seconds_since_seen() < MEMORY_SECONDS
+			and board.seconds_since_seen() < Species.tuned("wolf.memory_s", MEMORY_SECONDS)
 		if outside and not already_chasing:
 			continue
 		seen_peer = int(p["peer"])
@@ -277,7 +277,7 @@ func should_leash() -> bool:
 	# outside the territory solid, so a wolf following a path cannot get here.
 	if Creature.flat_distance(global_position, board.den_pos) > border:
 		return true
-	if board.target_peer < 0 or board.seconds_since_seen() >= MEMORY_SECONDS:
+	if board.target_peer < 0 or board.seconds_since_seen() >= Species.tuned("wolf.memory_s", MEMORY_SECONDS):
 		return false
 	# The pack SAW you cross.
 	if Creature.flat_distance(board.target_pos, board.den_pos) > border:
@@ -336,10 +336,10 @@ func do_leash() -> void:
 
 ## Close enough to bite.
 func in_engage_range() -> bool:
-	if board.target_peer < 0 or board.seconds_since_seen() > MEMORY_SECONDS:
+	if board.target_peer < 0 or board.seconds_since_seen() > Species.tuned("wolf.memory_s", MEMORY_SECONDS):
 		return false
 	if Creature.flat_distance(global_position, board.target_pos) \
-			> Species.bite(species)["range_m"] * ENGAGE_RANGE_SCALE:
+			> Species.bite(species)["range_m"] * Species.tuned("wolf.engage_scale", ENGAGE_RANGE_SCALE):
 		_close_since_ms = 0
 		return false
 	if _engaged:
@@ -364,7 +364,7 @@ func in_engage_range() -> bool:
 		atan2((global_position - board.target_pos).x,
 			(global_position - board.target_pos).z),
 		deg_to_rad(stand_bearing_deg()))))
-	return off <= ON_BEARING_DEG or now - _close_since_ms > ENGAGE_TIMEOUT_MS
+	return off <= Species.tuned("wolf.on_bearing_deg", ON_BEARING_DEG) or now - _close_since_ms > ENGAGE_TIMEOUT_MS
 
 
 func do_engage() -> void:
@@ -407,7 +407,7 @@ func do_engage() -> void:
 	# wolf parked 1.2 m short of its own waypoint - the arrival tolerance - was
 	# permanently just out of its own reach, and the pack circled a player for
 	# twelve seconds without ever trying.
-	if range_m <= bite["range_m"] * ENGAGE_RANGE_SCALE \
+	if range_m <= bite["range_m"] * Species.tuned("wolf.engage_scale", ENGAGE_RANGE_SCALE) \
 			and now - _last_bite_ms >= int(bite["cooldown_s"] * 1000.0):
 		_last_bite_ms = now
 		lunge()
@@ -426,7 +426,7 @@ func do_engage() -> void:
 func should_converge() -> bool:
 	if not board.has_howled() or is_howler:
 		return false
-	return board.target_peer >= 0 and board.seconds_since_seen() < MEMORY_SECONDS
+	return board.target_peer >= 0 and board.seconds_since_seen() < Species.tuned("wolf.memory_s", MEMORY_SECONDS)
 
 
 ## COME IN OFF A BEARING, WHICH IS THE WHOLE POINT.
@@ -447,7 +447,7 @@ func do_converge() -> void:
 	look_at_pos = board.target_pos
 	speed_mps = Species.run_mps(species)
 	_repath_to(_stand_point(
-		Species.bite(species)["range_m"] * ENGAGE_RANGE_SCALE * 0.9))
+		Species.bite(species)["range_m"] * Species.tuned("wolf.engage_scale", ENGAGE_RANGE_SCALE) * 0.9))
 
 
 func can_see_target() -> bool:
@@ -507,7 +507,7 @@ func do_patrol() -> void:
 	speed_mps = Species.walk_mps(species)
 	var leg := (Time.get_ticks_msec() / 9000) + id
 	var angle := WorldHash.hash01(leg, id, board.den_id & 0xFFFF, 412) * TAU
-	var r := Species.territory_m(species) * PATROL_RADIUS_SCALE \
+	var r := Species.territory_m(species) * Species.tuned("wolf.patrol_scale", PATROL_RADIUS_SCALE) \
 		* (0.4 + 0.6 * WorldHash.hash01(leg, id, board.den_id & 0xFFFF, 413))
 	_repath_to(board.den_pos + Vector3(cos(angle), 0.0, sin(angle)) * r)
 

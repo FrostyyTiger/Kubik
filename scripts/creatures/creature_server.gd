@@ -222,6 +222,18 @@ func _try_spawn_pack() -> void:
 		(pack.den_pos as Vector3).distance_to(spawn), den["danger"]])
 
 
+## Tear the pack down and build it again from the current numbers.
+##
+## The F10 panel's button. Territory is baked into the A* grid when it is
+## built, so a territory slider that only changed a number would appear to do
+## nothing at all - see `creature_debug.gd`'s note.
+func respawn_pack() -> void:
+	if not _is_host:
+		return
+	_spawned_seed = 0
+	_try_spawn_pack()
+
+
 func _despawn_all() -> void:
 	for id in creatures:
 		(creatures[id] as Node).queue_free()
@@ -262,7 +274,7 @@ func _process(delta: float) -> void:
 		_apply_rows(packet)
 
 	_brain_accum += delta
-	var period := 1.0 / Species.BRAIN_HZ
+	var period := 1.0 / Species.brain_hz()
 	# ONE SLICE OF THE PACK PER SUB-TICK. At 10 Hz with two wolves each thinks
 	# five times a second; with sixteen, each still thinks whenever its slice
 	# comes up, and no frame ever runs more than a slice.

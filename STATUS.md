@@ -1,25 +1,47 @@
 # Status
 
-The latest run is **trees v1**, one night, on `feat/trees-v1`:
-`docs/status/trees-v1.md`. **No two alike, and the ziggurat arrives** - all
-seven tree species re-authored against `docs/research/art-direction.md` §2.5
-"Forest", which look v2 wrote and parked. Marcel's ask was "no variation,
-they're all symmetrical, a bit boring - let's sort of nail this so we won't
-have to think about it for a while", and Stage 0's instruments found it was
-worse than the complaint: **TWINS 1.00 on spruce and beech**, meaning two trees
-hashed from two different cells were the SAME TREE down to the pixel, from
-every azimuth.
+The latest run is **creatures v1, night 1**, on `feat/creatures-v1`:
+`docs/status/creatures-v1.md`. **The pack gets an address, and the flank is a
+mechanism rather than a hope.** Stages 0-8 of `docs/plans/creatures-v1-tech.md`:
+the species table, the senses bus, the pack board, territory A*, dens placed by
+the danger dials, the wolf's behaviour tree, the wire and the views, the F10
+tuner and three shots. **Night 1 does not merge to main** - two lanes land
+ahead of it and night 2 opens with the merge.
 
-Now: the §2.5 spire, whose tiers are whorl ARMS of unequal length around a
-solid core, each yawed a golden-angle step from the one below; the larch as a
-**ziggurat**, four to six shelves with real air between them, so its sky shows
-through the GAPS and not through the crown volume; the beech as a lobed oblate
-scallop, bitten from outside, that has stopped being a solid of revolution; a
-birch that bows rather than tilts and never closes its foliage over its own
-pale bark; a wind-flagged krummholz cushion, and every one in a world combs the
-same way off a wind direction hashed once from the seed; three snags; and a
-hero that is no longer its parent scaled. Then a second colour: **authored
-slivers under the whorls**, where a shelf stands proud of the one below.
+Five things worth reading even if you read nothing else:
+
+- **The library ladder came down on rung (b).** There is no LimboAI GDExtension
+  built for Godot 4.7, and the 4.6 one - which loads fine - **core-dumps a cold
+  `--headless --import`** (SIGABRT, no message, reproducible on two release
+  lines). Beehave 2.9.3 is vendored instead: pure GDScript, no binaries.
+- **`pack-flank` measures an angle between two animals about the player**, and
+  it is **91.99 degrees median over five seeded runs** against a gate of 90.
+  The flank is explicit - a converging wolf takes a bearing 90-140 degrees off
+  the howler's and holds it through engagement - so the gate measures a
+  mechanism, not luck.
+- **Two table numbers were proved wrong by a scenario, not by taste.** The
+  wolf's `cliff_deg` was below the player's own 55-degree floor angle, making
+  the rusher less mobile than the thing it chases; and its hearing was shorter
+  than its sight, which means there is *no* position in the world where a
+  sprinting player is heard but a still one is not seen. Both are argued in
+  `species.gd`.
+- **Seven bugs the probe found**, each one invisible until a scenario asked for
+  a number: a square nav grid against a round territory, a 2D mask against a 3D
+  leash, repathing that kept a wolf exactly where it was, a circling wolf
+  turning its own sight cone away from its target, and peer ids colliding with
+  creature ids so that **no creature could hear a player at all.**
+- **`senses-honest` is 5/5**: a motionless player at 87.5 m is not found in
+  ninety seconds on any seed, and the same player at the same spot, moving, is
+  investigated every time - median 0.04 s. What the player is DOING decides the
+  outcome, which is the whole of DESIGN.md's rule 1.
+- **Nothing under `scripts/world/` was written, and `game.gd`'s whole diff is
+  22 lines** - one elif and one banner block. The worldgen probe reads
+  `76cccdb6` and spawn `(-44, -124)` at every stage, exactly as it did at
+  `85e2b19`.
+
+---
+
+## Previously: trees v1
 
 **Nothing about where a tree stands moved, at any stage** - heightmap
 `76cccdb6`, 28,383 trees, the species mix to the decimal, spawn `(-44, -124)`.

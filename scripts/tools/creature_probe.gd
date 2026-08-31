@@ -149,6 +149,7 @@ func _build_scenarios() -> void:
 		"pack-flank": _scenario_pack_flank,
 		"leash": _scenario_leash,
 		"senses-honest": _scenario_senses_honest,
+		"shots": _scenario_shots,
 	}
 
 
@@ -964,6 +965,146 @@ func _scenario_senses_honest() -> Dictionary:
 	if not why.is_empty():
 		out["why"] = why
 	return out
+
+
+
+
+# --- Stage 8: the photographs ------------------------------------------------
+
+## Three pictures for Marcel, and the ONLY part of this lane that renders.
+##
+##     xvfb-run -a godot --path . scenes/game.tscn -- --host --seed 42 \
+##         --creature-probe --scenario shots --view medium
+##
+## `screenshot_tour.gd`'s recipe, copied: a camera of our own rather than the
+## player's orbit rig, which is built to follow a character and fights for
+## control of its own pitch; wait for the world, settle some frames, wait for
+## `RenderingServer.frame_post_draw` because an image is only valid once the
+## frame has actually been drawn, then `get_image().save_png()`.
+##
+## The tour is not reused wholesale because it photographs a fixed list of
+## worldgen vantages and this needs to photograph whatever the pack is doing at
+## the moment it is doing it - which is a different kind of shot.
+func _scenario_shots() -> Dictionary:
+	var den: Vector3 = _server.pack.den_pos
+	var out := {"shots": 0}
+	var dir := "%s/shots" % OUT_ROOT
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
+
+	# The player is what streams chunks, so the player is what has to stand
+	# near the den even though the camera is the thing taking the picture.
+	await _place_player_near_den(24.0)
+	var camera := Camera3D.new()
+	camera.far = _world.config.fog_end_m * Player.FAR_PLANE_RATIO
+	camera.fov = 68.0
+	get_tree().current_scene.add_child(camera)
+	camera.current = true
+
+	var sky := _find_sky(_game)
+	var restore := -1.0
+	if sky != null:
+		restore = sky.time_of_day
+
+	# THE PACK AT ITS DEN, at noon and at dusk. Same camera, same subject, one
+	# number different - which is what makes the pair worth having rather than
+	# two separate pictures.
+	for shot in [["den-noon", 0.5], ["den-dusk", 0.85]]:
+		if sky != null:
+			sky.time_of_day = shot[1]
+			sky.apply()
+		# CLOSE. A critter is 0.69 m tall; the first pass shot the den from 22 m
+		# and produced two very good photographs of scree with an animal
+		# somewhere in them. These are portraits of a pack, not vantages.
+		await _shoot(camera, dir, shot[0], _pack_centre(den), 9.0, 3.5)
+		out["shots"] += 1
+
+	if sky != null:
+		sky.time_of_day = 0.5
+		sky.apply()
+
+	# THE FLANK, CAUGHT. Walk the player in and photograph the moment both
+	# wolves are engaged - which is the one frame in the encounter where the
+	# thing this whole lane is about is visible in a picture.
+	var walker := NavWalker.new(_server.pack_nav, den)
+	await _pump(180.0,
+		func(_t):
+			_player.wish_override = walker.wish(
+				_player.global_position,
+				1.0 / float(maxi(Engine.physics_ticks_per_second, 1)))
+			_player.jump_override = walker.want_jump,
+		func(): return _engaged_ids().size() >= 2)
+	var separation := _separation_deg()
+	out["separation_deg"] = separation if not is_nan(separation) else 0.0
+	# From above and to the side, because a flank photographed from ground
+	# level at the player's own height is two wolves overlapping - and close,
+	# because the whole subject is three small bodies and the angles between
+	# them.
+	await _shoot(camera, dir, "flank", _player.global_position, 8.0, 4.5)
+	out["shots"] += 1
+
+	if sky != null and restore >= 0.0:
+		sky.time_of_day = restore
+		sky.apply()
+	camera.queue_free()
+
+	var why := ""
+	if out["shots"] < 3:
+		why = "only %d of 3 shots were taken" % out["shots"]
+	elif _engaged_ids().size() < 2:
+		why = "flank.png was taken with %d wolves engaged" % _engaged_ids().size()
+	out["ok"] = why.is_empty()
+	if not why.is_empty():
+		out["why"] = why
+	return out
+
+
+## Where the pack is, on average - the subject of the den shots. The den itself
+## is an address rather than a thing you can see, so the picture is of the
+## animals standing at it.
+func _pack_centre(den: Vector3) -> Vector3:
+	if _server.creatures.is_empty():
+		return den
+	var sum := Vector3.ZERO
+	for id in _server.creatures:
+		sum += (_server.creatures[id] as Node3D).global_position
+	return sum / float(_server.creatures.size())
+
+
+## Stand `distance` away at `height` above the ground, look at `target`, and
+## save a PNG. `screenshot_tour.gd:899`'s capture recipe.
+func _shoot(camera: Camera3D, dir: String, shot_name: String, target: Vector3,
+		distance: float, height: float) -> void:
+	# Hashed azimuth, so the same world always photographs from the same side.
+	var angle := WorldHash.hash01(0, 0, _world.world_seed, 909) * TAU
+	var eye := target + Vector3(cos(angle), 0.0, sin(angle)) * distance
+	var cfg := _world.config
+	eye.y = _world.surface_height_m(
+		int(floor(eye.x / cfg.block_size)), int(floor(eye.z / cfg.block_size))) + height
+	camera.global_position = eye
+	camera.look_at(target + Vector3(0.0, 0.6, 0.0), Vector3.UP)
+
+	await _wait_for_world()
+	for i in 8:
+		await get_tree().process_frame
+	# The image is only valid once the frame has actually been drawn.
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	var path := "%s/%s.png" % [dir, shot_name]
+	var err := image.save_png(path)
+	if err != OK:
+		push_warning("[Creature] could not write %s: %s" % [path, error_string(err)])
+	else:
+		print("[Creature] -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
+
+
+func _find_sky(node: Node) -> SkyCycle:
+	if node is SkyCycle:
+		return node
+	for child in node.get_children():
+		var found := _find_sky(child)
+		if found != null:
+			return found
+	return null
 
 
 # --- Driving the player ------------------------------------------------------

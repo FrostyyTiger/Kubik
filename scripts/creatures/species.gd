@@ -351,6 +351,83 @@ static func is_creature_event(kind: String) -> bool:
 	return EVENT_KINDS.has(kind) or EVENT_KINDS_RESERVED.has(kind)
 
 
+# --- Tuning ------------------------------------------------------------------
+
+## Runtime overrides, keyed `"<something>.<column>"` or a bare name for a
+## shared number. Empty unless the F10 panel has been touched.
+##
+## THE TABLE IS A `const` AND THAT IS THE POINT - the authored numbers cannot
+## be written by accident, by a panel or by anything else. But hard rule 5 says
+## every value chosen by eye must be reachable from F10, and every number in
+## this file was chosen on a headless box by someone who has never seen a wolf
+## move. So the numbers stay constant and the TUNING is a layer over them: one
+## dictionary, consulted by every accessor, cleared by one call.
+##
+## It is deliberately not saved. `character_config.gd` has a `.tres` because
+## its knobs are a finished look; these are proposals, and a proposal that
+## silently persists is a proposal nobody re-examines.
+static var _tuned := {}
+
+
+## The tuned value for a key, or the authored one.
+static func tuned(key: String, fallback: float) -> float:
+	return float(_tuned.get(key, fallback))
+
+
+static func set_tuned(key: String, value: float) -> void:
+	_tuned[key] = value
+
+
+static func clear_tuning() -> void:
+	_tuned.clear()
+
+
+## Everything the F10 panel offers: `[key, label, lo, hi, step, default]`.
+##
+## EVERY NUMBER STAGE 6 CHOSE BY FEEL IS HERE, which is what hard rule 5 asks
+## for, and the status doc lists the same set with its starting values. The
+## wolf's rows come first because the wolf is the only species that moves
+## tonight; the marmot's and the eagle's are here so night 2 opens with the
+## panel already built.
+const TUNING_ROWS := [
+	["brain_hz", "brain ticks (Hz)", 1.0, 30.0, 1.0, BRAIN_HZ],
+
+	["wolf.walk_mps", "wolf walk (m/s)", 0.5, 6.0, 0.1, 2.0],
+	["wolf.run_mps", "wolf run (m/s)", 1.0, 16.0, 0.1, 7.5],
+	["wolf.sight_m", "wolf sight (m)", 5.0, 150.0, 1.0, 40.0],
+	["wolf.sight_deg", "wolf sight cone (deg)", 20.0, 360.0, 5.0, 110.0],
+	["wolf.hear_m", "wolf hearing (m)", 0.0, 200.0, 1.0, 60.0],
+	["wolf.territory_m", "wolf territory (m)", 20.0, 600.0, 5.0, 150.0],
+	["wolf.flank_min", "flank offset min (deg)", 0.0, 180.0, 5.0, 90.0],
+	["wolf.flank_max", "flank offset max (deg)", 0.0, 180.0, 5.0, 140.0],
+	["wolf.bite_damage", "bite damage (DISARMED)", 0.0, 100.0, 1.0, 15.0],
+	["wolf.bite_range_m", "bite range (m)", 0.5, 10.0, 0.1, 2.2],
+	["wolf.bite_cooldown_s", "bite cooldown (s)", 0.2, 10.0, 0.1, 1.6],
+	["wolf.patrol_scale", "patrol beat / territory", 0.05, 1.0, 0.05, 0.30],
+	["wolf.memory_s", "memory of a target (s)", 1.0, 60.0, 1.0, 20.0],
+	["wolf.engage_scale", "engage range / bite range", 1.0, 6.0, 0.1, 2.0],
+	["wolf.on_bearing_deg", "engaged within (deg of bearing)", 5.0, 90.0, 5.0, 15.0],
+
+	["marmot.sight_m", "marmot sight (m)", 5.0, 150.0, 1.0, 30.0],
+	["marmot.hear_m", "marmot hearing (m)", 0.0, 200.0, 1.0, 45.0],
+	["marmot.territory_m", "marmot territory (m)", 5.0, 200.0, 5.0, 40.0],
+
+	["eagle.sight_m", "eagle sight (m)", 5.0, 400.0, 5.0, 120.0],
+	["eagle.run_mps", "eagle orbit (m/s)", 1.0, 40.0, 0.5, 18.0],
+	["eagle.territory_m", "eagle territory (m)", 50.0, 1500.0, 10.0, 400.0],
+]
+
+
+## Brain ticks per second, tuning applied.
+static func brain_hz() -> float:
+	return maxf(tuned("brain_hz", BRAIN_HZ), 0.5)
+
+
+## One tunable per-species number: the override, or the table's own.
+static func _num(species: int, column: String, value: float) -> float:
+	return tuned("%s.%s" % [name_of(species), column], value)
+
+
 # --- Accessors ---------------------------------------------------------------
 
 ## Warned-about species, so an unknown one is reported once rather than sixty
@@ -402,23 +479,23 @@ static func archetype(species: int) -> String:
 
 
 static func walk_mps(species: int) -> float:
-	return table(species)["walk_mps"]
+	return _num(species, "walk_mps", table(species)["walk_mps"])
 
 
 static func run_mps(species: int) -> float:
-	return table(species)["run_mps"]
+	return _num(species, "run_mps", table(species)["run_mps"])
 
 
 static func sight_m(species: int) -> float:
-	return table(species)["sight_m"]
+	return _num(species, "sight_m", table(species)["sight_m"])
 
 
 static func sight_deg(species: int) -> float:
-	return table(species)["sight_deg"]
+	return _num(species, "sight_deg", table(species)["sight_deg"])
 
 
 static func hear_m(species: int) -> float:
-	return table(species)["hear_m"]
+	return _num(species, "hear_m", table(species)["hear_m"])
 
 
 static func slope_cost(species: int) -> Dictionary:
@@ -426,7 +503,7 @@ static func slope_cost(species: int) -> Dictionary:
 
 
 static func territory_m(species: int) -> float:
-	return table(species)["territory_m"]
+	return _num(species, "territory_m", table(species)["territory_m"])
 
 
 static func home(species: int) -> String:
@@ -438,7 +515,11 @@ static func pack_size(species: int) -> int:
 
 
 static func flank_deg(species: int) -> Dictionary:
-	return table(species)["flank_deg"]
+	var band: Dictionary = table(species)["flank_deg"]
+	return {
+		"min": _num(species, "flank_min", band["min"]),
+		"max": _num(species, "flank_max", band["max"]),
+	}
 
 
 ## DESIGN.md's cozy-honest rule, as one call. Anything that ever offers a
@@ -450,7 +531,12 @@ static func huntable(species: int) -> bool:
 
 
 static func bite(species: int) -> Dictionary:
-	return table(species)["bite"]
+	var b: Dictionary = table(species)["bite"]
+	return {
+		"damage": _num(species, "bite_damage", b["damage"]),
+		"range_m": _num(species, "bite_range_m", b["range_m"]),
+		"cooldown_s": _num(species, "bite_cooldown_s", b["cooldown_s"]),
+	}
 
 
 static func silhouette(species: int) -> String:
