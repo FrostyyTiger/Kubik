@@ -1,6 +1,83 @@
 # Status
 
-The latest run is **trees v1**, one night, on `feat/trees-v1`:
+The latest run is **distance v3**, one night, unattended on ganymede, on
+`feat/distance-v3` and merged to `main`: `docs/status/distance-v3.md`.
+**The far country stops being mush, and the whole region is visible.**
+
+Distance v2 made the far country block-SHAPED. This one makes it
+block-SURFACED and makes all of it visible: a mode vote so a far cell is one
+real material rather than one sample of a smoothed surface, a world-space block
+lattice painted in the shader that GROWS with distance instead of fading out,
+an axis term so a far cube has four tones, two more LOD rings taking the reach
+from 960 m to 3,840 m, an exponential-squared fog measured cylindrically over
+the configured reach, the far mesh drawn under the whole voxel disc and sunk
+below it, and per-tree colour in the impostor forest.
+
+**The one pair to look at is `build/tour/s5-rim-end800/17-rim.png` against
+`build/tour/final/17-rim.png`** - the same standpoint, the reach before and
+after. Over that frame's own band the first measures **fleck 0.0502 with a p95
+of exactly 0.00**, which is what a fog wall is when you write it down: past
+about 600 m no two neighbouring pixels differ by anything. The second is the
+whole region in blocks out to the rim, at **5.0454**.
+
+Five things worth reading even if you read nothing else:
+
+- **Holes went 25 to 0 and it took a correction to the plan.** Stage 4's reach
+  took the far-mesh rebuild to 6.3 s of wall during a sprint, which puts the
+  disc that reaches the screen 82 m behind the player and sticks its hole out
+  behind the voxel disc: 25 holes in one run, against hard rule 2. The plan
+  asked for DH's 0.85 overdraw, which is LESS overlap than what already
+  shipped. The arithmetic asks for the far mesh to cover the whole voxel disc,
+  sunk `detail_amp` below it - **0 holes in all six runs since**, for +0.7% of
+  vertices.
+- **A mode vote is a median filter, and this far field was never averaging.**
+  Stage 1 is very nearly a null result and it is the useful kind: `backdrop_zone`
+  has painted one real zone's surface block at full saturation since distance
+  v1, so the mush is a LOW-PASS rather than a blend, and a vote has nothing to
+  rescue. The fleck the epic is named for comes from Stage 2's lattice instead
+  - `6-postcard` 3.98 to 4.62 and the textured share 27.6% to 38.5%.
+- **`look.gd` was opened and the near field is byte-identical anyway.**
+  `OPAQUE_SHADER` is not edited at all: the far field's source is built from it
+  at runtime by splicing two blocks at two asserted anchors, so the string the
+  chunks compile is character for character the one `main` compiles.
+  `swatches.png` and `swatch-ramp.png` came back identical after every
+  shader-touching stage.
+- **The harness could not see the reach, and Stage 5 found out by failing.**
+  Moving the fog's start from 1,280 m to 480 m changed ZERO pixels of the
+  postcard's far band; so did quadrupling the band count. 99.3% of that frame
+  is within 640 m, and every one of the tour's sixteen vantages is either
+  enclosed by its own valley or a hundred metres from its subject. `17-rim` -
+  on the summit, looking out - is appended to the tour and is the epic's
+  acceptance frame.
+- **The crawl finally has an instrument, and TAA takes 69% of it off.** 60
+  frames walking forward, no settle between them, diffed pairwise: MSAA 4x
+  shimmers 3.6483 on the far band and TAA 1.1159, for 2.4% of local contrast on
+  the daylight stills. **Nothing was adopted** - Stage 9 changes no defaults and
+  the game still ships MSAA 4x.
+
+**The one thing that got worse, and it is not in the acceptance table: the far
+mesh's vertex upload is on the main thread and is now 23% bigger.** ABAB, three
+runs each, the reach on and off: holes **0** on all six, streaming throughput
+unmoved (76.0 against 75.6 chunks/s out), and **two frames of 283-291 ms** at
+the new reach against one of 247 ms at the old. About thirty uploads of 322,988
+vertices happen over a 480 m sprint. It is distance v2's carried item 11 grown,
+it is item 17 below, and the lever is not a constant.
+
+**Nothing about the world moved at any stage** - config `3d45b8fc`, heightmap
+`76cccdb6`, spawn `(-44, -124)`, 580 impostors. `world.gd`, `chunk_mesher.gd`
+and `scripts/character/` do not appear in the diff at all, and `game.gd` needed
+nothing.
+
+**Seven new knobs, all on F4, all live standing still without F7**, and two of
+them are Marcel's to rule on before anything else: **`far_fog_start_frac`
+ships at the plan's 0.4 and the recommendation is 0.15-0.20** (at 0.4 the air
+begins at 1,280 m, which is further than most of what a player looks at, and
+the postcard's dead-black share doubled), and **`fog_bands` is now a
+resolution rather than a style** - four bands tuned against a 480 m span cover
+1,920 m, so the first band boundary moved from 400 m to 1,558 m. Neither was
+changed; both are one number.
+
+The run before it is **trees v1**, one night, on `feat/trees-v1`:
 `docs/status/trees-v1.md`. **No two alike, and the ziggurat arrives** - all
 seven tree species re-authored against `docs/research/art-direction.md` §2.5
 "Forest", which look v2 wrote and parked. Marcel's ask was "no variation,
@@ -502,6 +579,35 @@ improves FIZZ and VALLEY GAIN at the same time** - measured, and deliberately
 not spent, because that is a distance v1 constant which also feeds the smooth
 mesh and moving it would break hard rule 1. A terrace-only gain in `_cell_h()`
 would get it cleanly. That is a decision, not a fix.
+
+**17. The far mesh's vertex upload is on the main thread and distance v3 made
+it 23% bigger.** 322,988 vertices against 262,312, uploaded about thirty times
+over a 480 m sprint. Interleaved ABAB, three runs each, the reach on and off:
+holes **0** on all six, chunks/s **76.0 (69.5-79.5)** against **75.6
+(73.8-80.4)** on the out leg - no difference - and the long-frame count 1/12/4
+against 31/30/0, whose ranges overlap and whose instrument `stream_probe.gd`'s
+own `TODO(marcel)` calls a coin flip. **What does not look like noise is the
+worst frame: 291.5 ms and 283.2 ms, twice, at the new reach, against 247.6 ms
+once at the old.** A quarter-second hitch is visible. This is item 11 grown by
+a quarter, and the lever is an upload off the frame thread or the GDExtension
+conversation - not a constant.
+
+**18. The 960 m and 1920 m ring boundaries are loud, and it is item 9 at a
+bigger step.** Max fizz 128.00 and 256.00 blocks, rms 11.80 and 31.81, against
+the 200 m and 400 m boundaries which are UNCHANGED at 24.00 and 80.00. The
+mechanism is exactly the one distance v2 Stage 9 found and wrote down - two
+rings sampling the cell height at different world points - and at 64 m and
+128 m cells that mis-sample is 32 and 64 blocks of ground before anything is
+quantised. **The fix is known, cheap and was out of distance v3's scope.**
+
+**19. The far grain aliases into a visible diagonal hatch at dusk under MSAA
+4x.** `build/tour/s8-trees/14-postcard-dusk.png`, on the big far cliffs - a
+moiré between distance v3's grain lattice and the pixel grid. TAA removes it
+entirely (`s9-taa-still/14-postcard-dusk.png`); so would raising
+`Look.FAR_GRAIN_PX` from 0.003, which is about two screen pixels per lattice
+cell and is DH's own caution about per-block variation below a certain angular
+size. It is distance v3's own artefact and it has two levers, neither pulled -
+Stage 9 changes no defaults.
 
 **16. The ridge test finds any local maximum over 96 blocks - shore berms and
 lake rims, not only alpine summits.** 79% of what the finer summit grid does to

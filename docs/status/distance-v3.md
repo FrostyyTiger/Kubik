@@ -11,6 +11,41 @@ is `docs/research/distant-horizons.md`, read from DH's source, and its
 one-line summary is that the epic look is four tricks and three of them are
 shader work.
 
+**The one pair to look at first:** `build/tour/s5-rim-end800/17-rim.png`
+against `build/tour/final/17-rim.png`. Same standpoint, same seed, the reach
+before and after. The first is a flat sheet of near-white past about 600 m -
+**fleck 0.0502, p95 exactly 0.00**, which is what a fog wall is when you write
+it down - and the second is the whole region in blocks out to the rim, at
+**5.0454**.
+
+**Acceptance is met**, with one substitution named in full at Stage 10: the
+"from the valley floor" shot is taken from the summit instead, because 99.3% of
+the valley-floor frame's far band is within 640 m and no implementation of this
+epic could have changed that. **So this branch merged to `main`.**
+
+**Three things to read before you turn a knob:**
+
+1. **The one thing that got worse is not in the acceptance table.** The far
+   mesh's vertex upload is on the main thread and is now 23% bigger, and the
+   ABAB found two frames of **283-291 ms** during a sprint at the new reach
+   against one of 247 ms at the old. Holes are **zero in all six runs** and
+   streaming throughput does not move. That hitch is the price of the reach on
+   this box, and the lever is not a constant.
+2. **`far_fog_start_frac` ships at the plan's 0.4 and I would rule 0.15-0.20.**
+   At 0.4 the air begins at 1,280 m, which is further than most of what a
+   player looks at, and the dead-black share of the postcard's far band doubled
+   because a kilometre of mountain that used to be hazed is now drawn at full
+   strength. It is one number on F4 and it redraws standing still.
+3. **`fog_bands` is now a resolution, not a style.** Four bands tuned against a
+   480 m span cover 1,920 m, so the first band boundary moved from 400 m to
+   1,558 m. Not changed - it is a look v2 constant and it is yours.
+
+**Where the pictures are.** `build/` is gitignored, as it has been since
+distance v1, so every `build/tour/<label>/...` path in this document is a file
+**on ganymede** and not in the repo. There are twenty-four labelled sets from
+this run; `s5-rim-end800`, `final`, `s2-grain0` / `s2-grain` and
+`s5-rim15` / `s5-rim25` are the ones the arguments rest on.
+
 *(this document is written as the run proceeds; sections appear in stage
 order)*
 
