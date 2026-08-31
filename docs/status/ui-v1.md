@@ -61,8 +61,18 @@ sampled out of them are here.
 | 6 | `76cccdb6` | `(-44, -124)` | all green |
 | 7 (final) | `76cccdb6` | `(-44, -124)` | all green |
 
+| merge | `76cccdb6` | `(-44, -124)` | all green |
+
 **Hard rule 1 held at every stage.** The probe's heightmap hash and spawn never
 moved. A UI lane that moves a block has left its lane; this one did not.
+
+**The merge posture of Decision 9 was followed.** `main` moved while this lane
+ran - `85e2b19`, the creatures v1 plan - so `main` was merged INTO the branch
+first and **every gate and every shot re-ran against the merge commit**, rather
+than the gates being green on a commit that is not the one landing. No
+conflict: `85e2b19` touches `docs/plans/` only, which this lane does not own
+and never opened. All three gates green, hash unmoved, and all seven HUD shots
+re-taken with the same numbers.
 
 ---
 
