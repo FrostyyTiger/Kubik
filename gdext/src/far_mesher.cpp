@@ -2,6 +2,8 @@
 
 #include <godot_cpp/core/class_db.hpp>
 
+#include "far_build.h"
+
 using namespace godot;
 
 void KubikFarMesher::_bind_methods() {
@@ -19,6 +21,8 @@ void KubikFarMesher::_bind_methods() {
 			&KubikFarMesher::h_peak);
 	ClassDB::bind_method(D_METHOD("h_slope_deg", "bx", "bz"),
 			&KubikFarMesher::h_slope_deg);
+	ClassDB::bind_method(D_METHOD("build", "args"), &KubikFarMesher::build);
+	ClassDB::bind_method(D_METHOD("has_colors"), &KubikFarMesher::has_colors);
 }
 
 String KubikFarMesher::ping() const {
@@ -61,4 +65,14 @@ double KubikFarMesher::h_peak(double p_bx, double p_bz, double p_level) const {
 
 double KubikFarMesher::h_slope_deg(double p_bx, double p_bz) const {
 	return world.slope_deg_at(p_bx, p_bz);
+}
+
+Dictionary KubikFarMesher::build(const Dictionary &p_args) {
+	return kubik::build_far_mesh(world, p_args);
+}
+
+// STAGE 3: geometry only. Flipped in Stage 4, when the zone, the band, the
+// aspect shade, the jitter and the wire conversion have all crossed.
+bool KubikFarMesher::has_colors() const {
+	return false;
 }

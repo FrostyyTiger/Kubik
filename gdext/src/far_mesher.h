@@ -46,4 +46,13 @@ public:
 	double h_peak(double p_bx, double p_bz, double p_level) const;
 	double h_slope_deg(double p_bx, double p_bz) const;
 	bool is_ready() const;
+
+	// --- The mesh ----------------------------------------------------------
+
+	Dictionary build(const Dictionary &p_args);
+
+	// Does this build paint as well as shape? False through Stage 3, where
+	// every colour is white and the parity harness is told to compare the rows
+	// that are meant to match and no others.
+	bool has_colors() const;
 };
