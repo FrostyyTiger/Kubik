@@ -62,6 +62,7 @@ func _ready() -> void:
 		"far terrace knob": _test_far_terrace_knob,
 		# CREATURES V1
 		"behaviour library": _test_behaviour_library,
+		"species table": _test_species_table,
 	}
 	var failures := 0
 	for name in tests:
@@ -1802,3 +1803,112 @@ func _beehave_version() -> String:
 	if cfg.load("res://addons/beehave/plugin.cfg") != OK:
 		return "UNKNOWN - plugin.cfg would not load"
 	return str(cfg.get_value("plugin", "version", "UNKNOWN"))
+
+
+## THE SPECIES TABLE IS COMPLETE, and its accessors do not lie about a species
+## that is not there.
+##
+## Hard rule 5 says every per-species number lives in `species.gd`, which is
+## only worth anything if a row cannot quietly be missing one. The `Races`
+## suite checks the same property for races; this is that check, for animals.
+##
+## The unknown-species half is the `Races._warn_once` contract: warn ONCE and
+## fall back, never crash. A creature that turns out to be a wolf is a visible
+## bug; a creature that fails to exist is an invisible one, and the difference
+## matters most in the middle of a probe run nobody is watching.
+func _test_species_table():
+	var bad := 0
+
+	for species in Species.SPECIES_COUNT:
+		var row: Dictionary = Species.TABLE[species]
+		var label: String = row.get("name", "row %d" % species)
+		for key in Species.REQUIRED_KEYS:
+			if not row.has(key):
+				print("  %s has no '%s'" % [label, key])
+				bad += 1
+		# The nested dictionaries, which are where a half-filled row hides:
+		# `slope_cost` and `bite` are present on every row above and it is
+		# their CONTENTS that a new species forgets.
+		for key in Species.REQUIRED_SLOPE_KEYS:
+			if not (row.get("slope_cost", {}) as Dictionary).has(key):
+				print("  %s slope_cost has no '%s'" % [label, key])
+				bad += 1
+		for key in Species.REQUIRED_BITE_KEYS:
+			if not (row.get("bite", {}) as Dictionary).has(key):
+				print("  %s bite has no '%s'" % [label, key])
+				bad += 1
+		# `dims` feeds Animator.pose_for, which reads dims["legs"] with NO
+		# default and would fail deep inside the animator rather than here.
+		if not (row.get("dims", {}) as Dictionary).has("legs"):
+			print("  %s dims has no 'legs' - Animator.pose_for would crash" % label)
+			bad += 1
+		# And the gait has to be one the animator actually knows, or every
+		# creature of this species silently walks like a person.
+		var gait: String = (row.get("dims", {}) as Dictionary).get("gait", "")
+		if not Animator.RIG_SHAPES.has(gait):
+			print("  %s dims gait '%s' is not in Animator.RIG_SHAPES" % [label, gait])
+			bad += 1
+		# The name column and the name list must agree, because `from_name`
+		# searches one and everything else reads the other.
+		if row["name"] != Species.SPECIES_NAMES[species]:
+			print("  %s: row name '%s' != SPECIES_NAMES '%s'" % [
+				label, row["name"], Species.SPECIES_NAMES[species]])
+			bad += 1
+		if Species.from_name(row["name"]) != species:
+			print("  %s: from_name did not round-trip" % label)
+			bad += 1
+
+	# THE COZY-HONEST RULE, AS AN ASSERTION. DESIGN.md: small cute ambient
+	# creatures are not huntable, and the marmot is the one that names. If this
+	# ever flips it is a design change and it should have to argue with a test.
+	if Species.huntable(Species.MARMOT):
+		print("  the marmot is huntable - DESIGN.md's cozy-honest rule says no")
+		bad += 1
+	if not Species.huntable(Species.WOLF):
+		print("  the wolf is not huntable - real wildlife is")
+		bad += 1
+
+	# HARD RULE 6: the bite ships disarmed. The DAMAGE is a real number here -
+	# the bite is built to full shape - and what stays zero is what gets
+	# applied, which is Stage 6's business. This checks the shape is real.
+	if Species.bite(Species.WOLF)["damage"] <= 0.0:
+		print("  the wolf's bite proposes no damage at all - it ships disarmed, not unbuilt")
+		bad += 1
+
+	# UNKNOWN SPECIES: warn once, fall back, never crash.
+	var fallback := Species.valid(97)
+	if fallback != Species.WOLF:
+		print("  species 97 fell back to %d, not the wolf" % fallback)
+		bad += 1
+	# The accessors have to survive it too - they are what a caller reaches for.
+	if Species.name_of(-3) != "wolf" or Species.sight_m(97) <= 0.0:
+		print("  an accessor did not survive an unknown species")
+		bad += 1
+
+	# PLAYER LOUDNESS reads the state byte the sync row already carries. Bit 1
+	# is sprint; standing still is quiet but never silent.
+	var still := Species.player_loudness(1, 0.0)
+	var moving := Species.player_loudness(1, 3.0)
+	var sprinting := Species.player_loudness(1 | 2, 8.0)
+	if not (still < moving and moving < sprinting):
+		print("  loudness is not ordered: still %.2f, moving %.2f, sprinting %.2f" % [
+			still, moving, sprinting])
+		bad += 1
+	if still <= 0.0:
+		print("  a still player is silent - stealth is a skill, not a switch")
+		bad += 1
+	# A sprint key held against a wall is not a sprint.
+	if Species.player_loudness(1 | 2, 0.0) != still:
+		print("  a stationary sprinter is louder than a stationary walker")
+		bad += 1
+
+	print("species table: %d species, %d required keys each, marmot huntable=%s" % [
+		Species.SPECIES_COUNT, Species.REQUIRED_KEYS.size(),
+		Species.huntable(Species.MARMOT)])
+	for species in Species.SPECIES_COUNT:
+		print("  %-7s %-7s sight %.0f m / %.0f deg, hear %.0f m, run %.1f m/s, territory %.0f m, %s" % [
+			Species.name_of(species), Species.archetype(species),
+			Species.sight_m(species), Species.sight_deg(species),
+			Species.hear_m(species), Species.run_mps(species),
+			Species.territory_m(species), Species.home(species)])
+	return bad

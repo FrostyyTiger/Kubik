@@ -112,6 +112,87 @@ him about it.
 
 ---
 
+## Stage 1 - the species table and the event schema
+
+`scripts/creatures/species.gd`, `class_name Species`: the `Races` doctrine
+applied to animals. Three rows indexed by `WOLF / MARMOT / EAGLE`, seventeen
+required columns each, static accessors, prose `silhouette`, and the
+warn-once-and-fall-back contract copied from `Races._warn_once`.
+
+**Every number below was chosen on a headless box and none of it was chosen
+by watching a wolf.** All of it is an F10 row in Stage 8 (provenance: **eye**,
+except where a column is a design decision rather than a feel).
+
+| | wolf | marmot | eagle |
+| --- | --- | --- | --- |
+| archetype | rusher | ambient | sky |
+| walk / run (m/s) | 2.0 / 7.5 | 1.0 / 4.5 | 0.8 / 18.0 |
+| sight | 40 m / 110 deg | 30 m / 240 deg | 120 m / 90 deg |
+| hearing | 30 m | 45 m | 0 m |
+| slope cost up / down / cliff | 2.6 / 0.8 / 42 deg | 1.4 / 1.0 / 38 deg | 1.0 / 1.0 / 90 deg |
+| territory | 150 m | 40 m | 400 m |
+| home | den | burrow | crag |
+| pack | 2 | 4 | 1 |
+| flank offset band | 90-140 deg | - | - |
+| huntable | **true** | **false** | false |
+| bite | 15 dmg, 2.2 m, 1.6 s | - | - |
+
+Three of those are decisions rather than feel, and are not Marcel's to
+re-tune casually:
+
+- **`huntable: false` on the marmot IS the cozy-honest rule** (DESIGN.md:
+  "they simply cannot be targeted"). It is a column, not a rule somebody has
+  to remember, and the selftest asserts it in both directions.
+- **The wolf's run (7.5 m/s) sits above the player's 4.4 m/s walk and below
+  their sprint.** You cannot stroll away from a wolf and you can outrun one
+  if you commit - and committing is how you end up somewhere worse, which is
+  pillar 3 doing its job.
+- **The marmot hears further (45 m) than it sees (30 m), and sees very wide
+  (240 deg).** That is what makes the whistle arrive before you have seen the
+  marmot, i.e. what makes it an information layer rather than scenery.
+- **The eagle's hearing is 0 m on purpose.** An eagle at 80 m does not react
+  to a footstep; a hearing radius would have it notice things it has no
+  business noticing.
+
+**`dims` is critter-DIMS-shaped per species, and the wolf's is the critter's
+exactly** - written out rather than referenced, so night 2's wolf model
+changes these numbers and nothing else. The marmot's and eagle's already
+differ; neither is spawned tonight, so neither can disagree with the critter
+geometry that would be on screen.
+
+**Shared numbers that are not per-species** live here too, because a second
+numbers file is how two numbers files start disagreeing: `NOISE`
+(sprint 1.5 / move 1.0 / **still 0.3 - not zero**, so stealth is a skill and
+not a switch), `BRAIN_HZ 10`, `MAX_LIVE 16`, `SYNC_HZ 20`,
+`REPLICATE_RANGE_M 128`, `ROWS_PER_PACKET 16`.
+
+**The event schema (decision 8) is a block comment in the same file, and it
+is THE schema** - the probe's evidence, Stage 6's gates and the director's
+future stream are the same rows. Every creature event carries
+`{species, id, pos}` on top of `Journal`'s own `kind` and `t`. Night 1's
+eight kinds: `den_placed`, `spotted`, `lost`, `howl`, `converge`, `engage`,
+`bite`, `leash_turn`. Reserved for night 2 and named now so the schema is one
+document: `whistle`, `dive`, `emerge`, `cry`, `perch`.
+
+**Gates:** all three green. `heightmap# 76cccdb6`, spawn `(-44, -124)` -
+baseline held. New selftest `species table` (registered under the banner):
+every row carries every required key including the nested `slope_cost` and
+`bite` keys, `dims.gait` is a gait `Animator.RIG_SHAPES` actually knows,
+names round-trip through `from_name`, the marmot is not huntable and the wolf
+is, the bite proposes real damage (it ships disarmed, not unbuilt), an
+unknown species warns once and falls back to the wolf through every accessor,
+and loudness is ordered still < moving < sprinting with a stationary
+sprinter reading as still.
+
+One thing worth knowing for the other lanes: **a GDScript parse error in
+`selftest.tscn`'s script does not fail the run, it HANGS it** - the scene
+never loads, nothing calls `quit()`, and the process sits there until the
+timeout. `var row := Species.TABLE[species]` on an untyped `const` Array did
+exactly that here. If a gate ever appears to run forever, read the first ten
+lines of its output, not the last.
+
+---
+
 ## Deferred, night 1
 
 - LimboAI, per above.
