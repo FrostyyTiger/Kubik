@@ -20,7 +20,7 @@ and parallelism they can run in.
 | physics - stuff falling | **D / G, small** | Dropped items and corpses fall and settle. Falling TERRAIN is "breaking terrain", unsettled - not here. |
 | water, rivers | **B. Water v1** | Plan B's unwritten second half. Hooks left by foliage v1. |
 | lakes | **B. Water v1** + look v2 | Lakes exist since terrain v1. Look v2 Stage 4 restyles the surface; Water v1 does shores, inflow / outflow, wading. |
-| oceans | **Second Age** | Post-1.0 expansion arc, `IDEAS.md`. Only obligation now: never hardcode edge = mountains. |
+| oceans | **Second Age** | Post-1.0 expansion arc, `IDEAS.md`. Only obligation now: never hardcode far-away = mountains (the coast is a direction; the world is unbounded since 2026-08-31). |
 | save world, reload, settings | **F. Session v1** | `DESIGN.md`: one host save file, world edits + every character. Settings and pause menus. |
 | UI | cross-cutting | Not one item. Theme = look v2 Stage 6. Each epic owns one UI slice: HUD (D), menus (F), map (I), sheet (J). |
 | mini map | **I. Navigation v1** | Pillar 3 tension - see pushbacks. Compass + a map that fills as you range. |

@@ -34,8 +34,9 @@ Four. Every feature serves at least one, and contradicts none.
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 
-> **Status: early, walkable, and it has a look.** A bounded 3 x 3 km Swiss
-> pre-Alpine landscape at 1:4 scale - meadow valleys, seven tree species that
+> **Status: early, walkable, and it has a look.** A 3 x 3 km Swiss
+> pre-Alpine landscape at 1:4 scale - the first generated region of a world
+> that is by design unbounded - meadow valleys, seven tree species that
 > clump and leave clearings, bare rock, snow peaks, lakes in real basins, 8.7 M
 > pieces of ground cover, fireflies after dark - drawn as an Art Deco travel
 > poster: one three-tone lighting ramp under everything, banded fog, a sky with
@@ -120,14 +121,19 @@ written against the wrapper, and "swap the transport" would quietly become
 ### 5. Chunks and the two-scale world
 
 Voxels exist only in a disc around the player — real, editable, collidable
-terrain. Everything beyond is one low-poly mesh built from a **global coarse
-heightmap** covering the whole 3 km world at 2 m resolution. That global
-heightmap is also what makes lakes possible: a basin is a depression with a rim
-all the way round it, and you cannot see one by looking at a chunk.
+terrain. Everything beyond is one low-poly mesh built from a **coarse
+heightmap** at 2 m resolution — today a single global one covering the whole
+3 km region. That coarse heightmap is also what makes lakes possible: a basin
+is a depression with a rim all the way round it, and you cannot see one by
+looking at a chunk.
 
-This is why the world is bounded rather than infinite. An infinite world could
-not afford a global heightmap, and lakes and a 200 m view distance are worth
-more than infinity is.
+The world itself is **unbounded by design** (ruled 2026-08-31, overturning
+the bounded decision that used to be recorded here — the ruling and the
+constraints it inherits are in `docs/DESIGN.md` § World). What survives of
+the old argument is the mechanism: lakes need a heightmap wider than a basin,
+so an unbounded world gets **regional heightmap tiles**, not no heightmap.
+The current single-region build is a stage, and no new system may assume a
+world edge or a global extent.
 
 Chunks are 16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per voxel, one
 contiguous allocation, serialises as-is. Index order is `x + z*16 + y*256`.

@@ -345,15 +345,38 @@ A free-fly / noclip toggle exists behind a debug key. It is a tool, not a mode.
 
 ## World
 
-Bounded, not infinite: one fixed 3 x 3 km region. Blocks are 0.5 m, so a
-player is 4 blocks tall.
+**Procedurally generated and effectively unbounded - ruled by Marcel on
+2026-08-31, overturning "bounded, not infinite".** The world the game wants
+is very, very big: you stand in a valley, see ranges beyond ranges with no
+fog wall, and you could walk to any of them. No world edge, no "the map ends
+here". The ruling is about the world model, not today's build: generation
+does not have to be infinite yet - the current build still generates one
+fixed 3 x 3 km region, and that is fine as a stage - but **no new system may
+bake in a world edge or a global-extent assumption.** Filling all that space
+so it stays fun is deliberately deferred ("get to filling it with things
+later"); the size is core and comes first.
 
-*Was 1.5 x 1.5 km through terrain v1. Doubled in terrain v2 Stage 6, once
-sprint existed to cross it — see Traversal below.*
+Blocks are 0.5 m, so a player is 4 blocks tall.
 
-Bounded is a feature, not a limitation - it is what makes a global heightmap
-affordable, and a global heightmap is what makes real per-basin lakes possible
-at all. You cannot find a depression by looking at one chunk.
+*The generated region was 1.5 x 1.5 km through terrain v1. Doubled in
+terrain v2 Stage 6, once sprint existed to cross it - see Traversal below.*
+
+**What "bounded is a feature" was paying for, kept as constraints the
+unbounded world must answer differently rather than pretend away:**
+
+- **Lakes.** A per-basin lake needs a heightmap wider than any one chunk -
+  you cannot find a depression by looking at one chunk. The global 2 m
+  heightmap paid for that. Unbounded, the heightmap becomes regional tiles
+  wide enough to hold a basin, and a basin crossing a tile border is a real
+  problem to be solved, not wished away.
+- **The director.** Authored truth wants the world's facts finite and in a
+  table. An unbounded world concentrates its authored truth in generated
+  regions of interest; the space between them is terrain, not content.
+- **Traversal.** The 3 km map was sized to a six-minute sprint diagonal, and
+  Cube World's 2019 failure - vast and empty - remains the named hazard. The
+  answer can no longer be "smaller"; it has to become density near and
+  reasons to go far. How reaching the genuinely far works (and whether
+  something faster than sprint eventually ships) is open, deliberately.
 
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
 Terrain generation targets are in `plans/terrain-v2.md`.
@@ -450,6 +473,11 @@ relitigated.** A real 1400 m mountain needs roughly a 6 km base, which does not
 fit inside a 3 km world at all; a 15 km world that could hold one has a 21 km
 diagonal, about 35 minutes' sprint corner to corner. That is the failure mode
 that damaged Cube World's 2019 release.
+
+*The 2026-08-31 unbounded ruling does not reopen this. The half of the
+argument that leaned on the world's size is gone; the traversal half - what a
+player can reach on foot in a session - still binds, and 1:4 is still what
+makes a mountain reachable.*
 
 Rendering was never the constraint. Since terrain v2 the far field is built in
 LOD rings, so its cost is roughly logarithmic in view distance - 80k vertices at

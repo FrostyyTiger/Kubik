@@ -320,11 +320,18 @@ writing - not discovering halfway through a branch that the design moved.
 
 Bigger than a Someday item - an expansion arc, so it gets its own section.
 
-The launch world is Alpine and bounded. Long-term, one world edge descends past
-the far ranges to a COAST, and the game's second act opens: the sea.
+The launch world is Alpine. Long-term, the land in one compass direction
+descends past the far ranges to a COAST, and the game's second act opens: the
+sea.
 
-- **Coast at ONE world edge.** World edges are asymmetric: peaks on most sides,
-  descent to water on one.
+*Amended 2026-08-31 with the unbounded-world ruling (`DESIGN.md` § World):
+this section used to say "bounded" and "one world edge". An unbounded world
+has no edges, so the coast becomes macro-structure instead - a direction the
+land falls toward - which is, if anything, truer to the fantasy: you range
+toward the sea, you don't bump into it.*
+
+- **Coast in ONE compass direction.** The macro-terrain is asymmetric: ranges
+  rise in most directions, the land descends to water in one.
 - **Interactive water.** Swimming ships here, and with it the lizardfolk swim
   perk (replaces the fish-shadow placeholder in `DESIGN.md`).
 - **Sailing.** Boat controller, wind matters. Valheim-school: sailing should be
@@ -343,7 +350,8 @@ ruins, lizardfolk graves facing away from the mountains, salt references.
 Longing is free; water physics are not.
 
 What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
-not hardcode "world edge = mountains" anywhere.
+not hardcode "far away = mountains" anywhere - direction treatment stays
+configurable.
 
 ## The Director (the fourth pillar, arriving late)
 

@@ -47,10 +47,16 @@ the queue.
 
 ## Worldgen guidance
 
-- World edges are not symmetric by design. Most edges = impassable peaks, but
-  one edge will eventually descend to a coast (Second Age expansion, see
-  `docs/IDEAS.md`). Do not hardcode "world edge = mountains" into worldgen,
-  pathing, or fog logic. Edge treatment must be per-edge configurable.
+- **The world is unbounded by design** (Marcel, 2026-08-31, overturning
+  "bounded, not infinite" - see `docs/DESIGN.md` § World). Today's build
+  generates one 3 x 3 km region; that is a stage, not the world. No new
+  system may bake in a world edge, a global heightmap, or any global-extent
+  assumption - heightmaps and lakes go regional (tiled) as the world opens.
+- Where the current region's edges still exist, they are not symmetric. Most
+  read as impassable peaks, but the coast (Second Age, see `docs/IDEAS.md`)
+  is a compass DIRECTION the land descends toward, not an edge. Do not
+  hardcode "far away = mountains" into worldgen, pathing, or fog logic; edge
+  and direction treatment must be configurable.
 
 ## Where things live
 
