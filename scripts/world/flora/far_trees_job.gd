@@ -361,6 +361,53 @@ func _instance_color(base_lin: Color, base_wire: Color, tint: Color) -> Color:
 		clampf(mixed.b / maxf(base_wire.b, 0.002), 0.0, 4.0), 1.0)
 
 
+## PER-TREE COLOUR, distance v3 Stage 8, decision 6's "one light stage".
+##
+## An impostor is shade A of its species, flat, and after distance v1 Stage 6 it
+## is shade A mixed some way toward its own hillside - so a forest at 600 m is
+## thousands of copies of ONE green. Veloren ships real per-tree colour in
+## thirteen bytes; ours is free, because every far tree already has a
+## deterministic hash of its placement cell and the yaw is already drawn from
+## it.
+##
+## THE SAME FORM AS Block.jitter() AND AS THE POSTER'S OWN GRAIN, deliberately:
+## a symmetric value multiplier with a smaller hue tilt, red against blue, at
+## the ratio Look's grain uses (grain_hue / grain_amount = 0.03 / 0.065). The
+## far country's terrain grain and its forest grain are then the same effect
+## with the same proportions, which is what stops a flecked hillside carrying a
+## flat forest.
+##
+## THE AVERAGE IS PRESERVED, hard rule 6, and by construction rather than by
+## hope: the multiplier is `1 + g` with `g` uniform on `[-a, a]`, so its
+## expectation is exactly 1. It multiplies in WIRE space, which is where the
+## MultiMesh instance colour acts, so the mean it preserves is the mean of the
+## sRGB values - which is also what the fleck number measures. Measured in
+## docs/status/distance-v3.md.
+##
+## ON ITS OWN SALT. The yaw already hashes this cell at salt 931, and a tree
+## that was both darker and turned the same way as its neighbour would put a
+## visible pattern in the wood.
+const SALT_FAR_TREE_GRAIN := 941
+
+## The poster grain's own hue-to-value ratio, so the two read as one effect.
+const FAR_TREE_GRAIN_HUE_RATIO := 0.46
+
+
+func _far_tree_grain(mul: Color, cell: Vector2i) -> Color:
+	var amount: float = config.far_tree_grain
+	if amount <= 0.0 or generator == null:
+		return mul
+	var g := (WorldHash.hash01(cell.x, cell.y, generator.world_seed,
+		SALT_FAR_TREE_GRAIN) * 2.0 - 1.0) * amount
+	var h := (WorldHash.hash01(cell.x, cell.y, generator.world_seed,
+		SALT_FAR_TREE_GRAIN + 1) * 2.0 - 1.0) * amount * FAR_TREE_GRAIN_HUE_RATIO
+	var v := 1.0 + g
+	return Color(
+		maxf(mul.r * v * (1.0 + h), 0.0),
+		maxf(mul.g * v, 0.0),
+		maxf(mul.b * v * (1.0 - h), 0.0), 1.0)
+
+
 func _pack(instances: Array, species: int) -> PackedFloat32Array:
 	var buf := PackedFloat32Array()
 	buf.resize(instances.size() * FLOATS_PER_INSTANCE)
@@ -398,7 +445,7 @@ func _pack(instances: Array, species: int) -> PackedFloat32Array:
 		buf[i + 4] = 0.0; buf[i + 5] = sy;  buf[i + 6] = 0.0; buf[i + 7] = pos.y
 		buf[i + 8] = -s;  buf[i + 9] = 0.0; buf[i + 10] = c;  buf[i + 11] = pos.z
 		var tint: Color = inst["tint"]
-		var mul := _instance_color(base_lin, base_wire, tint)
+		var mul := _far_tree_grain(_instance_color(base_lin, base_wire, tint), cell)
 		buf[i + 12] = mul.r; buf[i + 13] = mul.g
 		buf[i + 14] = mul.b; buf[i + 15] = 1.0
 		i += FLOATS_PER_INSTANCE

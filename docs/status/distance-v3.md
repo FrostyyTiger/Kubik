@@ -1156,3 +1156,75 @@ steps to the right, the treeline and the water are pixel-alike, and nowhere is
 there a patch of far-field colour lying over the near ground. That is the
 artefact the sink exists to prevent and it is not there.
 
+---
+
+## Stage 8 - The far forest flecks
+
+**Shipped**, `far_tree_grain` default **0.07**.
+
+An impostor is shade A of its species, flat, and since distance v1 Stage 6 it is
+shade A mixed some way toward its own hillside - so a forest at 600 m is
+thousands of copies of ONE green standing on a hillside that Stage 2 has just
+flecked. Veloren ships real per-tree colour in thirteen bytes; ours is free,
+because every far tree already carries a deterministic hash of its placement
+cell and the yaw is already drawn from it.
+
+**Same form as `Block.jitter()` and as the poster's own grain**, deliberately: a
+symmetric value multiplier with a smaller red-against-blue tilt at the grain's
+own ratio (`grain_hue / grain_amount` = 0.46). The far country's terrain grain
+and its forest grain are then one effect with one set of proportions. **On its
+own salt** - the yaw already hashes this cell at 931, and a tree that was both
+darker and turned the same way as its neighbour would put a pattern in the wood.
+
+**The average is preserved by construction and hard rule 6 is satisfied before
+it is measured:** the multiplier is `1 + g` with `g` uniform on `[-a, a]`, whose
+expectation is exactly 1. It multiplies in WIRE space, which is where a
+MultiMesh instance colour acts and also where the fleck number reads, so the
+mean it preserves is the mean that is measured.
+
+### Gate
+
+`ganymede, ABAB median`, three runs each, interleaved:
+
+| | `far_tree_grain 0` | `0.07` |
+| --- | --- | --- |
+| impostors at spawn | **580, every run** | **580, every run** |
+| impostor triangles | **17,700, every run** | **17,700, every run** |
+| ring rebuild ms | 900 (884-926) | 874 (872-894) |
+| far mesh vertices | 322,988, every run | 322,988, every run |
+| idle far rebuild, wall ms | 3,299 (3,284-3,312) | 3,299 (3,299-3,319) |
+
+**MET.** The count and the triangles are identical on all six runs - the knob
+moves a colour and nothing else - and the rebuild time is if anything a shade
+faster on the grain side, which is noise.
+
+### What it is worth, and the treeline
+
+`ganymede, eye` and per-pixel over the far band, `s7-seam` against `s8-trees`:
+
+| shot | fleck 0 -> 0.07 | mean \|dL\| | **mean dL** |
+| --- | --- | --- | --- |
+| 1-spawn | 5.4405 -> 5.4529 | 0.5694 | **-0.0096** |
+| 5-lake | 5.5760 -> 5.5697 | 0.1731 | **-0.0434** |
+| 6-postcard | 5.2168 -> 5.2171 | 0.1578 | **-0.0118** |
+| 3-forest-slope | 4.1268 -> 4.1301 | 0.1241 | **-0.0410** |
+| 14-postcard-dusk | 3.8720 -> 3.8680 | 0.1194 | **-0.0289** |
+| 9-treeline | 1.9008 -> 1.9006 | 0.0017 | **-0.0005** |
+
+**Hard rule 6, measured: the largest shift in any far band is four hundredths
+of a luma level.** The fleck number barely moves because impostors are a small
+share of the pixels in any of these frames - between 88 m and 800 m, a far tree
+is a few pixels tall - and where they are dense enough to matter, `1-spawn`,
+twenty thousand pixels change by more than a level. It is a light stage and it
+was scoped as one.
+
+**The treeline, which is the thing that could have gone wrong.** Where the
+impostor ring ends at 800 m and Stage 1's voted forest-colour cells begin,
+there is **no colour cliff** - and at `17-rim`, the only vantage that can see
+the boundary at all, the impostors are already sub-pixel by the time they stop,
+so the transition is from "green ground with specks on it" to "green ground".
+That is decision 6 working: the far forest beyond the ring is terrain colour,
+and terrain colour is forest-green there because the ground IS forest.
+`build/tour/s8-trees/17-rim.png`, rows 520-720, changes by mean |dL| 0.0506
+against Stage 7 - the ring is there and it is quiet.
+

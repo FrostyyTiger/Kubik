@@ -282,7 +282,7 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# exact confusion distance v2 Stage 0 existed to remove. The rebuild it
 	# also triggers is redundant and costs one worker task nobody is
 	# waiting on.
-	"far_fog_start_frac", "far_overdraw", "far_dither_m",
+	"far_fog_start_frac", "far_overdraw", "far_dither_m", "far_tree_grain",
 ]
 
 static var _knobs := {}

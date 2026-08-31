@@ -982,6 +982,27 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## HOW MUCH ONE FAR TREE'S COLOUR DIFFERS FROM THE NEXT, distance v3 Stage 8.
+##
+## `far_tree_tint` mixes an impostor toward the hillside behind it, so a distant
+## forest recedes; it does not stop that forest being thousands of copies of one
+## green. This is the difference between them, hashed from the same placement
+## cell the yaw already uses, on its own salt so a tree is not both darker and
+## turned the same way as its neighbour.
+##
+## Same shape as `Block.jitter()` and as the poster's own grain: a symmetric
+## value multiplier with a smaller red-against-blue tilt at the grain's own
+## ratio. **0.07**, which is `grain_amount` rounded - the far country's terrain
+## and its forest then read as one effect rather than as a flecked hillside
+## carrying a flat wood.
+##
+## The average is preserved by construction: `1 + g` with `g` symmetric about
+## zero. Hard rule 6, measured anyway.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed - it changes how a tree is DRAWN, never
+## where it stands, which species it is or how many there are.
+@export var far_tree_grain := 0.07
+
 ## WHERE THE FAR FIELD STARTS, as a fraction of the voxel radius. Distance v3
 ## Stage 7, decision 5, and DH's `overdrawPreventionPercent` with the same
 ## sense: 0.9 is almost no overlap, 0.2 is a lot, **0 is the far mesh drawn
@@ -1483,7 +1504,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
-	"far_overdraw", "far_dither_m",
+	"far_overdraw", "far_dither_m", "far_tree_grain",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
