@@ -63,6 +63,8 @@ func _ready() -> void:
 		# UI V1 STAGE 2, appended at the end of the list.
 		"ui mouse owners": _test_ui_mouse_owners,
 		"stats table": _test_stats_table,
+		# DISTANCE V4 STAGE 1, appended at the end of the list.
+		"far parity": _test_far_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -1897,3 +1899,184 @@ func _test_stats_table():
 
 	print("stats table: seam, clamp and journal, %d checks failed" % bad)
 	return 1 if bad > 0 else 0
+
+
+# --- DISTANCE V4 -------------------------------------------------------------
+#
+# Appended at the end of the file, and nothing above it is touched.
+#
+# THE HARNESS EXISTS BEFORE THE PORT, which is the whole of Stage 1 and is the
+# lesson ui v1's shot harness paid for: the class of bug a rewrite introduces
+# is not the class the numbers catch. A 30x speedup that draws a slightly
+# different mountain is not a speedup, it is a regression nobody measured, and
+# by the time the pictures show it there are eight stages of C++ to bisect.
+#
+# So the comparison is wired in first and runs from Stage 1 onward, skipping
+# itself while the C++ side is a stub and printing that it skipped - because a
+# gate that silently passes when its subject is missing is the other way this
+# goes wrong.
+
+
+## THE TWO MESHERS AGREE, ARRAY FOR ARRAY. Distance v4 Stage 1, decision 3.
+##
+## Builds the same far mesh twice - once through `FarFieldJob` (GDScript, the
+## reference) and once through `FarMesher` (the GDExtension) - and compares the
+## four arrays. The default gate is IDENTICAL: same vertex count, same index
+## buffer, zero max component difference. Both meshers compute in doubles and
+## store into 32-bit packed arrays, and on one machine's libm the same
+## expression rounds the same way, so "close enough" is not the bar and a stage
+## that cannot hold exactness records WHICH expression and the measured worst
+## diff rather than lowering it quietly.
+##
+## FOUR CASES, and each one is a thing the far probe cannot see:
+##
+##   * far_terrace 0.0 - the smooth mesh, hard rule 1's way back, no cell cache
+##     and no riser in the whole build.
+##   * far_terrace 1.0 - the terrace, the ridge test, the risers, and the
+##     _t_full fast path the shipped config actually takes.
+##   * far_ring_div 4 - the 1 m cell the whole night is for, at four times the
+##     quads and a different base step in every derived radius.
+##   * A NON-EMPTY FRONTIER. `_sector_exclude` is filled only when a frontier
+##     is passed, and the far probe builds with an empty one - which is exactly
+##     how distance v2 shipped a moved inner edge past seven stages of
+##     "identical on every geometry row" (STATUS item 12). This harness is not
+##     allowed to be blind in the same place.
+func _test_far_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	# The far terrace knob test's world, and for its reason: small enough that
+	# a far mesh is a few thousand vertices rather than a hundred thousand.
+	# This test is about AGREEMENT, and the cost of a real rebuild is Stage 6's.
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	if not mesher.setup(heightmap, generator, wcfg):
+		print("far parity: c++ mesher absent/stub, 0 checks")
+		world.free()
+		return 0
+
+	var with_colors := FarMesher.colors_ready()
+	# A frontier the voxels have only partly reached: three sectors short, the
+	# rest at the full radius. Sixteen entries, in CHUNKS.
+	var partial := PackedInt32Array()
+	partial.resize(16)
+	for s in 16:
+		partial[s] = wcfg.voxel_radius_chunks
+	partial[0] = 1
+	partial[1] = 1
+	partial[7] = 2
+
+	var cases := [
+		{"name": "terrace 0.0", "terrace": 0.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "terrace 1.0", "terrace": 1.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "ring_div 4", "terrace": 1.0, "div": 4.0,
+			"frontier": PackedInt32Array()},
+		{"name": "frontier", "terrace": 1.0, "div": 2.0,
+			"frontier": partial},
+	]
+	var checks := 0
+	for c in cases:
+		wcfg.far_terrace = c["terrace"]
+		wcfg.far_ring_div = c["div"]
+		# THE OVERLAP IS A STATIC BOTH MESHERS READ, and it is derived from
+		# far_ring_div through base_step_blocks() - so it has to be pushed
+		# again whenever the divisor moves, on the main thread, exactly as
+		# FarField does it.
+		FarField.apply_overdraw(wcfg)
+		var centre := Vector2i(0, 0)
+
+		var job := FarFieldJob.new()
+		job.heightmap = heightmap
+		job.generator = generator
+		job.config = wcfg
+		job.center = centre
+		job.frontier = c["frontier"]
+		job.run()
+
+		if not mesher.build(wcfg, centre, c["frontier"]):
+			print("  %s: the c++ mesher refused to build" % c["name"])
+			bad += 1
+			continue
+		checks += 1
+		var d := _far_parity_diff(job, mesher, with_colors)
+		print("  %-12s gd %6d verts / cpp %6d, %s" % [
+			c["name"], job.vertex_count, mesher.vertex_count, d["text"]])
+		if not d["ok"]:
+			bad += 1
+
+	print("far parity: %d checks, colours %s" % [
+		checks, "compared" if with_colors else "SKIPPED (c++ emits white)"])
+	world.free()
+	return bad
+
+
+## The four arrays, compared. Returns whether it passed and a line to print.
+##
+## Vertices, normals and colours are float32 in the packed arrays, so the
+## comparison is a max ABSOLUTE component difference and the gate is that it
+## is exactly zero. Indices are integers and are compared for equality, which
+## is a stronger statement than any tolerance: a mesh with the same vertices in
+## a different order is a different mesh.
+func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
+		with_colors: bool) -> Dictionary:
+	var a: Array = job.arrays
+	var b: Array = mesher.arrays
+	if a.is_empty() or b.is_empty():
+		return {"ok": a.is_empty() and b.is_empty(),
+			"text": "one side emitted no arrays at all (gd %d, cpp %d)" % [
+				a.size(), b.size()]}
+	if job.vertex_count != mesher.vertex_count:
+		return {"ok": false, "text": "VERTEX COUNTS DIFFER"}
+
+	var va: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var vb: PackedVector3Array = b[Mesh.ARRAY_VERTEX]
+	var na: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+	var nb: PackedVector3Array = b[Mesh.ARRAY_NORMAL]
+	var ia: PackedInt32Array = a[Mesh.ARRAY_INDEX]
+	var ib: PackedInt32Array = b[Mesh.ARRAY_INDEX]
+	if va.size() != vb.size() or na.size() != nb.size() or ia.size() != ib.size():
+		return {"ok": false, "text": "ARRAY SIZES DIFFER: v %d/%d n %d/%d i %d/%d" % [
+			va.size(), vb.size(), na.size(), nb.size(), ia.size(), ib.size()]}
+
+	var dv := 0.0
+	for k in va.size():
+		var p := va[k]
+		var q := vb[k]
+		dv = maxf(dv, maxf(absf(p.x - q.x), maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	var dn := 0.0
+	for k in na.size():
+		var p := na[k]
+		var q := nb[k]
+		dn = maxf(dn, maxf(absf(p.x - q.x), maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	var bad_i := 0
+	for k in ia.size():
+		if ia[k] != ib[k]:
+			bad_i += 1
+	var dc := 0.0
+	if with_colors:
+		var ca: PackedColorArray = a[Mesh.ARRAY_COLOR]
+		var cb: PackedColorArray = b[Mesh.ARRAY_COLOR]
+		if ca.size() != cb.size():
+			return {"ok": false, "text": "COLOUR ARRAY SIZES DIFFER: %d/%d" % [
+				ca.size(), cb.size()]}
+		for k in ca.size():
+			var p := ca[k]
+			var q := cb[k]
+			dc = maxf(dc, maxf(absf(p.r - q.r),
+				maxf(absf(p.g - q.g), maxf(absf(p.b - q.b), absf(p.a - q.a)))))
+
+	var ok := dv == 0.0 and dn == 0.0 and bad_i == 0 and dc == 0.0
+	var text := "max diff pos %.9f normal %.9f colour %s, %d indices differ" % [
+		dv, dn, ("%.9f" % dc) if with_colors else "-", bad_i]
+	return {"ok": ok, "text": text}
