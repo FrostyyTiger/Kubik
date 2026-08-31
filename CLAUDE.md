@@ -13,6 +13,10 @@ Four. Every feature must serve at least one, and contradict none.
   objects, never terrain.
 - **THE WORLD IS THE CONTENT.** Progression is ranging further. Distance is
   the difficulty, strangeness, and content axis - not menus or crafting trees.
+  The scale register is monumental (2026-08-31): the world must feel huge -
+  continents, massive factions, built things that dwarf the player - and the
+  player small against it. See `docs/DESIGN.md` § World, "The north star:
+  monumental".
 - **THE WORLD ANSWERS.** Authored truth, generative direction. The world's
   facts are data the game owns; a director reads what the journey MEANS and
   responds through opportunity, never railroading, and never invents

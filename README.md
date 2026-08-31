@@ -25,7 +25,10 @@ Four. Every feature serves at least one, and contradicts none.
    and darkness. Firelight and daylight are the warm register. Death costs
    time, not progress. No base building.
 3. **THE WORLD IS THE CONTENT.** Progression is ranging further. Distance is
-   the difficulty, strangeness, and content axis.
+   the difficulty, strangeness, and content axis. The scale register is
+   monumental: an unbounded world of continents, massive factions, and built
+   things that dwarf the player - it must feel huge, and you small in it
+   (`docs/DESIGN.md` § World).
 4. **THE WORLD ANSWERS.** Authored truth, generative direction. A semantic
    director reads what the journey MEANS and responds through opportunity,
    never railroading. The tech is invisible: we market the experience, never

@@ -378,6 +378,27 @@ unbounded world must answer differently rather than pretend away:**
   reasons to go far. How reaching the genuinely far works (and whether
   something faster than sprint eventually ships) is open, deliberately.
 
+### The north star: monumental (2026-08-31, same session as the ruling)
+
+Unbounded says how big the world IS; this says how big it must FEEL, and it
+is the test every scale decision answers to from here. The game is a huge,
+grand adventure: continents, not a map. Factions with massive reach. Built
+things - towers, walls, ruins - at a size where a player stands at the foot
+of one and feels small; the Voxel Box school of monumental Minecraft
+building is the reference Marcel named. The player should be the smallest
+thing in frame nearly always, because feeling small against the world is
+what makes ranging into it epic - and it is pillar 2's ratio at full
+stretch: the vaster and stranger the out-there, the warmer one campfire is.
+
+Two honesty notes, so this stays a north star and not a lie:
+
+- **Content is deferred, not denied.** Marcel's own call: storylines and
+  things to do are his to solve later. The FEELING of scale must not wait
+  for them, and no one gets to block a scale decision on "but it will be
+  empty" - that hazard is already on the record above.
+- **Huge buildings are the world's, not the players'.** "No base building"
+  is untouched: the world builds monuments, players place objects.
+
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
 Terrain generation targets are in `plans/terrain-v2.md`.
 
