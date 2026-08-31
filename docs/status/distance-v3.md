@@ -1310,3 +1310,333 @@ so far, and a person looking at the pair would call the second one better.
 **Marcel judges the pairs. Nothing in this stage changed a default**, and the
 game still ships MSAA 4x.
 
+---
+
+## Stage 10 - Docs, night 2, and the handoff
+
+### Every constant this epic moved
+
+| constant | before | shipped | why, in one line |
+| --- | --- | --- | --- |
+| `far_vote` | - | **1.0**, F4 | a far cell is the most common of four real materials; shore never wins, ties are the first sample |
+| `far_grain` | - | **0.065**, F4 | the near field's own `grain_amount`, extended outward on a lattice that GROWS with distance instead of fading |
+| `far_riser_axis` | - | **0.08**, F4 | half the near field's own sun/anti-sun luma spread, so a far cube has four tones and not three |
+| `far_fog_start_frac` | - | **0.4**, F4 | DH's `farFogStart`, of the configured reach and never a metre value |
+| `far_overdraw` | (0.667, a const) | **0.0**, F4 | the far mesh is drawn under the whole voxel disc: the overlap has to exceed an 82 m rebuild lag |
+| `far_dither_m` | - | **0.0**, F4 | DH's Bayer dissolve, implemented and off - every fragment it discards is covering a hole |
+| `far_tree_grain` | - | **0.07**, F4 | a distant forest is thousands of slightly different greens, free from a hash it already had |
+| `RING_OUTER_M` | `[200, 400]` | **`[200, 400, 960, 1920]`** | two more rings |
+| `RING_STEP_MULTIPLE` | `[1, 2, 4]` | **`[1, 2, 4, 8, 16]`** | 32 m and 64 m cells, powers of two, so the subset property holds |
+| `FRONTIER_OVERLAP_CELLS` | `const 8` | **`static var`, 24 at the default** | `world.gd` reads it by name and must not drift; a static keeps them in step while the knob moves |
+| `SEAM_SINK_BLOCKS` | - | **3.0** | overdraw would otherwise poke a quarter of a metre up through the ground at your feet, half the time |
+| High preset `fog_end` | 800 m | **3,200 m** | the region's rim from anywhere a player can stand |
+| Ultra preset `fog_end` | 1,000 m | **3,200 m** | the same reach; Ultra buys voxels and trees, not country |
+| High / Ultra `far_tree` | 800 / 1,000 m | **unchanged** | decision 6 |
+| `FOG_FN`'s curve | `smoothstep` | **exp², density 2.5** | aerial perspective instead of a ramp |
+| `FOG_FN`'s distance | spherical | **cylindrical** | looking up must not fog the peaks' sky |
+| the far field's material | the chunks' | **its own, spliced from theirs** | uniforms the chunks must not have, and the seam Stage 7 needed |
+| `17-rim` | - | **appended to the tour** | the harness could not see the reach |
+| `--taa`, `--fly N`, `--sequence` | - | **appended** | the crawl had no instrument at all |
+
+**`PROPERTIES` and `hash_key()` are untouched.** Config `3d45b8fc`, heightmap
+`76cccdb6`, spawn `(-44, -124)`, 580 impostors at spawn - before and after
+every stage. Nothing this epic added crosses the network or can refuse a join.
+**Hard rule 1, LOOK NOT SHAPE, met end to end.**
+
+### Taste, on F4 and still Marcel's
+
+The table distance v1 started and distance v2 kept. Every alternative is a real
+tour on ganymede, seed 42, Forward+, and every one of these knobs moves the far
+country **standing still, without F7** - which is the property distance v2
+built and this epic never regressed.
+
+| knob | shipped | photographed alternatives |
+| --- | --- | --- |
+| `far_vote` | **1.0** | `s1-vote0` / `s1-vote1` (17 shots each), plus `s1-cell0` / `s1-cell0-v0` at `far_zone_cell_m 0` |
+| `far_grain` | **0.065** | `s2-grain0` (0) / `s2-grain` (0.065), 17 shots each |
+| `far_riser_axis` | **0.08** | `s2-grain` (0), `s3-axis` (0.08), `s3-axis20` (0.20), `s3-axis00` (0, the byte-identical control) |
+| `far_fog_start_frac` | **0.4** | `s5-rim` (0.40), `s5-rim25` (0.25), `s5-rim15` (0.15), and `s5-rim-end800` for the wall it replaced |
+| `far_overdraw` | **0.0** | `s7-seam` (0.0) against `s7-nooverdraw` (0.667, what shipped before) |
+| `far_dither_m` | **0.0** | `s7-dither30` (30 m) |
+| `far_tree_grain` | **0.07** | `s7-seam` (0) / `s8-trees` (0.07), 17 shots each |
+| TAA | **not adopted** | `s9-msaa-fly` / `s9-taa-fly` (60 frames each), `s9-taa-still`, `s9-taa-rim` |
+| `fog_bands` | **4, untouched** | `s5-b24` (24) and `s5-b24-f15` (24 at `frac 0.15`) |
+
+### For Marcel to rule on
+
+Nine, in the order they matter.
+
+**1. `far_fog_start_frac`, and it is the biggest one.** Shipped at the plan's
+**0.40**; **I would rule 0.15-0.20.** At 0.40 the air begins at 1,280 m, which
+is further away than most of what a player is looking AT, and the consequence
+is measured: `dark40` on `6-postcard`'s far band went 8.83% to 20.13% at Stage
+4 and stayed there, because a kilometre of mountain that used to be hazed is
+now drawn at full strength including its shaded side. That is distance v2's
+carried item 14 - the black crush - reopening through the fog rather than
+through the risers. DH gets away with 0.4 because vanilla Minecraft's own fog
+handles everything nearer; we have no second fog.
+`build/tour/s5-rim/17-rim.png` (0.40) against `s5-rim15/17-rim.png` (0.15).
+
+**2. `fog_bands` is now a resolution and 4 is coarse.** Four bands tuned by
+look v1 and v2 against a 480 m span now cover 1,920 m, so **the first band
+boundary moved from 400 m to 1,558 m** and nothing nearer than that gets any
+air at all whatever the curve says. The in-house precedent points at scaling
+it: distance v2 Stage 7 scaled `far_band_step` by the ratio of the band
+interval so "the value change per METRE" stayed where look v1 put it. The same
+argument says four bands over 480 m is sixteen over 1,920. **Not changed - it
+is a look v2 constant and it is yours.**
+
+**3. TAA.** `-69%` of the crawl on the far band, for `-2.4%` of local contrast
+on the daylight stills, and the poster's flat fields and hard boundaries
+survive. **I would adopt it.** The pairs are `s9-msaa-fly` / `s9-taa-fly` for
+the crawl and `s8-trees` / `s9-taa-still` for the softening. **And read
+`14-postcard-dusk` in that pair before deciding:** under MSAA the far cliffs
+carry a fine diagonal hatch, a moiré between the grain lattice and the pixel
+grid, and under TAA they are clean flat fields. If TAA is NOT adopted,
+`Look.FAR_GRAIN_PX` should go up instead - the hatch is the epic's own artefact
+and the constant is the lever.
+
+**4. `far_vote` is very nearly a null and it costs 17.5% of the far-mesh job.**
+It changes the picture - five luma levels across 55,842 pixels of the postcard,
+because the boundaries move - and it does not raise the fleck, because a mode
+vote is a median filter and this far field was never averaging. It buys a
+better answer per cell (three quarters forest is painted forest) and nothing
+else. **Keeping it is defensible and so is turning it off**; I would keep it,
+because "one real material, chosen properly" is the doctrine and 17.5% of a
+worker task nobody waits on is cheap.
+
+**5. `far_riser_axis` produces a picture and not a number.** The metric moves
+DOWN 1.3%, because two risers of different axes meet at a corner rather than
+side by side, so darkening one family separates it from faces it is not next
+to. What it buys is four tones per cube. `s2-grain` (0) / `s3-axis` (0.08) /
+`s3-axis20` (0.20). I would keep 0.08 and would not go to 0.20.
+
+**6. The seam.** `s7-seam/1-spawn.png` against `s5-fog/1-spawn.png`: the far
+mesh is now drawn under the whole voxel disc and sunk a metre and a half, and
+the two photographs are the same photograph but for flora streaming. The thing
+to check by eye is that no patch of far-field colour lies over the near ground
+anywhere - I cannot find one.
+
+**7. The treeline.** `s8-trees/17-rim.png`, where the impostor ring ends at
+800 m and Stage 1's voted forest-colour cells begin. No colour cliff, because
+the impostors are already sub-pixel when they stop.
+
+**8. `far_grain` at 0.065 is the near field's number, not a chosen one.**
+`s2-grain0` / `s2-grain`. It is the single largest move in the epic's own
+metric (`6-postcard` 3.98 to 4.62, textured 27.6% to 38.5%) and it is the one
+knob I would expect you to want to turn UP rather than down.
+
+**9. The rim shot itself.** `17-rim` is new and it is the epic's acceptance
+frame. `s5-rim-end800/17-rim.png` is what the game looked like at the old
+reach - a flat wall of near-white past 600 m, fleck **0.0502**, p95 exactly
+**0.00** - and `final/17-rim.png` is the whole region in blocks to the horizon.
+**If one pair is worth your five minutes it is that one.**
+
+### The fleck table, final
+
+`final`, 17 shots plus `17-rim`, against the baseline. Far band rows 0-300
+except `17-rim`, whose horizon is at y 340 and whose band is rows 330-520.
+
+| shot | baseline fleck | **final fleck** | baseline tex | **final tex** |
+| --- | --- | --- | --- | --- |
+| 1-spawn | 4.335 | **5.450** | 26.8% | **38.9%** |
+| 2-summit | 1.085 | 1.068 | 10.1% | 10.6% |
+| 3-forest-slope | 2.102 | **4.129** | 13.6% | **49.8%** |
+| 4-valley-floor | 1.345 | 1.398 | 3.7% | 3.7% |
+| 5-lake | 2.236 | **5.570** | 16.8% | **41.6%** |
+| **6-postcard** | 3.940 | **5.217** | 27.7% | **42.3%** |
+| 7-forest-interior | 0.834 | 0.834 | 7.0% | 7.0% |
+| 8-meadow-closeup | 9.179 | 9.294 | 42.2% | 44.2% |
+| 9-treeline | 1.719 | 1.901 | 18.2% | 21.5% |
+| 10-shore | 0.686 | **2.468** | 5.0% | **16.1%** |
+| 11-forest-dusk | 0.671 | 0.671 | 5.8% | 5.8% |
+| 12-meadow-night | 1.997 | 1.840 | 10.9% | 13.7% |
+| 13-meadow-dawn | 1.332 | 1.824 | 10.3% | 14.8% |
+| 14-postcard-dusk | 3.094 | 3.868 | 28.6% | 39.2% |
+| 15-boulder | 3.368 | 3.822 | 23.0% | 30.9% |
+| 15-under-canopy | 0.681 | 0.677 | 6.4% | 6.3% |
+| 16-spawn-postcard | 1.557 | 1.824 | 10.9% | 14.0% |
+| **17-rim** (rows 330-520) | **0.050** at the old reach | **5.046** | **0.5%** | **36.2%** |
+
+The near field's own band, on the shots where rows 500-720 really are the near
+field, measures 3.2 to 8.2. **Eight of the eighteen far bands are now inside
+that range and `17-rim` is at 5.05**; at baseline exactly one was.
+`7-forest-interior`, `11-forest-dusk` and `15-under-canopy` do not move at all
+and correctly so - they are photographs of trunks at eye height with no far
+country in the frame.
+
+### Acceptance
+
+| criterion | result |
+| --- | --- |
+| **the rim visible, terraced and hazed, no fog wall** | **MET, with one substitution named below** - `final/17-rim.png` |
+| **fleck above baseline at every stage that claimed it** | **MET** - Stage 1 +1.0% on forest-facing shots (a near-null, recorded as one), Stage 2 +16.0%, Stage 4 +12.9%. Final `6-postcard` 3.940 -> 5.217 |
+| **far mesh ≤ ~350k vertices** | **MET - 322,988**, deterministic, every run |
+| **wall rebuild ≤ 5 s, ABAB** | **MET at 3,299 ms** (3,284-3,319, ABAB, three runs each) for a rebuild with the pool idle - which is what an F4 knob does. **NOT under 5 s while the world is streaming**: 5,433-6,187 ms during a sprint. Both are reported at every stage and neither is hidden |
+| **stream probe: zero holes at sprint, full harness** | **MET - 0 holes in all SIX runs**, three at Stage 7 and three at HEAD, against Stage 4's 25 and 8 |
+| **swatches byte-identical to main's** | **MET - 0 pixels, both sheets**, checked after every shader-touching stage |
+| **far probe determinism, rings 0-4, twice** | **MET - `PASS`, tables IDENTICAL**, 163,923 ms and 164,308 ms; terrace compliance 100% at 8, 16, 32, 64 and 128 blocks on all three vantages |
+| **every new knob on F4, live, no reroll, with photographed alternatives** | **MET** - seven knobs, the table above |
+| **"For Marcel to rule on" with A/B pairs for the vote, the grain, the axis, the fog, the seam, the treeline, TAA** | **MET** - all seven, plus two more |
+
+**THE ONE SUBSTITUTION, stated plainly.** The criterion says "a tour shot from
+the valley floor". The shot that shows the rim is `17-rim`, taken **from the
+summit**, and the reason is measured rather than argued: **99.3% of
+`6-postcard`'s far band - the valley-floor frame - is within 640 m**, because
+that valley is enclosed by its own ridges. Moving the fog's start from 1,280 m
+to 480 m changes 2,726 of its 383,700 pixels; raising `fog_bands` from 4 to 24
+changes none. **No implementation of this epic could have put the region's rim
+in a seed-42 valley-floor frame**, and the finding is about the world rather
+than about the far field.
+
+What the valley floor DOES show is the other half of the criterion: `6-postcard`
+is terraced to its own horizon with no fog wall anywhere in it, and its fleck
+went 3.940 to 5.217. The rim, terraced and hazed, is one vantage up.
+
+### The one thing that got worse, and it is not in the acceptance table
+
+**Long frames during a sprint.** `ganymede, ABAB`, three runs each, interleaved,
+`--stream-probe --set fog_end_m=800|3200` - the reach on and off, everything
+else identical:
+
+| | reach 800 m | reach 3,200 m |
+| --- | --- | --- |
+| **holes** | **0, 0, 0** | **0, 0, 0** |
+| frames over 33 ms | 1, 12, 4 (median **4**) | 31, 30, 0 (median **30**) |
+| worst frame, out / back | 41.9 / 31.2, 247.6 / 34.6, 35.6 / 43.8 | 178.2 / **291.5**, 47.4 / **283.2**, 30.7 / 28.7 |
+| chunks/s, out | 76.0 (69.5-79.5) | 75.6 (73.8-80.4) |
+| chunks/s, back | 88.5 (83.6-90.5) | 78.1 (66.9-87.9) |
+
+**Streaming throughput does not move** - the out legs' medians are half a chunk
+per second apart and every range overlaps. **The long-frame count does**, and
+the honest caveat is the one `stream_probe.gd`'s own `TODO(marcel)` makes: a
+threshold turns a drifting continuous quantity into a coin flip, and one of the
+three runs at the new reach produced ZERO long frames while one at the old
+reach produced twelve. The ranges overlap.
+
+**What does not look like noise is the worst frame: 291 ms and 283 ms, twice,
+on the new reach, against 247 ms once on the old.** The mechanism is distance
+v2's carried item 11 getting bigger: **the far mesh's vertex upload runs on the
+main thread**, it now uploads 322,988 vertices instead of 262,312, and it
+happens about thirty times over a 480 m sprint. A quarter-second hitch is
+visible, and it is the price of the reach on a box that uploads a far mesh from
+the frame thread.
+
+**It is not an acceptance criterion and it is the first thing in
+`STATUS.md`.** The lever is not a constant: an upload off the main thread, or
+the GDExtension conversation that would make the whole job cheap.
+
+### Gates that could not be met as written
+
+Four, in one place, in the order they appear.
+
+1. **Stage 2, gate 1: "far band rows 0-300, mean |dL| under 0.5 sRGB levels."**
+   That statistic cannot be under 0.5 if the stage works - it IS the fleck. The
+   gate is named "the average is preserved", and the statistic that answers
+   that is the SIGNED mean, which is at worst **-0.1033** on the six far-band
+   shots. Both are reported. Under the plan's literal wording the gate fails on
+   `6-postcard` (1.08) and `3-forest-slope` (2.49); under its own name it passes
+   by a factor of five.
+2. **Stage 4: "wall stays under 5 s on this box."** A rebuild with the pool
+   idle is **3,299 ms**; a rebuild while the world is streaming is
+   **5,433-6,187 ms**; the first build of a session, behind 2,400 chunks, is
+   **6,013-7,285 ms**, and one rebuild during the final tour took **43 s**.
+   Every wall number this project had ever printed was contended, which is why
+   two instruments were built here before the gate could be answered at all.
+3. **Stage 4: "frontier rule untouched, stream probe zero holes."** **NOT MET
+   at Stage 4** - 25 holes and 8 - and met at Stage 7 and at HEAD, 0 in six runs.
+   Recorded rather than fixed in place, per the plan's own rule, and the
+   mechanism was worked out at Stage 4 rather than guessed at Stage 7.
+4. **Acceptance: "a tour shot from the valley floor."** Substituted with the
+   summit, measured reason above.
+
+And one gate that was met but by a different instrument than the plan imagined:
+**Stage 3's "the vertical-luma-gradient metric moves"** moves DOWN by 1.3%, and
+the stage's value is a per-cube reading that a per-pixel metric cannot see.
+
+### Carried forward
+
+Everything below is measured, not suspected.
+
+#### This epic owns these seven
+
+1. **The far mesh's vertex upload is on the main thread and the reach made it
+   23% bigger.** 322,988 vertices, uploaded about thirty times over a 480 m
+   sprint, and twice in six runs that produced a **283-291 ms frame**. Holes are
+   zero and throughput does not move; this is the hitch. Distance v2 raised the
+   same item at 255,128 vertices and it is now the largest single cost in the
+   epic. The lever is an upload off the frame thread, or the GDExtension
+   conversation.
+2. **The ring boundaries at 960 m and 1920 m are loud, and they are distance
+   v2's carried item 9 at a bigger step.** Max fizz **128.00** and **256.00**
+   blocks, rms 11.80 and 31.81, against 24.00 and 80.00 at the two inner
+   boundaries which are UNCHANGED. Stage 9 of distance v2 found the mechanism
+   and it applies unchanged: two rings sample the cell height at different
+   world points, up to half a cell apart, and what a geomorph has to blend is
+   the SAMPLE POSITION over the last cell or two of the finer ring. At 64 m and
+   128 m cells that mis-sample is 32 and 64 blocks of ground before anything is
+   quantised. **The fix is known, cheap and was out of scope here.**
+3. **`far_fog_start_frac 0.4` leaves the mid-distance airless and doubles the
+   dead-black share.** `dark40` on `6-postcard` 8.83% -> 20.13%. See "For
+   Marcel to rule on" (1); the knob is on F4 and the recommendation is
+   0.15-0.20.
+4. **`fog_bands 4` is a resolution tuned against a 480 m span and it now
+   covers 1,920 m.** The first band boundary is at 1,558 m. See (2) there.
+5. **The far grain aliases into a visible diagonal hatch at dusk under MSAA
+   4x.** `s8-trees/14-postcard-dusk.png`, the big cliffs. TAA removes it
+   entirely; so would raising `Look.FAR_GRAIN_PX` from 0.003. It is the epic's
+   own artefact and it has two levers, neither of which was pulled here because
+   Stage 9 changes no defaults.
+6. **`far_vote` costs 17.5% of the far-mesh job for a near-null on the fleck.**
+   It is defensible and it is not obviously worth its price. Shipped at 1.0.
+7. **`FRONTIER_OVERLAP_CELLS` is a `static var` written by `FarField` and read
+   by `world.gd`.** It is in step by construction and it is a shared mutable
+   static, which is a shape this codebase has none of elsewhere. If `world.gd`
+   ever gains a `far_field()` accessor, this and the two `get_node_or_null`
+   reaches distance v2 recorded should all go through it.
+
+#### Method
+
+8. **The tour's vantages cannot see past about a kilometre, except the one this
+   epic added.** Every one of the sixteen is enclosed by its own valley or a
+   hundred metres from its subject. `17-rim` exists because of it. Any future
+   epic about distance should check that its instrument can see what it is
+   changing BEFORE the stage that changes it - this one found out at Stage 5,
+   two stages after the reach shipped.
+9. **The far probe is still structurally blind to the frontier** (distance v2's
+   carried item 13) and it is now half-closed: `[FarField] first build` and the
+   rebuild summary print the vertex count and the wall time the world actually
+   produces, which is what would have caught the Stage 8 near-miss distance v2
+   describes. The probe itself still builds `FarFieldJob` with an empty
+   frontier.
+10. **The far probe takes 27 minutes at the new reach**, against 4 at the old,
+    because `_fizz` samples a 7,680-block square on a 13-block lattice. It is
+    still deterministic and still passes twice; it is no longer something to
+    run at every stage, which is why `--cost` exists.
+11. **`--strict` fails on the long-frame threshold on about half of all runs,
+    at both reaches.** Unchanged from distance v1's finding and unchanged by
+    this epic; the threshold count remains the wrong instrument.
+
+#### Untouched by this epic, and still open exactly as it found them
+
+- **Distance v2's carried item 15, the city-skyline summits.** Untouched, and
+  the reach makes there be more of them. The next lever is horizontal - shelf
+  width or riser treatment at summit cells - and this epic did not spend it.
+- **Distance v2's carried item 4, VALLEY GAIN -6.53.** Unchanged.
+- **PEAK LOSS +24.20 mean at 600 m.** Unchanged - the terrace machinery is
+  untouched and 600 m is inside ring 2, which this epic did not move.
+- **The meadow tufts read as gravel** (distance v1's item 8). Untouched.
+- **`world.gd` and `chunk_mesher.gd` do not appear in this epic's diff at all.**
+  `scripts/character/` does not either.
+
+### The one number to lead with
+
+`build/tour/s5-rim-end800/17-rim.png` against `build/tour/final/17-rim.png`,
+over rows 330-520: **fleck 0.0502 with a p95 of exactly 0.00**, against
+**5.0454**.
+
+The first number is what "a fog wall" is, written down: past about 600 m the
+frame is one flat sheet of near-white in which no two neighbouring pixels
+differ by anything at all. The second is the same standpoint with the whole
+region in front of it, in blocks, out to the rim.
+

@@ -47,6 +47,21 @@ differently.
 3. **Distance is bands, not haze.** Fog steps in flat bands to the sky's
    horizon colour; the far field is a stacked backdrop, the near field a solid
    voxel world, and the seam between them is owned rather than hidden.
+
+   *Amended by distance v3 (2026-08-31), and the rule stands - what changed is
+   what is under the bands.* The far field is no longer a stacked backdrop: it
+   is the same world made of BIGGER BLOCKS, 4 m at the seam through 8, 16 and
+   32 to 64 m at the rim, terraced with lit tops and shaded risers, painted on
+   a world-space block lattice that grows with distance so a hillside at 3 km
+   is flecked in ten-metre cells rather than in half-metre ones nobody can
+   resolve. A far cell is one real material chosen by a majority vote over four
+   sub-samples, never a blend. The fog is still bands and the bands are still
+   the poster, but the curve UNDER them is now exponential-squared over the
+   configured reach, measured cylindrically so looking up does not fog the
+   peaks' sky - which is what removes the wall. And the seam is owned by
+   OVERDRAW: the far field is drawn under the whole voxel disc, sunk below it,
+   so what shows through a hole in the world is ground drawn a metre and a half
+   low rather than sky.
 4. **Forms are stepped and chamfered.** Heads lose their vertical edges to a
    chamfer, shoulders step, hair is a geometric mass. Trees are cones and
    ziggurats.
@@ -503,6 +518,13 @@ makes a mountain reachable.*
 Rendering was never the constraint. Since terrain v2 the far field is built in
 LOD rings, so its cost is roughly logarithmic in view distance - 80k vertices at
 600 m, 82k at 800 m. **Traversal was the constraint**, and it still is.
+
+*Distance v3 (2026-08-31) finally spent that logarithm.* High and Ultra see
+3,200 m of fog over a 3,840 m far radius, which covers the whole region's rim
+from anywhere a player can stand, and it cost **262k vertices to 323k for
+sixteen times the visible ground** - one more ring per doubling, exactly as the
+ladder promised. The numbers above are the terraced far field's, which is
+2.5x the smooth one's; what did not change is the shape of the cost.
 
 ### Traversal
 
