@@ -66,6 +66,7 @@ func _ready() -> void:
 		"senses bus": _test_senses_bus,
 		"pack board": _test_pack_board,
 		"creature paths": _test_creature_paths,
+		"home identity": _test_home_identity,
 	}
 	var failures := 0
 	for name in tests:
@@ -2293,3 +2294,48 @@ func _den_like_ground(world: World, cfg: WorldgenConfig) -> Vector3:
 				p.y = world.surface_height_m(int(bx), int(bz))
 				return p
 	return spawn
+
+
+## A HOME'S ID IS A NAME, and it has to survive being one.
+##
+## `HomePlacement` reuses `FloraPlacement.identity()`'s packing so Sites v1
+## inherits one id scheme rather than two, and the model byte is what keeps a
+## den and a boulder from sharing a name. The model numbers are 200-202, which
+## set bit 63 - so every one of these ids is a NEGATIVE integer, and that is
+## the case a packing bug hides in.
+func _test_home_identity():
+	var bad := 0
+	var models := [HomePlacement.MODEL_DEN, HomePlacement.MODEL_BURROW,
+		HomePlacement.MODEL_CRAG]
+	var seen := {}
+	# Negative coordinates included deliberately: the packing sign-extends by
+	# hand, and half the world is on the negative side of the origin.
+	for bz in [-2900, -64, 0, 17, 2900]:
+		for bx in [-2900, -64, 0, 17, 2900]:
+			for model in models:
+				var id := HomePlacement.identity(model, bx, bz)
+				if FloraPlacement.model_of(id) != model:
+					print("  model %d came back as %d" % [
+						model, FloraPlacement.model_of(id)])
+					bad += 1
+				if FloraPlacement.block_of(id) != Vector2i(bx, bz):
+					print("  block (%d, %d) came back as %s" % [
+						bx, bz, FloraPlacement.block_of(id)])
+					bad += 1
+				if seen.has(id):
+					print("  id collision: %s and (%d, %d, model %d)" % [
+						seen[id], bx, bz, model])
+					bad += 1
+				seen[id] = [bx, bz, model]
+
+	# A HOME MAY NOT SHARE A NAME WITH A PLANT. The two id spaces are one id
+	# space, which is the point of reusing the packing, and the model byte is
+	# the whole of the separation.
+	for model in models:
+		if model < FloraModels.COUNT:
+			print("  home model %d collides with a flora model" % model)
+			bad += 1
+
+	print("home identity: %d ids over %d models, all distinct and reversible" % [
+		seen.size(), models.size()])
+	return bad

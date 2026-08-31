@@ -504,6 +504,93 @@ vacuous.
 
 ---
 
+## Stage 5 - the den has an address
+
+`scripts/creatures/home_placement.gd`, `class_name HomePlacement`, in the
+`TreePlacement` school: a 64-block (32 m) candidate lattice jittered by up to
+24 blocks, a product of independent terms, the ceiling-first early-out, and
+the hash-the-coordinates contract - **no RNG, no stream, no dependence on
+which chunk asked first.** `decide(gen, cell_x, cell_z)` is ONE FUNCTION,
+ASKED BY EVERYTHING.
+
+**Salts 400-419 are claimed**, documented in the file beside the registry
+pattern: 400 den present, 401 den jitter x, 402 den jitter z, 403 burrow
+field, 404 burrow count, 405-419 reserved (night 2's crag takes 405-407).
+
+**Home model numbers are 200 (den), 201 (burrow), 202 (crag, reserved)** -
+well clear of `FloraModels`' 0-18, which has room to grow. Ids reuse
+`FloraPlacement.identity()`'s packing so **Sites v1 inherits one id scheme
+rather than two**, and the model byte is the whole of the separation between a
+den and a boulder.
+
+**There is no new noise layer, and that is a decision rather than an
+omission.** The trees needed grove and glade noise because a forest's clumping
+is not a property of the terrain. Everything a home asks - what zone, how
+steep, how flat the bench, how far out - the terrain already answers, so
+adding one would have been inventing a structure the world does not have.
+
+### The terms
+
+| | den | burrow field |
+| --- | --- | --- |
+| base | 0.022 | 0.20 |
+| zone | forest, heath, rock | meadow |
+| slope | 5-25 deg | <= 10 deg, **and the neighbourhood <= 14 deg** |
+| danger | >= 0.25, ramped **x(1 + 1.5t)** to the far corner | any |
+| spawn exclusion | 300 m | 60 m |
+| count | 1 pack | 3-6 burrows, hashed |
+
+**The danger ramp is pillar 3 in one term.** A den is 2.5x likelier at the far
+corner of the world than at the near edge of its own band, so packs thicken as
+you range further and nobody had to paint a zone. **Below `danger 0.25` there
+are no dens at all** - the near valley is the warm register.
+
+**The bench test is why a burrow field is a shelf and not a ledge.** One cell
+can be level on a 40-degree hillside; the field requires every cell within two
+coarse cells to be under 14 degrees.
+
+### `homes` (probe, 5 runs, seeds 42-46) - 5/5
+
+| | median | runs |
+| --- | --- | --- |
+| dens in the region | **38** | 44, 38, 44, 38, 30 |
+| burrow fields | **465** | 413, 477, 491, 465, 462 |
+| burrows (seed 42) | 1838 over 413 fields | - |
+| nearest den to spawn | **582 m** | 556 - 714 |
+| enumeration | 124 ms (seed 42, single run) | - |
+| **drift between two enumerations** | **0** | all runs |
+| dens inside the spawn exclusion | 0 | all runs |
+| dens outside the slope band | 0 | all runs |
+| dens below the danger floor | 0 | all runs |
+| homes sharing an id | 0 | all runs |
+
+Seed 42's nearest den: id `-4035225258590993545` at (444, 224) m, **556 m from
+spawn, slope 12.3 deg, danger 0.25, zone heath** - and that is the den Stage 6
+anchors its pack to.
+
+**The determinism check compares ids and positions, not counts.** Two
+enumerations of the same seed must produce *the same homes in the same order*;
+a count-only check would pass a placement that had quietly become
+order-dependent, which is the exact failure the hash contract exists to
+prevent. The plan's floors (>= 3 dens, >= 10 burrow fields) are met by more
+than an order of magnitude; 38 dens across 9 km2 is roughly one every 450 m
+against a 300 m territory diameter, so territories occasionally touch and
+never routinely overlap. Density is an F10 dial.
+
+**`home identity` selftest**: 75 ids over three models at coordinates
+including -2900 and 2900, all distinct and all reversible. The model numbers
+set bit 63, so **every home id is a negative integer** - which is the case a
+packing bug hides in, and why the test uses negative coordinates deliberately.
+It also asserts no home model can collide with a flora model.
+
+**Nothing writes terrain** (hard rule 2) and nothing spawns yet. A den is a
+position and an identity; whether it ever gets a visible scree mouth is on
+Marcel's list.
+
+**Gates:** all three green, `heightmap# 76cccdb6`, spawn `(-44, -124)`.
+
+---
+
 ## Deferred, night 1
 
 - LimboAI, per Stage 0.

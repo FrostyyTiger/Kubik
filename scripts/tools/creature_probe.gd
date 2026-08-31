@@ -142,6 +142,7 @@ func run(server: CreatureServer) -> void:
 func _build_scenarios() -> void:
 	_scenarios = {
 		"walk": _scenario_walk,
+		"homes": _scenario_homes,
 	}
 
 
@@ -238,6 +239,123 @@ func _open_heading(from: Vector3, distance_m: float) -> Vector3:
 	print("[Creature] walking %.0f deg, worst slope on the corridor %.1f deg" % [
 		rad_to_deg(atan2(best.z, best.x)), best_worst])
 	return best
+
+
+## THE DETERMINISM CONTRACT, AS A SCENARIO.
+##
+## Enumerate every home in the region twice and require the two answers to be
+## identical - not merely the same count, the same ids in the same order. That
+## is the promise `HomePlacement` inherits from `TreePlacement`: hash the
+## coordinates, never roll, so two machines that have never spoken agree about
+## every den in the world without sending a byte. A count-only check would pass
+## a placement that had quietly become order-dependent.
+##
+## Then the bands: every den outside the spawn exclusion, every den's slope
+## inside the band it claims, every den past the danger floor. Those are not
+## statistics, they are the product's own terms read back off the product - so
+## a term that stops multiplying fails here rather than in a screenshot.
+##
+## NO PLAYER, NO CLOCK. This one does not walk anywhere, so it never touches
+## the time scale.
+func _scenario_homes() -> Dictionary:
+	var gen: TerrainGenerator = _world.generator
+	var started := Time.get_ticks_msec()
+	var first := HomePlacement.all_homes(gen)
+	var enumerate_ms := Time.get_ticks_msec() - started
+	var second := HomePlacement.all_homes(gen)
+
+	var dens := []
+	var burrows := []
+	for h in first:
+		if h["home"] == "den":
+			dens.append(h)
+		elif h["home"] == "burrow":
+			burrows.append(h)
+
+	var out := {
+		"dens": dens.size(),
+		"burrow_fields": burrows.size(),
+		"enumerate_ms": enumerate_ms,
+	}
+
+	# --- IDENTICAL, TWICE.
+	var drift := 0
+	if first.size() != second.size():
+		drift += 1
+	else:
+		for i in first.size():
+			if first[i]["id"] != second[i]["id"] 					or first[i]["pos"] != second[i]["pos"] 					or first[i]["home"] != second[i]["home"]:
+				drift += 1
+	out["drift"] = drift
+
+	# --- THE BANDS, read back off the product.
+	var spawn := _world.spawn_position_m(0.0)
+	var too_near := 0
+	var out_of_slope := 0
+	var too_safe := 0
+	var duplicate_ids := 0
+	var seen := {}
+	for h in dens:
+		if float(h["from_spawn_m"]) < HomePlacement.DEN_SPAWN_CLEAR_M:
+			too_near += 1
+		var slope := float(h["slope_deg"])
+		if slope < HomePlacement.DEN_SLOPE_MIN or slope > HomePlacement.DEN_SLOPE_MAX:
+			out_of_slope += 1
+		if float(h["danger"]) < HomePlacement.DEN_DANGER_MIN:
+			too_safe += 1
+	# IDS ARE NAMES AND TWO THINGS MAY NOT SHARE ONE. The identity packs the
+	# block position, and two homes of the same kind on the same block would be
+	# indistinguishable to anything that stores one - which is Sites v1 and the
+	# director, later.
+	for h in first:
+		if seen.has(h["id"]):
+			duplicate_ids += 1
+		seen[h["id"]] = true
+	out["too_near"] = too_near
+	out["out_of_slope"] = out_of_slope
+	out["too_safe"] = too_safe
+	out["duplicate_ids"] = duplicate_ids
+
+	# --- The burrow fields, which night 2 consumes. Placed and checked now to
+	# prove the pattern generalises past the one home type that is used.
+	var burrow_count := 0
+	for h in burrows:
+		burrow_count += int(h["count"])
+	out["burrows"] = burrow_count
+
+	var nearest := HomePlacement.nearest(gen, "den", spawn, first)
+	if not nearest.is_empty():
+		out["nearest_den_m"] = (nearest["pos"] as Vector3).distance_to(spawn)
+		print("[Creature] nearest den: id %d at %.0f, %.0f m, %.0f m from spawn, slope %.1f deg, danger %.2f, zone %s" % [
+			nearest["id"], (nearest["pos"] as Vector3).x, (nearest["pos"] as Vector3).z,
+			out["nearest_den_m"], nearest["slope_deg"], nearest["danger"],
+			TerrainGenerator.ZONE_NAMES[nearest["zone"]]])
+	print("[Creature] %d dens, %d burrow fields (%d burrows) in %d ms" % [
+		dens.size(), burrows.size(), burrow_count, enumerate_ms])
+
+	var why := ""
+	if drift > 0:
+		why = "%d homes differed between two enumerations of the same seed" % drift
+	elif dens.size() < 3:
+		why = "only %d dens in the whole region - a pack needs somewhere to live" % dens.size()
+	elif burrows.size() < 10:
+		why = "only %d burrow fields - the pattern has not generalised" % burrows.size()
+	elif too_near > 0:
+		why = "%d dens inside the %.0f m spawn exclusion" % [
+			too_near, HomePlacement.DEN_SPAWN_CLEAR_M]
+	elif out_of_slope > 0:
+		why = "%d dens outside the %.0f-%.0f degree slope band" % [
+			out_of_slope, HomePlacement.DEN_SLOPE_MIN, HomePlacement.DEN_SLOPE_MAX]
+	elif too_safe > 0:
+		why = "%d dens below the danger floor" % too_safe
+	elif duplicate_ids > 0:
+		why = "%d homes share an id with another" % duplicate_ids
+	elif nearest.is_empty():
+		why = "no nearest den could be named for Stage 6"
+	out["ok"] = why.is_empty()
+	if not why.is_empty():
+		out["why"] = why
+	return out
 
 
 # --- Driving the player ------------------------------------------------------
