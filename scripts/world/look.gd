@@ -733,6 +733,7 @@ static func apply_local_knobs(config: WorldgenConfig) -> void:
 	f.set_shader_parameter("grain_sparse", config.grain_sparse)
 	f.set_shader_parameter("contact_band", config.contact_band)
 	f.set_shader_parameter("far_grain", config.far_grain)
+	f.set_shader_parameter("far_dither_m", config.far_dither_m)
 	# THE FOG CURVE IS EVERY MATERIAL'S, distance v3 Stage 5, so it is pushed to
 	# all four of them rather than to the terrain's alone. FloraModels builds
 	# its own materials from Look.FOG_FN and is another lane's file, so its
@@ -893,6 +894,29 @@ const FAR_GRAIN_DECL := """
 // DISTANCE V3 STAGE 2. Spliced into the far field's copy of this shader only;
 // the chunks compile the string above without these lines in it at all.
 uniform float far_grain = 0.0;
+
+// THE DITHERED DISSOLVE, distance v3 Stage 7. DH's, verbatim in mechanism
+// (`docs/research/distant-horizons.md` §5b): a 4x4 Bayer matrix keyed on SCREEN
+// coordinates - "the fragCoord is used since it is stable and small so the
+// dithering is cleaner" - smoothstepped over [clip, 1.5 * clip], discard below.
+// Dither rather than alpha because it works identically for opaque and
+// transparent passes and needs no sorting.
+//
+// The clip distance is in METRES and 0 turns it off. See far_dither_m.
+uniform float far_dither_m = 0.0;
+
+float bayer4x4(vec2 c) {
+	int x = int(mod(c.x, 4.0));
+	int y = int(mod(c.y, 4.0));
+	int i = x + y * 4;
+	// The 4x4 ordered dither, over 16.
+	float m[16] = float[16](
+		 0.0,  8.0,  2.0, 10.0,
+		12.0,  4.0, 14.0,  6.0,
+		 3.0, 11.0,  1.0,  9.0,
+		15.0,  7.0, 13.0,  5.0);
+	return m[i] / 16.0;
+}
 // The lattice at the seam, in metres: one block, which is the near field's own
 // grain cell, so the two grains are the same grain.
 const float FAR_GRAIN_NEAR_M = 0.5;
@@ -906,6 +930,17 @@ const float FAR_GRAIN_MAX_LEVEL = 7.0;
 """
 
 const FAR_GRAIN_CODE := """
+	// THE DISSOLVE, FIRST, so a discarded fragment costs nothing else.
+	if (far_dither_m > 0.0) {
+		float fd_step = smoothstep(far_dither_m, far_dither_m * 1.5,
+			length(VERTEX));
+		// DH's "minor fudge factor to make sure all pixels fade out - if not
+		// included 1 in 16 pixels would never fade away".
+		if (fd_step <= bayer4x4(FRAGCOORD.xy) + 0.001) {
+			discard;
+		}
+	}
+
 	// THE FAR GRAIN. See Look.FAR_GRAIN_DECL for the whole argument.
 	if (far_grain > 0.0) {
 		float fg_d = length(VERTEX);

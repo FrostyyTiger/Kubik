@@ -982,6 +982,51 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## WHERE THE FAR FIELD STARTS, as a fraction of the voxel radius. Distance v3
+## Stage 7, decision 5, and DH's `overdrawPreventionPercent` with the same
+## sense: 0.9 is almost no overlap, 0.2 is a lot, **0 is the far mesh drawn
+## under the whole voxel disc.**
+##
+## 0.667 IS WHAT SHIPPED BEFORE THIS EPIC - `voxel_radius - 8 * far_step` out of
+## `voxel_radius` - and DH's own automatic table would pick 0.8 or 0.9 here.
+## **Both are far too little, and the arithmetic says so.** Distance v3 Stage 4
+## took the far mesh's rebuild to 6.3 s of wall clock during a sprint; at
+## 13 m/s the disc that reaches the screen is centred **82 m** behind the
+## player, so its hole - which is centred there too - sticks out behind the
+## voxel disc and the stream probe counted twenty-five holes in one run. The
+## overlap has to exceed the lag, the lag is 82 m and the voxel radius is 96 m,
+## and what is left is nearly nothing. So: 0.
+##
+## IT IS AFFORDABLE. Covering the whole disc is about 1,800 more ring-0 quads,
+## under 2% of the far mesh, all of them hidden under voxels - and hidden is
+## the operative word, which is what `FarFieldJob.SEAM_SINK_BLOCKS` is for.
+##
+## LOOK, NOT SHAPE, and never a hole: hard rule 2 does not trade against a
+## vertex count.
+@export var far_overdraw := 0.0
+
+## THE DITHERED DISSOLVE'S CLIP DISTANCE, in metres. 0 is off, and 0 is the
+## shipped value. Distance v3 Stage 7.
+##
+## DH's 4x4 Bayer discard is implemented and it is switched off, and the reason
+## is a direct conflict with the line above rather than an opinion.
+##
+## The dissolve exists to hide DH's near clip plane: fragments nearer than
+## `clip` are discarded, over `[clip, 1.5 * clip]`, so the LOD's inner edge is
+## a fade instead of a line. **Every fragment it discards is a fragment that
+## was covering a hole.** DH can afford that because vanilla Minecraft meshes a
+## chunk in milliseconds; our far mesh takes 6.3 s to rebuild, which is exactly
+## why `far_overdraw` is 0, and discarding the overdraw would undo it.
+##
+## It is left in, on a knob, because the conflict is a property of the rebuild
+## time and not of the idea. If the far-mesh job ever gets cheap - the
+## GDExtension conversation in STATUS.md - the dissolve becomes affordable and
+## this is where it lives. A safe value TODAY is about 30 m: the stream probe
+## measures the frontier ahead of a sprinting player at no less than 40 m, so
+## fragments inside 30 m are covering ground that is always there. It is
+## photographed in docs/status/distance-v3.md at 30.
+@export var far_dither_m := 0.0
+
 ## WHERE THE AIR BEGINS, as a fraction of the FAR RADIUS. Distance v3 Stage 5,
 ## decision 4, and DH's `farFogStart` default.
 ##
@@ -1438,6 +1483,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
+	"far_overdraw", "far_dither_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

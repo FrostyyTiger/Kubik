@@ -286,7 +286,38 @@ const INV_LN2 := 1.4426950408889634
 ## overlap is invisible - the far mesh sits half a detail_amp below the voxel
 ## surface and the voxels are drawn over it - whereas a gap is a hole in the
 ## world. Hard rule S1: never a hole, at any speed.
-const FRONTIER_OVERLAP_CELLS := 8
+## NOT A CONST SINCE DISTANCE V3 STAGE 7, and the name is deliberate.
+##
+## `world.gd` reads `FarFieldJob.FRONTIER_OVERLAP_CELLS` to decide whether a
+## column is covered by the far mesh, and the note below records what happens
+## when the job and that function disagree: the stream probe reports holes that
+## are not there. So the overlap has to be ONE number that both read, and
+## distance v3 needs it to move with a knob.
+##
+## A `static var` with the same name does both. `FarField.apply_overdraw()`
+## sets it from `far_overdraw` on the MAIN thread before any job is submitted -
+## never from a worker - and `world.gd` keeps reading it by the same name,
+## unchanged, in step by construction.
+static var FRONTIER_OVERLAP_CELLS := 8
+
+## HOW FAR THE FAR MESH SINKS BELOW THE VOXEL SURFACE INSIDE THE FRONTIER, in
+## blocks, ramped over the seam band. Distance v3 Stage 7.
+##
+## Overdraw means the far mesh is now drawn UNDER the voxels rather than
+## stopping short of them, and inside the seam band `_corner_y()` deliberately
+## computes the voxel surface itself: `coarse + detail + half a block`. The
+## voxel you stand on has its top face at `floor(coarse + detail) + 1`, so the
+## far mesh sits `0.5 - frac(...)` above it - **half the time it pokes
+## through**, by up to a quarter of a metre, and what you would see is patches
+## of far-field colour lying over the near ground.
+##
+## Three blocks is `detail_amp`, which is the amplitude of the only thing the
+## far mesh does not know about the voxel surface, and six times the worst
+## poke-through. Under the voxels it is invisible. Where the voxels have NOT
+## arrived it is the whole point: what shows through a hole in the world is
+## then ground drawn a metre and a half low, rather than sky. Hard rule 2 does
+## not trade.
+const SEAM_SINK_BLOCKS := 3.0
 
 ## IT WAS BRIEFLY 12 WHILE TERRACING, AND THAT WAS TWO MISTAKES IN ONE LINE.
 ## Distance v2 Stage 8, reverted while merging to main. Kept as a comment
@@ -481,8 +512,17 @@ func run() -> void:
 	# exactly: a small overlap is hidden by the voxels, whereas a small gap is
 	# a hole you can see the sky through.
 	var voxel_radius_blocks: float = float(config.voxel_radius_chunks * Chunk.SIZE)
-	var exclude := maxf(voxel_radius_blocks - float(2 * base_step), 0.0)
-	_seam_radius = exclude
+	# THE SEAM AND THE HOLE ARE TWO DIFFERENT RADII SINCE DISTANCE V3 STAGE 7,
+	# and they used to be the same number.
+	#
+	# `_seam_radius` is where the far mesh is meant to AGREE with the voxels -
+	# the nominal voxel edge, which is what `_corner_y`, `_level_at` and
+	# `_terrace_at` all measure their fades from, and it must not move or the
+	# terrace would fade in somewhere else. `exclude` is where the far mesh
+	# stops DRAWING, and overdraw pushes that inward, under the voxels.
+	_seam_radius = maxf(voxel_radius_blocks - float(2 * base_step), 0.0)
+	var exclude := maxf(
+		voxel_radius_blocks - float(FRONTIER_OVERLAP_CELLS * base_step), 0.0)
 	# Per sector, the same two-cell overlap subtracted from the frontier rather
 	# than from the nominal radius. A sector whose voxels are still coming keeps
 	# its far mesh all the way in.
@@ -1178,7 +1218,16 @@ func _corner_y(bx: int, bz: int, coarse: float, band: float, y_offset: float) ->
 	# The offset exists to keep the far mesh UNDER voxels whose detail it does
 	# not know about. Where it does know about it, there is nothing to hide
 	# from and the offset would reintroduce the step it was covering.
-	return h * bs + y_offset * (1.0 - blend)
+	#
+	# AND INSIDE THE SEAM RADIUS IT SINKS, distance v3 Stage 7. `blend` saturates
+	# at 1 the moment the far mesh is inside the voxel edge, so everything the
+	# overdraw draws under the voxels would otherwise sit exactly on the voxel
+	# surface and poke through half of it. `over` is how far inside the seam
+	# this corner is, in bands, and the sink is zero AT the seam - so the join
+	# itself is exactly what it was - and full one band in. See
+	# SEAM_SINK_BLOCKS.
+	var over := clampf((_seam_radius - sqrt(dx * dx + dz * dz)) / band, 0.0, 1.0)
+	return (h - over * SEAM_SINK_BLOCKS) * bs + y_offset * (1.0 - blend)
 
 
 ## THE QUANTISED HEIGHT OF ONE CELL, and the terrace strength there. Returns

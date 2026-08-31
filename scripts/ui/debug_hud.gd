@@ -119,6 +119,8 @@ const LOCAL_TUNING_ROWS := [
 	["far_grain", "distance: far grain", 0.0, 0.2, 0.005],
 	["far_riser_axis", "distance: riser axis (cross)", 0.0, 0.3, 0.01],
 	["far_fog_start_frac", "distance: fog start (x reach)", 0.0, 0.9, 0.05],
+	["far_overdraw", "distance: far starts at (x r)", 0.0, 0.9, 0.05],
+	["far_dither_m", "distance: seam dither (m)", 0.0, 90.0, 5.0],
 ]
 
 var config: WorldgenConfig = null

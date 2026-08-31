@@ -61,6 +61,9 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	# OPAQUE_SHADER rather than editing it - so the near field's shader string is
 	# byte for byte the one main compiles.
 	material_override = Look.far_field_material()
+	# DISTANCE V3 STAGE 7. Before any job exists, and on the main thread - see
+	# apply_overdraw().
+	apply_overdraw(config)
 	# DISTANCE V2 STAGE 0. Remember what the far-only knobs are worth NOW, so
 	# the first turn of a spinbox after the world loads is seen as a change
 	# rather than as the value the snapshot happened to be seeded with.
@@ -156,7 +159,34 @@ func exclusion_blocks() -> float:
 	if _config == null:
 		return 0.0
 	var voxel_radius_blocks := float(_config.voxel_radius_chunks * Chunk.SIZE)
-	return maxf(voxel_radius_blocks - float(2 * _config.far_step), 0.0)
+	# THE OVERDRAW RADIUS, distance v3 Stage 7, and it used to be the nominal
+	# two-cell margin. Same expression the job uses, same static, so the two
+	# cannot drift - which is the whole reason that static exists.
+	return maxf(voxel_radius_blocks
+		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS * _config.far_step), 0.0)
+
+
+## WHERE THE FAR FIELD STARTS, from far_overdraw. Distance v3 Stage 7.
+##
+## `far_overdraw` is the fraction of the voxel radius the far mesh's inner edge
+## sits at - DH's `overdrawPreventionPercent`, same sense: 0.9 is almost no
+## overlap and 0.2 is a lot. The job and `world.gd` both work in CELLS of
+## overlap rather than in a fraction, because `world.gd` subtracts a constant
+## from a PER-SECTOR frontier and a fraction of what would be a different
+## number in every sector. So the fraction is converted once, here, against the
+## nominal voxel radius: at 0.667 this returns 8, which is the constant
+## distance v2 shipped, exactly.
+##
+## MAIN THREAD ONLY. It writes a static a worker reads; called from setup() and
+## from apply_far_knobs(), both of which are the main thread's, and never from
+## inside a job.
+static func apply_overdraw(config: WorldgenConfig) -> void:
+	if config == null:
+		return
+	var voxel_radius_blocks := float(config.voxel_radius_chunks * Chunk.SIZE)
+	var overlap := (1.0 - clampf(config.far_overdraw, 0.0, 1.0)) \
+		* voxel_radius_blocks / float(maxi(config.far_step, 1))
+	FarFieldJob.FRONTIER_OVERLAP_CELLS = maxi(int(round(overlap)), 2)
 
 
 ## What the last rebuild cost, for the F3 readout. Distance v1 Stage 0.
@@ -252,7 +282,7 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# exact confusion distance v2 Stage 0 existed to remove. The rebuild it
 	# also triggers is redundant and costs one worker task nobody is
 	# waiting on.
-	"far_fog_start_frac",
+	"far_fog_start_frac", "far_overdraw", "far_dither_m",
 ]
 
 static var _knobs := {}
@@ -320,6 +350,10 @@ static func apply_far_knobs(world: Node, far_trees: Node,
 	if world.config != null:
 		for key in moved:
 			world.config.set(key, config.get(key))
+	# DISTANCE V3 STAGE 7. The overdraw is a static the JOB reads and world.gd
+	# reads, so it is pushed before the rebuild is asked for rather than read
+	# out of the config inside the job.
+	apply_overdraw(config)
 	if not far_field.rebuild_in_place():
 		return fallback
 	# The ring is rebuilt too: far_terrace moves the shelf every impostor

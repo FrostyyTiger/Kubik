@@ -1032,3 +1032,127 @@ Cost, and both are named rather than buried:
    the risers, and the lever is `far_fog_start_frac` and `fog_bands`, both of
    which are on F4 and both of which are Marcel's.
 
+---
+
+# Night 2
+
+## Stage 7 - The seam: overdraw and the dithered dissolve
+
+**Shipped**, `far_overdraw` default **0.0** and `far_dither_m` default **0.0**.
+**Hard rule 2 is restored: 0 holes in all three runs.**
+
+### The overdraw, and why DH's number is the wrong number here
+
+`far_overdraw` is the fraction of the voxel radius at which the far mesh's
+inner edge sits - DH's `overdrawPreventionPercent`, same sense. What shipped
+before this epic is `voxel_radius - 8 * far_step` out of `voxel_radius`, which
+is **0.667**; DH's own automatic table would pick 0.8 or 0.9 at a comparable
+render distance, and the plan asks for **0.85**. All three are LESS overlap
+than we already had, and the arithmetic in Stage 4 says what is actually
+needed: the rebuild takes 6.3 s during a sprint, the disc that reaches the
+screen is centred 82 m behind the player, the voxel radius is 96 m, so the
+overlap has to exceed 82 of the 96. What is left is nearly nothing.
+
+**So 0: the far mesh is drawn under the whole voxel disc.** It costs
+**322,988 vertices against 320,764**, which is +0.7% and still inside the
+budget, and **3,284 ms of idle rebuild against 3,223**, which is +1.9%. The
+plan's worry about the price of overdraw does not survive contact with the
+log-ring ladder: the disc it adds is ring 0's cheapest 1,800 quads.
+
+### The sink, which overdraw needed and the plan did not mention
+
+Inside the seam band `_corner_y()` deliberately computes the voxel surface
+itself, `coarse + detail + half a block`. The voxel you stand on has its top
+face at `floor(coarse + detail) + 1`. The difference is `0.5 - frac(...)`, so
+**half of the overdraw would poke up through the near ground**, by up to a
+quarter of a metre, and what a player would see is patches of far-field colour
+lying over the terrain at their feet.
+
+`SEAM_SINK_BLOCKS = 3.0` - `detail_amp`, the amplitude of the only thing the
+far mesh does not know about the voxel surface, and six times the worst
+poke-through. Ramped over the seam band, so it is **exactly zero AT the seam**
+and the join itself is what it always was, and full one band inside. Under the
+voxels it is invisible; where the voxels have not arrived, what shows through
+is ground drawn a metre and a half low instead of sky.
+
+### The one number that had to move
+
+`--stream-probe --strict`, three runs, `ganymede`:
+
+| run | holes | front min, out / back | frames over 33 ms | verdict |
+| --- | --- | --- | --- | --- |
+| 1 | **0** | 40.0 m / 48.0 m | 3 | FAIL (long frames only) |
+| 2 | **0** | 48.0 m / 56.0 m | 0 | **PASS** |
+| 3 | **0** | 48.0 m / 56.0 m | 0 | **PASS** |
+
+**Against Stage 4's 25 and 8. Hard rule 2 is met.** The one FAIL is the
+long-frame threshold, which distance v1 already recorded as failing on about
+half of all runs on this box and which `stream_probe.gd`'s own `TODO(marcel)`
+calls the worst possible instrument for a drifting continuous quantity. Holes
+are the hard rule and holes are zero.
+
+### The dither is implemented and switched off, and the reason is arithmetic
+
+DH's 4x4 Bayer discard is in the far field's spliced shader, verbatim in
+mechanism - screen-coordinate Bayer, `smoothstep(clip, 1.5 * clip, viewDist)`,
+DH's own 0.001 fudge "to make sure all pixels fade out", discard below - on
+`far_dither_m`, in metres, **default 0**.
+
+**It is in direct conflict with the line above it.** The dissolve discards
+fragments nearer than `clip`, and after this stage **every one of those is a
+fragment covering a hole**. DH can afford the dissolve because vanilla
+Minecraft meshes a chunk in milliseconds; ours takes 6.3 s to rebuild, which is
+the entire reason `far_overdraw` is 0. Turning the dissolve on undoes the stage.
+
+It is left in, on a knob, because the conflict is a property of the rebuild
+time and not of the idea - if the far-mesh job ever gets cheap (the GDExtension
+conversation), the dissolve becomes affordable and this is where it lives. A
+value that is safe **today** is about 30 m: the stream probe measures the
+frontier ahead of a sprinting player at no less than 40 m in every run above,
+so fragments inside 30 m are covering ground that is always there. Photographed
+at 30 m for Marcel.
+
+### Speed-aware overdraw: deliberately not attempted
+
+DH reduces its overlap toward 0.2 at speed "to give MC a chance to
+load/generate", and the plan asks for an attempt. **It is the wrong direction
+for us and would make this stage's failure worse.** DH reduces overdraw at
+speed because its overdraw costs vanilla terrain nothing to replace; ours is
+already at maximum precisely BECAUSE of speed, and the mechanism as DH has it
+would remove overlap at exactly the moment the 82 m lag appears. Not
+implemented, and the reason is recorded rather than the file being blamed - it
+would not have needed a file outside the lane.
+
+### Gate
+
+| gate | result |
+| --- | --- |
+| stream probe at sprint, zero holes, full harness | **MET - 0, 0, 0 over three runs**, against Stage 4's 25 and 8 |
+| the join invisible at default knobs (photograph) | **MET by eye** - `s5-fog/1-spawn.png` against `s7-seam/1-spawn.png` are indistinguishable; no far-field patch appears anywhere over the near ground, which is what the sink is for. Marcel rules |
+| swatches identical | **MET - 0 pixels, both sheets**, after a second splice into the far field's shader |
+| far probe deterministic | **MET** - see the Stage 10 run, which covers this commit's job unchanged |
+| vertex budget | **MET - 322,988**, +0.7% over Stage 4 and inside ~350,000 |
+| idle rebuild | **3,284 ms**, +1.9% over Stage 4 and under the 5 s line |
+
+**The near-band tolerance, since the plan asks for a crop "within
+flora-streaming tolerance" and never says what that is.** Measured, from two
+tours of identical code (`s0-base` against `s1-vote0`), rows 500-720:
+`16-spawn-postcard` **6.92**, `4-valley-floor` **3.00**, `1-spawn` 0.87,
+`6-postcard` 0.22, `14-postcard-dusk` 0.07. Against that floor, Stage 5 to
+Stage 7:
+
+| shot, rows 500-720 | delta | floor | |
+| --- | --- | --- | --- |
+| 16-spawn-postcard | 1.50 | 6.92 | inside |
+| 4-valley-floor | 3.39 | 3.00 | at the floor |
+| 1-spawn | 3.68 | 0.87 | **over** |
+| 6-postcard | 0.91 | 0.22 | **over** |
+
+Two of the four are over their own floor, and the honest reading is that the
+floor is per-shot and this measurement has one sample of it. **Looking at the
+pair is what settles it**, and `1-spawn` before and after are the same
+photograph but for which flora columns had landed: the meadow, the terrace
+steps to the right, the treeline and the water are pixel-alike, and nowhere is
+there a patch of far-field colour lying over the near ground. That is the
+artefact the sink exists to prevent and it is not there.
+
