@@ -71,9 +71,10 @@ const SAVE_PATH := "user://ui.tres"
 @export var slot_gap := 8.0
 
 ## The compass strip (Stage 5): its width, its height, and how far it hangs
-## below the top edge.
+## below the top edge. The height has to carry a row of chevrons above a row of
+## cardinals, so it is taller than the type in it.
 @export var strip_width := 460.0
-@export var strip_height := 26.0
+@export var strip_height := 34.0
 @export var strip_margin_y := 14.0
 
 ## Degrees of heading visible across the whole strip. Smaller is a longer lens:

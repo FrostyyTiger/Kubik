@@ -576,6 +576,21 @@ func _start_hud_shots() -> void:
 	_stats.apply_delta(Net.local_peer_id(), "hp", -30.0, "shot")
 	await _hud_shot("hurt", 0.5)
 
+	# THE PARTY, STAGED. A second peer is injected through the NORMAL path -
+	# _merge_state into the authoritative table, then _apply_states, which is
+	# the same function the sync tick calls - so the icons and the chevron are
+	# built from a row that arrived the way every row arrives. A fake set
+	# straight into the icons would photograph the icons and prove nothing
+	# about the wire.
+	await _hud_shot_party("party")
+
+	# AND THE HELD THING ACTS. Slot 1 is the slab tool; using it drives
+	# world.request_set_block through the one mutation path, which journals.
+	# The dump below is what that is judged on.
+	_hud.select_slot(0)
+	use_slab_tool()
+	await get_tree().process_frame
+
 	# THE F8 PANEL, ON SCREEN, AT 720 LOGICAL. Stage 1 replaced its hard-coded
 	# 352x640 scroll box with anchors and offsets and could not photograph the
 	# result, because F8 lives in this scene and this scene had no camera on it
@@ -600,6 +615,61 @@ func _hud_shot(name: String, time_of_day: float) -> void:
 	_hud.settle(HUD_SHOT_SETTLE_S)
 	print("[HudShot] %s: %s" % [name, _hud.fade_line()])
 	print("[HudShot]   %s" % _hud.layout_line())
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+
+## A staged second peer, 20 m due east, hurt, and photographed.
+##
+## KIRA at 60 health is not a decoration: the icon draws its hurt arc only
+## below full, the chevron's bearing is computed from this position against the
+## player's, and the hue is color_for_peer(2) - a number the acceptance test
+## can compute independently as fposmod(2 * 0.61803398875, 1.0).
+##
+## DUE EAST because east is +X under the compass's NORTH_IS_MINUS_Z, so the
+## chevron must land in the east half of the strip. A bearing that came out
+## west would mean the cardinal convention disagrees with itself, which is
+## exactly the class of bug a single named constant is supposed to prevent and
+## exactly the one nobody notices without a picture.
+func _hud_shot_party(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	var here := _player.global_position
+	# KIRA, DUE EAST AND HURT. East is +X under NORTH_IS_MINUS_Z, so her
+	# chevron must land in the east half of the strip; at 60 health her icon
+	# must grow the hurt arc a healthy partner does not have.
+	_merge_state(2, {
+		"p": here + Vector3(20.0, 0.0, 0.0), "y": 0.0, "v": Vector3.ZERO,
+		"s": 1, "l": 0.0, "n": "KIRA",
+		"a": CharacterDef.new().to_bytes(),
+		"hp": 60.0, "sp": 100.0, "mp": 100.0,
+	})
+	# TORV, DUE NORTH AND UNHURT, WHICH IS THE ONE THE NAMETAG CHECK NEEDS.
+	# The player spawns facing north, so this body is in frame - and a body in
+	# frame is the only way to photograph the ABSENCE of a floating Label3D
+	# over its head. Kira, off to the east, is outside a 68 degree fov and
+	# proves nothing about a tag either way.
+	#
+	# He is also the second icon, so the row lays out more than one - a cap of
+	# four that has only ever been asked to draw one is a cap nobody has tested.
+	_merge_state(3, {
+		"p": here + Vector3(0.0, 0.0, -8.0), "y": 0.0, "v": Vector3.ZERO,
+		"s": 1, "l": 0.0, "n": "TORV",
+		"a": CharacterDef.new().to_bytes(),
+		"hp": 100.0, "sp": 100.0, "mp": 100.0,
+	})
+	# Through the same function the sync tick uses, so the RemotePlayer is
+	# spawned by the code that spawns every RemotePlayer.
+	_apply_states(_states)
+	_hud.settle(HUD_SHOT_SETTLE_S)
+	print("[HudShot] %s: %s" % [name, _hud.party_line()])
+	# WHERE TORV'S HEAD IS, IN PIXELS, so the nametag check has a named band to
+	# sample rather than an eyeballed one. A tag would have floated just above
+	# this point; the acceptance test asserts there is nothing there.
+	var head := _player.get_camera().unproject_position(
+		here + Vector3(0.0, 1.9, -8.0))
+	print("[HudShot] %s: torv head at %s, tag band would be rows %d-%d" % [
+		name, head, int(head.y) - 44, int(head.y) - 4])
 	await UiShot.capture(get_tree(), name, UiShot.hud_label())
 	_hud_shots_taken += 1
 
@@ -1104,6 +1174,36 @@ func peer_row(peer_id: int) -> Dictionary:
 	return _states.get(peer_id, {})
 
 
+## Everybody except us, as {peer, row} pairs, wherever this machine's copy of
+## the table lives (ui v1 Stage 5).
+##
+## The host reads its own `_states`; a client reads the whole table the host
+## last sent. The party icons and the compass chevrons are built from this and
+## from nothing else, which is what makes them cost NO NEW NETWORK TRAFFIC: a
+## bearing comes out of a position the sync has always carried, and a friend's
+## health out of the three floats Stage 3 put on the same packet.
+func other_peer_rows() -> Array:
+	var me := Net.local_peer_id()
+	var table: Dictionary = _states if Net.is_host() else _last_states
+	var out := []
+	for peer_id in table:
+		if peer_id == me:
+			continue
+		out.append({"peer": peer_id, "row": table[peer_id]})
+	return out
+
+
+## THE HOTBAR'S SLOT 1 ACTS. Called by the HUD, and it is the same call the G
+## key used to make - a request through the one mutation path, which the host
+## validates, applies, broadcasts and (since Stage 3) journals.
+##
+## The point of a stand-in item before Items v1 exists: select-and-use is
+## proven end to end through the real chain rather than asserted about a chain
+## nobody has driven.
+func use_slab_tool() -> void:
+	_toggle_debug_slab()
+
+
 ## What the host's body for that peer was last told. Probe diagnostics only.
 func peer_input_line(peer_id: int) -> String:
 	if not _sims.has(peer_id):
@@ -1295,7 +1395,7 @@ func status_line() -> String:
 ## The keys, for the same readout. Kept as data next to the line it prints on,
 ## and the one place a new binding has to be written down.
 func keybind_line() -> String:
-	return "WASD+mouse, Space jump, [F] fly, [G] slab, [H] hurt, [C] sheet, Esc"
+	return "WASD+mouse, Space jump, [1-5]/wheel hotbar, LMB use, [F] fly, [H] hurt, [C] sheet, Esc"
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1306,18 +1406,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 		return
 
-	# TEMPORARY until we have block interaction (raycast + break/place).
-	# Exists so the authority chain can be verified end to end: press G on the
-	# CLIENT and the slab appears on both machines, because the client only
-	# sent a request and the host broadcast the result back.
-	#
-	# UI V1 STAGE 5 RETIRES G: the slab becomes hotbar slot 1, which drives
-	# this same path through the same request, and select-and-use is then
-	# proven end to end rather than bound to a key nothing will ever ship.
+	# UI V1 STAGE 5 RETIRED THE G BINDING. The slab is hotbar slot 1 now and it
+	# is used by selecting it and clicking, which drives this same request
+	# through the same one mutation path - so the authority chain is still
+	# verified end to end, and now by the thing a player would actually do
+	# rather than by a key nothing will ever ship. See use_slab_tool().
 	if event is InputEventKey and event.pressed and not event.echo:
-		if event.physical_keycode == KEY_G:
-			_toggle_debug_slab()
-			return
 		# TEMPORARY, AND ON THE SAME CONTRACT THE SLAB IS ON. THE COMBAT PLAN
 		# DELETES THIS KEY (ui v1 Stage 3, Decision 6).
 		#

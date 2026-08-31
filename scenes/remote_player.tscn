@@ -9,12 +9,3 @@ script = ExtResource("1_remote")
 [node name="View" type="Node3D" parent="."]
 script = ExtResource("2_view")
 
-[node name="Nametag" type="Label3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2.3, 0)
-billboard = 1
-no_depth_test = true
-fixed_size = true
-pixel_size = 0.002
-text = "peer"
-font_size = 64
-outline_size = 20

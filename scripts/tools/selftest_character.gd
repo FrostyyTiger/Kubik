@@ -1791,13 +1791,12 @@ func _test_remote_row():
 			print("  %s left the remote with no geometry" % case["label"])
 			bad += 1
 
-	# The name is sanitised by the HOST, so what arrives here is already clean -
-	# but the tag must show what arrived rather than something of its own.
-	var tag: Label3D = remote.get_node("Nametag")
-	if tag.text != "line\nbreak and a very long name indeed":
-		# ...unless nothing overwrote it, which is also fine. The point of the
-		# check is that a hostile string cannot break the node.
-		pass
+	# THE NAMETAG IS GONE (ui v1 Stage 5, ui-v1.md decision 5). Four lines that
+	# fetched $Nametag and compared its text stood here; they were a no-op
+	# check even then - the body of the `if` was `pass` - and they would crash
+	# on the missing node now. The name is stored on the remote and read by the
+	# party icons, and the hostile-payload assertion below is the one that was
+	# ever doing work.
 
 	# The hostile payload must have produced the DEFAULT human, not a
 	# lizardfolk with a beard index of 99.

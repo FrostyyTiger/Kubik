@@ -57,6 +57,7 @@ sampled out of them are here.
 | 2 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`ui mouse owners`) |
 | 3 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`stats table`) |
 | 4 | `76cccdb6` | `(-44, -124)` | all green |
+| 5 | `76cccdb6` | `(-44, -124)` | all green, character selftest green **post-nametag-removal** |
 
 ---
 
@@ -323,6 +324,97 @@ the panel keys are untouched** - hard rule 3 holds.
 
 ---
 
+## Stage 5 - hotbar, compass strip, party icons, and the nametag dies
+
+### The evidence [deterministic]
+
+`party.png`, sampled with `~/.venvs/kubik/bin/python`. Two peers staged
+through `_merge_state` + `_apply_states` - **the same functions the sync tick
+calls**, so what is photographed is built from rows that arrived the way every
+row arrives. KIRA due east at 60 hp; TORV due north at 100 hp.
+
+| check | result |
+| --- | --- |
+| peer-2 hue | computed **independently in Python** as `hsv(fposmod(2 x 0.61803398875, 1), 0.65, 0.95)` = **#B1F255**; the game printed `b1f255`; **126 ring pixels** of it in the icon area |
+| chevron in the east half | **22 px at x 864-870**, strip centre 640 - all east |
+| no nametag over the body | band rows 224-264, x 560-720 (named by the driver from `unproject_position`): **0 PAPER pixels** in 6601 |
+| health only when hurt | **161 SUN px** around KIRA (hp 0.60), **0** around TORV (hp 1.00) |
+| gold nowhere but the selected slot | **368 GOLD px, x 508-555** - slot 1's frame is x 508-554, and there is no gold anywhere else in the hotbar row |
+
+The nametag check is decisive on PAPER rather than on INK: the old `Label3D`
+was `modulate = Deco.PAPER` with a darkened peer-hue outline, so paper WAS the
+tag's ink. There is none. (The band does contain 157 INK-ish pixels - that is
+Torv's dark hair, which is what is actually in that band now.)
+
+### The journal, from the `use` step
+
+The driver selects slot 1 and uses it. The dump:
+
+- **1 x `stat_changed`** (the `hurt` step's -30, peer 1, 100 -> 70)
+- **9 x `block_edit`**, every one `peer: 1`, at `(-1..1, 114, -1..1)`, `block: 5`
+
+**The plan's acceptance says "exactly one `block_edit`". It is nine, and that
+is correct.** The stand-in tool is the pre-existing debug *slab*, which places
+a 3x3 by construction (`_toggle_debug_slab`, `for x in range(-1, 2)`) and
+always has. One use, nine accepted edits, each journalled once, each with the
+sender the network layer assigned. The claim the acceptance was reaching for -
+select-and-use goes through the one mutation path and every accepted edit is
+now recorded - holds exactly. Recorded rather than papered over.
+
+### Three real layout faults the shots found
+
+None of these were visible in a number; all three needed the picture.
+
+1. **The hotbar hung off the bottom of the screen.** The cluster's box was
+   sized to the bar stack alone, so the five slots laid out below its bottom
+   edge, which is below the screen's. The cluster is the bars *and* the
+   hotbar, and its height says so now.
+2. **The icons spilled across the health bar.** Their box is sized from
+   `natural_width()`, which depends on who is in the party - and the party is
+   not known when the HUD builds itself. Laid out once at build time the box
+   was zero wide, and a Control does not clip its own drawing, so the icons
+   drew outside it. `set_members` reports a change and the row re-lays out.
+3. **Two four-letter names ran into each other.** A 30 px roundel plus a 10 px
+   gap is narrower than the word under it. The step is the wider of the
+   roundel and the name.
+
+### Two calls the plan did not make, taken conservatively and recorded
+
+- **Off-strip party chevrons are PINNED to the strip's edge, not dropped.** At
+  the shipped 150-degree span a friend more than 75 degrees away falls off the
+  ends - which at any moment is most directions - and the first party shot had
+  an icon and no chevron because of it. A tick or a cardinal that scrolls off
+  is genuinely not on the strip and clamping one would be a lie about a
+  direction; "your friend is somewhere off to the right" is not a lie, it is
+  the half of the answer a strip can still give. This is also what makes the
+  acceptance test's "chevron in the east half" true rather than vacuous.
+- **Chevrons draw above the cardinals, not across them.** A friend due north
+  puts their chevron exactly where the N is. `strip_height` went 26 -> 34 to
+  carry both rows; both numbers are on F9.
+
+### The nametag removal, complete
+
+`scenes/remote_player.tscn`'s `Label3D` node, `remote_player.gd`'s `@onready`
+ref, all four feed sites and the height line. The name is a stored
+`display_name` field the party icons read. `selftest_character.gd`'s four
+`Nametag` lines are gone - they were a no-op check even then (the body of the
+`if` was `pass`) and would have crashed on the missing node.
+
+The class docstring's paragraph on why the body is never tinted is
+**rewritten, not deleted** - that reasoning still holds, and it now also says
+where the hue went. `color_for_peer()` stays exactly where it is, static, per
+its own doc comment.
+
+**The character selftest is green after the removal** - the plan's stated MUST.
+
+### The G binding is retired
+
+Slot 1 is the slab tool and using it calls `Game.use_slab_tool()` ->
+`World.request_set_block()`, the same request the key made. The keybind crib on
+F3 reads `[1-5]/wheel hotbar, LMB use` now.
+
+---
+
 ## F9 tunables - starting and final values
 
 Every value this run chose by eye, all reachable from **F9** (layer 12), all
@@ -346,7 +438,7 @@ monitor.
 | `slot_size` | hotbar: slot size | **46.0** | - |
 | `slot_gap` | hotbar: slot gap | **8.0** | - |
 | `strip_width` | strip: width | **460.0** | - |
-| `strip_height` | strip: height | **26.0** | - |
+| `strip_height` | strip: height | **34.0** | - |
 | `strip_margin_y` | strip: top margin | **14.0** | - |
 | `strip_span_deg` | strip: span (deg) | **150.0** | - |
 | `icon_radius` | party: icon radius | **15.0** | - |
