@@ -436,6 +436,10 @@ func run() -> void:
 	# and a value that changed half way through a build would terrace half a
 	# mesh.
 	_t_amount = clampf(config.far_terrace, 0.0, 1.0)
+	# DISTANCE V3 STAGE 1. Read once per job for the same reason far_terrace is:
+	# it is a knob on a shared config the main thread can write while this worker
+	# runs, and a value that changed half way through would vote on half a mesh.
+	_voting = config.far_vote > 0.0 and generator != null and heightmap != null
 	# ONE LEVEL FOR THE WHOLE JOB - see _t_level. heightmap.step is 4 blocks, so
 	# at the default far_step of 8 the three rings' cells are 8, 16 and 32 blocks
 	# and this picks 32: log2(32/4) + far_filter_bias = 4.
@@ -545,6 +549,9 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# entirely at far_terrace 0 - hard rule 1 is also a cost rule.
 	_t_step = step
 	_t_band = band
+	# Per ring, because the cell grid is per ring and a key from the last ring
+	# could collide with a cell of this one.
+	_vote_memo.clear()
 	_t_full = _t_amount >= 1.0 and band <= 0.0
 	if _t_amount > 0.0:
 		# The margin is the RIDGE reach PLUS ONE, not one cell. A quad asks its
@@ -681,18 +688,28 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				var zdx := float(bx0 + step / 2 - _ring_cx)
 				var zdz := float(bz0 + step / 2 - _ring_cz)
 				zone_d_m = sqrt(zdx * zdx + zdz * zdz) * bs
+			# THE ZONE CELL'S OWN WIDTH IN BLOCKS, which distance v3's vote needs
+			# and the single-sample path never had to name: the vote's four
+			# sub-samples sit at the quarter points of THIS square.
+			var zone_cell := step
 			if ring > 1 and config.far_zone_cell_m > 0.0:
 				var cell_m := maxf(config.far_zone_cell_m,
 					config.far_zone_cell_ratio * zone_d_m)
-				var cell := maxi(int(round(cell_m / bs)), step)
-				zone_bx = Chunk.floor_div(bx0, cell) * cell + cell / 2
-				zone_bz = Chunk.floor_div(bz0, cell) * cell + cell / 2
+				zone_cell = maxi(int(round(cell_m / bs)), step)
+				zone_bx = Chunk.floor_div(bx0, zone_cell) * zone_cell + zone_cell / 2
+				zone_bz = Chunk.floor_div(bz0, zone_cell) * zone_cell + zone_cell / 2
 				# THE ZONE READS THE FILTERED HEIGHT TOO. It decided the quad's
 				# colour off the raw 2 m grid while the quad's own corners came
 				# off the pyramid, so the paint was sampled from a surface the
 				# geometry no longer had.
-				zone_h = _filtered(zone_bx, zone_bz, 0.0)
-			var zone := _far_zone(zone_bx, zone_bz, zone_h, ring)
+				#
+				# NOT TAKEN WHEN THE VOTE IS ON - the vote reads its own four
+				# heights at its own level and this sample would be thrown away.
+				# It is two pyramid reads per quad, which is most of what pays
+				# for the vote.
+				if not _voting:
+					zone_h = _filtered(zone_bx, zone_bz, 0.0)
+			var zone := _far_zone(zone_bx, zone_bz, zone_h, ring, zone_cell)
 			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 			# THE BACKDROP, look v1. One altitude band per quad - so the band
@@ -851,10 +868,140 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 ##
 ## Rendering only: the zones themselves do not move, and nothing here is read
 ## by anything that decides what the world is.
-func _far_zone(bx: int, bz: int, altitude: float, ring: int) -> int:
+func _far_zone(bx: int, bz: int, altitude: float, ring: int, cell: int) -> int:
 	if ring == 0:
 		return generator.surface_zone_at(bx, bz, altitude)
-	return backdrop_zone(generator, bx, bz, altitude)
+	if not _voting:
+		return backdrop_zone(generator, bx, bz, altitude)
+	return _zone_vote(bx, bz, cell)
+
+
+# --- THE MODE VOTE, distance v3 Stage 1 --------------------------------------
+#
+# DISTANT HORIZONS NEVER AVERAGES A COLOUR WHEN IT COARSENS. Merging four fine
+# columns into one coarse column, it takes the MOST COMMON block id at the
+# slice midpoints and keeps that block's colour at full saturation, with air
+# excluded so a hollow structure cannot become a hole and ties falling through
+# to the first sub-column. `docs/research/distant-horizons.md` §2c has the code.
+# The consequence is the one this epic is named for: two adjacent coarse cells
+# over a mixed forest floor come out LEAVES and DIRT rather than as two shades
+# of brown-green soup, and the arbitrariness of the tie-break is free
+# high-frequency texture rather than error.
+#
+# WHAT WE HAD INSTEAD, and it is worth saying plainly because it is not
+# averaging either. Past ring 0 the far field asks `backdrop_zone` for the zone
+# at ONE point - the zone cell's centre - at an altitude read off the pyramid at
+# a level chosen from the distance to the player. One sample of a smooth
+# surface, so neighbouring cells read neighbouring altitudes and agree with each
+# other; the mush is not a blend, it is a LOW-PASS. Nothing in the picture ever
+# says "this cell is forest and the one beside it is rock" unless the smoothed
+# altitude happens to cross a threshold between them.
+#
+# So the port is: four samples at the sub-cell midpoints, EACH AT THE FINER
+# LEVEL - which is exactly what DH is doing when it votes over four fine
+# columns - and the mode of what they answer.
+#
+#   * The level is the one whose cells are the SUB-cell's width, so the four
+#     samples read a surface that has detail at the scale they are spaced at.
+#     Voting over four reads of a surface too smooth to disagree is four times
+#     the cost of the old path and none of the benefit; this is the whole
+#     mechanism.
+#   * SHORE NEVER WINS, which is DH's "air never wins" in our world. A cell
+#     that is three parts meadow and one part lake margin is meadow: a shore
+#     fleck floating on a hillside is the artefact the rule exists to stop, and
+#     shore is the only zone in this world that belongs to a place rather than
+#     to an altitude. A cell whose four samples are ALL shore is shore.
+#   * TIES RESOLVE TO THE FIRST SAMPLE, deterministically. Two-two splits are
+#     common on a boundary and the arbitrariness is the texture.
+#
+# COST. Four bilinear pyramid reads per zone CELL where there was one trilinear
+# per quad - and past ring 1 the zone cell is coarser than the quad, so the
+# memo below serves several quads from one vote and the vote is cheaper than
+# what it replaced. Ring 1 pays in full: its zone cell is its quad.
+
+## HOW MANY SUB-CELLS ON A SIDE. Two, which is DH's four sub-columns, and it is
+## a constant rather than a knob because three would not be a mode over a power
+## of two and five would be a blur.
+const VOTE_SPLIT := 2
+
+## config.far_vote > 0 and the generator can answer. Read once per job, like
+## every other knob the ring loop reads.
+var _voting := false
+
+## THE VOTE MEMO, one entry per zone cell, cleared per ring.
+##
+## Past ring 1 the zone cell grows with distance - `far_zone_cell_ratio * d` -
+## so at 1.5 km one cell covers a couple of dozen quads and the single-sample
+## path was answering the same question for every one of them. Keyed on the
+## cell's own centre, which is snapped to the cell grid, so two quads in one
+## cell hash to one entry by construction.
+var _vote_memo := {}
+
+
+## The mode of the four sub-cell zones. See the block comment above.
+func _zone_vote(cx: int, cz: int, cell: int) -> int:
+	var key := cx * 131071 + cz
+	var hit = _vote_memo.get(key)
+	if hit != null:
+		return hit
+	# The quarter points of the cell: the centres of the four sub-cells, at
+	# least one block apart even if a ring's cell ever became tiny.
+	var q := maxi(cell / 4, 1)
+	var level := _vote_level(cell)
+	var gain: float = config.far_peak_gain
+	var zones := [0, 0, 0, 0]
+	var k := 0
+	for dz in [-q, q]:
+		for dx in [-q, q]:
+			var bx: int = cx + dx
+			var bz: int = cz + dz
+			var h := heightmap.height_at_level(float(bx), float(bz), level)
+			if gain > 0.0:
+				# THE PEAK GAIN IS IN THE VOTE, for the reason the zone reads a
+				# filtered height at all: the snow line has to sit where the
+				# DRAWN summit is, and the drawn summit is the mean pyramid
+				# pulled towards the maxima. A vote off the mean alone would
+				# paint the snow line tens of blocks below the ridge it is on.
+				h = lerpf(h, heightmap.height_max_at_level(
+					float(bx), float(bz), level), gain)
+			zones[k] = backdrop_zone(generator, bx, bz, h)
+			k += 1
+	# The mode, with shore excluded and the first sample winning ties. Four
+	# values, so a histogram is more code than a double loop and slower.
+	var best := -1
+	var best_n := 0
+	for a in 4:
+		if zones[a] == TerrainGenerator.ZONE_SHORE:
+			continue
+		var n := 0
+		for b in 4:
+			if zones[b] == zones[a]:
+				n += 1
+		if n > best_n:
+			best_n = n
+			best = zones[a]
+	if best < 0:
+		best = TerrainGenerator.ZONE_SHORE
+	_vote_memo[key] = best
+	return best
+
+
+## THE PYRAMID LEVEL THE VOTE READS, an integer, from the sub-cell's width.
+##
+## `level = log2(sub-cell / heightmap.step) + far_filter_bias`, floored - the
+## same expression `_t_level` uses for the terrace, asked about a different cell
+## and rounded DOWN rather than left continuous. Floored because the vote wants
+## the finer of the two levels it sits between: a vote is only worth taking over
+## a surface that still has something to disagree about, and it is an integer so
+## the read is one bilinear instead of a trilinear's two.
+##
+## The bias is included so the paint follows the shape: far_filter_bias is the
+## far country's smoothness dial and a vote that ignored it would keep flecking
+## a mountain the geometry had smoothed flat.
+func _vote_level(cell: int) -> int:
+	var sub := maxf(float(cell) / float(VOTE_SPLIT), 1.0)
+	var l := log(sub / float(heightmap.step)) * INV_LN2 + config.far_filter_bias
+	return clampi(int(floor(l)), 0, Heightmap.MAX_LEVEL)
 
 
 ## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.

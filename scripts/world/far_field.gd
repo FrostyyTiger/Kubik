@@ -187,6 +187,10 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	"far_filter_bias", "far_peak_gain", "far_normal_m", "far_level_ref_m",
 	"far_band_m", "far_band_step", "far_zone_cell_m", "far_zone_cell_ratio",
 	"far_tree_tint",
+	# DISTANCE V3, appended. Every one of them redraws the far mesh or the
+	# impostor ring and nothing else, which is what earns a place on this
+	# list - and being on it is what makes a knob judgeable standing still.
+	"far_vote",
 ]
 
 static var _knobs := {}

@@ -960,6 +960,31 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## WHETHER A FAR CELL IS ONE REAL MATERIAL, distance v3 Stage 1.
+##
+## 0 is distance v2's path exactly: past ring 0 the far field asks for the zone
+## at ONE point, the zone cell's centre, at an altitude read off the pyramid.
+## One sample of a smooth surface, so neighbouring cells read neighbouring
+## altitudes and agree with each other - which is the mush this epic is named
+## after. It is not a blend; it is a low-pass, and no colour constant reaches it.
+##
+## 1 is Distant Horizons' mode vote (`docs/research/distant-horizons.md` §2c):
+## four samples at the sub-cell midpoints, each read at the FINER pyramid level
+## so they have something to disagree about, and the most common zone wins.
+## Shore never wins unless every sample is shore - DH's "air never wins", in a
+## world whose one place-rather-than-altitude zone is the lake margin - and a
+## tie falls to the first sample, deterministically. A distant forest becomes
+## leaves-next-to-dirt flecks instead of brown-green soup.
+##
+## A FLAG RATHER THAN A STRENGTH, unlike far_terrace. A zone is an integer and
+## there is no half-way between rock and snow; the continuous version of this
+## idea is far_grain, which is Stage 2 and lives in the shader.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed like every knob distance v1 and v2 added:
+## it decides which of two real materials a cell is PAINTED, never what the
+## world contains, and nothing that decides what a place IS reads it.
+@export var far_vote := 1.0
+
 ## HOW MUCH THE FAR COUNTRY IS MADE OF BLOCKS, distance v2 Stage 0.
 ##
 ## THE KNOB THIS WHOLE EPIC IS JUDGED BY. 0.0 is the smooth bilinear far mesh
@@ -1307,6 +1332,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
+	"far_vote",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

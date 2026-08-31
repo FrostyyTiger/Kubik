@@ -112,6 +112,10 @@ const LOCAL_TUNING_ROWS := [
 	# is what the black crush in the treeline band wants. See the status doc.
 	["far_riser_shade", "distance: riser shade", 0.0, 1.5, 0.05],
 	["far_riser_lift", "distance: riser lift (away)", 1.0, 2.5, 0.05],
+	# DISTANCE V3, appended after distance v2's block. Every row here redraws
+	# the far country in place - no reroll, no chunk rebuilt, the player
+	# standing still - which is the property the whole epic is judged by.
+	["far_vote", "distance: far vote (0/1)", 0.0, 1.0, 1.0],
 ]
 
 var config: WorldgenConfig = null
