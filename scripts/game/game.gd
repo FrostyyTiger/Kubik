@@ -77,6 +77,22 @@ var _sims := {}
 ## HOST ONLY. See journal.gd - habit 2 of the three.
 var _journal := Journal.new()
 
+## HOST ONLY. Health, stamina and mana for everybody - see stats.gd, habit 1.
+##
+## Beside _states rather than inside it, because the two have different
+## lifetimes and different authorities: a state row is rewritten off a body
+## twenty times a second, and a stat only ever changes because something
+## happened. They MEET on the wire - _publish_stats() merges the three numbers
+## into each peer's state row - which is the whole of Decision 1: no new
+## channel, no reliable-on-change RPC, three floats on a packet that was going
+## out anyway.
+var _stats := StatsTable.new()
+
+## CLIENT ONLY. The last whole table the host sent, kept so a client can read
+## ANOTHER peer's stats - the party icons need a friend's health, and
+## _last_authority is only ever our own row.
+var _last_states := {}
+
 ## CLIENT ONLY. The part of a correction not yet applied, and how long is
 ## left to apply it in. An OFFSET rather than a destination, because the body
 ## goes on walking while the correction eases and a destination would drag it
@@ -177,6 +193,12 @@ func _ready() -> void:
 	_body_field.name = "Bodies"
 	add_child(_body_field)
 	_body_field.setup(Net.is_host(), config.block_size, _world, _journal)
+	# THE SAME INJECTION SITE, three lines apart, because they are the same
+	# kind of wiring: the host's journal reaching the two things that have
+	# events worth recording. World's is Decision 10 - block edits are
+	# CLAUDE.md's own first example of habit 2 and were still not journalled.
+	_stats.set_journal(_journal)
+	_world.set_journal(_journal)
 	# See _physics_process: the push must be collected after the bodies that
 	# make the contacts have moved.
 	process_physics_priority = 100
@@ -299,6 +321,11 @@ func _process(delta: float) -> void:
 		# streams around the local player, so a peer 500 m away has nothing to
 		# stand on until the host builds it. See WorldgenConfig.sim_radius_chunks.
 		_world.set_sim_centres(_sim_columns())
+		# ...and how everybody is doing. THREE FLOATS PER PEER ON A PACKET THAT
+		# WAS GOING OUT ANYWAY (Decision 1). Merged rather than assigned, the
+		# same contract p/v/s obey: a `_states[who] = {...}` here would wipe
+		# appearance and name twenty times a second.
+		_publish_stats()
 		# The host is the only one that assembles and distributes the table.
 		# Skip the broadcast when hosting alone - single player is just a host
 		# with no clients, and there is nobody to send to.
@@ -316,6 +343,12 @@ func _on_far_trees_rebuilt(count: int, elapsed_ms: int) -> void:
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	_chunk_count = chunk_count
 	_build_ms = elapsed_ms
+	# The host's own row. Here rather than in _ready because a host is only
+	# really in the world once the world exists, and because solo play is a
+	# host with zero clients - so this is the line that gives a single player
+	# a set of bars at all.
+	if Net.is_host():
+		_stats.ensure_row(Net.local_peer_id())
 	_update_status()
 
 
@@ -656,6 +689,50 @@ func _publish_sim_states() -> void:
 			"s": st.to_state_byte(), "l": st.look_yaw})
 
 
+## Every stat row into the table that goes on the wire.
+##
+## DECISION 1, and the reason there is no stats RPC in this file: the three
+## numbers ride the 20 Hz `_cl_sync_players` broadcast as three more per-tick
+## fields on a row every client already receives and retains. RemotePlayer's
+## set_target() ignores keys it does not know by construction, so a peer on an
+## older build sees a friend standing in the right place and no error.
+##
+## Rewritten every tick even though a stat changes rarely. That is the cheap
+## and correct choice: three floats against a Vector3 and a Transform already
+## in the row, and a change-detecting sender would need an acknowledgement path
+## to survive the packet loss unreliable_ordered exists to tolerate.
+func _publish_stats() -> void:
+	for peer_id in _stats.peer_ids():
+		var row := _stats.get_row(peer_id)
+		_merge_state(peer_id, {
+			"hp": row["hp"], "sp": row["sp"], "mp": row["mp"]})
+
+
+## One peer's stats, wherever this machine's copy of them lives.
+##
+## The host reads its own table. A client reads the last row the host sent -
+## which is DISPLAY ONLY and says so: there is no client write path to a stat
+## anywhere in this game, and no prediction to reconcile, because a stat is not
+## a position. Empty until the first packet arrives, and the bars draw full
+## against an empty row rather than empty, which is the right way round for a
+## number that has not been contradicted yet.
+func peer_stats(peer_id: int) -> Dictionary:
+	if Net.is_host():
+		return _stats.get_row(peer_id)
+	var row: Dictionary = _last_states.get(peer_id, {})
+	var out := {}
+	for stat in StatsTable.ORDER:
+		if row.has(stat):
+			out[stat] = row[stat]
+	return out
+
+
+## HOST ONLY, and read by the self-test and the shot driver. The table itself
+## stays private for the same reason _states does: apply_delta is the seam.
+func stats() -> StatsTable:
+	return _stats
+
+
 ## A CLIENT SAYS WHAT IT LOOKS LIKE. Once on joining, and again if it changes.
 ##
 ## THE HOST VALIDATES EVERY CLAIM, and stores the RE-ENCODED bytes rather than
@@ -715,6 +792,10 @@ func _cl_sync_players(states: Dictionary, bodies: Dictionary = {}) -> void:
 
 
 func _apply_states(states: Dictionary) -> void:
+	# THE WHOLE TABLE, KEPT. _last_authority is our own row only, and the party
+	# icons need a FRIEND's health - which is in this table and nowhere else on
+	# a client. One line, and it is what makes Stage 5 need no new traffic.
+	_last_states = states
 	var me := Net.local_peer_id()
 	for pid in states:
 		if pid == me:
@@ -833,6 +914,7 @@ func _on_host_disconnected() -> void:
 
 func _on_peer_joined(peer_id: int) -> void:
 	if Net.is_host():
+		_stats.ensure_row(peer_id)
 		_journal.log_event("peer_joined", {"peer": peer_id})
 
 
@@ -842,6 +924,7 @@ func _on_peer_left(peer_id: int) -> void:
 	_states.erase(peer_id)
 	_remove_player(peer_id)
 	if Net.is_host():
+		_stats.erase(peer_id)
 		_journal.log_event("peer_left", {"peer": peer_id})
 		if _sims.has(peer_id):
 			_sims[peer_id].queue_free()
@@ -1067,9 +1150,31 @@ func _unhandled_input(event: InputEvent) -> void:
 	# Exists so the authority chain can be verified end to end: press G on the
 	# CLIENT and the slab appears on both machines, because the client only
 	# sent a request and the host broadcast the result back.
+	#
+	# UI V1 STAGE 5 RETIRES G: the slab becomes hotbar slot 1, which drives
+	# this same path through the same request, and select-and-use is then
+	# proven end to end rather than bound to a key nothing will ever ship.
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.physical_keycode == KEY_G:
 			_toggle_debug_slab()
+			return
+		# TEMPORARY, AND ON THE SAME CONTRACT THE SLAB IS ON. THE COMBAT PLAN
+		# DELETES THIS KEY (ui v1 Stage 3, Decision 6).
+		#
+		# Nothing in the game changes a stat yet, and the bars, the fade, the
+		# hurt icon on a partner and the stat_changed journal event cannot be
+		# DEMONSTRATED - let alone photographed - without something that does.
+		# H takes 10 health off whoever presses it, host-side, through
+		# apply_delta like everything else will.
+		#
+		# Host-only on purpose: a client key that took a client's own health
+		# would be the one thing DESIGN.md's networking section forbids, and
+		# writing it "just for a test" is how that rule gets broken for real.
+		if event.physical_keycode == KEY_H and Net.is_host():
+			var left := _stats.apply_delta(
+				Net.local_peer_id(), "hp", -10.0, "debug")
+			print("[Game] debug damage: hp %.0f" % left)
+			return
 
 
 func _toggle_debug_slab() -> void:

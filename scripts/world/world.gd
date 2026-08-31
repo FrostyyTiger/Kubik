@@ -1677,6 +1677,24 @@ func _world_chunk_max() -> int:
 ## joiner needs replayed to catch up.
 var _edits := {}
 
+## THE HOST'S JOURNAL, injected by Game (ui v1 Stage 3, Decision 10).
+##
+## A block edit is CLAUDE.md's own first example of habit 2 - "the host sees
+## every event: an edit, a death, a campfire" - and it was the one event still
+## not being recorded. The only site every accepted edit passes through is
+## _host_apply_edit below, after the validate gate and after the no-op gate,
+## with the sender in hand; anywhere else would journal edits that were
+## refused, or count one edit twice.
+##
+## Null on a client and on anything that builds a World without a Game, which
+## is every self-test - a client's journal would be a journal of what a client
+## was told, which journal.gd already declines to keep.
+var _journal: Journal = null
+
+
+func set_journal(journal: Journal) -> void:
+	_journal = journal
+
 
 ## Ask for a block change. Call this from anywhere; it is the only entry point.
 func request_set_block(world_block_pos: Vector3i, block_id: int) -> void:
@@ -1748,6 +1766,13 @@ func _host_apply_edit(sender_id: int, world_block_pos: Vector3i, block_id: int) 
 		return
 
 	_edits[world_block_pos] = block_id
+	# HABIT 2. Here and not in request_set_block(), because this is the line
+	# after which the edit is real: past the validate gate, past the no-op
+	# gate, and with the sender the network layer assigned rather than one an
+	# argument claimed.
+	if _journal != null:
+		_journal.log_event("block_edit", {
+			"peer": sender_id, "pos": world_block_pos, "block": block_id})
 	# Nobody to tell when hosting alone, and rpc() without a peer is an error.
 	if not Net.other_peer_ids().is_empty():
 		_cl_apply_block.rpc(world_block_pos, block_id)

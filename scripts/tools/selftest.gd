@@ -62,6 +62,7 @@ func _ready() -> void:
 		"far terrace knob": _test_far_terrace_knob,
 		# UI V1 STAGE 2, appended at the end of the list.
 		"ui mouse owners": _test_ui_mouse_owners,
+		"stats table": _test_stats_table,
 	}
 	var failures := 0
 	for name in tests:
@@ -1798,4 +1799,101 @@ func _test_ui_mouse_owners():
 	UiMouse.clear()
 
 	print("ui mouse owners: claim/release set, %d checks failed" % bad)
+	return 1 if bad > 0 else 0
+
+
+## THE STATS TABLE, AND THE ONE MUTATION SEAM (ui v1 Stage 3).
+##
+## Every assertion here is about apply_delta, because apply_delta is the only
+## thing in the game that writes a stat and the clamp and the journal are both
+## inside it. A test that set a row directly would be testing a dictionary.
+func _test_stats_table():
+	var bad := 0
+	var journal := Journal.new()
+	var stats := StatsTable.new()
+	stats.set_journal(journal)
+
+	# A fresh row is the defaults, and the defaults are the maxima.
+	stats.ensure_row(1)
+	var row := stats.get_row(1)
+	for stat in StatsTable.ORDER:
+		if not is_equal_approx(float(row[stat]), float(StatsTable.DEFAULTS[stat])):
+			print("  a fresh row has %s at %s, not the default %s" % [
+				stat, row[stat], StatsTable.DEFAULTS[stat]])
+			bad += 1
+	if not stats.is_full(1):
+		print("  a fresh row does not read as full")
+		bad += 1
+
+	# A REAL DELTA JOURNALS EXACTLY ONE EVENT, with from and to correct. This
+	# is the shot driver's -30 and the H key's -10, so the numbers are the ones
+	# every later stage's evidence is measured against.
+	var before := journal.size()
+	var left := stats.apply_delta(1, "hp", -30.0, "test")
+	if not is_equal_approx(left, 70.0):
+		print("  -30 from 100 left %s" % left)
+		bad += 1
+	if journal.size() != before + 1:
+		print("  one delta wrote %d events" % (journal.size() - before))
+		bad += 1
+	var event: Dictionary = journal.dump()[journal.size() - 1]
+	if event.get("kind") != "stat_changed" or event.get("stat") != "hp" \
+			or not is_equal_approx(float(event.get("from", -1.0)), 100.0) \
+			or not is_equal_approx(float(event.get("to", -1.0)), 70.0) \
+			or event.get("peer") != 1 or event.get("cause") != "test":
+		print("  the event a delta wrote is wrong: %s" % event)
+		bad += 1
+	if stats.is_full(1):
+		print("  a hurt row still reads as full - the fade would never come in")
+		bad += 1
+
+	# A NO-OP DELTA JOURNALS NOTHING. Regen against a full bar at 20 Hz is the
+	# case: 1200 identical events a minute is the same as no journal at all.
+	before = journal.size()
+	stats.apply_delta(1, "hp", 0.0, "noop")
+	if journal.size() != before:
+		print("  a zero delta wrote %d events" % (journal.size() - before))
+		bad += 1
+	# ...and neither does one that is clamped away against a full stat.
+	stats.apply_delta(1, "sp", 40.0, "overheal")
+	if journal.size() != before:
+		print("  healing a full stat wrote %d events" % (journal.size() - before))
+		bad += 1
+	if not is_equal_approx(float(stats.get_row(1)["sp"]), 100.0):
+		print("  healing past the maximum left sp at %s" % stats.get_row(1)["sp"])
+		bad += 1
+
+	# CLAMPED AT ZERO, and health at 0 does nothing else - there is no death
+	# system, and the table's docstring says so.
+	stats.apply_delta(1, "hp", -500.0, "test")
+	if not is_equal_approx(float(stats.get_row(1)["hp"]), 0.0):
+		print("  -500 clamped to %s, not 0" % stats.get_row(1)["hp"])
+		bad += 1
+
+	# The row is a COPY. Writing to what get_row hands back must not be a way
+	# around the seam.
+	var stolen := stats.get_row(1)
+	stolen["hp"] = 999.0
+	if not is_equal_approx(float(stats.get_row(1)["hp"]), 0.0):
+		print("  writing to a handed-out row changed the table - the seam leaks")
+		bad += 1
+
+	# fraction_of() reads a row off the wire the same way it reads one here,
+	# which is what lets a client draw the same bar from a synced dictionary.
+	if not is_equal_approx(StatsTable.fraction_of({"hp": 70.0}, "hp"), 0.7):
+		print("  fraction_of 70/100 is not 0.70")
+		bad += 1
+	# An absent stat draws FULL, not empty: a bar with no packet yet has not
+	# been contradicted, and an empty health bar on join would read as a bug.
+	if not is_equal_approx(StatsTable.fraction_of({}, "hp"), 1.0):
+		print("  an empty row does not draw a full bar")
+		bad += 1
+
+	# erase() forgets a peer that left, so a stale row cannot be broadcast.
+	stats.erase(1)
+	if stats.has_row(1) or not stats.get_row(1).is_empty():
+		print("  an erased peer still has a row")
+		bad += 1
+
+	print("stats table: seam, clamp and journal, %d checks failed" % bad)
 	return 1 if bad > 0 else 0

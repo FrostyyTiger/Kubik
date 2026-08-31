@@ -55,6 +55,7 @@ sampled out of them are here.
 | 0 | `76cccdb6` | `(-44, -124)` | all green |
 | 1 | `76cccdb6` | `(-44, -124)` | all green |
 | 2 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`ui mouse owners`) |
+| 3 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`stats table`) |
 
 ---
 
@@ -172,6 +173,70 @@ lane does not read it as an oversight.
 `$G --headless --path . --import` before any gate will parse. The plan says
 so; this run hit it anyway on `UiMouse` and the symptom is a *hang*, not a
 clean error - the selftest scene fails to load and the process sits there.
+
+---
+
+## Stage 3 - the stats table, the sync ride, and the journal
+
+`StatsTable` (`scripts/game/stats.gd`) holds `peer_id -> {hp, sp, mp}` on the
+host. `DEFAULTS` carries the starting values **and** the maxima in one const -
+100/100/100 - so a racial health bonus or a mana pool that grows with Magic
+changes a table and nothing else. `apply_delta` is the only thing in the game
+that writes a stat, and it journals `stat_changed {peer, stat, from, to, cause}`
+through an injected Journal.
+
+**Health at 0 does nothing.** No death, no downed, no respawn - Combat v1 owns
+what 0 means, and the table's docstring says so rather than leaving the next
+reader to infer it.
+
+`stats table` in `scenes/selftest.tscn`, **0 checks failed** [deterministic]:
+defaults are the maxima; -30 from 100 leaves 70 and writes exactly one event
+with `from`/`to` correct; a zero delta and a heal against a full stat write
+nothing; -500 clamps to 0; a handed-out row is a copy and writing to it does
+not reach the table; `fraction_of` reads 70/100 as 0.70 and an **absent** stat
+as 1.0 (a bar with no packet yet has not been contradicted - an empty health
+bar on join would read as a bug); `erase` forgets a peer that left.
+
+### The sync ride
+
+Decision 1, as built: `_publish_stats()` merges `{"hp","sp","mp"}` into each
+peer's `_states` row from inside the existing 20 Hz block, so the three floats
+travel on a packet that was going out anyway. No new channel, no new rate, no
+reliable-on-change RPC - **hard rule 7 untouched**. Rewritten every tick rather
+than on change: three floats against a Vector3 and a transform already in the
+row, and a change-detecting sender would need an acknowledgement path to
+survive the loss `unreliable_ordered` exists to tolerate.
+
+Clients keep the **whole** table now (`_last_states`, one line in
+`_apply_states`) because `_last_authority` is our own row only and the Stage 5
+party icons need a *friend's* health. `peer_stats(peer_id)` reads the host
+table or the client copy as appropriate. **Hard rule 8 holds:** there is no
+client write path to a stat anywhere, and nothing predicts one.
+
+### The world.gd exception (Decision 10)
+
+**+25 lines, -0. Not one existing line of `world.gd` was modified** - `git
+diff` reports 25 insertions and no deletions. The two additions are a
+`set_journal()` setter beside `_edits`, and one `log_event("block_edit", ...)`
+in `_host_apply_edit` immediately after `_edits[world_block_pos] = block_id` -
+past the validate gate, past the no-op gate, with the sender id the network
+layer assigned rather than one an argument claimed. `game.gd` injects it three
+lines from where BodyField gets the same journal. The client's
+`_cl_apply_block` journals nothing.
+
+### The H key (Decision 6)
+
+`KEY_H`, **host-side only**, -10 hp through `apply_delta`, marked TEMPORARY on
+the same contract the G slab is on: **Combat v1 deletes it.** Host-only is not
+a convenience - a client key that took a client's own health is the exact thing
+`DESIGN.md` § networking forbids, and writing it "just for a test" is how that
+rule gets broken for real.
+
+### Operational note
+
+The default ENet port was in use on this box (the concurrent distance-v3 lane),
+so the boot smoke test ran `--port 24071`. The shot driver in Stage 4 hosts
+**offline** and binds no port at all, so it is unaffected.
 
 ---
 
