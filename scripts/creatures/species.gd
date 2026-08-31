@@ -269,6 +269,27 @@ const REQUIRED_BITE_KEYS := ["damage", "range_m", "cooldown_s"]
 # `dive` and `emerge` (burrow), `cry` and `perch` (eagle).
 
 
+## The kinds above, as data rather than as prose in the comment alone.
+##
+## HABIT 1 (CLAUDE.md): facts as data. The probe filters the journal for the
+## creature slice, and a filter written as a literal list in the probe is a
+## second copy of this schema that drifts from the first by the third stage.
+const EVENT_KINDS := [
+	"den_placed", "spotted", "lost", "howl",
+	"converge", "engage", "bite", "leash_turn",
+]
+
+## Named now so the schema is one document rather than two. Night 2 moves
+## these up into EVENT_KINDS as it builds the marmot and the eagle.
+const EVENT_KINDS_RESERVED := ["whistle", "dive", "emerge", "cry", "perch"]
+
+
+## Is this journal row one of ours? The probe's slice, and eventually the
+## director's.
+static func is_creature_event(kind: String) -> bool:
+	return EVENT_KINDS.has(kind) or EVENT_KINDS_RESERVED.has(kind)
+
+
 # --- Accessors ---------------------------------------------------------------
 
 ## Warned-about species, so an unknown one is reported once rather than sixty

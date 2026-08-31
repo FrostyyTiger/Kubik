@@ -183,6 +183,25 @@ func _ready() -> void:
 	_world.body_field = _body_field
 	_debug.body_field = _body_field
 
+	# CREATURES V1 - this block and the elif below are the whole of that lane's
+	# reach into this file, and neither grows again. See
+	# docs/plans/creatures-v1-tech.md, decision 2.
+	#
+	# AFTER THE BodyField BLOCK, and for the reason its comment above gives:
+	# CreatureServer decides host-or-client exactly once, here, from
+	# Net.is_host(). Built a moment too early and a single-player session
+	# silently gets a world with no brains in it.
+	#
+	# The centres go over as a bound Callable rather than as a new public
+	# accessor, so this file gains a block and not an API.
+	var creatures := CreatureServer.new()
+	creatures.name = "Creatures"
+	add_child(creatures)
+	creatures.setup(Net.is_host(), _world, _journal, self, _sim_centres_m)
+	var creature_debug := CreatureDebug.new()
+	creature_debug.name = "CreatureDebug"
+	add_child(creature_debug)
+
 	if "--tour" in OS.get_cmdline_user_args():
 		_start_tour.call_deferred()
 	elif "--traverse" in OS.get_cmdline_user_args():
@@ -201,6 +220,9 @@ func _ready() -> void:
 	# DISTANCE V1 STAGE 0, appended at the end of the chain.
 	elif "--far-probe" in OS.get_cmdline_user_args():
 		_start_far_probe.call_deferred()
+	# CREATURES V1. The launch lives in creature_server.gd, not here.
+	elif "--creature-probe" in OS.get_cmdline_user_args():
+		creatures.start_probe.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,

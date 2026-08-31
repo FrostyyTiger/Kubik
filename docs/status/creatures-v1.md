@@ -193,6 +193,110 @@ lines of its output, not the last.
 
 ---
 
+## Stage 2 - the scenario harness
+
+`scripts/tools/creature_probe.gd`, `class_name CreatureProbe extends Node`.
+Built second and before any creature exists, per the plan, because every
+later stage's evidence comes out of it.
+
+```
+godot --headless --path . -- --host --seed 42 --creature-probe \
+    --scenario walk --runs 5 --view low
+```
+
+**A scenario is a Callable that returns a Dictionary.** Two keys are the
+harness's - `ok` and `why` - and **every other numeric key it returns is
+medianed across runs automatically** and printed in the summary table. So a
+scenario adds a measurement by returning it and nothing else has to be told;
+Stage 6's three scenarios cost no reporting code at all.
+
+**Multi-run rerolls through the game's own F5 path.** `--runs 5` repeats with
+`seed + i`, and the world rebuild between runs is `DebugHUD.reroll_requested`
+**emitted, not reimplemented** - `game.gd` already connects that signal to a
+host-only handler that resets the world, sets it up on the new seed and
+respawns the player. Emitting it is a read-side use of a file this lane may
+not write, and it means the between-run rebuild is the same rebuild a human
+gets by pressing a key.
+
+**The journal is marked at the start of every run.** The host's `Journal` is
+never reset - a reroll rebuilds the world, not the record of the session - so
+without a mark run 5 would be judged on the events of runs 1 through 5 and
+every count in the table would climb for a reason that has nothing to do with
+the seed. Every count this branch ever quotes is a per-run slice.
+
+**Decision 10, in numbers.** `walk` runs at `Engine.time_scale 4.0` with
+`physics_ticks_per_second` scaled to match at **240 Hz**, and both are
+recorded per run in the summary table. Scaling the tick rate with the scale
+is the load-bearing half: `time_scale` alone stretches the delta each tick
+reports without changing how many ticks happen, so a character integrating
+gravity at 4x delta jumps differently and the sim stops being the sim.
+`--time-scale N` overrides it, so a scenario that misbehaves at 4x can be
+re-run honestly at 1x without an edit.
+
+### `walk`, the null scenario - 5/5 (probe, 5 runs, seeds 42-46)
+
+| | median | runs |
+| --- | --- | --- |
+| walked | **197.02 m** of 200 | 197.01, 197.02, 197.02, 197.02, 197.06 |
+| sim time | 10.20 s | 10.11 - 10.35 |
+| wall time | 29.63 s | 22.75 - 32.38 |
+| waited for chunks | 18.49 s | 12.63 - 20.37 |
+| rescues from inside terrain | 0 | all runs |
+| creature events | 0 | (correct - nothing is spawned yet) |
+| schema violations | 0 | all runs |
+
+**It walks an open heading, not due east, and the first version's failure is
+worth keeping.** A fixed `+X` heading passed on seeds 42 and 43 and then
+stopped dead at 45 m, 78 m and 106 m on seeds 44, 45 and 46 - against a
+mountainside. That is a true fact about those worlds and says nothing about
+the harness this scenario exists to test. So the walk now scores sixteen
+compass headings by the **worst** slope along a 200 m corridor, disqualifies
+any corridor that crosses a lake, and takes the best - deterministically,
+reading the heightmap and the lakes and rolling nothing. Worst rather than
+mean: a corridor that is flat for 190 m and vertical for 10 is not a walk,
+and a mean hides exactly that.
+
+**Evidence lands on disk.** `build/creatures/<scenario>/events-run<i>.json`
+per run, and `events.json` = run 0, the seed the caller actually asked for.
+`build/` is gitignored, so this is output and not a commit. Every dumped
+event is validated against the schema first: `{species, id, pos}` present and
+correctly typed, and **`applied == 0.0` on every bite** - hard rule 6 asserted
+on the evidence rather than on the code, however it got there.
+
+### `game.gd`: the whole diff, landed complete, never grown again
+
+**22 lines, two banner regions, nothing else changed** (hard rule 3):
+
+1. **The block**, immediately after the BodyField block - `CreatureServer`
+   built, named `Creatures`, `setup(...)`, then `CreatureDebug`. After
+   BodyField for BodyField's own stated reason: the server decides
+   host-or-client exactly once, there, from `Net.is_host()`.
+2. **The elif**, at the end of the cmdline chain, calling
+   `creatures.start_probe`.
+
+**Two things the plan asked for turned out to be unnecessary, and this is the
+recorded deviation.** The plan's block was to contain four things, two of
+them new functions on `game.gd` - a public `sim_centres_m()` and a
+`_start_creature_probe()`. Neither was added:
+
+- **The centres go over as a bound `Callable`** (`_sim_centres_m`) handed to
+  `setup()` in the block itself. That achieves what the public accessor was
+  for - this lane never naming a private member of a file another lane owns
+  tonight - and does it better: `game.gd` chooses what it exposes, in the one
+  block it already gave us, and gains a block rather than an API.
+- **The probe launch lives in `creature_server.gd`**, so the elif calls into
+  this lane's own territory. The HUD-hiding that every other probe does from
+  `game.gd` is done by the probe itself for the same reason.
+
+The plan also describes the block as "one contiguous appended block", which
+cannot be literally true of a thing containing both statements inside `_ready`
+and function definitions at file scope. Two regions is the smallest honest
+reading of "the one elif and the one banner block", and it is what landed.
+
+**Gates:** all three green, `heightmap# 76cccdb6`, spawn `(-44, -124)`.
+
+---
+
 ## Deferred, night 1
 
 - LimboAI, per above.
