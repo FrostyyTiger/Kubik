@@ -46,10 +46,37 @@ var last_seen_ms := 0
 ## about the same sighting, and by the probe to measure howl-to-converge.
 var howled_at_ms := 0
 
-## The bearing the howler had to the target, in DEGREES, world space. The
-## converging members offset from THIS - which is what makes the flank a
-## mechanism the probe can measure rather than an emergent maybe.
+## The bearing the howler had to the target, in DEGREES, world space, at the
+## moment it howled. Journalled with every converge, so the event log records
+## what the flank was measured off.
 var howl_bearing_deg := 0.0
+
+## WHERE THE HOWLER IS NOW, kept current by the howler itself.
+##
+## The frozen `howl_bearing_deg` is the wrong thing to hold a flank against and
+## the first `pack-flank` run proved it: a member offset 103 degrees from where
+## the howler WAS ended up 68 degrees from where the howler had GOT to, because
+## the player kept walking and both wolves followed. A flank is a live
+## relationship between two animals and a target, so it is measured against a
+## position the pack keeps up to date - through the board, which is how a pack
+## is allowed to know anything about itself.
+var howler_pos := Vector3.ZERO
+
+## WHEN THE PACK TURNED BACK, in ms, or 0.
+##
+## One wolf reaching the border turns the whole pack - that is what a pack IS -
+## but every member journals its OWN `leash_turn`, because a leash is a thing
+## each animal did and the event log is a record of what animals did. Without
+## a flag on the board, the first wolf to turn calls `forget_target()` and the
+## second one then has nothing to leash from: the pack of two produces one
+## turn, and the honest ending looks half-finished in the journal.
+var turned_back_ms := 0
+
+
+## Call the pack home. See `turned_back_ms`.
+func turn_back() -> void:
+	turned_back_ms = Time.get_ticks_msec()
+
 
 ## Set by the server so a broadcast can be journalled. May be null in tests.
 var server: CreatureServer = null
@@ -98,6 +125,7 @@ func _apply(kind: String, data: Dictionary) -> void:
 			last_seen_ms = Time.get_ticks_msec()
 			howled_at_ms = last_seen_ms
 			howl_bearing_deg = float(data.get("bearing_deg", howl_bearing_deg))
+			howler_pos = data["pos"]
 		"engage":
 			target_pos = data.get("target_pos", target_pos)
 			last_seen_ms = Time.get_ticks_msec()

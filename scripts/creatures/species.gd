@@ -121,7 +121,25 @@ const TABLE := [
 		# and narrow enough that behind it is a real place to be.
 		"sight_m": 40.0,
 		"sight_deg": 110.0,
-		"hear_m": 30.0,
+		# HEARING IS THE LONG-RANGE SENSE AND SIGHT IS THE CONFIRMATION, which
+		# is a correction rather than a preference, and `senses-honest` is what
+		# forced it.
+		#
+		# It was 30 m against 40 m of sight. A wolf patrols a beat around its
+		# den and sees 40 m from wherever it has got to, so its EYE reaches
+		# `patrol + 40` from home while its EAR reaches only `1.5 * hear_m`
+		# from itself. With hearing shorter than sight there is NO position in
+		# the world where a sprinting player is heard but a still one is not
+		# seen: the noise channel is vestigial, what the player is DOING never
+		# decides anything, and DESIGN.md rule 1's "a wolf players LEARN" has
+		# nothing to teach.
+		#
+		# 60 m makes the ear half again the eye. A sprinting player is heard at
+		# 90 m and a still one at 18; the wolf's beat is 45 m; so there is a
+		# comfortable band - about 85 to 90 m from the den - in which standing
+		# still is genuinely safe and running is genuinely not. Real wolves
+		# hear over kilometres, so if anything this is still shy.
+		"hear_m": 60.0,
 		# What the ground costs this animal, for the territory A* in
 		# creature_nav.gd. A wolf pays for climbing and is happy to drop, which
 		# is what puts it on the contour rather than over the crest - and the
@@ -285,6 +303,10 @@ const REQUIRED_BITE_KEYS := ["damage", "range_m", "cooldown_s"]
 #                  A lunge landed. `applied` IS ALWAYS 0.0 ON NIGHT 1 - hard
 #                  rule 6 - and the field exists now so that arming it in
 #                  night 2 changes a value rather than a schema.
+#     investigate  {kind: String, range_m: float, loudness_m: float}
+#                  A noise reached this creature and it went to look. `kind` is
+#                  what the noise was ("player", "howl"). THE ONLY EVENT THAT
+#                  IS ABOUT HEARING, which is why it exists - see EVENT_KINDS.
 #     leash_turn   {home: int, over_by_m: float}
 #                  The target or the creature left the territory, so the
 #                  creature turned back. Design decision 6's honest leash: a
@@ -300,9 +322,22 @@ const REQUIRED_BITE_KEYS := ["damage", "range_m", "cooldown_s"]
 ## HABIT 1 (CLAUDE.md): facts as data. The probe filters the journal for the
 ## creature slice, and a filter written as a literal list in the probe is a
 ## second copy of this schema that drifts from the first by the third stage.
+## `investigate` IS A NINTH KIND, ADDED AGAINST DECISION 8's LIST OF EIGHT.
+##
+## Recorded rather than slipped in. The tech plan's `senses-honest` gate is
+## written as "the same position sprinting IS INVESTIGATED within 20 s", and
+## there is no way to observe an investigation in a journal that has no word
+## for one. The alternative was to gate on `spotted` instead - to wait for the
+## wolf to hear the noise, walk 50 m to it, and lay eyes on the player - which
+## measures the ear, the legs and the terrain in between, and takes minutes
+## rather than seconds to say something about hearing.
+##
+## The rest of Decision 8 stands: this is a thing that HAPPENED, it carries
+## `{species, id, pos}` like everything else, and it is documented in the
+## schema above rather than only existing in code.
 const EVENT_KINDS := [
 	"den_placed", "spotted", "lost", "howl",
-	"converge", "engage", "bite", "leash_turn",
+	"converge", "engage", "bite", "leash_turn", "investigate",
 ]
 
 ## Named now so the schema is one document rather than two. Night 2 moves

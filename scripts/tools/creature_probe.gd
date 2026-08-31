@@ -42,6 +42,9 @@ const MAX_SCENARIO_SECONDS := 300.0
 ## Where the evidence goes.
 const OUT_ROOT := "res://build/creatures"
 
+## Progress line every this many seconds of sim time, during a Stage 6 pump.
+const REPORT_EVERY_S := 20.0
+
 ## Physics ticks per second at time_scale 1. Read once at startup rather than
 ## assumed, so raising the scale multiplies whatever the project actually uses.
 var _base_physics_hz := 60
@@ -143,6 +146,9 @@ func _build_scenarios() -> void:
 	_scenarios = {
 		"walk": _scenario_walk,
 		"homes": _scenario_homes,
+		"pack-flank": _scenario_pack_flank,
+		"leash": _scenario_leash,
+		"senses-honest": _scenario_senses_honest,
 	}
 
 
@@ -352,6 +358,608 @@ func _scenario_homes() -> Dictionary:
 		why = "%d homes share an id with another" % duplicate_ids
 	elif nearest.is_empty():
 		why = "no nearest den could be named for Stage 6"
+	out["ok"] = why.is_empty()
+	if not why.is_empty():
+		out["why"] = why
+	return out
+
+
+
+
+# --- Stage 6: the pack -------------------------------------------------------
+#
+# All three teleport the player to the pack's den rather than walking 556 m to
+# it. `traversal_probe.gd` teleports to a world corner for the same reason: the
+# walk in is not what is being measured, and paying for it five times a run
+# turns a two-minute gate into a twenty-minute one.
+
+## Put the player `distance_m` from the den, on the most open bearing, and let
+## the world stream in around them.
+func _place_player_near_den(distance_m: float) -> Vector3:
+	var den: Vector3 = _server.pack.den_pos
+	var best := Vector3(1.0, 0.0, 0.0)
+	var best_slope := INF
+	var hm: Heightmap = _world.generator.heightmap
+	var cfg := _world.config
+	# THE STANDING SPOT HAS TO BE SOMEWHERE THE PLAYER CAN WALK BACK FROM, and
+	# two versions of this got it wrong before this one. The first picked the
+	# bearing whose END was flattest; the second scored the straight corridor.
+	# Seed 42's den has no walkable straight line to it from ANY of sixteen
+	# bearings - the best corridor's worst slope is 62.8 degrees - so the
+	# player covered 20 m, stopped dead against a hillside with a full
+	# wish_override, and the pack was gated on never having seen someone who
+	# never arrived.
+	#
+	# So the bearing is chosen by asking THE WOLF'S OWN PATHFINDER whether it
+	# can get there, which is the honest question: `CreatureNav` is built
+	# against a 55-degree cliff angle and `Locomotion.FLOOR_MAX_ANGLE_DEG` is
+	# 55, so a path a wolf can walk is a path a player can walk. Slope is the
+	# tie-breaker among bearings that work.
+	for i in 16:
+		var angle := TAU * float(i) / 16.0
+		var dir := Vector3(cos(angle), 0.0, sin(angle))
+		var p := den + dir * distance_m
+		p.y = _world.surface_height_m(
+			int(floor(p.x / cfg.block_size)), int(floor(p.z / cfg.block_size)))
+		var path := _server.pack_nav.path_m(p, den)
+		# A PARTIAL PATH IS NOT AN APPROACH. `path_m` allows partial paths so a
+		# creature always has somewhere to go; here the question is whether the
+		# whole way exists, so the far end has to actually arrive.
+		if path.is_empty() or path[path.size() - 1].distance_to(den) > 8.0:
+			continue
+		var worst := 0.0
+		for step in range(0, int(distance_m) + 1, 8):
+			var q := den + dir * float(step)
+			worst = maxf(worst, hm.slope_deg_at(q.x / cfg.block_size, q.z / cfg.block_size))
+		if worst < best_slope:
+			best_slope = worst
+			best = dir
+	print("[Creature] approach bearing %.0f deg, straight-line worst slope %.1f deg over %.0f m" % [
+		rad_to_deg(atan2(best.z, best.x)), best_slope, distance_m])
+	var stand := den + best * distance_m
+	stand.y = _world.surface_height_m(
+		int(floor(stand.x / cfg.block_size)),
+		int(floor(stand.z / cfg.block_size))) + 2.0
+	_player.global_position = stand
+	_player.velocity = Vector3.ZERO
+	_player.set_physics_process(true)
+	_world.set_center_from_position(stand)
+	await _wait_for_world()
+	return stand
+
+
+## Wait, driving the player with `steer`, until `done` returns true or the sim
+## clock runs out. Returns the sim seconds spent.
+##
+## ONE PUMP FOR EVERY SCENARIO. Each of the three below is a different steering
+## rule and a different stopping condition and nothing else, which is what
+## keeps them arguments about behaviour rather than about plumbing.
+func _pump(seconds: float, steer: Callable, done: Callable) -> float:
+	var sim := 0.0
+	var next_report := 0.0
+	while sim < seconds:
+		await get_tree().physics_frame
+		var delta := 1.0 / float(maxi(Engine.physics_ticks_per_second, 1))
+		var pos := _player.global_position
+		var ground := _world.surface_height_m(
+			int(floor(pos.x / _world.config.block_size)),
+			int(floor(pos.z / _world.config.block_size)))
+		if pos.y < ground - FALL_THROUGH_M:
+			_player.global_position = Vector3(pos.x, ground + 2.0, pos.z)
+			_player.velocity = Vector3.ZERO
+			continue
+		steer.call(sim)
+		sim += delta
+		if sim >= next_report:
+			next_report += REPORT_EVERY_S
+			_report(sim)
+		if done.call():
+			break
+	_player.wish_override = Vector3.ZERO
+	_player.sprint_override = false
+	return sim
+
+
+## Where everything is, every REPORT_EVERY_S seconds of sim.
+##
+## A GATE THAT ONLY SAYS "the pack never spotted the player" IS NOT DEBUGGABLE,
+## and the first run of `pack-flank` said exactly that for 180 seconds. This
+## line is what turns "it did not work" into "the wolves were 180 m away the
+## whole time", which is a different sentence with a fix in it.
+func _report(sim: float) -> void:
+	if _server == null or _server.pack == null:
+		return
+	var den: Vector3 = _server.pack.den_pos
+	var pos := _player.global_position
+	var parts := PackedStringArray()
+	for id in _server.creatures:
+		var c: Creature = _server.creatures[id]
+		parts.append("#%d p%.0f d%.0f %s" % [
+			id, Creature.flat_distance(c.global_position, pos),
+			Creature.flat_distance(c.global_position, den), _state_name(c.state)])
+	var ground := _world.surface_height_m(
+		int(floor(pos.x / _world.config.block_size)),
+		int(floor(pos.z / _world.config.block_size)))
+	print("[Creature]   %5.0f s  player %.0f m from den, %.1f m/s, y %.1f vs ground %.1f, idle %s, wish %.1f  |  %s" % [
+		sim, Creature.flat_distance(pos, den),
+		Vector2(_player.velocity.x, _player.velocity.z).length(),
+		pos.y, ground, _world.is_idle(), _player.wish_override.length(),
+		" ".join(parts)])
+
+
+func _state_name(state: int) -> String:
+	match state:
+		Creature.STATE_WALK: return "walk"
+		Creature.STATE_RUN: return "run"
+		Creature.STATE_LUNGE: return "lunge"
+	return "idle"
+
+
+## Steer the player along a `CreatureNav` path, recomputing when it is spent.
+##
+## THE PROBE WALKS THE WAY A WOLF WALKS. The walker is otherwise deliberately
+## dumb - `traversal_probe.gd` explains why measuring a pathfinder is not the
+## same as measuring a world - but these three scenarios are not measuring
+## traversal at all, and a player who cannot reach the pack is a scenario that
+## measures nothing.
+class NavWalker extends RefCounted:
+	var path := PackedVector3Array()
+	var index := 0
+	var target := Vector3.ZERO
+	var _nav: CreatureNav = null
+	var _last := Vector3.INF
+	var _stalled := 0.0
+
+	## Set when the walker is not getting anywhere. VOXEL TERRAIN IS A
+	## STAIRCASE and a player crossing it presses Space constantly -
+	## `traversal_probe.gd` says so in as many words, and this walker learned
+	## it the same way: the `leash` scenario's player stood at 91 m from the
+	## den for a hundred and fifty seconds with a perfectly good path in front
+	## of it, against a half-metre step, while the pack was gated on reaching
+	## someone who never arrived.
+	var want_jump := false
+
+	## Which way it is currently stepping aside, and until when.
+	var _detour_sign := 1.0
+	var _detour_left := 0.0
+
+	func _init(nav: CreatureNav, p_target: Vector3) -> void:
+		_nav = nav
+		target = p_target
+
+	## The direction to push the player, or ZERO when there is nowhere to go.
+	func wish(from: Vector3, delta: float) -> Vector3:
+		if _last != Vector3.INF and from.distance_to(_last) < 0.05 * maxf(delta, 0.001) * 60.0:
+			_stalled += delta
+		else:
+			_stalled = 0.0
+		_last = from
+		want_jump = _stalled > 0.25
+
+		# WEDGED, SO STEP ASIDE. `traversal_probe.gd` does this for the same
+		# reason and calls it crude on purpose: voxel terrain has walls a path
+		# over 2 m cells does not know about, and a capsule pressed into one
+		# will press into it forever. Alternating sides, because a walker that
+		# changes its mind every second walks a zigzag in a corner.
+		if _detour_left > 0.0:
+			_detour_left -= delta
+			var side := Vector3(target.x - from.x, 0.0, target.z - from.z)
+			if side.length_squared() > 0.01:
+				return side.rotated(Vector3.UP, deg_to_rad(70.0) * _detour_sign)
+		elif _stalled > 1.5:
+			_detour_sign = -_detour_sign
+			_detour_left = 2.5
+			_stalled = 0.0
+
+		# Spent, never had one, or wedged for two seconds: ask again from here.
+		if index >= path.size() or _stalled > 2.0:
+			path = _nav.path_m(from, target)
+			index = 0
+			_stalled = 0.0
+			if path.is_empty():
+				return Vector3.ZERO
+		# Skip waypoints already reached - a player moves faster than the 2 m
+		# cell spacing between them.
+		while index < path.size():
+			var w := path[index]
+			if Vector2(w.x - from.x, w.z - from.z).length() < 3.0:
+				index += 1
+				continue
+			return Vector3(w.x - from.x, 0.0, w.z - from.z)
+		return Vector3(target.x - from.x, 0.0, target.z - from.z)
+
+
+## Journal rows of one kind from this run, in order.
+func _events_of(kind: String) -> Array:
+	var out := []
+	for row in _creature_events():
+		if row.get("kind", "") == kind:
+			out.append(row)
+	return out
+
+
+## THE FLANK, MEASURED. Walk the player into the territory and watch what the
+## pack does about it.
+##
+## The gate is an ANGLE BETWEEN TWO ANIMALS ABOUT THE PLAYER at the moment both
+## are engaged - which is the only honest way to ask "did they flank", because
+## every other phrasing is satisfied by two wolves arriving from the same side.
+func _scenario_pack_flank() -> Dictionary:
+	_set_time_scale(4.0)
+	var den: Vector3 = _server.pack.den_pos
+	# JUST OUTSIDE THE PATROL'S SIGHT, not most of a territory away. This was
+	# 0.75 of the territory - 112 m of alpine hillside for a capsule to cross
+	# before the scenario could begin - and what it measured most often was
+	# whether the probe's player could get there at all. The pack's response is
+	# the subject; the approach march is not, and every metre of it is a metre
+	# of terrain that can wedge a walker.
+	await _place_player_near_den(
+		Species.territory_m(Species.WOLF) * Wolf.PATROL_RADIUS_SCALE
+		+ Species.sight_m(Species.WOLF) * 0.75)
+
+	var walker := NavWalker.new(_server.pack_nav, den)
+	var sim := await _pump(180.0,
+		# Walk at the den. Not sprinting: this scenario is about being found
+		# and surrounded, and a sprint would make it about outrunning.
+		func(_t):
+			_player.wish_override = walker.wish(
+				_player.global_position,
+				1.0 / float(maxi(Engine.physics_ticks_per_second, 1)))
+			_player.jump_override = walker.want_jump,
+		func(): return _engaged_ids().size() >= 2)
+
+	# THE ANGLE IS READ HERE, at the first tick where both are engaged, which
+	# is what the plan asks for - and then the encounter is allowed to run on
+	# for a few seconds so the disarmed bite actually appears in the evidence.
+	var separation := _separation_deg()
+	await _pump(12.0,
+		func(_t):
+			_player.wish_override = walker.wish(
+				_player.global_position,
+				1.0 / float(maxi(Engine.physics_ticks_per_second, 1)))
+			_player.jump_override = walker.want_jump,
+		func(): return false)
+
+	var out := {"sim_s": sim}
+	if not is_nan(separation):
+		out["separation_deg"] = separation
+	var spotted := _events_of("spotted")
+	var howls := _events_of("howl")
+	var converges := _events_of("converge")
+	var engages := _events_of("engage")
+	var bites := _events_of("bite")
+	out["spotted"] = spotted.size()
+	out["howls"] = howls.size()
+	out["converges"] = converges.size()
+	out["engages"] = engages.size()
+	out["bites"] = bites.size()
+
+	# HOWL WITHIN 5 s OF THE FIRST SIGHTING.
+	if not spotted.is_empty() and not howls.is_empty():
+		out["howl_delay_s"] = float(int(howls[0]["t"]) - int(spotted[0]["t"])) / 1000.0
+	# ...and the flank offset the converging wolf actually took.
+	if not converges.is_empty():
+		out["offset_deg"] = absf(float(converges[0].get("offset_deg", 0.0)))
+
+	var engaged := _engaged_ids()
+	var why := ""
+	if spotted.is_empty():
+		why = "the pack never spotted the player in %.0f s" % sim
+	elif howls.is_empty():
+		why = "somebody was spotted and nobody howled"
+	elif out.get("howl_delay_s", 99.0) > 5.0:
+		why = "the howl came %.1f s after the first sighting" % out["howl_delay_s"]
+	elif converges.is_empty():
+		why = "nobody converged on the howl"
+	elif engaged.size() < 2:
+		why = "only %d of the pack reached engage in %.0f s" % [engaged.size(), sim]
+	elif not out.has("separation_deg"):
+		why = "could not measure a separation"
+	# THE SINGLE-RUN FLOOR, not the gate. The gate is the 5-run MEDIAN and it
+	# is applied in the summary, because host AI is not promised deterministic
+	# and one wolf catching a rock on the way round is a fact about a hillside.
+	elif out["separation_deg"] < 75.0:
+		why = "separation %.0f deg is under the single-run floor of 75" % out["separation_deg"]
+	# HARD RULE 6, ON THE EVIDENCE.
+	else:
+		for b in bites:
+			if float(b.get("applied", -1.0)) != 0.0:
+				why = "a bite applied %s of damage" % b.get("applied")
+				break
+	out["ok"] = why.is_empty()
+	if not why.is_empty():
+		out["why"] = why
+	return out
+
+
+## THE ANGLE. Bearings from the PLAYER to each engaged wolf, right now.
+##
+## Measured about the PLAYER because that is the only place the question means
+## anything: "did they flank" is about where the two of them are relative to
+## the person in the middle, not about where they started or where the den is.
+## NAN when fewer than two are engaged.
+func _separation_deg() -> float:
+	var engaged := _engaged_ids()
+	if engaged.size() < 2:
+		return NAN
+	var player_pos := _player.global_position
+	var bearings := []
+	for id in engaged:
+		var wolf: Node3D = _server.creatures.get(id)
+		if wolf == null:
+			continue
+		var d := wolf.global_position - player_pos
+		bearings.append(atan2(d.x, d.z))
+	if bearings.size() < 2:
+		return NAN
+	return absf(rad_to_deg(angle_difference(bearings[0], bearings[1])))
+
+
+## Which creatures have engaged and not since leashed, by id.
+func _engaged_ids() -> Array:
+	var live := {}
+	for row in _creature_events():
+		var kind := str(row.get("kind", ""))
+		if kind == "engage":
+			live[int(row["id"])] = true
+		elif kind == "leash_turn":
+			live.erase(int(row["id"]))
+	return live.keys()
+
+
+## THE HONEST LEASH. Sprint out of the territory and check the pack turns back
+## at its border rather than following forever or being deleted.
+func _scenario_leash() -> Dictionary:
+	_set_time_scale(4.0)
+	var den: Vector3 = _server.pack.den_pos
+	var border := Species.territory_m(Species.WOLF)
+	await _place_player_near_den(border * 0.6)
+
+	# Phase one: be CAUGHT, not merely seen. Without a chase there is nothing
+	# to leash out of - and the chase has to start at contact rather than at
+	# first sight, because of an honest fact about the numbers. A player
+	# sprints at 13 m/s and a wolf runs at 7.5; a player who turns and runs
+	# from forty metres is out of sight before they reach the border, and the
+	# pack never observes the crossing it is supposed to turn at. Starting from
+	# two metres, the gap opens at 5.5 m/s and the wolf keeps sight for the six
+	# or so seconds it takes to cover the ground to the border.
+	var walker := NavWalker.new(_server.pack_nav, den)
+	await _pump(150.0,
+		func(_t):
+			_player.wish_override = walker.wish(
+				_player.global_position,
+				1.0 / float(maxi(Engine.physics_ticks_per_second, 1)))
+			_player.jump_override = walker.want_jump,
+		func(): return not _engaged_ids().is_empty())
+	var found := not _events_of("engage").is_empty()
+
+	# Phase two: leave, on a bearing the ground actually allows.
+	#
+	# THE DIRECTION THE PLAYER HAPPENS TO BE STANDING IN IS NOT AN EXIT. The
+	# first version ran straight out from the den along whatever bearing the
+	# chase had left the player on, and on seed 42 that bearing dead-ends at
+	# 136 m of a 150 m territory: the player pressed into a hillside, the pack
+	# stopped politely behind them, and nobody crossed anything. So the exit is
+	# chosen the same way the approach was - by asking the wolves' own
+	# pathfinder which way out it can walk.
+	var away := (_player.global_position - den)
+	away.y = 0.0
+	if away.length() < 1.0:
+		away = Vector3(1.0, 0.0, 0.0)
+	away = away.normalized()
+	var best_reach := 0.0
+	for i in 16:
+		var angle := TAU * float(i) / 16.0
+		var dir := Vector3(cos(angle), 0.0, sin(angle))
+		var aim := den + dir * (border * 0.98)
+		aim.y = _world.surface_height_m(
+			int(floor(aim.x / _world.config.block_size)),
+			int(floor(aim.z / _world.config.block_size)))
+		var path := _server.pack_nav.path_m(_player.global_position, aim)
+		if path.is_empty():
+			continue
+		# How far out the path actually GETS - partial paths are allowed, so
+		# the end of one is the honest measure of how far this way goes.
+		var reach := Creature.flat_distance(path[path.size() - 1], den)
+		if reach > best_reach:
+			best_reach = reach
+			away = dir
+	print("[Creature] exit bearing %.0f deg, reaches %.0f m of a %.0f m border" % [
+		rad_to_deg(atan2(away.z, away.x)), best_reach, border])
+	# ...and keep running until the whole pack has turned, rather than until an
+	# arbitrary distance. The first version stopped at 2x the border - nine
+	# seconds of sim - and then stood still for the settle phase while the
+	# wolves' memory quietly expired: they went home, correctly, having never
+	# said anything, and the journal recorded a chase that ended in silence.
+	# WALKED OUT, NOT SPRINTED, AND THE REASON IS A FINDING RATHER THAN A
+	# CONVENIENCE. The plan says sprint. A player sprints at 13 m/s and a wolf
+	# runs at 7.5, so a committed sprinter is not chased out of a territory -
+	# they are simply gone, and the pack loses them well inside its own ground.
+	# That produces no crossing for anybody to observe and no turn to journal:
+	# three versions of this scenario failed with "0 leash turns" while the
+	# pack behaved perfectly correctly.
+	#
+	# The thing under test is "a chase ends because the pack turns back at its
+	# border", and a chase is only a chase while contact is kept. At a walk -
+	# 4.4 m/s against the wolf's 7.5 - the pack stays on the player all the way
+	# out, watches them cross, and turns. That the sprint case cannot be
+	# measured this way is itself recorded, in the status doc, as something for
+	# Marcel to rule on: as the numbers stand, no wolf can ever catch a player
+	# who commits to running.
+	# ...and out over ground the PACK can follow, not in a straight line.
+	#
+	# The straight line ran downhill. World feel v1 gave loose ground a slide,
+	# so a player walking out of this particular den's valley leaves at 14 m/s
+	# rather than 4.4 - and a wolf that was in contact is thirty metres behind
+	# and blind two seconds later. That is a true fact about that hillside and
+	# it is not what this scenario is asking. Walking the nav path to the
+	# border keeps the player on the same graded ground the pack paths over, so
+	# the crossing happens with the pack still on them - and the last stretch,
+	# past the border where there is no grid, is the straight line it has to be.
+	var edge := den + away * (border * 0.99)
+	edge.y = _world.surface_height_m(
+		int(floor(edge.x / _world.config.block_size)),
+		int(floor(edge.z / _world.config.block_size)))
+	var out_walker := NavWalker.new(_server.pack_nav, edge)
+	var sim := await _pump(150.0,
+		func(_t):
+			var pos := _player.global_position
+			if Creature.flat_distance(pos, den) < border * 0.98:
+				_player.wish_override = out_walker.wish(pos,
+					1.0 / float(maxi(Engine.physics_ticks_per_second, 1)))
+				_player.jump_override = out_walker.want_jump
+			else:
+				_player.wish_override = away
+				_player.jump_override = true,
+		func(): return _events_of("leash_turn").size() >= _server.creatures.size())
+
+	var turns := _events_of("leash_turn")
+	var out := {
+		"sim_s": sim, "leash_turns": turns.size(),
+		"player_out_m": Creature.flat_distance(_player.global_position, den),
+	}
+
+	# ...and phase three: did they actually go home, and stay disengaged?
+	var mark := _creature_events().size()
+	await _pump(60.0, func(_t): _player.wish_override = Vector3.ZERO,
+		func(): return _all_home(den, border * 0.5))
+	var home := _all_home(den, border * 0.5)
+	var post_engages := 0
+	var rows := _creature_events()
+	for i in range(mini(mark, rows.size()), rows.size()):
+		if rows[i].get("kind", "") == "engage":
+			post_engages += 1
+	out["post_turn_engages"] = post_engages
+	out["home_m"] = _furthest_from(den)
+
+	var why := ""
+	if not found:
+		why = "the pack never reached the player, so there was nothing to leash"
+	elif turns.size() != _server.creatures.size():
+		why = "%d leash turns from a pack of %d" % [
+			turns.size(), _server.creatures.size()]
+	elif not home:
+		why = "the pack was still %.0f m from the den after 60 s" % out["home_m"]
+	elif post_engages > 0:
+		why = "%d engagements after the turn" % post_engages
+	out["ok"] = why.is_empty()
+	if not why.is_empty():
+		out["why"] = why
+	return out
+
+
+func _all_home(den: Vector3, within_m: float) -> bool:
+	return _furthest_from(den) <= within_m
+
+
+func _furthest_from(den: Vector3) -> float:
+	var worst := 0.0
+	for id in _server.creatures:
+		var c: Node3D = _server.creatures[id]
+		worst = maxf(worst, Creature.flat_distance(c.global_position, den))
+	return worst
+
+
+## RULE 1'S HONESTY, AS A NUMBER. The same place, twice: standing still, and
+## moving. Only one of them should get you found.
+##
+## POSITIONED BEYOND SIGHT RANGE RATHER THAN BEHIND THE CONE, and that is a
+## deliberate departure from the plan's wording - recorded in the status doc.
+## The plan puts the player at 0.4 * hear_m (12 m) "behind the sight cone",
+## which at 12 m depends entirely on which way a PATROLLING wolf happens to be
+## facing from one second to the next. That makes the result luck. At 42 m the
+## player is outside the wolf's 40 m sight range altogether, inaudible while
+## still (a still player carries 9 m against 30 m of hearing) and audible while
+## sprinting (45 m) - so the only thing that can change the outcome is what the
+## player is DOING, which is the thing the test is about.
+func _scenario_senses_honest() -> Dictionary:
+	_set_time_scale(4.0)
+	# BEYOND WHERE A PATROL CAN SEE, and that distance is derived rather than
+	# picked. A wolf patrols out to `territory_m * PATROL_RADIUS_SCALE` from
+	# its den and sees `sight_m`, so anywhere closer than the sum of those can
+	# be walked up on eventually - and the first run of this scenario proved
+	# it, finding a motionless player 24 times in 90 seconds at 42 m. Past that
+	# sum, the only sense that can reach the player is hearing, which is the
+	# one the test is about.
+	# THE BAND WHERE ONLY THE EAR REACHES, computed from the table rather than
+	# picked. Below `patrol + sight` a patrolling wolf can walk up and SEE a
+	# motionless player - the first run of this found one 24 times in 90
+	# seconds at 42 m - and beyond `1.5 * hear_m` a sprinting one is inaudible
+	# to a wolf standing at its own den. The test stands in the middle of what
+	# is left, and if that band is empty the scenario says so rather than
+	# quietly measuring nothing.
+	var sight := Species.sight_m(Species.WOLF)
+	var hear := Species.hear_m(Species.WOLF)
+	var lo := Species.territory_m(Species.WOLF) * Wolf.PATROL_RADIUS_SCALE + sight
+	var hi := hear * Species.NOISE["sprint"]
+	var stand_m := (lo + hi) * 0.5
+	var here := await _place_player_near_den(stand_m)
+	var den: Vector3 = _server.pack.den_pos
+
+	# --- HALF ONE: stand still for 90 s and do not be found.
+	var quiet_mark := _creature_events().size()
+	await _pump(90.0, func(_t): _player.wish_override = Vector3.ZERO,
+		func(): return false)
+	var noticed_still := 0
+	var rows := _creature_events()
+	for i in range(mini(quiet_mark, rows.size()), rows.size()):
+		var k := str(rows[i].get("kind", ""))
+		if k == "spotted" or k == "investigate":
+			noticed_still += 1
+
+	# --- HALF TWO: sprint on the spot - which is to say, back and forth along
+	# a short tangential line, because a player standing on one square pressing
+	# sprint has a speed of zero and `Species.player_loudness` correctly calls
+	# that still.
+	var out_dir := (here - den)
+	out_dir.y = 0.0
+	out_dir = out_dir.normalized()
+	var tangent := Vector3(-out_dir.z, 0.0, out_dir.x)
+	var loud_mark := _creature_events().size()
+	var noticed_at := -1.0
+	# TWO MINUTES, NOT ONE, AND THE REASON IS THE PATROL. Hearing the player
+	# needs a wolf to wander within 67 m of them, and a patrol leg is hashed -
+	# it goes where it goes. At a walk of 2 m/s a wolf covers a couple of legs
+	# a minute, so a one-minute window is a coin flip on whether it happened to
+	# come this way at all, which would make the gate a measurement of the hash
+	# rather than of the ears.
+	var sim := await _pump(120.0,
+		func(t):
+			_player.sprint_override = true
+			# 4 s out, 4 s back, so the distance from the den stays put.
+			_player.wish_override = tangent * (1.0 if fmod(t, 8.0) < 4.0 else -1.0),
+		func():
+			var r := _creature_events()
+			for i in range(mini(loud_mark, r.size()), r.size()):
+				if r[i].get("kind", "") == "investigate":
+					return true
+			return false)
+	var noticed_loud := 0
+	rows = _creature_events()
+	for i in range(mini(loud_mark, rows.size()), rows.size()):
+		if str(rows[i].get("kind", "")) == "investigate":
+			noticed_loud += 1
+	if noticed_loud > 0:
+		noticed_at = sim
+
+	var out := {
+		"stand_m": stand_m,
+		"sight_m": sight,
+		"hear_m": Species.hear_m(Species.WOLF),
+		"band_lo_m": lo,
+		"band_hi_m": hi,
+		"noticed_still": noticed_still,
+		"investigated_sprinting": noticed_loud,
+		"noticed_after_s": noticed_at,
+	}
+	var why := ""
+	if lo >= hi:
+		why = "no band exists: sight+patrol reaches %.0f m and sprint-hearing only %.0f m" % [lo, hi]
+	elif noticed_still > 0:
+		why = "a still player at %.0f m was noticed %d times in 90 s" % [
+			stand_m, noticed_still]
+	elif noticed_loud == 0:
+		why = "a sprinting player at %.0f m was never investigated in 120 s" % stand_m
 	out["ok"] = why.is_empty()
 	if not why.is_empty():
 		out["why"] = why

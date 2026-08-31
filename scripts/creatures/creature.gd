@@ -30,6 +30,9 @@ const TURN_RATE := 6.0
 ## a creature does not visibly stop at each one.
 const WAYPOINT_M := 1.2
 
+## How long a lunge reads as a lunge, in milliseconds.
+const LUNGE_MS := 400
+
 ## How much a slope slows an animal down, as a fraction of its speed at the
 ## steepest ground it will walk on. 0.55 means the last walkable slope is
 ## covered at 45% speed - noticeably labouring, still moving.
@@ -69,6 +72,30 @@ var _yaw := 0.0
 
 ## Metres actually covered, for the probe.
 var travelled_m := 0.0
+
+## WHAT THIS ANIMAL IS LOOKING AT, when that is not where it is going.
+##
+## A creature normally faces its direction of travel, which is right for
+## walking and WRONG for fighting - and wrong in a way that quietly disabled
+## the wolf's own eyes. A wolf circling a player at bite range moves
+## TANGENTIALLY, so its nose points across the target rather than at it, and
+## the target sits about 90 degrees off a 110-degree cone whose half-width is
+## 55. The `leash` run caught it exactly: `engage`, `bite`, and then `lost`
+## four hundred milliseconds later at a range of 2.6 m, over and over.
+##
+## Animals look at what they are attacking. Vector3.INF means "face where I am
+## going", which is the default and the walking case.
+var look_at_pos := Vector3.INF
+
+## When the current lunge started. See LUNGE_MS.
+var _lunged_at_ms := 0
+
+
+## Spring at something. The state is a display fact; the damage is the
+## caller's business and on night 1 there is none - hard rule 6.
+func lunge() -> void:
+	state = STATE_LUNGE
+	_lunged_at_ms = Time.get_ticks_msec()
 
 
 func setup(p_species: int, p_id: int, p_world: World, p_nav: CreatureNav,
@@ -119,6 +146,15 @@ func advance(delta: float) -> void:
 	if not has_path() or speed_mps <= 0.0:
 		if state != STATE_LUNGE:
 			state = STATE_IDLE
+		# STILL IS NOT BLIND. A creature that has arrived and is holding
+		# position must still be able to turn its head, or it stares at the
+		# last direction it happened to be walking in.
+		if look_at_pos != Vector3.INF:
+			var to_look := look_at_pos - global_position
+			if Vector2(to_look.x, to_look.z).length_squared() > 0.01:
+				_yaw = lerp_angle(_yaw, atan2(to_look.x, to_look.z),
+					1.0 - exp(-TURN_RATE * delta))
+				rotation.y = _yaw
 		snap_to_ground()
 		return
 
@@ -143,13 +179,25 @@ func advance(delta: float) -> void:
 	var climb := clampf(rise / maxf(step, 0.001), 0.0, 1.0)
 	step *= 1.0 - SLOPE_DRAG * climb
 
+	# THE LUNGE IS A MOMENT, NOT A MODE. Set by the bite and cleared here, or
+	# the first bite of an encounter leaves the state int stuck on LUNGE for
+	# the rest of the creature's life - which is a wrong pose on every client
+	# from Stage 7 onward, and a wrong reading on every probe report.
+	if state == STATE_LUNGE and Time.get_ticks_msec() - _lunged_at_ms > LUNGE_MS:
+		state = STATE_RUN
+
 	var moved := dir * step
 	global_position += moved
 	travelled_m += step
 	snap_to_ground()
 
-	# Turn towards where it is going. Frame-rate independent, per TURN_RATE.
+	# Turn towards where it is going - or towards what it is watching, if it is
+	# watching something. See `look_at_pos`.
 	var wanted := atan2(dir.x, dir.z)
+	if look_at_pos != Vector3.INF:
+		var to_look := look_at_pos - global_position
+		if Vector2(to_look.x, to_look.z).length_squared() > 0.01:
+			wanted = atan2(to_look.x, to_look.z)
 	_yaw = lerp_angle(_yaw, wanted, 1.0 - exp(-TURN_RATE * delta))
 	rotation.y = _yaw
 
@@ -165,6 +213,18 @@ func advance(delta: float) -> void:
 ## with its ankles in the rock until its next waypoint.
 func snap_to_ground() -> void:
 	global_position.y = _ground_at(global_position)
+
+
+## Horizontal distance between two points.
+##
+## A TERRITORY IS A DISC, NOT A SPHERE, and every distance measured against one
+## has to agree about that. `CreatureNav` masks its circle in XZ; the leash
+## measured `Vector3.distance_to`, which in this terrain adds a hundred metres
+## of altitude to a hundred metres of ground. Two rules about the same border
+## disagreeing by that much is the same class of bug as the square grid and the
+## round territory, and it is fixed the same way: one definition.
+static func flat_distance(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
 
 
 func _ground_at(pos: Vector3) -> float:

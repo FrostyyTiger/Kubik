@@ -107,12 +107,30 @@ func _build(world: World, p_species: int, centre_m: Vector3) -> void:
 
 	var costs := Species.slope_cost(species)
 	var cliff := float(costs["cliff_deg"])
+	var border := Species.territory_m(species)
 	total_cells = region.size.x * region.size.y
 	solid_cells = 0
 	for j in range(region.position.y, region.end.y):
 		for i in range(region.position.x, region.end.x):
 			var bx := float(hm.cell_to_block(i))
 			var bz := float(hm.cell_to_block(j))
+			var here := Vector2(bx * cfg.block_size, bz * cfg.block_size)
+			# THE TERRITORY IS A CIRCLE AND THE GRID IS A SQUARE, so the
+			# corners are masked out. Without this the two disagree by up to
+			# 41% of the radius, and the disagreement is not cosmetic: a
+			# patrolling wolf pathing round a cliff would leave the CIRCLE the
+			# leash is measured against while still inside the SQUARE it is
+			# pathing in, journal a leash_turn it had no reason to, and go
+			# home. That is what the first run of `pack-flank` was doing while
+			# it drifted from 47 m to 151 m out.
+			#
+			# With the mask, no path a creature can follow ever leaves its
+			# territory, and the leash means exactly one thing: the thing it is
+			# chasing went outside.
+			if here.distance_to(Vector2(centre_m.x, centre_m.z)) > border:
+				_grid.set_point_solid(Vector2i(i, j), true)
+				solid_cells += 1
+				continue
 			var slope := hm.slope_deg_at(bx, bz)
 			if slope > cliff or _is_underwater(bx, bz):
 				_grid.set_point_solid(Vector2i(i, j), true)

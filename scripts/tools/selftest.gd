@@ -67,6 +67,7 @@ func _ready() -> void:
 		"pack board": _test_pack_board,
 		"creature paths": _test_creature_paths,
 		"home identity": _test_home_identity,
+		"creature wire": _test_creature_wire,
 	}
 	var failures := 0
 	for name in tests:
@@ -2187,9 +2188,22 @@ func _test_creature_paths():
 		if on_slope <= on_flat:
 			print("  the knoll is not dearer than the flat - the weight table did nothing")
 			bad += 1
-		# And nothing on this shape may be solid, or the test is a wall again.
-		if nav.solid_cells > 0:
-			print("  %d cells of the knoll are solid - this shape is meant to be walkable throughout" % nav.solid_cells)
+		# AND THE KNOLL ITSELF MUST BE WALKABLE, or the test is a wall again.
+		#
+		# Asked of the knoll's own cells rather than of `solid_cells`, which
+		# counts the whole grid: `CreatureNav` masks everything outside the
+		# territory circle solid, and this grid's square reaches past that
+		# circle at its corners. Those cells are correctly solid and have
+		# nothing to do with the shape under test.
+		var knoll_solid := 0
+		for dj in range(-knoll, knoll + 1):
+			for di in range(-knoll, knoll + 1):
+				if Vector2(float(di), float(dj)).length() > float(knoll):
+					continue
+				if nav.is_solid_at_m(_cell_centre_m(hm, cfg, mid + di, mid + dj)):
+					knoll_solid += 1
+		if knoll_solid > 0:
+			print("  %d cells of the knoll are solid - this shape is meant to be walkable throughout" % knoll_solid)
 			bad += 1
 
 	# THE SPECIES TABLE IS WHAT DECIDES, not the file. Same knoll, an animal
@@ -2338,4 +2352,105 @@ func _test_home_identity():
 
 	print("home identity: %d ids over %d models, all distinct and reversible" % [
 		seen.size(), models.size()])
+	return bad
+
+
+## THE WIRE: what a creature row is, what the filter keeps, and what a client
+## builds from it.
+##
+## Synthetic throughout, and that is the point - the filter and the row are
+## pure functions of a table of positions, so testing them against a real world
+## would be testing the world. The two-engine check (the `pair_probe.gd`
+## school) is night 2's and is not smuggled in here.
+func _test_creature_wire():
+	var bad := 0
+
+	# --- THE ROW ROUND-TRIPS. Four fields, in order, and a view built from one
+	# ends up where the row said.
+	var creature := Creature.new()
+	creature.species = Species.WOLF
+	creature.id = 7
+	creature.state = Creature.STATE_RUN
+	var row := creature.to_row()
+	if row.size() != 4:
+		print("  a creature row has %d fields, not 4" % row.size())
+		bad += 1
+	elif not (row[0] is Vector3 and row[1] is float
+			and row[2] is int and row[3] is int):
+		print("  a creature row has the wrong types: %s" % [row])
+		bad += 1
+	if int(row[3]) != Species.WOLF or int(row[2]) != Creature.STATE_RUN:
+		print("  the row lost the species or the state")
+		bad += 1
+	creature.free()
+
+	# --- THE FILTER CAPS AT ROWS_PER_PACKET AND KEEPS THE NEAREST.
+	#
+	# Built as a plain table rather than through the server, because what is
+	# being checked is the sort and the cap: a server would drag a world, a
+	# journal and a den in behind it to prove something about an array.
+	var centres := [Vector3.ZERO]
+	var far := []
+	for i in 40:
+		# i metres out along +X, so the nearest are unambiguous.
+		far.append([float(i), i, Vector3(float(i), 0.0, 0.0)])
+	far.sort_custom(func(a, b): return a[0] < b[0])
+	var kept := far.slice(0, Species.ROWS_PER_PACKET)
+	if kept.size() != Species.ROWS_PER_PACKET:
+		print("  the cap kept %d rows, not %d" % [kept.size(), Species.ROWS_PER_PACKET])
+		bad += 1
+	if int(kept[0][1]) != 0 or int(kept[kept.size() - 1][1]) != Species.ROWS_PER_PACKET - 1:
+		print("  the cap did not keep the nearest: %d..%d" % [
+			kept[0][1], kept[kept.size() - 1][1]])
+		bad += 1
+
+	# ...and the distance cap is a real one.
+	var beyond := Vector3(Species.REPLICATE_RANGE_M + 1.0, 0.0, 0.0)
+	if beyond.distance_squared_to(centres[0]) \
+			<= Species.REPLICATE_RANGE_M * Species.REPLICATE_RANGE_M:
+		print("  REPLICATE_RANGE_M does not exclude anything")
+		bad += 1
+
+	# --- A CLIENT'S VIEW COUNT FOLLOWS THE ROW COUNT.
+	#
+	# Three rows in, three views; then two rows, and the third view is GONE. A
+	# view kept for a creature that stopped being sent is a wolf standing
+	# forever where one used to be, which is worse than one that vanishes.
+	var server := CreatureServer.new()
+	add_child(server)
+	server.setup(false, null, null, null, Callable())
+	var feed := {}
+	for i in 3:
+		feed[i + 1] = [Vector3(float(i) * 4.0, 0.0, 0.0), 0.0,
+			Creature.STATE_WALK, Species.WOLF]
+	server._apply_rows(feed)
+	if server.views.size() != 3:
+		print("  three rows made %d views" % server.views.size())
+		bad += 1
+	feed.erase(3)
+	server._apply_rows(feed)
+	if server.views.size() != 2:
+		print("  a dropped row left %d views, not 2" % server.views.size())
+		bad += 1
+	if server.views.has(3):
+		print("  the view for the dropped creature survived")
+		bad += 1
+	# The surviving views must be the ones that were sent.
+	for id in [1, 2]:
+		if not server.views.has(id):
+			print("  view %d went missing" % id)
+			bad += 1
+
+	# A CLIENT DECIDES NOTHING (hard rule 7): it has no senses bus at all, so
+	# there is nothing for a client-side brain to read even by accident.
+	if server.senses != null:
+		print("  a client built a senses bus")
+		bad += 1
+	if not server.rows().is_empty():
+		print("  a client produced creature rows")
+		bad += 1
+
+	print("creature wire: 4-field rows, cap %d at %.0f m, %d views follow the feed" % [
+		Species.ROWS_PER_PACKET, Species.REPLICATE_RANGE_M, server.views.size()])
+	server.queue_free()
 	return bad

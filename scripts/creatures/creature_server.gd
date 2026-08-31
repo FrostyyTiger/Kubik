@@ -141,6 +141,234 @@ func log_event(kind: String, species: int, id: int, pos: Vector3,
 	journal.log_event(kind, row)
 
 
+# --- The pack ----------------------------------------------------------------
+
+## Every live creature, by id.
+var creatures := {}
+
+## The one pack night 1 spawns. Night 2's marmots and eagle get their own.
+var pack: PackBoard = null
+var pack_nav: CreatureNav = null
+
+## The den this pack lives at, as HomePlacement returned it.
+var den := {}
+
+var _next_id := 1
+## Which seed the current creatures belong to. A reroll changes the world under
+## them, so it has to change them too - and comparing seeds is how that happens
+## without this file knowing what a reroll is.
+var _spawned_seed := 0
+var _brain_accum := 0.0
+var _tick_index := 0
+
+
+## Build the pack at the nearest den, once the world exists.
+##
+## POLLED RATHER THAN SIGNALLED, and that is a deliberate simplicity. The
+## world emits `generation_finished` on every batch, so a signal would need a
+## guard anyway; comparing the seed the creatures were built for against the
+## world's current one gets the reroll case right for free, which is exactly
+## what the probe's five-run loop needs.
+func _try_spawn_pack() -> void:
+	if not _is_host or world == null or not world.has_seed():
+		return
+	if _spawned_seed == world.world_seed:
+		return
+	if not world.is_idle():
+		return
+	_spawned_seed = world.world_seed
+	_despawn_all()
+
+	var gen: TerrainGenerator = world.generator
+	var spawn := world.spawn_position_m(0.0)
+	den = HomePlacement.nearest(gen, "den", spawn)
+	if den.is_empty():
+		push_warning("[Creatures] no den in this region - no pack")
+		return
+
+	pack = PackBoard.new(Species.WOLF, self)
+	pack.den_id = int(den["id"])
+	pack.den_pos = den["pos"]
+	# THE FIRST ADDRESS THE WORLD EVER HAD, written into the journal as an
+	# event rather than only existing as a position. `id` here is the HOME's
+	# identity, not a creature's - see the schema in species.gd.
+	log_event("den_placed", Species.WOLF, pack.den_id, pack.den_pos, {
+		"home": "den", "danger": den["danger"], "slope_deg": den["slope_deg"],
+	})
+
+	pack_nav = CreatureNav.build(world, Species.WOLF, pack.den_pos)
+
+	var wanted := mini(Species.pack_size(Species.WOLF),
+		Species.MAX_LIVE - creatures.size())
+	for k in wanted:
+		var wolf := Wolf.new()
+		var wolf_id := _next_id
+		_next_id += 1
+		# Spread around the den mouth rather than stacked in one point, or the
+		# first frame has two wolves inside each other and the flank starts
+		# from a coin flip.
+		var angle := TAU * float(k) / float(maxi(wanted, 1))
+		# ADD FIRST, THEN PLACE. `global_position` on a node that is not in the
+		# tree yet is an engine error and silently returns the identity
+		# transform, so a wolf positioned before it was added started at the
+		# world origin - half a world away from its own den.
+		add_child(wolf)
+		wolf.global_position = pack.den_pos + Vector3(cos(angle), 0.0, sin(angle)) * 3.0
+		wolf.setup_wolf(wolf_id, world, pack_nav, pack, self)
+		creatures[wolf_id] = wolf
+		pack.members.append(wolf_id)
+	print("[Creatures] pack of %d at den %d, %.0f m from spawn, danger %.2f" % [
+		creatures.size(), pack.den_id,
+		(pack.den_pos as Vector3).distance_to(spawn), den["danger"]])
+
+
+func _despawn_all() -> void:
+	for id in creatures:
+		(creatures[id] as Node).queue_free()
+	creatures.clear()
+	for id in views:
+		(views[id] as Node).queue_free()
+	views.clear()
+	pack = null
+	pack_nav = null
+
+
+## Movement every frame, brains at `Species.BRAIN_HZ`, STAGGERED.
+##
+## Staggered because sixteen animals all deciding on the same tick is a spike
+## sixteen times the size of the one it replaces, and because a pack that
+## thinks in lockstep moves in lockstep - which reads as a formation rather
+## than as animals.
+func _process(delta: float) -> void:
+	if not _is_host:
+		return
+	_try_spawn_pack()
+	if creatures.is_empty():
+		return
+	tick_senses()
+
+	for id in creatures:
+		(creatures[id] as Creature).advance(delta)
+
+	# ...and the wire, on this node's OWN accumulator. game.gd's sync tick is
+	# not touched; see decision 2.
+	_sync_accum += delta
+	if _sync_accum >= 1.0 / Species.SYNC_HZ:
+		_sync_accum = 0.0
+		var packet := rows_for(sim_centres_m())
+		if Net.is_online() and not Net.other_peer_ids().is_empty():
+			_cl_sync_creatures.rpc(packet)
+		# The host draws its own creatures from the same rows it would send.
+		_apply_rows(packet)
+
+	_brain_accum += delta
+	var period := 1.0 / Species.BRAIN_HZ
+	# ONE SLICE OF THE PACK PER SUB-TICK. At 10 Hz with two wolves each thinks
+	# five times a second; with sixteen, each still thinks whenever its slice
+	# comes up, and no frame ever runs more than a slice.
+	var slices := maxi(creatures.size(), 1)
+	while _brain_accum >= period / float(slices):
+		_brain_accum -= period / float(slices)
+		var ids := creatures.keys()
+		var who: int = ids[_tick_index % ids.size()]
+		_tick_index += 1
+		var creature: Node = creatures.get(who)
+		if creature is Wolf:
+			(creature as Wolf).think()
+
+
+# --- The wire ----------------------------------------------------------------
+#
+# Decisions 2 and 3: this node publishes its own rows on its own accumulator
+# and its own rpc, so `game.gd`'s sync path, rates and packet shape are
+# untouched. The filter is `body_field.gd`'s, copied rather than shared -
+# nearest first, distance-capped, count-capped - because the two will want to
+# diverge (a creature that has moved is not an interesting exception the way a
+# boulder that has moved is; every creature is always moving).
+
+## Client only. creature id -> CreatureView. The host has these too, built from
+## its own creatures - see `_refresh_views`.
+var views := {}
+
+var _sync_accum := 0.0
+
+
+## Every creature's row, distance-filtered and capped, nearest first.
+##
+## `centres` is every peer's position INCLUDING the host's own, exactly as
+## BodyField's is: a creature only the host can see still has to be sent,
+## because the host is not the only one who will walk over there later.
+func rows_for(centres: Array) -> Dictionary:
+	var out := {}
+	if not _is_host or creatures.is_empty():
+		return out
+	var range_sq := Species.REPLICATE_RANGE_M * Species.REPLICATE_RANGE_M
+	var near := []
+	for id in creatures:
+		var c: Creature = creatures[id]
+		var best := INF
+		for centre in centres:
+			best = minf(best, c.global_position.distance_squared_to(centre))
+		if best > range_sq:
+			continue
+		near.append([best, id, c])
+	if near.size() > Species.ROWS_PER_PACKET:
+		# NEAREST FIRST when there are too many. If a packet has to drop rows,
+		# the ones to drop are the ones nobody is standing next to.
+		near.sort_custom(func(a, b): return a[0] < b[0])
+		near.resize(Species.ROWS_PER_PACKET)
+	for entry in near:
+		out[entry[1]] = (entry[2] as Creature).to_row()
+	return out
+
+
+## Every creature's row, unfiltered. For the probe and the selftests.
+func rows() -> Dictionary:
+	var out := {}
+	for id in creatures:
+		out[id] = (creatures[id] as Creature).to_row()
+	return out
+
+
+## Sent by the host, executed on every client.
+##
+## UNRELIABLE ORDERED, like every other continuous position feed in this
+## project: a dropped creature row is corrected 50 ms later by the next one,
+## and re-sending it would arrive after the correction.
+@rpc("authority", "call_remote", "unreliable_ordered")
+func _cl_sync_creatures(rows_in: Dictionary) -> void:
+	if _is_host:
+		return
+	_apply_rows(rows_in)
+
+
+## Build, feed and retire the display bodies.
+##
+## THE HOST RUNS THIS TOO, on its own creatures. One code path for what a
+## creature looks like: a wolf cannot look different to the player hosting than
+## to the player who joined.
+func _apply_rows(rows_in: Dictionary) -> void:
+	for id in rows_in:
+		var row: Array = rows_in[id]
+		if row.size() < 4:
+			continue
+		var view: CreatureView = views.get(id)
+		if view == null:
+			view = CreatureView.new()
+			view.setup(int(row[3]), int(id))
+			add_child(view)
+			views[id] = view
+		view.set_row(row)
+	# A CREATURE THAT STOPPED BEING SENT IS GONE, whether it died, was culled
+	# by the distance filter, or the pack despawned. A view kept for one that
+	# is no longer in the packet is a wolf standing forever where one used to
+	# be, which is worse than one that vanishes.
+	for id in views.keys():
+		if not rows_in.has(id):
+			(views[id] as Node).queue_free()
+			views.erase(id)
+
+
 # --- The probe hook ----------------------------------------------------------
 
 ## Hand the session to the creature probe - see
