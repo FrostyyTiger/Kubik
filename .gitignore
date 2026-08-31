@@ -40,3 +40,9 @@ desktop.ini
 
 # The parts generator, tools/parts_author
 __pycache__/
+
+# Purchased, licensed art. Lives in the PRIVATE Kubik-assets repo and is
+# mounted here by scripts/tools/sync_assets.py. Never commit its contents:
+# the licences allow use in the game, not redistribution through a public
+# repo. The game must always run with this directory absent.
+assets/purchased/

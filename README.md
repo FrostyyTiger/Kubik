@@ -446,6 +446,8 @@ Check `BUILD_INFO.txt` matches before blaming the netcode.
 ```
 assets/textures/     one 16x16 greyscale placeholder, no longer used
 assets/characters/   the character part data, and .vox drop-ins that replace it
+assets/purchased/    (git-ignored) paid art mounted from the private
+                     Kubik-assets repo by scripts/tools/sync_assets.py
 scenes/              main_menu, game, player, remote_player
 scripts/net/         transport seam, ENet implementation, Net autoload
 scripts/world/       worldgen config, heightmap, terrain generator, lakes,
@@ -458,6 +460,21 @@ docs/plans/          implementation plans
 ```
 
 ---
+
+## Purchased assets
+
+Some art is bought, not made: licensed for use and modification in the game,
+not for redistribution as source. That content lives in the **private**
+[Kubik-assets](https://github.com/FrostyyTiger/Kubik-assets) repo - archived
+packs plus a curated `game/` subset - and is mounted into the (public) game
+repo at `assets/purchased/`, which is git-ignored, by
+`scripts/tools/sync_assets.py` (clone Kubik-assets as a sibling directory and
+run it after every pull of that repo). Two rules hold: nothing from the
+private repo is ever committed here, in original or modified form; and the
+game must always run with `assets/purchased/` absent - purchased art is a
+drop-in layer over authored fallbacks, never a dependency. First tenant: the
+Voxel Forest Animals Pack, ten rigged-and-animated species at
+`assets/purchased/creatures/<species>/`.
 
 ## Known provisional bits
 
@@ -520,4 +537,6 @@ input, the host simulates, the host broadcasts the position.
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The licence covers this repo's code and authored
+content only; purchased art (see **Purchased assets**) is proprietary,
+lives outside this repo, and is not MIT.
