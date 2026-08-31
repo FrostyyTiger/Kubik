@@ -222,6 +222,37 @@ def band_diff(pa: Path, pb: Path, rows: tuple[int, int] | None) -> dict:
     }
 
 
+def run_sequence(path: Path, rows, strict: bool) -> int:
+    """THE SHIMMER NUMBER, distance v3 Stage 9.
+
+    A crawl is the difference between CONSECUTIVE frames of a moving camera,
+    and no still can show one. `--tour --fly N` writes those frames; this
+    reports the mean |dL| between each pair over a row band, and the median and
+    worst of that series. Antialiasing that resolves sub-pixel geometry across
+    frames - TAA - lowers it; MSAA, which resolves inside one frame, does not.
+    """
+    np = _need_numpy()
+    frames = sorted(path.glob("fly-*.png"))
+    if len(frames) < 2:
+        print("need at least two fly-*.png in %s" % path)
+        return 2
+    label = "rows %d-%d" % rows if rows else "whole frame"
+    per = []
+    for a, b in zip(frames, frames[1:]):
+        r = band_diff(a, b, rows)
+        if "size_mismatch" in r:
+            print("%s vs %s: size mismatch" % (a.name, b.name))
+            return 2
+        per.append(r["mean"])
+    arr = np.array(per)
+    print("%-38s %10s %9s %9s %8s  (%s)" % (
+        "sequence", "shimmer", "median", "worst", "frames", label))
+    print("%-38s %10.4f %9.4f %9.4f %8d" % (
+        path.name, float(arr.mean()), float(np.median(arr)), float(arr.max()),
+        len(frames)))
+    return 0
+
+
 def parse_rows(spec: str) -> tuple[int, int]:
     a, _, b = spec.partition(":")
     return (int(a), int(b))
@@ -283,6 +314,13 @@ def main(argv: list[str]) -> int:
         i = argv.index("--axis")
         axis = argv[i + 1]
         del argv[i:i + 2]
+    if "--sequence" in argv:
+        argv = [a for a in argv if a != "--sequence"]
+        if len(argv) != 1:
+            print(__doc__.strip().split("\n\n")[1])
+            return 2
+        d = Path(argv[0]) if Path(argv[0]).is_absolute() else ROOT / argv[0]
+        return run_sequence(d, rows, strict)
     if "--local-contrast" in argv:
         argv = [a for a in argv if a != "--local-contrast"]
         paths = [Path(p) if Path(p).is_absolute() else ROOT / p for p in argv]

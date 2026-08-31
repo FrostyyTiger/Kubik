@@ -1228,3 +1228,85 @@ and terrain colour is forest-green there because the ground IS forest.
 `build/tour/s8-trees/17-rim.png`, rows 520-720, changes by mean |dL| 0.0506
 against Stage 7 - the ring is there and it is quiet.
 
+---
+
+## Stage 9 - TAA, tested and judged
+
+**No default changes, as the plan instructs.** Two things were added to the
+harness, because the crawl this stage is about is the one artefact the project
+had no instrument for:
+
+- **`--tour --taa`** swaps MSAA 4x for Godot 4's temporal antialiasing. MSAA is
+  turned OFF when TAA is on, deliberately: MSAA resolves edges inside one frame
+  and TAA resolves them across eight, and comparing "MSAA 4x" against "MSAA 4x
+  plus TAA" would measure the wrong pair.
+- **`--tour --fly N`** captures N consecutive frames while the camera walks
+  forward at 0.75 m a frame, **with no settle between them**, which is what a
+  moving player does not get. Every other capture in this harness waits for the
+  world to settle and takes one picture, and a harness that only ever takes one
+  frame has zero frame-pairs by construction.
+- **`png_diff.py --sequence`** reports the mean |dL| between consecutive frames
+  over a row band. **That is the shimmer number.**
+
+Both are appends to a tool. `screenshot_tour.gd` is off the plan's lane list
+and this is the second time this epic has appended to it; the first was
+`17-rim` at Stage 5.
+
+### The shimmer numbers
+
+Sixty frames walking forward from the summit vantage, seed 42, Forward+,
+`ganymede`. Mean |dL| between consecutive frames, in sRGB luma levels.
+
+| band | MSAA 4x | TAA | |
+| --- | --- | --- | --- |
+| **the far country, rows 330-520** | **3.6483** (median 3.4489) | **1.1159** (median 0.8887) | **-69%, and -74% on the median** |
+| the near field, rows 500-720 | 3.4754 (median 3.2628) | 1.3985 (median 1.1677) | -60% |
+| mostly sky, rows 0-300 | 0.6134 | 0.6565 | +7%, which is nothing happening |
+
+**The crawl is real, it is large, and TAA removes about seven tenths of it.**
+Three and a half luma levels of change between one frame and the next, over the
+whole far band, is not subtle - it is the terraces of a 3.8 km country
+re-resolving every frame as the camera moves.
+
+### Does TAA soften the poster's hard edges?
+
+Still frames, same vantages, MSAA against TAA, local contrast over the far
+band:
+
+| shot | MSAA 4x | TAA | |
+| --- | --- | --- | --- |
+| 6-postcard | 5.2171 | 5.0928 | -2.4% |
+| 17-rim | 5.0463 | 4.9281 | -2.3% |
+| **14-postcard-dusk** | **3.8680** | **1.6280** | **-58%** |
+
+**Two of the three say no and the third says something more interesting than
+yes.** Two and a half percent is not softening; it is the edge pixels of a
+hard-edged image being resolved slightly differently, and the poster's flat
+fields and hard band boundaries survive it intact.
+
+`14-postcard-dusk` is the one to look at, and **the 58% is not TAA removing
+detail - it is TAA removing an artefact this epic introduced.** In
+`build/tour/s8-trees/14-postcard-dusk.png` the big far cliffs carry a fine
+diagonal HATCHING, a moiré between Stage 2's grain lattice and the pixel grid;
+in `s9-taa-still/14-postcard-dusk.png` those same cliffs are clean flat fields
+of colour. The fleck number counts the hatch as texture, which is why it falls
+so far, and a person looking at the pair would call the second one better.
+
+### The recommendation, and it is a recommendation
+
+1. **The crawl is worth fixing and TAA fixes it.** -69% on the far band, and
+   the far band is what this epic added.
+2. **It costs almost nothing in the poster's own language** - 2.4% of local
+   contrast on the daylight shots, and the flat fields and hard boundaries are
+   still flat and hard.
+3. **There is a second finding underneath it that is NOT about TAA:** the far
+   grain aliases into a visible hatch at dusk on this GPU at MSAA 4x. TAA hides
+   it; so would a coarser lattice. `Look.FAR_GRAIN_PX` is 0.003, about two
+   screen pixels per lattice cell at 1280x720, and DH's own caution is that
+   per-block variation below a certain angular size "stops helping and starts
+   aliasing". **If TAA is not adopted, that constant should go up.** It is a
+   shader constant rather than a knob and was not moved here.
+
+**Marcel judges the pairs. Nothing in this stage changed a default**, and the
+game still ships MSAA 4x.
+

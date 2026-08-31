@@ -100,12 +100,104 @@ func run(world: World, player: Player, sky: SkyCycle = null) -> void:
 	print("[Tour] waiting for the first world load")
 	await _wait_for_world()
 
+	# DISTANCE V3 STAGE 9, appended: the anti-aliasing this run is shot with, and
+	# the fly-forward the crawl needs. See _apply_aa() and _flythrough().
+	_apply_aa()
 	var shots := _filter(_choose_vantages())
+	if _fly_frames() > 0:
+		await _flythrough(shots)
+		print("[Tour] done, %d frames in %s" % [_fly_frames(), _out_dir])
+		await _shutdown()
+		return
 	for i in shots.size():
 		await _capture(i, shots[i])
 
 	print("[Tour] done, %d images in %s" % [shots.size(), _out_dir])
 	await _shutdown()
+
+
+## `--taa` swaps MSAA for Godot's temporal antialiasing. Distance v3 Stage 9.
+##
+## The game ships MSAA 4x. At a 3,840 m reach the far country's terraces are
+## sub-pixel long before the fog takes them, and sub-pixel geometry CRAWLS -
+## which is the one artefact a still photograph cannot show and the reason DH
+## ships its own TAA with an eight-frame jitter table. Godot 4 Forward+ has TAA
+## built in, so this is a flag rather than an implementation.
+##
+## MSAA IS TURNED OFF WHEN TAA IS ON, deliberately. They are not complementary
+## here: MSAA resolves the edges inside one frame and TAA resolves them across
+## eight, and running both pays for the first while the second is what actually
+## catches a crawling terrace. Comparing "MSAA 4x" against "MSAA 4x + TAA"
+## would measure the wrong pair.
+##
+## NO DEFAULT CHANGES IN STAGE 9 - the plan says produce the evidence and let
+## Marcel judge - so this is a command-line flag and touches no config value.
+func _apply_aa() -> void:
+	if not "--taa" in OS.get_cmdline_user_args():
+		return
+	var vp := get_viewport()
+	vp.msaa_3d = Viewport.MSAA_DISABLED
+	vp.use_taa = true
+	print("[Tour] --taa: MSAA off, temporal antialiasing on")
+
+
+## `--fly N` captures N consecutive frames while the camera walks forward.
+## Distance v3 Stage 9, and it is the only thing in this harness that measures
+## MOTION.
+##
+## Every other capture here waits for the world to settle and then takes one
+## picture, which is exactly the wrong instrument for a crawl: a crawl is the
+## difference between consecutive frames, and a harness that only ever takes
+## one frame has zero of them by construction. So: go to the first selected
+## vantage, then step the camera forward FLY_STEP_M per frame and photograph
+## every frame, with no settle in between - the settle is what a moving player
+## does not get.
+##
+## The frames are diffed pairwise afterwards by
+## `tools/png_diff.py --rows A:B`, and the mean |dL| between consecutive frames
+## is the shimmer number. TAA should lower it; so, less usefully, would motion
+## blur or a lower frame rate, which is why the pair is shot at the same speed
+## and the same vantage.
+const FLY_STEP_M := 0.75
+
+
+func _fly_frames() -> int:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--fly")
+	if i < 0 or i + 1 >= argv.size():
+		return 0
+	return maxi(int(argv[i + 1]), 0)
+
+
+func _flythrough(shots: Array) -> void:
+	if shots.is_empty():
+		push_warning("[Tour] --fly with no vantage selected")
+		return
+	var shot: Dictionary = shots[0]
+	var n := _fly_frames()
+	print("[Tour] --fly %d from %s, %.2f m per frame" % [
+		n, shot["name"], FLY_STEP_M])
+	# Stand where the shot stands, then let _capture's own placement run once
+	# so the world streams in around it.
+	await _capture(0, shot)
+	var eye := _camera.global_position
+	var look: Vector3 = shot["target"]
+	var dir := (look - eye)
+	dir.y = 0.0
+	dir = dir.normalized() if dir.length() > 0.001 else Vector3.FORWARD
+	for f in n:
+		eye += dir * FLY_STEP_M
+		_player.global_position = eye
+		_world.set_center_from_position(eye)
+		_camera.global_position = eye
+		_camera.look_at(look + dir * float(f) * FLY_STEP_M, Vector3.UP)
+		# NO SETTLE. One frame, then the shutter - which is the whole point.
+		await RenderingServer.frame_post_draw
+		var image := get_viewport().get_texture().get_image()
+		var path := "%s/fly-%03d.png" % [_out_dir, f]
+		if image.save_png(path) != OK:
+			push_warning("[Tour] could not write %s" % path)
+	print("[Tour]   -> %d frames written" % n)
 
 
 ## `--only NAME` shoots just the vantages whose name contains NAME.
