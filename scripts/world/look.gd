@@ -162,9 +162,47 @@ const FOG_FN := """
 // vertex: the vertex colour's alpha is already the flora's emissive flag.
 uniform float fog_dark_mix = 0.0;
 
-vec4 poster_fog(vec3 view_vertex, vec3 albedo) {
-	float depth = length(view_vertex);
-	float f = smoothstep(kubik_fog_start, kubik_fog_end, depth);
+// WHERE THE AIR BEGINS, as a fraction of the FAR RADIUS rather than as a
+// number of metres. Distance v3 Stage 5, and DH's `farFogStart 0.4`.
+//
+// The fog wall is not a fog property; it is a fog-over-thirty-metres property.
+// Vanilla Minecraft ramps its fog over the last two chunks of a 200-block
+// radius and gets a wall; DH ramps over 60% of a 4 km radius and gets aerial
+// perspective. Ours ramped from 320 m to 800 m, which is the vanilla shape.
+//
+// A FRACTION, NEVER A METRE VALUE, because the world is unbounded by design and
+// nothing may bake in a reach (CLAUDE.md, 2026-08-31). At 0 this falls back to
+// kubik_fog_start, so fog_start_m still does something and is still on F4.
+uniform float far_fog_start_frac = 0.4;
+
+// DH's EXPONENTIAL_SQUARED density, and its default. The curve is
+// 1 - exp(-(density * t)^2) over the normalised span, divided by its own value
+// at t = 1 so the last band is exactly the fog colour and the far mesh's own
+// edge is never the thing you notice first.
+const float FOG_DENSITY = 2.5;
+
+// The fog factor at one distance, before the bands. Split out of poster_fog so
+// the curve is in one place and the DISTANCE is the caller's business - which
+// it has to be, because it is cylindrical for the world and spherical for
+// anything that has no world position to hand.
+float poster_fog_curve(float dist) {
+	float start = far_fog_start_frac > 0.0
+		? kubik_fog_end * far_fog_start_frac : kubik_fog_start;
+	float t = clamp((dist - start) / max(kubik_fog_end - start, 1.0), 0.0, 1.0);
+	float k = FOG_DENSITY * t;
+	return (1.0 - exp(-k * k)) / (1.0 - exp(-FOG_DENSITY * FOG_DENSITY));
+}
+
+// THE FOG AT A DISTANCE THE CALLER CHOOSES. Distance v3 Stage 5.
+//
+// CYLINDRICAL, WHEN THE CALLER CAN BE. Spherical distance fogs a peak by how
+// far away it is THROUGH THE AIR, so standing under a mountain and looking up
+// hazes its summit as hard as ground at the same range - and the sky behind it
+// is not hazed at all, because the sky is not drawn through this. The result is
+// a bright sky behind a grey peak, which is the one thing a travel poster never
+// does. DH's fog is cylindrical by default for exactly this reason.
+vec4 poster_fog_at(vec3 view_vertex, vec3 albedo, float dist) {
+	float f = poster_fog_curve(dist);
 	f = floor(f * kubik_fog_bands + 0.5) / kubik_fog_bands;
 	// HUE IS HELD ACROSS THE BANDS. Fading everything to one fog colour turns
 	// a green range and a grey range into the same grey at the same distance;
@@ -177,6 +215,14 @@ vec4 poster_fog(vec3 view_vertex, vec3 albedo) {
 	// A FIGURE FOGS DARKER THAN THE GROUND BEHIND IT, or it dissolves into it
 	// at exactly the distance you most need to see it.
 	return vec4(mix(target, kubik_fog_dark.rgb, fog_dark_mix), f);
+}
+
+// The spherical form, kept so callers that have no world position keep working
+// unchanged - FloraModels is one, and it is another lane's file. Nothing grows
+// past 128 m and the fog does not start until 0.4 of the far radius, so the
+// flora has never reached a non-zero fog factor and still does not.
+vec4 poster_fog(vec3 view_vertex, vec3 albedo) {
+	return poster_fog_at(view_vertex, albedo, length(view_vertex));
 }
 """
 
@@ -269,7 +315,11 @@ void fragment() {
 	ALBEDO = vec3(1.0);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	FOG = poster_fog(VERTEX, v_albedo);
+	// CYLINDRICAL DISTANCE, distance v3 Stage 5. world_pos is already a
+	// varying here; the camera's own world position is the translation column
+	// of the inverse view matrix.
+	FOG = poster_fog_at(VERTEX, v_albedo,
+		length(world_pos.xz - INV_VIEW_MATRIX[3].xz));
 }
 """ + RAMP
 
@@ -292,7 +342,11 @@ void fragment() {
 	ALPHA = COLOR.a;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.0;
-	FOG = poster_fog(VERTEX, v_albedo);
+	// Cylindrical, like the terrain. No world_pos varying here, so it is
+	// recovered from the view-space vertex.
+	vec3 w_pos = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	FOG = poster_fog_at(VERTEX, v_albedo,
+		length(w_pos.xz - INV_VIEW_MATRIX[3].xz));
 }
 """ + RAMP
 
@@ -679,6 +733,13 @@ static func apply_local_knobs(config: WorldgenConfig) -> void:
 	f.set_shader_parameter("grain_sparse", config.grain_sparse)
 	f.set_shader_parameter("contact_band", config.contact_band)
 	f.set_shader_parameter("far_grain", config.far_grain)
+	# THE FOG CURVE IS EVERY MATERIAL'S, distance v3 Stage 5, so it is pushed to
+	# all four of them rather than to the terrain's alone. FloraModels builds
+	# its own materials from Look.FOG_FN and is another lane's file, so its
+	# copy keeps the shader's default 0.4 - which is correct and inert: nothing
+	# grows past 128 m and the fog does not start until 1,280 m.
+	for mat in [m, f, figure_material(), water_material()]:
+		mat.set_shader_parameter("far_fog_start_frac", config.far_fog_start_frac)
 
 
 static func _set_color(name: StringName, c: Color) -> void:

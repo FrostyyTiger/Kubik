@@ -118,6 +118,7 @@ const LOCAL_TUNING_ROWS := [
 	["far_vote", "distance: far vote (0/1)", 0.0, 1.0, 1.0],
 	["far_grain", "distance: far grain", 0.0, 0.2, 0.005],
 	["far_riser_axis", "distance: riser axis (cross)", 0.0, 0.3, 0.01],
+	["far_fog_start_frac", "distance: fog start (x reach)", 0.0, 0.9, 0.05],
 ]
 
 var config: WorldgenConfig = null

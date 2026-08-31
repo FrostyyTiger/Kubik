@@ -253,6 +253,49 @@ func _choose_vantages() -> Array:
 			"target": boulder,
 			"distance": 6.0, "height": 1.8,
 		})
+
+	# --- Distance v3 Stage 5: the one shot this harness did not have ---------
+	#
+	# APPENDED, and the reason is a measurement rather than a preference.
+	#
+	# Distance v3 Stage 4 took the far field from a 960 m radius to 3,840 m, and
+	# then Stage 5 could not photograph it: moving the fog's start from 1,280 m
+	# to 640 m changed 2,726 pixels of `6-postcard`, and raising fog_bands from
+	# 4 to 24 changed ZERO. Both say the same thing - **99.3% of that frame's
+	# far band is within 640 m** - and it is true of every vantage above.
+	# Every one of them is either enclosed by its own valley or standing a
+	# hundred metres from its subject. `2-summit` is the highest ground in the
+	# world photographed from 132 m away with the sky behind it; nothing in
+	# this tour has ever stood ON high ground and looked OUT.
+	#
+	# So the epic that exists to make the whole country visible had no
+	# instrument that could see it, and the answer is one more vantage rather
+	# than an argument. Stand on the summit, at eye height, and look across the
+	# map toward the origin - which is the longest sightline the world has,
+	# because the highest ground is near an edge and the origin is not.
+	#
+	# It is also the fourth pillar's north star as a photograph: the world huge,
+	# the player small (docs/DESIGN.md, "the north star is monumental").
+	#
+	# NOTHING ELSE IN THIS FILE IS TOUCHED. It is one append to one list, in a
+	# tool, and the sixteen shots before it are the sixteen shots that were
+	# there - which is what makes every earlier label still comparable.
+	var rim_eye := _cell_to_metres(hm, summit, cfg)
+	rim_eye.y += 3.0
+	var rim_dir := Vector2(-rim_eye.x, -rim_eye.z)
+	if rim_dir.length() < 1.0:
+		rim_dir = Vector2(1.0, 0.0)
+	rim_dir = rim_dir.normalized()
+	# 3 km out and 120 m down: about two degrees below level, so the horizon
+	# sits high in the frame and the country fills it.
+	shots.append({
+		"name": "17-rim",
+		"note": "standing on the summit, looking across the whole region",
+		"target": Vector3(rim_eye.x + rim_dir.x * 3000.0, rim_eye.y - 120.0,
+			rim_eye.z + rim_dir.y * 3000.0),
+		"eye_m": rim_eye,
+		"distance": 0.0, "height": 0.0,
+	})
 	return shots
 
 

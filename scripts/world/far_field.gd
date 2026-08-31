@@ -244,6 +244,15 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# impostor ring and nothing else, which is what earns a place on this
 	# list - and being on it is what makes a knob judgeable standing still.
 	"far_vote", "far_grain", "far_riser_axis",
+	# far_grain and far_fog_start_frac are UNIFORMS and are already live
+	# through Look.apply_local_knobs() before this runs. They are on this
+	# list anyway, and deliberately: being on it is what makes the panel say
+	# "the far country is redrawing" instead of "press F7 to rebuild
+	# terrain", and the F7 message on a knob that needs no reroll is the
+	# exact confusion distance v2 Stage 0 existed to remove. The rebuild it
+	# also triggers is redundant and costs one worker task nobody is
+	# waiting on.
+	"far_fog_start_frac",
 ]
 
 static var _knobs := {}

@@ -840,3 +840,125 @@ meadow whose horizon is its own ground, so no rim is in the frame at any reach.
 Its floating impostors and pale horizon band are identical at Stage 3 and at
 baseline; they are pre-existing and not this stage's.
 
+---
+
+## Stage 5 - The air: exp² fog over the far radius, banded
+
+**Shipped**, `far_fog_start_frac` default **0.4**.
+
+Three changes to `Look.FOG_FN`, and the bands survive all three.
+
+**The curve is exp².** `1 - exp(-(2.5 * t)^2)` over the normalised span,
+divided by its own value at `t = 1` so the last band is exactly the fog colour
+and the far mesh's edge is still never the thing you notice first. 2.5 is DH's
+own `EXPONENTIAL_SQUARED` density.
+
+**The span is a FRACTION of the far radius, never a metre value.** The world is
+unbounded by design and no new system may bake in a reach, so the knob is
+`far_fog_start_frac` and the span is `[frac * kubik_fog_end, kubik_fog_end]`.
+At 0 the shader falls back to `kubik_fog_start`, so `fog_start_m` still means
+something and is still on F4 - which is what "every existing fog knob still
+does something sensible" asks for.
+
+**The distance is cylindrical.** Spherical distance fogs a peak by how far away
+it is through the air, so standing under a mountain and looking up hazes its
+summit as hard as ground at the same range - while the sky behind it is not
+hazed at all, because the sky is not drawn through this. A grey peak against a
+clear sky is the one thing a travel poster never does. `world_pos.xz` against
+`INV_VIEW_MATRIX[3].xz`, which both the terrain and the water shader can reach.
+
+**`poster_fog()` still exists and still means what it meant.** It is now a
+one-line wrapper that passes the spherical distance, kept because
+`FloraModels` builds its own materials from `Look.FOG_FN` and is another lane's
+file. Nothing grows past 128 m and the air does not start until 1,280 m, so the
+flora has never reached a non-zero fog factor and still does not - checked
+rather than assumed.
+
+**The near field is untouched:** `swatches.png` and `swatch-ramp.png`
+**identical, 0 pixels**, after a change to the shader every material in the game
+compiles. The swatches sit inside the fog start, where both curves are exactly
+zero, so the arithmetic is unchanged and the compiler agreed.
+
+### The measurement that changed the stage: the tour could not see the reach
+
+`far_fog_start_frac` 0.4 -> 0.15 changed **0 pixels** of `6-postcard`'s far
+band. So did 0.25. So did raising `fog_bands` from 4 to 24. Something was
+either broken or the frame had nothing to fog, and the control settles it:
+`--set fog_end_m=800` moves the same band by **35.69 luma levels over 268,689
+pixels**. The fog works.
+
+So the frame had nothing to fog. Reading it off the two experiments: at
+`fog_bands 24` the first band lands at ~1,390 m and **zero** pixels changed; at
+`frac 0.15` with 24 bands the first band lands at ~638 m and **2,726** pixels
+changed, out of 383,700. **99.3% of `6-postcard`'s far band is within 640 m.**
+
+And that is true of every vantage in the tour. Each of the sixteen is either
+enclosed by its own valley or standing a hundred metres from its subject -
+`2-summit` is the highest ground in the world, photographed from 132 m away
+with the sky behind it. **Nothing in this harness has ever stood on high
+ground and looked out.** The epic that exists to make the whole country visible
+had no instrument that could see it.
+
+**So one vantage was appended to `screenshot_tour.gd`: `17-rim`**, standing on
+the summit at eye height, looking across the map toward the origin, which is
+the longest sightline this world has. It is one append to one list, in a TOOL
+rather than in the game, the sixteen shots before it are untouched and every
+earlier label stays comparable, and it is recorded here because
+`screenshot_tour.gd` is not on the plan's lane list. It is also the fourth
+pillar's north star as a photograph: the world huge, the player small.
+
+### Gate
+
+Measured over `17-rim`'s own far band, which is **rows 330-520** - that frame's
+horizon is at about y 340, so rows 0-300 are pure sky and the epic's own metric
+reads 0.2259 there whatever the fog is doing. Every number in this section says
+which rows, for that reason.
+
+| `17-rim`, rows 330-520 | fleck | p95 | textured | dark40 |
+| --- | --- | --- | --- | --- |
+| **`fog_end 800`, the reach before Stage 4** | **0.0502** | **0.00** | **0.54%** | 0.00% |
+| `fog_end 3200`, `frac 0.15` | 3.4970 | 18.07 | 30.03% | 0.00% |
+| `fog_end 3200`, `frac 0.25` | 4.1943 | 21.34 | 32.97% | 0.51% |
+| **`fog_end 3200`, `frac 0.40` (shipped)** | **5.0454** | **24.99** | **36.17%** | 1.39% |
+
+| gate | result |
+| --- | --- |
+| the rim readable through haze where the old curve saturates to flat fog colour | **MET, by a factor of a hundred** - 0.0502 to 5.0454 |
+| a tour pair old-reach/new-reach from a standpoint that sees the rim | **MET** - `s5-rim-end800/17-rim.png` against `s5-rim/17-rim.png` |
+| near-band crop within tolerance at default knobs | **MET** - swatches identical; the near band of every tour shot is unchanged from Stage 4 except where flora streaming moves it |
+| every existing fog knob still does something sensible | **`fog_end_m` yes, spectacularly. `fog_start_m` yes, at `far_fog_start_frac 0` and only there. `fog_bands` - see below, and the answer is nearly NO** |
+
+**`build/tour/s5-rim-end800/17-rim.png` is the fog wall, photographed.**
+Everything past about 600 m is one flat sheet of near-white with the terrain's
+silhouette barely readable through it - fleck **0.0502** and p95 exactly
+**0.00**, which is the number for "there is nothing there". Beside it,
+`s5-rim/17-rim.png` is the whole region in blocks to the horizon. That pair is
+the epic.
+
+### `fog_bands` is now a resolution, and 4 is coarse
+
+The bands were tuned by look v1 and v2 against a 480 m span (320 m to 800 m),
+where each of the four covered 120 m. The same four now cover a 1,920 m span at
+480 m each, so **the first band boundary moved from 400 m to 1,558 m.** Nothing
+nearer than that gets any air at all, whatever the curve says, because the
+quantiser rounds it to zero.
+
+That is why `frac 0.15` changes `6-postcard` by 2,726 pixels rather than by
+none and by fifty thousand: dropping the start to 480 m only moves the first
+band to 875 m, and the postcard's country stops at 640 m.
+
+**Not changed here**, because `fog_bands` is a look v2 constant and its value is
+Marcel's; the finding and the arithmetic are in "For Marcel to rule on". The
+in-house precedent points one way, though: distance v2 Stage 7 scaled
+`far_band_step` by the ratio of the band interval so that "the value change per
+METRE of altitude" stayed where look v1 put it. The same argument applied to
+`fog_bands` says four bands over 480 m is sixteen over 1,920.
+
+### For the record: what the fog curve is worth on its own
+
+Holding the reach at 3,200 m, `far_fog_start_frac` trades contrast for air on
+the rim shot: 0.40 keeps the most block detail (fleck 5.05) and starts the air
+at 1,280 m; 0.15 starts it at 480 m and reads as aerial perspective (fleck
+3.50). **The recommendation is 0.15-0.20 and it is Marcel's call**; the shipped
+value is the plan's 0.40.
+

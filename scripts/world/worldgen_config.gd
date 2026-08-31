@@ -982,6 +982,32 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## WHERE THE AIR BEGINS, as a fraction of the FAR RADIUS. Distance v3 Stage 5,
+## decision 4, and DH's `farFogStart` default.
+##
+## The fog wall is not a fog property. Vanilla Minecraft ramps its fog over the
+## last two chunks of a 200-block radius and gets a wall; Distant Horizons ramps
+## an exp-squared curve over 60% of a 4 km radius and gets aerial perspective
+## (`docs/research/distant-horizons.md` §4, "How the fog wall is avoided"). This
+## project's fog ramped from 320 m to 800 m, which is the vanilla shape at a
+## different scale, and Stage 4's reach turned that wall into a distance nothing
+## reached.
+##
+## A FRACTION AND NEVER A METRE VALUE, because the world is unbounded by design
+## and no new system may bake in a reach (CLAUDE.md, 2026-08-31). At 0 the
+## shader falls back to `fog_start_m`, so that knob still means something and is
+## still on F4 - which is the other half of the decision-4 gate.
+##
+## 0.4 IS DH'S NUMBER AND IT IS THE PLAN'S DEFAULT, and it has one consequence
+## worth reading before turning it: at fog_end 3200 m the air starts at 1,280 m,
+## which is further away than most of what a player is looking AT. DH gets away
+## with it because vanilla Minecraft's own fog handles everything nearer; we
+## have no second fog. Alternatives at 0.15 and 0.25 are photographed in
+## docs/status/distance-v3.md and the call is Marcel's.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed.
+@export var far_fog_start_frac := 0.4
+
 ## HOW MUCH DARKER A RISER FACING ACROSS THE ASPECT AXIS IS, distance v3
 ## Stage 3. 0 is distance v2's behaviour exactly.
 ##
@@ -1411,7 +1437,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
-	"far_vote", "far_grain", "far_riser_axis",
+	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
