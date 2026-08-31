@@ -377,15 +377,25 @@ func _build_readout() -> void:
 
 func _build_panel() -> void:
 	_panel = PanelContainer.new()
-	_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_panel.position = Vector2(-360, 16)
-	_panel.custom_minimum_size = Vector2(344, 0)
+	# Anchored to the whole right edge rather than sized to content: the row
+	# list outgrew the screen somewhere around distance v1, so the panel takes
+	# the viewport's height and the rows scroll inside it.
+	_panel.set_anchors_preset(Control.PRESET_RIGHT_WIDE)
+	_panel.offset_left = -360
+	_panel.offset_right = -16
+	_panel.offset_top = 16
+	_panel.offset_bottom = -16
 	_panel.visible = false
 	add_child(_panel)
 
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_panel.add_child(scroll)
+
 	var box := VBoxContainer.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	box.add_theme_constant_override("separation", 2)
-	_panel.add_child(box)
+	scroll.add_child(box)
 
 	var title := Label.new()
 	title.text = "worldgen tuning"

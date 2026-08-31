@@ -983,7 +983,10 @@ const FOG_START_RATIO := 0.4
 ## LOOK, NOT SHAPE, so LOCAL and unhashed like every other knob distance v1
 ## added. Nothing about what the world IS reads it - the heightmap hash is
 ## untouched at every value.
-@export var far_terrace := 0.0
+##
+## Shipped at 0.0 pending Marcel's ruling; set to 1.0 on 2026-08-31 for him to
+## judge in game.
+@export var far_terrace := 1.0
 
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
