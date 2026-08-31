@@ -65,6 +65,7 @@ func _ready() -> void:
 		"species table": _test_species_table,
 		"senses bus": _test_senses_bus,
 		"pack board": _test_pack_board,
+		"creature paths": _test_creature_paths,
 	}
 	var failures := 0
 	for name in tests:
@@ -2118,3 +2119,177 @@ func _test_pack_board():
 
 	print("pack board: broadcast reaches a second reader, memory survives 'lost'")
 	return bad
+
+
+## CREATURE PATHS: the ridge, the territory, and the ground under a waypoint.
+##
+## Two parts, the `_test_body_promotion` shape, for the same reason that test
+## gives. PART ONE is synthetic - a ridge built by hand, where the right answer
+## is known in advance and "did the weight table do anything at all" has a
+## yes-or-no answer. PART TWO is a real seed-42 territory, where the question
+## is not what the path is but whether one exists and stays out of the rock.
+func _test_creature_paths():
+	var bad := 0
+
+	# --- PART ONE: A KNOLL, AND THE CONTOUR ROUND IT.
+	#
+	# A cone in the middle of flat ground, with the two endpoints on opposite
+	# sides of it so the straight line goes over the top. NOTHING HERE IS
+	# SOLID - the knoll's slope is 37 degrees against a wolf's 55 degree limit
+	# - and that is the whole point of the shape. The first version of this
+	# test built a 15 m wall two cells wide, which slope_deg_at reads as a
+	# cliff: the path went round it, the assertion passed, and it had measured
+	# a WALL rather than a weight table. A test a broken weight table passes is
+	# not a test.
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	var world := World.new()
+	world.setup(1234, cfg)
+	var hm: Heightmap = world.generator.heightmap
+
+	var mid := hm.cols / 2
+	var knoll := 20     # cells of radius
+	var rise := 3.0     # blocks per cell -> 0.75 per block -> 36.9 degrees
+	for j in hm.cols:
+		for i in hm.cols:
+			var d := Vector2(float(i - mid), float(j - mid)).length()
+			var h := 30.0
+			if d <= float(knoll):
+				h += rise * (float(knoll) - d)
+			hm.cells[i + j * hm.cols] = h
+
+	var centre_cell := _cell_centre_m(hm, cfg, mid, mid)
+	var nav := CreatureNav.build(world, Species.WOLF, _cell_centre_m(hm, cfg, mid - 30, mid))
+	var start := _cell_centre_m(hm, cfg, mid - 25, mid)
+	var finish := _cell_centre_m(hm, cfg, mid + 25, mid)
+	var path := nav.path_m(start, finish)
+	if path.is_empty():
+		print("  no path across the knoll at all")
+		bad += 1
+	else:
+		# Nothing being solid, the ONLY thing that can push the path off the
+		# straight line is the weight table. So: how close to the summit did
+		# it get? Inside 10 cells is the upper half of the knoll.
+		var closest := INF
+		for p in path:
+			closest = minf(closest, Vector2(p.x - centre_cell.x, p.z - centre_cell.z).length())
+		var closest_cells := closest / (float(hm.step) * cfg.block_size)
+		print("creature paths: knoll path %d waypoints, closest approach to the summit %.1f cells (radius %d)" % [
+			path.size(), closest_cells, knoll])
+		if closest_cells < 10.0:
+			print("  the wolf climbed the upper half of the knoll instead of contouring round it")
+			bad += 1
+		# ...and the weights are what did it.
+		var on_slope := nav.weight_at_m(_cell_centre_m(hm, cfg, mid - 8, mid))
+		var on_flat := nav.weight_at_m(_cell_centre_m(hm, cfg, mid - 40, mid))
+		print("  weight on the knoll %.2f vs on the flat %.2f" % [on_slope, on_flat])
+		if on_slope <= on_flat:
+			print("  the knoll is not dearer than the flat - the weight table did nothing")
+			bad += 1
+		# And nothing on this shape may be solid, or the test is a wall again.
+		if nav.solid_cells > 0:
+			print("  %d cells of the knoll are solid - this shape is meant to be walkable throughout" % nav.solid_cells)
+			bad += 1
+
+	# THE SPECIES TABLE IS WHAT DECIDES, not the file. Same knoll, an animal
+	# whose costs are flat: it should not pay nearly as much for the height.
+	var flat_nav := CreatureNav.build(world, Species.EAGLE,
+		_cell_centre_m(hm, cfg, mid - 30, mid))
+	var wolf_cost := nav.weight_at_m(_cell_centre_m(hm, cfg, mid - 8, mid))
+	var eagle_cost := flat_nav.weight_at_m(_cell_centre_m(hm, cfg, mid - 8, mid))
+	print("  the same cell costs the wolf %.2f and the flat-costed eagle %.2f" % [
+		wolf_cost, eagle_cost])
+	if not (wolf_cost > eagle_cost):
+		print("  the species table is not being read")
+		bad += 1
+	world.free()
+
+	# --- PART TWO: A REAL TERRITORY ON SEED 42.
+	#
+	# Twenty random in-territory pairs. The question is not which way a path
+	# goes - that is part one - but that one is found and that no waypoint is
+	# standing in something the grid itself calls solid.
+	var cfg2 := WorldgenConfig.new()
+	var world2 := World.new()
+	world2.setup(42, cfg2)
+	# ON GROUND A DEN COULD ACTUALLY BE, which is the honest place to ask.
+	# Stage 5 puts dens at 300 m or more from spawn in a 5-25 degree slope
+	# band, so a territory centred on an arbitrary diagonal offset - the first
+	# version picked spawn + (400, 400) - lands in whatever the seed put there
+	# and reports a fact about that cell rather than about pathing.
+	var centre := _den_like_ground(world2, cfg2)
+	var nav2 := CreatureNav.build(world2, Species.WOLF, centre)
+	print("  territory grid %dx%d cells, %d solid (%.1f%%), built in %d ms" % [
+		nav2.region.size.x, nav2.region.size.y, nav2.solid_cells,
+		100.0 * float(nav2.solid_cells) / maxf(float(nav2.total_cells), 1.0),
+		nav2.build_ms])
+
+	# A territory that is almost entirely solid would make every assertion
+	# below vacuous, exactly as "0 boulders, 0 promoted" did in the body test.
+	if nav2.solid_cells > nav2.total_cells / 2:
+		print("  over half the territory is solid - part two proves nothing")
+		bad += 1
+
+	# Deterministic pairs, hashed rather than randf'd, so a failure can be
+	# reproduced by reading this file.
+	var found := 0
+	var waypoints := 0
+	var in_rock := 0
+	var radius := Species.territory_m(Species.WOLF) * 0.9
+	for k in 20:
+		var a := centre + _hashed_offset(k * 2, radius)
+		var b := centre + _hashed_offset(k * 2 + 1, radius)
+		var p := nav2.path_m(a, b)
+		if p.is_empty():
+			continue
+		found += 1
+		waypoints += p.size()
+		for w in p:
+			if nav2.is_solid_at_m(w):
+				in_rock += 1
+	print("  %d of 20 in-territory pairs found a path, %d waypoints, %d in solid ground" % [
+		found, waypoints, in_rock])
+	if found < 20:
+		print("  %d pairs found no path inside their own territory" % (20 - found))
+		bad += 1
+	if in_rock > 0:
+		print("  %d waypoints landed on cells the grid calls solid" % in_rock)
+		bad += 1
+	world2.free()
+	return bad
+
+
+## The metre-space centre of a heightmap cell.
+func _cell_centre_m(hm: Heightmap, cfg: WorldgenConfig, i: int, j: int) -> Vector3:
+	return Vector3(
+		float(hm.cell_to_block(i)) * cfg.block_size, 0.0,
+		float(hm.cell_to_block(j)) * cfg.block_size)
+
+
+## A repeatable offset inside a radius. Hashed, not rolled - a failing case
+## must be findable again.
+func _hashed_offset(k: int, radius: float) -> Vector3:
+	var angle := WorldHash.hash01(k, 0, 42, 4001) * TAU
+	var r := sqrt(WorldHash.hash01(k, 0, 42, 4002)) * radius
+	return Vector3(cos(angle) * r, 0.0, sin(angle) * r)
+
+
+## Ground of the kind Stage 5 will put a den on: at least 300 m from spawn and
+## in the 5-25 degree slope band. Scanned on a coarse lattice, first match
+## wins, so it is repeatable.
+func _den_like_ground(world: World, cfg: WorldgenConfig) -> Vector3:
+	var hm: Heightmap = world.generator.heightmap
+	var spawn := world.spawn_position_m(0.0)
+	for step in range(320, 1400, 40):
+		for k in 16:
+			var angle := TAU * float(k) / 16.0
+			var p := spawn + Vector3(cos(angle), 0.0, sin(angle)) * float(step)
+			var bx := p.x / cfg.block_size
+			var bz := p.z / cfg.block_size
+			if not hm.in_bounds(int(bx), int(bz)):
+				continue
+			var slope := hm.slope_deg_at(bx, bz)
+			if slope >= 5.0 and slope <= 25.0:
+				p.y = world.surface_height_m(int(bx), int(bz))
+				return p
+	return spawn

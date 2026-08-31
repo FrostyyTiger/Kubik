@@ -127,7 +127,16 @@ const TABLE := [
 		# is what puts it on the contour rather than over the crest - and the
 		# ibex, when it arrives, is the same table with the signs the other way
 		# round. Terrain use as one weight table, per DESIGN.md.
-		"slope_cost": {"uphill": 2.6, "downhill": 0.8, "cliff_deg": 42.0},
+		# `cliff_deg` IS THE PLAYER'S OWN FLOOR ANGLE, and that is a decision
+		# rather than a feel. `Locomotion.FLOOR_MAX_ANGLE_DEG` is 55, so a
+		# wolf can go anywhere a player can go and nowhere they cannot. Set
+		# lower - it was 42 for one stage - the rusher is LESS mobile than the
+		# thing it is chasing, which quietly deletes the encounter: you escape
+		# by walking up a hill you can walk up and it cannot. It also mattered
+		# more than it looked: this world's mean slope is 30.7 degrees and a
+		# third of it is over 45, so 42 marked two thirds of a real territory
+		# impassable and the pack had nowhere to go.
+		"slope_cost": {"uphill": 2.6, "downhill": 0.8, "cliff_deg": 55.0},
 		# The honest leash (design decision 6). A chase ends because the pack
 		# turns back at its border, not because a timer despawned it.
 		"territory_m": 150.0,
@@ -168,7 +177,10 @@ const TABLE := [
 		# And it hears further than it sees, which is the other half of why it
 		# is a danger radar.
 		"hear_m": 45.0,
-		"slope_cost": {"uphill": 1.4, "downhill": 1.0, "cliff_deg": 38.0},
+		# Lower than the wolf's on purpose: a marmot lives on its bench and
+		# gives up on a slope sooner than a person would. It never leaves the
+		# bench anyway, so this number is about where it forages.
+		"slope_cost": {"uphill": 1.4, "downhill": 1.0, "cliff_deg": 45.0},
 		# It lives on its bench and never leaves it.
 		"territory_m": 40.0,
 		"home": "burrow",

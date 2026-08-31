@@ -399,10 +399,119 @@ already declares a global class by that name.
 
 ---
 
+## Stage 4 - paths over the land the animals already know
+
+`creature_nav.gd` (`class_name CreatureNav`) and `creature.gd`
+(`class_name Creature extends Node3D`).
+
+**One `AStarGrid2D` per pack territory, not per world.** A 3 km world is 1500
+cells a side and 2.25 million points; a wolf territory is **151 x 151 = 22,801
+points and builds in 153 ms** (ganymede, single run), and is thrown away with
+the pack. Cell size and offset are set in METRES so `get_point_path` hands back
+world XZ directly and no coordinate system is converted twice. Diagonals are
+`ONLY_IF_NO_OBSTACLES` - the strict policy - so an animal cannot cut the corner
+between two solid cells, which is the move that sends a wolf clipping through
+the nose of a ridge. Y on a waypoint comes from `surface_height_m`, not the
+coarse cell: the difference is the detail layer, and a creature walking the
+coarse height floats and sinks by a metre at a time.
+
+### The one place this file argues with its plan
+
+**A per-point weight cannot express a per-edge asymmetry.** `AStarGrid2D`
+weights a POINT, not the move into it, so "uphill dearer than downhill" - a
+fact about a *direction of travel* - has no direct expression. Getting it would
+mean a directed graph, which means giving up the grid, which is the thing that
+makes this cheap enough to have one per pack. So the table's two numbers are
+spent on two things a point *can* know:
+
+- **Steepness, direction-free** - `1 + uphill * (slope_deg / cliff_deg)`. This
+  is what makes a wolf take the contour rather than the crest.
+- **Rise above the den** - a direction, just a fixed one. A territory is a
+  thing centred on a home, so above-home costs `uphill` and below-home costs
+  `downhill` (2.6 against 0.8 for a wolf), saturating at
+  `RISE_REFERENCE_M = 40`. An ibex's row inverts it and its territory tilts
+  uphill instead, which is the design intent in the only place a grid can
+  hold it.
+
+### Two real findings, both changing numbers Stage 1 proposed
+
+**1. The wolf's `cliff_deg` moved from 42 to 55, and it is now a decision
+rather than a feel.** `Locomotion.FLOOR_MAX_ANGLE_DEG` is **55** - the player
+walks up to 55 degrees. A wolf that gave up at 42 was **less mobile than the
+thing it is chasing**, which quietly deletes the encounter: you escape by
+walking up a hill you can walk up and it cannot. It mattered more than it
+looked, because this world is steep - **mean slope 30.7 degrees, a third of it
+over 45** (worldgen probe, seed 42) - so 42 marked **67% of a real territory
+solid** and the pack had nowhere to go. At 55 the same territory is **5.4%
+solid**. The marmot moved 38 -> 45 for a stated reason (a small animal on a
+bench gives up sooner than a person); the eagle stays at 90 and does not walk.
+
+**2. Partial paths are allowed, and that is a behaviour decision.** A real
+territory can be cut in two by a cliff band or a lake: on seed 42, one
+in-territory pair in twenty is **genuinely unreachable** from the other, and
+the first run of the gate found it as 19/20. The choice is between a creature
+that stands still because the answer came back empty and one that goes as far
+towards you as the land allows and then gives up. The second is the better
+animal and the one Stage 6's leash already knows how to end.
+
+### `creature.gd` - what a creature's body is
+
+Height-snapped kinematics per decision 1: a `Node3D` on `surface_height_m`,
+walked by the server, **no `CharacterBody3D`, no collision shape, no Jolt
+cost**, so the cap of 16 is a policy and not a budget. Slope drag is measured
+**along the way it is actually going**, not from the cell's own steepness - an
+animal running along a contour on a 30-degree hillside is on steep ground and
+is not climbing. It re-snaps to the ground every frame rather than at each
+waypoint, or a creature crossing into terrain whose detail layer differs from
+the coarse cell walks with its ankles in the rock. The brain is not in this
+file: `wolf.gd` decides where, and the marmot's utility scores and the eagle's
+boids will drive the same body.
+
+**Deferred and recorded:** a creature does not collide with a `BodyField`
+boulder, cannot be pushed by one, and will walk through a pushed body's new
+position. Making bodies solid to animals is a Combat-v1-era question.
+
+### The `creature paths` selftest, and the test that wasn't one
+
+Two parts, the `_test_body_promotion` shape. **Part one's first version
+measured a wall.** It built a 15 m ridge two cells wide, which `slope_deg_at`
+reads as a cliff, so every cell of it was *solid*: the path went round, the
+assertion passed, and it had tested the solid mask rather than the weight
+table. **A test a broken weight table passes is not a test.**
+
+The version that ships builds a **knoll** - a 20-cell cone at 37 degrees, with
+**nothing solid anywhere on it** (asserted) - and puts the endpoints on
+opposite sides so the straight line goes over the summit. The only thing that
+can push the path off that line is the weight table:
+
+| | value |
+| --- | --- |
+| closest approach to the summit | **20.8 cells** (knoll radius 20 - it skirted the base entirely) |
+| weight on the knoll's flank | **3.91** |
+| weight on the flat | **1.00** |
+| same cell, flat-costed eagle | **1.86** |
+
+Part two is a real seed-42 territory, centred on **ground a den could actually
+be on** - 300 m or more from spawn, in Stage 5's 5-25 degree slope band -
+rather than an arbitrary diagonal offset from spawn, which reports a fact about
+whatever the seed put there. **20 of 20 in-territory pairs find a path, 1164
+waypoints, 0 standing in a cell the grid calls solid**, with a guard that fails
+the test if over half the territory is solid so the assertions cannot be
+vacuous.
+
+**Gates:** all three green, `heightmap# 76cccdb6`, spawn `(-44, -124)`,
+`walk` still passes.
+
+---
+
 ## Deferred, night 1
 
 - LimboAI, per Stage 0.
 - **Senses honesty**: occlusion, scent + wind, darkness. Stage 3, named above.
+- **Creatures do not collide with boulders** (`BodyField`). Stage 4, decision 1.
+- **Uphill/downhill as a true per-edge cost.** Stage 4 spends the two numbers
+  on steepness and rise-above-the-den instead; a directed graph is the only
+  way to have the real thing, and it costs the per-pack grid.
 
 ## What night 2 inherits
 
