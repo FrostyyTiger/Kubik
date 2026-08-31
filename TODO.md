@@ -19,7 +19,7 @@ has one owner per wave; everyone else adds a file plus a one-line hook.
 
 ## Wave 1 - after flora lands  `C || D || B`
 
-- [ ] **C. Creatures v1 - the trio** (2 nights) - wolf, marmot, eagle; LimboAI, A* over the heightmap, senses, pack, burrows; quadruped rig; species table
+- [ ] **C. Creatures v1 - the trio** (2 nights) - wolf, marmot, eagle; LimboAI, A* over the heightmap, senses, pack, burrows; quadruped rig; species table. **Designed 2026-08-31** in conversation (`docs/plans/creatures-v1.md`, six decisions: the pack is the point, the groundwork is the deliverable, honest-interface perception, the disarmed bite, the scenario probe, the den). **Night 1 launched 2026-08-31** on `feat/creatures-v1`, ganymede, Opus (`docs/plans/creatures-v1-tech.md`) - stages 0-8: library ladder, species table, scenario harness, senses bus + pack board, territory A*, den placement, the two-wolf flank, the wire, F10. No merge night 1; night 2 merges main first, then marmot / eagle / wolf model / armed bite.
 - [ ] **D. Combat v1** (2 nights)
   - [x] D1 host-authoritative player input (the carried ticket) - **done in A2 night 2**, 2026-08-27
   - [ ] D1 stats table: health, stamina, mana; damage through the one mutation path
