@@ -156,7 +156,14 @@ end to end).
 Written for Opus, alone, on the headless Linux box, overnight.
 
 - **Branch `feat/distance-v3` from current `main`.** One commit per stage,
-  in the house voice. Merge is Marcel's, not yours.
+  in the house voice, and **push the branch after every stage** so the run
+  is inspectable from elsewhere while it goes.
+- **At the end of the run, merge to `main` and push** (Marcel,
+  2026-08-31: he reviews at main, on his own machine). The merge happens
+  only after Stage 10's acceptance table is filled in and every hard rule
+  below checks out - a run that stopped early stays on its branch, pushed,
+  with the status doc saying where and why. Merge `main` into the branch
+  first if main moved, resolve, run the self-test once more, then merge.
 - **Keep `docs/status/distance-v3.md` as you go**, in the house style:
   provenance column (`ganymede, deterministic` / `single run` /
   `ABAB median` / `eye`), numbers with spreads, failures named. Distance
@@ -399,6 +406,11 @@ Status doc completed: acceptance table below filled in, knob table final,
 open questions listed. Update `docs/DESIGN.md`'s rendering line if the far
 field's description changed materially. Do not touch IDEAS/ROADMAP/TODO -
 re-queueing is Marcel's.
+
+Then the landing (Marcel's instruction, 2026-08-31): push the branch,
+merge it to `main`, push `main`. He reviews the finished epic at main. If
+acceptance is not met, do NOT merge - push the branch and write the
+shortfall at the top of the status doc instead.
 
 ---
 
