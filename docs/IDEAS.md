@@ -189,6 +189,22 @@ here on this list is filled by what a playtest taught us.
    placement - the open `TODO(marcel)` at `WorldgenConfig.grove_floor`, now
    with a second measurement feeding it.
 
+   **Look v3 - the painted world (direction settled 2026-08-31)** is the
+   next look epic, and it is a register change recorded in `DESIGN.md` § Art
+   direction: up close the world becomes a painting - sculpted forms,
+   family-toned paint, dense dressing, soft light - and the poster survives
+   at distance, where the comparison run showed it already holds. Scope now:
+   characters, gear, weapons, creatures, trees, flora, terrain dressing,
+   lighting. Structures excluded - nothing is built yet, so Sites v1 arrives
+   at this fidelity rather than being converted to it. The bar is Marcel's
+   nine-render reference set (kept off-repo; DESIGN.md carries the
+   description) and the gates are the KNIGHT TEST and the BELONGING TEST. A
+   demo at the bar, `kubik-knight-demo.bbmodel`, went to his desktop the day
+   of the ruling; Blockbench becomes the character authoring surface and the
+   plan owes the import half of the round trip. Concept then tech plan to be
+   written after the three in-flight runs (creatures v1 night 2, ui v1,
+   distance v3) land, so the trio is modelled once, in the new register.
+
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
    *Answers:* does fighting it together actually produce flanking and saves, or

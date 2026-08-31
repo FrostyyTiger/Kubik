@@ -21,34 +21,60 @@ Playable races are described under Character identity below.
 
 ## Art direction
 
-**Settled by look v1 (2026-08-25): the Art Deco Alpine travel poster.** The
-1920s-30s railway and resort posters of the Alps - Broders' PLM series, the
-Swiss lithographs of the same decade. Flat colour fields, mountains as stacked
-bands, warm sun and cool violet shade, stepped geometric forms, a sun with
-rays, one gold accent. The travel-poster strand of Deco, never the Manhattan
-strand: no chrome, no glamour, no city. The world is cozy-Alpine; Deco is how
-it is drawn - world, characters and UI alike.
+**The style was settled by look v1 (2026-08-25): the Art Deco Alpine travel
+poster. The register was re-set on 2026-08-31: painted, not flat.** The
+identity has not moved - the 1920s-30s railway and resort posters of the
+Alps, Broders' PLM series, the Swiss lithographs: mountains as stacked bands,
+warm sun and cool violet-ink shade, stepped geometric forms, one gold accent,
+the travel-poster strand of Deco and never the Manhattan strand. What moved
+is what those colours are painted ON up close.
 
-Why it fits and not merely looks nice: Deco is built from steps and facets,
-which is what a voxel terrace and a low-poly far range already are. Under any
-other colour language they are artefacts; under this one they are the
-vocabulary.
+**The 2026-08-31 ruling, from a reference set Marcel keeps outside the repo**
+(nine renders in a desktop folder; this section carries their content so the
+doc stands alone): a knight whose pauldrons are layered, sculpted plates with
+gold trim woven through them and four greys of painted wear; a barbarian
+whose bare skin carries four painted tones under a battered helm; a weapons
+sheet where every polearm has a shaped blade, a wrapped grip and a fitting; a
+dead fir whose branches are real branches under caps of snow; a garden whose
+ground is dense with scatter and whose cliffs carry painted strata; a
+timbered house, a bridge-town, a dungeon gate in a cliff, all in soft warm
+light. **None of that is a finer grid than ours.** The character grid (96
+voxels to a human, 1/24 of a block) already out-resolves those models. It is
+the grid we have, actually USED: sculpted forms, painted tones, dense
+dressing, soft light. That is the bar, and the old register - one flat colour
+per surface - is retired everywhere the player can walk.
 
-Five rules. Everything drawn obeys all of them; a feature that cannot is drawn
-differently.
+The poster does not die; it moves to where it always lived. **Up close the
+world is a painting; at distance it is the poster.** The far ranges' flat
+poster read survives - the 2026-08-31 comparison run showed it was the one
+thing already at the bar - though distance v3, landing the same day, rebuilt
+what is UNDER that read: see rule 3.
 
-1. **Two tones and a shade.** A surface is lit, half-lit or in shade - three
-   flat bands, no gradient across a face. Shade is a *colour* (blue-violet),
-   never a darkness. Shadows are hard-edged and that colour. This is pillar 2
-   made visible: warmth is safety, and a campfire is the one warm thing in a
-   cool night.
-2. **No texture, no specular, no gradient.** Colour variation is per-block
-   jitter and altitude/aspect banding, never a map.
-3. **Distance is bands, not haze.** Fog steps in flat bands to the sky's
-   horizon colour; the far field is a stacked backdrop, the near field a solid
-   voxel world, and the seam between them is owned rather than hidden.
+Five rules, re-cut on 2026-08-31. Everything drawn obeys all of them; a
+feature that cannot is drawn differently.
 
-   *Amended by distance v3 (2026-08-31), and the rule stands - what changed is
+1. **Shade is an ink.** (Look v2, unchanged.) The shade side keeps the
+   surface's luminance and takes the ink's hue - blue-violet, a colour and
+   never a darkness. The ramp desaturates the albedo toward its own luminance
+   (`kubik_shade_desat`, 0.55 day / 0.75 night) and colours the result with
+   the ink. Warmth is safety made visible: the campfire is the one warm thing
+   in a cool night.
+2. **Paint is voxels, never maps.** Supersedes look v1's "no texture, no
+   specular, no gradient" - the second half stands, the first is re-read.
+   There are still no texture maps, no specular, no gradient across a face: a
+   colour is a voxel's colour on a model and a vertex colour on the wire,
+   nowhere else. But a material is now PAINTED, in tones of its own family -
+   steel in five greys, skin in four tones, bark in three browns - laid as
+   patches and runs with intent: a highlight row along a plate's top edge,
+   wear at a rim, strata in a cliff face, slivers under a whorl. Never
+   white-noise jitter, never a tone from another family's ramp.
+3. **Distance is bands, not haze - and distance is where the paint stops.**
+   Fog steps in flat bands to a colour a step darker than the sky's lowest
+   band (look v2: the horizon is not the fog; the sky owns its own horizon
+   row). The near field is painted voxels; the far field is the flat poster;
+   the seam between them is owned rather than hidden.
+
+*Amended by distance v3 (2026-08-31), and the rule stands - what changed is
    what is under the bands.* The far field is no longer a stacked backdrop: it
    is the same world made of BIGGER BLOCKS, 4 m at the seam through 8, 16 and
    32 to 64 m at the rim, terraced with lit tops and shaded risers, painted on
@@ -62,52 +88,64 @@ differently.
    OVERDRAW: the far field is drawn under the whole voxel disc, sunk below it,
    so what shows through a hole in the world is ground drawn a metre and a half
    low rather than sky.
-4. **Forms are stepped and chamfered.** Heads lose their vertical edges to a
-   chamfer, shoulders step, hair is a geometric mass. Trees are cones and
-   ziggurats.
-5. **One accent.** Gold `#C9A24A`: UI rules, the sun disc, later the
-   campfire's light. Nothing else in the world is gold. The gold has an hour:
-   `Look.accent_color()` reads the keyframe table, dawn `#F2A80D` through noon
-   `#C9A24A` to night `#E8892E`.
+4. **Forms are sculpted, stepped and chamfered.** Look v1 said stepped and
+   chamfered; the reference set adds sculpted. A pauldron is three layered
+   plates, not a box; a helmet has a brow, a visor slit and cheek guards; a
+   blade has a shaped edge and a fitted socket. Heads still lose their
+   vertical edges to a chamfer; trees keep the trees v1 form language below.
+   Everything stays on the voxel grid - "sculpted" is achieved with steps,
+   never with rotated geometry in the world mesh.
+5. **One accent.** Gold `#C9A24A`: UI rules, the sun disc, trim on the things
+   the world honours, later the campfire's light. Nothing else in the world
+   is gold. The gold has an hour: `Look.accent_color()` reads the keyframe
+   table, dawn `#F2A80D` through noon `#C9A24A` to night `#E8892E`. Gold trim
+   on gear obeys the same discipline - it is the accent, so it is never the
+   body of a thing.
 
-**Look v2 (2026-08-25) sharpened three of those and added a fourth.** The five
-stand; these bind on top of them.
+**Two look v2 rulings stand beneath all five.** Warmth is in the light,
+coolness is in the shade, and the albedo has neither - a palette entry is the
+thing's colour in flat noon light; the sun makes it warm and the ink makes it
+cool, and nothing bakes a cast into an albedo. And what is authored is what
+is on screen - an authored hex, lit, at noon, lands at `authored * sun *
+energy` and nowhere else, proved by the swatch sheet (`godot --path .
+scenes/character/gallery.tscn -- --sheet swatches --strict`, every swatch
+within 6 sRGB units of `Look.predict()`) before anyone judges a colour
+through a changed stage.
 
-1. **Shade is an INK, not a darkness and not merely a colour.** The shade side
-   keeps the surface's *luminance* and takes the ink's *hue*. A multiply cannot
-   do that - it darkens and desaturates together - so the ramp desaturates the
-   albedo toward its own luminance by `kubik_shade_desat` (0.55 by day, 0.75 at
-   night) and then colours the result with the ink. Sharpens rule 1.
-2. **The horizon is not the fog.** Distance bands go to a fog colour a step
-   *darker* than the sky's lowest band, so a far range is a cut-out against the
-   sky and never glass over it. The sky owns its own horizon row; the
-   environment's fog no longer tints it at all. Sharpens rule 3.
-3. **Warmth is in the light, coolness is in the shade, and the albedo has
-   neither.** A palette entry is the thing's colour in flat noon light. The sun
-   makes it warm and the ink makes it cool; nothing bakes a cast into an
-   albedo. Sharpens rule 2.
-4. **What is authored is what is on screen.** An authored hex, lit, at noon,
-   lands at `authored * sun * energy` and nowhere else. Any stage that changes
-   a colour path proves it with the swatch sheet before anyone judges a colour
-   through it: `godot --path . scenes/character/gallery.tscn -- --sheet
-   swatches --strict`. Every swatch within 6 sRGB units of `Look.predict()`, or
-   the stage is not done.
+**Two gates, replacing taste.** The KNIGHT TEST, for anything that moves: set
+the model beside the reference knight and barbarian; it passes when it reads
+as the same game - layered forms, family-toned paint, a silhouette that still
+means something at 40 m. The BELONGING TEST, for the world: drop a passing
+character into the frame; the ground, the trees and the light must not
+embarrass it - painted terrain tones, dense scatter, strata on rock, soft
+occlusion in the corners. A screenshot that fails either gate is a bug with a
+cause to be found, not a taste dispute.
 
-**Trees v1 (2026-08-30) is rule 4 on the forest, and it is why "not yet" came
-out of it.** A conifer is a notched spire - max width one third of its height -
-built from whorl ARMS of unequal length around a solid core, each tier yawed a
+**Scope of the register (2026-08-31).** Now: characters, gear, weapons,
+creatures, trees, flora, terrain dressing, lighting. Later, at birth:
+structures - nothing is built yet, so Sites v1 and everything after arrives
+at this fidelity rather than being converted to it. Unchanged: the far field,
+and the UI's Deco paper and ink. The plan lane is **look v3**; the demo that
+set the bar is `kubik-knight-demo.bbmodel` on Marcel's desktop, authored the
+day of the ruling.
+
+**Trees v1 (2026-08-30) is the form language of the forest, and it stands.**
+A conifer is a notched spire - max width one third of its height - built from
+whorl ARMS of unequal length around a solid core, each tier yawed a
 golden-angle step from the one below; the larch is the ziggurat, four to six
-shelves with real air between them, so its sky shows through the GAPS and never
-through the crown volume. A beech is an oblate scallop of two to four
+shelves with real air between them, so its sky shows through the GAPS and
+never through the crown volume. A beech is an oblate scallop of two to four
 overlapping lobes in a big/medium/small hierarchy, bitten once or twice from
-outside, on a clean trunk with a limb entering the crown underside; a birch is
-a bowed pale stem the foliage never closes over; a krummholz is a wind-flagged
-cushion, twice as wide as tall, and every one in a world combs the same way.
-The hero is re-proportioned rather than its parent scaled. Every conifer
-carries the second colour as **authored slivers** on the whorl underside, where
-a shelf stands proud of the one below - never scattered through the crown.
-The taste authority is `docs/research/art-direction.md` §2.5 "Forest"; the
-variation machinery and the measured cost model are in
+outside, on a clean trunk with a limb entering the crown underside; a birch
+is a bowed pale stem the foliage never closes over; a krummholz is a
+wind-flagged cushion, twice as wide as tall, and every one in a world combs
+the same way. The hero is re-proportioned rather than its parent scaled.
+Every conifer carries the second colour as **authored slivers** on the whorl
+underside, where a shelf stands proud of the one below - never scattered
+through the crown. Under rule 2 as re-cut, the forest's paint deepens - bark
+in family browns, snow held on the windward side - without leaving these
+silhouettes. The taste authority is `docs/research/art-direction.md` §2.5
+"Forest"; the variation machinery and the measured cost model are in
 `docs/research/trees.md`, and the run is `docs/status/trees-v1.md`.
 
 ### The pipeline: linear maths, sRGB on the wire
@@ -316,6 +354,18 @@ kept on the stocky side rather than the doll side, because it is what stays
 readable at 40 m at dusk. Character v1 built a lean (naturalistic) human for
 comparison; it was retired with the decision and its part set deleted. The
 `build` byte stays on the wire, always 0, so the wire version did not bump.
+
+**Look v3 direction (2026-08-31): the parts library is re-authored to the
+painted register.** The bar is the knight/barbarian reference set (see Art
+direction). The rig, the grid, the slots and the drop-in rule all stand; what
+changes is what is authored INTO them - sculpted part shapes and family-toned
+paint. The authoring surface becomes **Blockbench**:
+`scripts/tools/bbmodel_export.gd` already exports the assembled character
+through the same code path the game draws, and the look v3 plan owes the
+import half of that round trip. Two constraints bind the tech plan: palette
+swaps must stay free (a family re-resolve, exactly as slots resolve today -
+the encoding of tone-within-family is the plan's to settle), and no client
+may need a wire change to see a part that got prettier.
 
 ### Parts are data
 
@@ -636,9 +686,9 @@ see `IDEAS.md`.
 
 ### Art
 
-Creatures follow the poster art direction (see Art direction, above):
-silhouette-first, readable as flat bold shapes at distance, restricted
-palette, and the same voxel-part modularity as characters where possible -
+Creatures follow the art direction above - the painted register up close,
+the poster at distance: silhouette-first, readable at range, family-toned
+paint, and the same voxel-part modularity as characters where possible -
 the critter rig, `tools/parts_author`, and the part data it writes to
 `assets/characters/parts/` for `PartsData` to load.
 

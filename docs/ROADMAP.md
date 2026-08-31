@@ -79,6 +79,23 @@ the same struct a player fills from input; and the critter is at the new grid,
 the build plan, `docs/status/character-v2.md` what actually happened - including
 the three places the run did not meet its own gate.
 
+### A6. Look v3 - the painted world  *(direction settled 2026-08-31, plan not written)*
+
+The register change: `DESIGN.md` § Art direction re-cut on 2026-08-31. Up
+close the world becomes a painting - sculpted forms, family-toned paint,
+dense dressing, soft light - and the poster survives at distance. Two lanes
+when it runs: **characters** (parts library re-authored to the
+knight/barbarian bar, gear and weapons with it, Blockbench round trip as the
+authoring surface) and **world** (painted terrain tones and strata through
+the mesher, flora density, forest paint on the trees v1 silhouettes, the
+lighting pass). Structures excluded by scope - Sites v1 is born at this
+fidelity instead. Gates: the KNIGHT TEST and the BELONGING TEST, both in
+DESIGN.md. Sequenced after the in-flight creatures v1 night 2 / ui v1 /
+distance v3 so the trio is modelled once. Territory when planned: character
+parts data + `tools/parts_author/` + `scripts/tools/` (characters lane);
+`scripts/world/` mesher colour path + `look.gd` + flora (world lane). 2+
+nights, likely two separate plans.
+
 ### C. Creatures v1 - the trio
 
 Wolf (rusher), marmot (whistle + burrow), eagle (ridge orbit + cry). The
