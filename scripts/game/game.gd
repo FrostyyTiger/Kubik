@@ -605,6 +605,19 @@ func _start_hud_shots() -> void:
 	# until now. The debt is discharged here rather than left in the status doc.
 	await _hud_shot_panel("panel-f8")
 
+	# THE ONE SHOT THAT IS NOT A MEASUREMENT.
+	#
+	# Every other picture in this run answers a count: is the ink gone, is the
+	# bar at 0.70, is the chevron east of centre. This one answers the question
+	# the acceptance test ends on, which no count can - do the strip, the bars
+	# and the world read as ONE POSTER, or does the UI look pasted on? It is
+	# framed, named, and left for Marcel.
+	#
+	# Sunset, t = 0.75, where dusk_amount peaks and night_amount has just
+	# crossed fade_night_max - so the instruments are coming in exactly as the
+	# light goes, which is the whole thesis of the fade in one frame.
+	await _hud_shot("dusk-poster", 0.76)
+
 	_dump_journal("after the scripted sequence")
 	print("[HudShot] done: %d shots in build/ui/%s" % [_hud_shots_taken, label])
 	await _hud_shot_shutdown()

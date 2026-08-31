@@ -59,6 +59,10 @@ sampled out of them are here.
 | 4 | `76cccdb6` | `(-44, -124)` | all green |
 | 5 | `76cccdb6` | `(-44, -124)` | all green, character selftest green **post-nametag-removal** |
 | 6 | `76cccdb6` | `(-44, -124)` | all green |
+| 7 (final) | `76cccdb6` | `(-44, -124)` | all green |
+
+**Hard rule 1 held at every stage.** The probe's heightmap hash and spawn never
+moved. A UI lane that moves a block has left its lane; this one did not.
 
 ---
 
@@ -536,12 +540,134 @@ game's state depends on it.
 
 ---
 
-## For Marcel to rule on
+## Acceptance
 
-Filled as the run raises them.
+Every line of `ui-v1-tech.md`'s acceptance list, against the final commit.
+
+| # | asked for | result |
+| --- | --- | --- |
+| 1 | three gates green, probe hash = Stage 0 | **PASS.** selftest all passed; character selftest 36 tests, all passed; `heightmap# 76cccdb6`, spawn `(-44, -124)`, config `3d45b8fc` [deterministic] |
+| 2 | `safe-noon.png` shows zero HUD ink in sampled, named regions | **PASS.** 9x9 windows at (607, 612), (607, 624), (607, 636) - the three bar rows, derived from `HudConfig` - contain **no INK, SUN, ALPINE_PALE or ALPINE_DEEP pixels at all** |
+| 3 | `hurt.png` shows three bars, health at 0.70 +/- 2 px of track | **PASS, exactly.** Health fill x 530-683 = **154 px of a 220 px track = 0.7000**. All three bars present in their own Deco colour |
+| 4 | `party.png`: peer-2 icon in the computable hue, chevron in the east half, no nametag | **PASS on all three.** Hue computed independently in Python as **#B1F255**, 126 matching ring pixels; chevron at **x 864-870** against a strip centre of 640; **0 PAPER pixels** in the named tag band |
+| 5 | journal has `block_edit` and `stat_changed`, each once, host-side | **PASS with a correction.** `stat_changed` x1 (peer 1, 100 -> 70). `block_edit` **x9, not x1** - the stand-in tool is the pre-existing debug slab, which places a 3x3 by construction and always has. One use, nine accepted edits, each journalled once, each `peer: 1`. See Stage 5 |
+| 6 | `sheet.png` lists six sockets and five skills, nothing interactive but close | **PASS.** Counted by construction from the driver's label dump (no OCR on this box): 6 sockets, 5 skills. The close button is the only Control on the screen that takes input |
+| 7 | creation re-shoot within measured tolerance of Stage 1's | **PASS.** **0.010%** on the final pair, 0.135% on the Stage 6 pair, against a **0.232%** same-commit noise floor measured in Stage 1 |
+| 8 | the night HUD over a far ridge at dusk, framed and named | **DONE, and left for Marcel.** `dusk-poster.png` - see below |
+
+### 8, the one that is not a measurement
+
+`build/ui/ui-v1-hud/dusk-poster.png`. Sunset (t = 0.76), the far ridge in
+mauve and cream, fireflies out, the strip at the top and the cluster at the
+bottom, `night 0.84` against a `fade_night_max` of 0.25 - so the instruments
+are coming in exactly as the light goes, which is the thesis of the fade in one
+frame.
+
+**My reading [eye], offered so Marcel has something to disagree with:** it
+reads as one poster. The bars sit in the same value range as the dusk
+landscape rather than on top of it, the strip's ink hairline is quiet against
+the sky, and the gold slot frame is the one accent and matches the warm ridge
+light. It does not look pasted on.
+
+**Two things in it that do:**
+
+- The five hotbar slots' paper ground at 0.14 alpha reads as five grey
+  rectangles that are more present at night than the rest of the field
+  register. A lower alpha, or one that scales with `night`, is the fix; both
+  are F9 rows away.
+- `TORV`'s name under his icon is ink on a dark ground and nearly invisible at
+  dusk. This is the same call already on the list below - whether the icon
+  shows the name always or only on hurt - and dusk is the argument for "only
+  on hurt".
+
+Neither is blocking and neither was fixed: they are taste at a light level I
+cannot judge properly from a PNG, and hard rule 5 says the guess goes on F9
+and into this doc rather than into a `_draw()`.
 
 ---
 
-## Deferred / wrapped
+## For Marcel to rule on
 
-Nothing yet.
+The plan named five of these and said not to block on any. All five are shipped
+at a starting value and all five are on F9.
+
+1. **The three bar colours.** `SUN` health, `ALPINE_PALE` stamina,
+   `ALPINE_DEEP` mana. Palette-legal by construction (hard rule 4), but WHICH
+   constant goes on WHICH stat is taste. The reasoning offered: sun is the
+   palette's warning, and the two alpine values are tints of one colour so
+   stamina and mana read as a pair against health rather than as three
+   unrelated stripes.
+2. **The fade thresholds and grace.** `fade_grace_s 6.0`, `fade_night_max
+   0.25`, `fade_danger_max 0.35`, out 1.4 s, in 0.25 s. Chosen from
+   screenshots; only play can judge them. In particular 0.25 night means the
+   HUD comes back quite early in the evening - defensible (dusk IS when it
+   gets tense) and worth arguing about.
+3. **Compass strip density.** `strip_span_deg 150`, ticks every 15 degrees,
+   cardinals at 62% of strip height. A narrower span is a longer lens: the
+   cardinals spread out and small turns read, at the cost of more party
+   chevrons being pinned to the edges.
+4. **Whether the party icon shows the name always or only on hurt.** Shipped
+   as always. The dusk poster is the argument for "only on hurt": the name is
+   nearly unreadable at that light level and the roundel's initial is not.
+5. **Hotbar slot size against the monumental horizon.** `slot_size 46`. Big
+   enough to read, and five of them is 262 px of a 1280 px screen - about a
+   fifth of the width. Against a world the pillars want to feel huge, that may
+   still be too much furniture.
+
+**And one the plan did not name:** the hotbar's slot ground alpha (0.14,
+hard-coded in `hotbar.gd` rather than on F9 - it is a draw detail, not a size).
+See the dusk poster note above. If Marcel wants it tunable it is one row.
+
+---
+
+## Deferred, and what was NOT built
+
+Named so the next lane does not go looking for them.
+
+- **No ping system.** Deliberately deferred by the design doc; noted, not
+  designed.
+- **No map screen, no markers, no site names on the strip.** Navigation v1 (I).
+  The strip is built to take them: `CARDINALS` is a table and `_x_of()` already
+  answers "where does this bearing fall", pinned or dropped.
+- **No downed state on the party icon.** There is no death system - `stats.gd`
+  says so in its docstring - so there is nothing for an icon to show. The hook
+  is the same arc in a different colour and the row it reads is already on the
+  wire.
+- **No firelight in the fade's warm register.** Campfire v1 (E) owns it; this
+  pass stubs "warm" as "daylight" and `hud_config.gd` says so at the line.
+- **Nothing on the sheet is clickable.** Hard rule 9, and a design rule rather
+  than an unfinished feature.
+- **No stage was wrapped for time.** Stages 0-7 all completed; nothing was cut.
+
+### Two TEMPORARY things the next plans delete
+
+- **The H key** (host-side, -10 hp). Combat v1 (D) deletes it. It exists
+  because the fade, the bars, the hurt arc and the `stat_changed` event cannot
+  be demonstrated - let alone photographed - without something that moves a
+  stat.
+- **The slab in hotbar slot 1.** Items v1 (G) deletes it and replaces
+  `Hotbar.SLOTS` with the real bag. It exists so select-and-use is proven end
+  to end through the real mutation path before items exist.
+
+---
+
+## What the next plans inherit
+
+- **Combat v1 (D):** `StatsTable` and its one mutation seam; the H key to
+  delete; the downed hook on the party icon; `apply_delta`'s `cause` string,
+  which is what makes a journal readable.
+- **Items v1 (G):** the hotbar shell and its `SLOTS` table; the slab to
+  delete; the six empty sockets on the sheet, whose render path
+  (`Armour.apply_armour`) already works the day there is a tier above 0.
+- **Campfire v1 (E):** the placeable palette's home is the hotbar; the fade's
+  "firelight is safe" input, stubbed here as night-only.
+- **Navigation v1 (I):** the compass strip, `NORTH_IS_MINUS_Z`, and
+  `Compass.bearing_to()`; markers and the map screen are additions to it.
+- **Skills v1 (J):** the five rows on the sheet and `Skills.NO_LEVEL`. Replace
+  the dash with truth; the sheet's structure does not change, because it reads
+  a table.
+- **Anything with a screen:** `UiMouse` (claim/release, never a boolean) and
+  `HudConfig` + F9 as the pattern for "a value chosen by eye lives on a panel".
+- **Anything that needs to be seen:** `--shot-hud`, which boots the game
+  offline, stages a situation through the game's own seams, and writes PNGs.
+  Adding a state to it is one function.
