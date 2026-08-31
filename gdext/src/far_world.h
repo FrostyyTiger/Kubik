@@ -78,10 +78,22 @@ inline int64_t floor_div(int64_t a, int64_t b) {
 }
 
 // The salts the far mesher's callees use. terrain_generator.gd and block.gd.
-constexpr int64_t SALT_ZONE_DITHER = 102;
-constexpr int64_t SALT_SLOPE_ZONE = 111;
+constexpr int64_t SALT_ZONE_DITHER = 101;
+constexpr int64_t SALT_SLOPE_ZONE = 205;
 constexpr int64_t SALT_TINT_VALUE = 301;
 constexpr int64_t SALT_TINT_HUE = 302;
+
+// terrain_generator.gd's elevation zones, low to high.
+constexpr int ZONE_SHORE = 0;
+constexpr int ZONE_FOREST = 2;
+constexpr int ZONE_ROCK = 5;
+constexpr int ZONE_SNOW = 6;
+constexpr int ZONE_COUNT = 7;
+
+// block.gd. SUN_ASPECT is Vector2(0, -1) - any fixed direction would do, and
+// this one is the -Z the camera starts looking along.
+constexpr double SUN_ASPECT_X = 0.0;
+constexpr double SUN_ASPECT_Y = -1.0;
 
 // --- The config -----------------------------------------------------------
 
@@ -260,6 +272,87 @@ struct World {
 
 	double height_max_filtered(double bx, double bz, double level) const {
 		return trilinear(bx, bz, level, true);
+	}
+
+	// --- terrain_generator.gd, the zone rules ------------------------------
+	//
+	// DECISION 4, RUNG (a): every one of these is a pure function of altitude,
+	// a slope read off level 0, a hash and config scalars, so they are ported
+	// rather than precomputed into a grid. The one that is NOT pure is
+	// `zone_jitter_at`, and it is a FastNoiseLite sample - held as the same
+	// engine object the generator built and called natively, exactly as
+	// `detail_at` already is. See far_mesher.gd's header: no GDScript frame is
+	// entered, and the noise is bit-identical by construction.
+
+	// TerrainGenerator.wildness_at
+	double wildness_at(double bx, double bz) const {
+		double half = (double)config.world_blocks_xz * 0.5;
+		if (half <= 0.0) {
+			return 0.0;
+		}
+		return Math::clamp(Math::max(Math::abs(bx), Math::abs(bz)) / half, 0.0, 1.0);
+	}
+
+	// TerrainGenerator.zone_jitter_at
+	double zone_jitter_at(double bx, double bz) const {
+		return (double)jitter_noise->get_noise_2d(bx, bz) * config.zone_jitter_blocks;
+	}
+
+	// TerrainGenerator.zone_at
+	int zone_at(double altitude, double jitter, double dither) const {
+		double blend = Math::max(config.zone_blend_blocks, 0.001);
+		int zone = ZONE_SHORE;
+		for (size_t i = 0; i < zone_thresholds.size(); i++) {
+			double edge = (altitude - ((double)zone_thresholds[i] + jitter)) / blend + 0.5;
+			if (edge <= 0.0) {
+				break;
+			}
+			if (edge >= 1.0 || dither < edge) {
+				zone = (int)i + 1;
+			} else {
+				break;
+			}
+		}
+		return zone;
+	}
+
+	// TerrainGenerator._slope_zone
+	int slope_zone(int64_t bx, int64_t bz, int zone) const {
+		if (config.slope_zone_strength <= 0.0) {
+			return zone;
+		}
+		double slope = slope_deg_at((double)bx, (double)bz);
+		double roll = hash01(bx, bz, world_seed, SALT_SLOPE_ZONE);
+		if (roll > Math::clamp(config.slope_zone_strength, 0.0, 1.0)) {
+			return zone;
+		}
+		if (zone == ZONE_SNOW && slope >= config.snow_max_slope_deg) {
+			return ZONE_ROCK;
+		}
+		double rock_at = config.rock_slope_deg
+				- config.wildness_rock_deg * wildness_at((double)bx, (double)bz);
+		if (zone > ZONE_SHORE && zone < ZONE_ROCK && slope >= rock_at) {
+			return ZONE_ROCK;
+		}
+		return zone;
+	}
+
+	// TerrainGenerator.surface_zone_at - ring 0's zone, jitter and dither and
+	// all, because it touches the voxels at the seam and the treeline has to
+	// agree with the trees.
+	int surface_zone_at(int64_t bx, int64_t bz, double altitude) const {
+		int64_t patch = config.zone_dither_blocks > 1 ? config.zone_dither_blocks : 1;
+		int zone = zone_at(altitude,
+				zone_jitter_at((double)bx, (double)bz),
+				hash01(floor_div(bx, patch), floor_div(bz, patch), world_seed,
+						SALT_ZONE_DITHER));
+		return slope_zone(bx, bz, zone);
+	}
+
+	// FarFieldJob.backdrop_zone - altitude alone, no jitter, a dither of
+	// exactly 0.5, and the slope override kept.
+	int backdrop_zone(int64_t bx, int64_t bz, double altitude) const {
+		return slope_zone(bx, bz, zone_at(altitude, 0.0, 0.5));
 	}
 
 	// FarFieldJob.filtered_height / _filtered's tail: the peak gain.

@@ -2,7 +2,9 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+#include <godot_cpp/variant/vector3.hpp>
 
 #include "far_world.h"
 
@@ -50,6 +52,18 @@ public:
 	// --- The mesh ----------------------------------------------------------
 
 	Dictionary build(const Dictionary &p_args);
+
+	// Stage 4's micro-gates: the zone rules and the colour path, one
+	// expression at a time.
+	int z_backdrop(int64_t p_bx, int64_t p_bz, double p_altitude) const;
+	int z_surface(int64_t p_bx, int64_t p_bz, double p_altitude) const;
+	int c_treeline_band(double p_band_m) const;
+	double c_band_m_at(int p_step_blocks, double p_terrace) const;
+	Color c_band_color(const Color &p_color, double p_y_m, int p_band_treeline,
+			double p_band_m) const;
+	Color c_aspect_shade(const Color &p_color, const Vector3 &p_normal) const;
+	Color c_vertex(const Color &p_color, const Vector3 &p_normal,
+			const Vector3 &p_point) const;
 
 	// Does this build paint as well as shape? False through Stage 3, where
 	// every colour is white and the parity harness is told to compare the rows

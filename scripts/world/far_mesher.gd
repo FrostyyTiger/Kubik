@@ -236,3 +236,39 @@ func h_peak(bx: float, bz: float, level: float) -> float:
 
 func h_slope_deg(bx: float, bz: float) -> float:
 	return _impl.h_slope_deg(bx, bz)
+
+
+# --- Stage 4's micro-gates ---------------------------------------------------
+#
+# The zone rules and the colour path, one expression at a time. Decision 4 asks
+# for a 10,000-sample gate per function before the whole-mesh comparison goes
+# colour-inclusive, and these are what it runs against.
+
+func z_backdrop(bx: int, bz: int, altitude: float) -> int:
+	return _impl.z_backdrop(bx, bz, altitude)
+
+
+func z_surface(bx: int, bz: int, altitude: float) -> int:
+	return _impl.z_surface(bx, bz, altitude)
+
+
+func c_treeline_band(band_m: float) -> int:
+	return _impl.c_treeline_band(band_m)
+
+
+func c_band_m_at(step_blocks: int, terrace: float) -> float:
+	return _impl.c_band_m_at(step_blocks, terrace)
+
+
+func c_band_color(color: Color, y_m: float, band_treeline: int,
+		band_m: float) -> Color:
+	return _impl.c_band_color(color, y_m, band_treeline, band_m)
+
+
+func c_aspect_shade(color: Color, normal: Vector3) -> Color:
+	return _impl.c_aspect_shade(color, normal)
+
+
+## The whole per-vertex tail of _push_quad: aspect shade, jitter, to_wire.
+func c_vertex(color: Color, normal: Vector3, point: Vector3) -> Color:
+	return _impl.c_vertex(color, normal, point)

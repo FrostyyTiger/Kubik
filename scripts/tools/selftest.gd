@@ -66,6 +66,7 @@ func _ready() -> void:
 		# DISTANCE V4 STAGE 1, appended at the end of the list.
 		"far parity": _test_far_parity,
 		"far pyramid parity": _test_far_pyramid_parity,
+		"far zone parity": _test_far_zone_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -1985,11 +1986,21 @@ func _test_far_parity():
 			"frontier": PackedInt32Array()},
 		{"name": "frontier", "terrace": 1.0, "div": 2.0,
 			"frontier": partial},
+		# THE PATHS THE SHIPPED CONFIG NEVER TAKES. far_vote is 0.0 and both
+		# colour-jitter knobs are 0.0 by default, so the mode vote, its memo
+		# and Block.jitter's whole hash path are dead code in every mesh this
+		# project has built - and a gate that only ever ran the early return
+		# would be testing nothing. Turned on here, and only here.
+		{"name": "vote+jitter", "terrace": 1.0, "div": 2.0,
+			"frontier": partial, "vote": 1.0, "jitter": true},
 	]
 	var checks := 0
 	for c in cases:
 		wcfg.far_terrace = c["terrace"]
 		wcfg.far_ring_div = c["div"]
+		wcfg.far_vote = float(c.get("vote", 0.0))
+		wcfg.color_jitter_value = 0.06 if c.get("jitter", false) else 0.0
+		wcfg.color_jitter_hue = 0.03 if c.get("jitter", false) else 0.0
 		# THE OVERLAP IS A STATIC BOTH MESHERS READ, and it is derived from
 		# far_ring_div through base_step_blocks() - so it has to be pushed
 		# again whenever the divisor moves, on the main thread, exactly as
@@ -2159,3 +2170,127 @@ func _test_far_pyramid_parity():
 			maxf(worst["max"], maxf(worst["peak"], worst["slope"])))])
 	world.free()
 	return bad
+
+
+## ZONE AND COLOUR CROSS, EXPRESSION BY EXPRESSION. Distance v4 Stage 4,
+## decision 4's micro-gate.
+##
+## Ten thousand random samples per function, C++ against GDScript, exact.
+##
+## THE LADDER LANDED ON RUNG (a), and the plan's own wording is worth holding it
+## to. `backdrop_zone`, `zone_at`, `_slope_zone`, `wildness_at`, `band_color`,
+## `band_m_at`, `treeline_band`, `Block.color_of`, `Block.aspect_shade`,
+## `Block.jitter` and `Look.to_wire` are pure functions of altitude, a slope
+## read off level 0, a hash and config scalars, and they are ported.
+##
+## ONE FUNCTION IS NOT PURE and it is `zone_jitter_at`, which ring 0's
+## `surface_zone_at` needs: a FastNoiseLite sample. It is neither rung (a) as
+## written nor rung (b) - no grid is precomputed - because FastNoiseLite is an
+## ENGINE class and the mesher holds the very same object the generator built,
+## calling get_noise_2d on it natively. Decision 2's "never calls back into
+## GDScript during a build" holds exactly, and the noise is bit-identical by
+## construction rather than by a reimplementation. `detail_at` crossed the same
+## way in Stage 3. It is recorded here and in the status doc because it is a
+## third rung the plan did not name, not because it is a compromise.
+##
+## THE JITTER KNOBS ARE TURNED UP FOR THIS TEST, and that is deliberate:
+## color_jitter_value and color_jitter_hue both ship at 0.0, so Block.jitter's
+## whole hash path returns early in every mesh this project has ever built. A
+## gate that only ever exercised the early return would be testing nothing.
+func _test_far_zone_parity():
+	var bad := 0
+	if not FarMesher.class_present():
+		print("far zone parity: c++ mesher absent, 0 checks")
+		return 0
+
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	var world := World.new()
+	world.setup(1234, cfg)
+	var generator: TerrainGenerator = world.generator
+	var heightmap: Heightmap = generator.heightmap
+	var wcfg: WorldgenConfig = world.config
+	# See the note above: the shipped defaults are 0.0 and would test the early
+	# return and nothing else.
+	wcfg.color_jitter_value = 0.06
+	wcfg.color_jitter_hue = 0.03
+
+	var mesher := FarMesher.new()
+	if not mesher.setup(heightmap, generator, wcfg):
+		print("  the c++ mesher would not take the world")
+		world.free()
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 987654
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var n := 10000
+	var diff := {
+		"backdrop_zone": 0, "surface_zone_at": 0, "treeline_band": 0,
+		"band_m_at": 0.0, "band_color": 0.0, "aspect_shade": 0.0, "vertex": 0.0,
+	}
+	for k in n:
+		var bx := rng.randi_range(int(-half * 1.2), int(half * 1.2))
+		var bz := rng.randi_range(int(-half * 1.2), int(half * 1.2))
+		var alt := rng.randf_range(cfg.min_altitude - 20.0, cfg.max_altitude + 20.0)
+		if FarFieldJob.backdrop_zone(generator, bx, bz, alt) \
+				!= mesher.z_backdrop(bx, bz, alt):
+			diff["backdrop_zone"] += 1
+		if generator.surface_zone_at(bx, bz, alt) != mesher.z_surface(bx, bz, alt):
+			diff["surface_zone_at"] += 1
+
+		var band_m := rng.randf_range(1.0, 90.0)
+		if FarFieldJob.treeline_band(generator, wcfg, band_m) \
+				!= mesher.c_treeline_band(band_m):
+			diff["treeline_band"] += 1
+		var step_blocks := rng.randi_range(1, 256)
+		var terrace := rng.randf_range(-0.2, 1.2)
+		diff["band_m_at"] = maxf(diff["band_m_at"],
+			absf(FarFieldJob.band_m_at(wcfg, step_blocks, terrace)
+				- mesher.c_band_m_at(step_blocks, terrace)))
+
+		var zone := rng.randi_range(0, TerrainGenerator.ZONE_COUNT - 1)
+		var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
+		var y_m := rng.randf_range(-50.0, 500.0)
+		var tl := rng.randi_range(0, 12)
+		diff["band_color"] = maxf(diff["band_color"], _color_diff(
+			FarFieldJob.band_color(color, y_m, wcfg, tl, band_m),
+			mesher.c_band_color(color, y_m, tl, band_m)))
+
+		var normal := Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0))
+		if normal.length_squared() > 0.0:
+			normal = normal.normalized()
+		else:
+			normal = Vector3.UP
+		diff["aspect_shade"] = maxf(diff["aspect_shade"], _color_diff(
+			Block.aspect_shade(color, normal, wcfg.slope_tint, wcfg.aspect_tint),
+			mesher.c_aspect_shade(color, normal)))
+
+		var point := Vector3(rng.randf_range(-500.0, 500.0),
+			rng.randf_range(-50.0, 400.0), rng.randf_range(-500.0, 500.0))
+		var inv_bs := 1.0 / wcfg.block_size
+		var gd := Look.to_wire(Block.jitter(
+			Block.aspect_shade(color, normal, wcfg.slope_tint, wcfg.aspect_tint),
+			int(round(point.x * inv_bs)), int(round(point.z * inv_bs)),
+			generator.world_seed, wcfg.color_jitter_blocks,
+			wcfg.color_jitter_value, wcfg.color_jitter_hue))
+		diff["vertex"] = maxf(diff["vertex"], _color_diff(gd,
+			mesher.c_vertex(color, normal, point)))
+
+	for key in diff:
+		if diff[key] != 0 and diff[key] != 0.0:
+			print("  %s differs: %s over %d samples" % [key, diff[key], n])
+			bad += 1
+	print("far zone parity: %d samples x 7 functions, %s" % [
+		n, "all identical" if bad == 0 else "%d FUNCTIONS DIFFER" % bad])
+	world.free()
+	return bad
+
+
+func _color_diff(a: Color, b: Color) -> float:
+	return maxf(absf(a.r - b.r), maxf(absf(a.g - b.g),
+		maxf(absf(a.b - b.b), absf(a.a - b.a))))
