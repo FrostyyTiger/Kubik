@@ -15,15 +15,15 @@ and parallelism they can run in.
 | AI animal behaviour | **C. Creatures v1** | Stance settled in `DESIGN.md`: LimboAI, `AStarGrid2D` over the heightmap, boids, utility AI, the five rules. |
 | combat | **D. Combat v1** | Next 3 #2, the other half. Light attack, dodge / block. |
 | combat, how it works | **D. Combat v1** | The design section of the combat plan. Sword / bow / staff. |
-| damage, health bar, stamina / mana, stats | **D. Combat v1** | Stats v1 is the first stage of combat. HUD bars are its UI slice. |
+| damage, health bar, stamina / mana, stats | **D. Combat v1** | Stats v1 is the first stage of combat. The stats table + HUD bars were pulled forward into UI v1 (2026-08-31, `docs/plans/ui-v1.md`); D keeps damage and everything that moves them. |
 | character animations | **D. Combat v1** | Attack, hit, downed poses on the character v1 procedural animator. Creature poses live in C. |
 | physics - stuff falling | **D / G, small** | Dropped items and corpses fall and settle. Falling TERRAIN is "breaking terrain", unsettled - not here. |
 | water, rivers | **B. Water v1** | Plan B's unwritten second half. Hooks left by foliage v1. |
 | lakes | **B. Water v1** + look v2 | Lakes exist since terrain v1. Look v2 Stage 4 restyles the surface; Water v1 does shores, inflow / outflow, wading. |
 | oceans | **Second Age** | Post-1.0 expansion arc, `IDEAS.md`. Only obligation now: never hardcode far-away = mountains (the coast is a direction; the world is unbounded since 2026-08-31). |
 | save world, reload, settings | **F. Session v1** | `DESIGN.md`: one host save file, world edits + every character. Settings and pause menus. |
-| UI | cross-cutting | Not one item. Theme = look v2 Stage 6. Each epic owns one UI slice: HUD (D), menus (F), map (I), sheet (J). |
-| mini map | **I. Navigation v1** | Pillar 3 tension - see pushbacks. Compass + a map that fills as you range. |
+| UI | cross-cutting + **UI v1** | The frame is one pass (UI v1, an explicit queue jump by Marcel 2026-08-31: HUD framework, scaling, compass strip, hotbar shell, stats table, sheet, party icons - `docs/plans/ui-v1.md`); each epic still fills its slice into that frame: menus (F), map screen (I), toast (J), inventory (G). |
+| mini map | resolved, **none** | Settled 2026-08-31: no minimap, not even a toggle. The compass strip (UI v1) + the fog-of-exploration map screen (I) are the whole answer. |
 | castles and structures | **H. Sites v1** | "Found places" in Someday; promoted because quests need places to point at. |
 | random map, fixed locations always generate | **H. Sites v1** | Spawn already does this by construction (terrain v2). Extend it to a landmark table. |
 | place names | **H. Sites v1** | Names on the landmark table. Facts as data - the director reads them. |
@@ -268,8 +268,8 @@ path is playtest 1.
 - **Mini map.** A live top-down minimap fights pillar 3 and the camera
   decision ("sold on reading landscape at a glance"). What the game wants is
   a compass and a map that fills in as you range - exploration as
-  progression, which is the pillar. If Marcel wants the minimap anyway, it is
-  a settings toggle, off by default, and it goes in I.
+  progression, which is the pillar. *Resolved 2026-08-31: Marcel agreed, and
+  dropped the off-by-default-toggle escape hatch too. No minimap, ever.*
 - **Skill tree.** Tagged in `IDEAS.md` Someday as contradicting a pillar, and
   `DESIGN.md` Skills says the sheet is read-only on purpose. Five skills that
   level by doing is already designed and gives most of the feeling. Building
