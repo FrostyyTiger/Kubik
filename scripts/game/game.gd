@@ -28,6 +28,7 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _status: Label = $HUD/Status
 @onready var _hud: Hud = $HUD
 @onready var _hud_tuner: HudTuner = $HudTuner
+@onready var _sheet: CharacterScreen = $CharacterScreen
 @onready var _players_root: Node3D = $Players
 
 ## Built in code rather than put in the scene, because it only ever has
@@ -156,6 +157,7 @@ func _ready() -> void:
 	_hud.setup(_sky, _world, _player, self)
 	_hud_tuner.setup(_hud)
 	_debug.set_hud(_hud)
+	_sheet.setup(_player, _hud)
 	# The session's config, which may carry CLI overrides the saved file does
 	# not - so the far plane matches the fog this run actually uses.
 	_player.apply_view_config(config)
@@ -591,6 +593,12 @@ func _start_hud_shots() -> void:
 	use_slab_tool()
 	await get_tree().process_frame
 
+	# THE CHARACTER SHEET. Opened through the same set_open() the C key calls,
+	# and the label dump printed beside it: the acceptance test COUNTS six
+	# sockets and five skills rather than reading them out of a PNG, because
+	# there is no OCR on this box.
+	await _hud_shot_sheet("sheet")
+
 	# THE F8 PANEL, ON SCREEN, AT 720 LOGICAL. Stage 1 replaced its hard-coded
 	# 352x640 scroll box with anchors and offsets and could not photograph the
 	# result, because F8 lives in this scene and this scene had no camera on it
@@ -672,6 +680,40 @@ func _hud_shot_party(name: String) -> void:
 		name, head, int(head.y) - 44, int(head.y) - 4])
 	await UiShot.capture(get_tree(), name, UiShot.hud_label())
 	_hud_shots_taken += 1
+
+
+## The character sheet, open, over the world.
+##
+## AND THE ESCAPE TEST, WHICH IS HARD RULE 10 AS AN ASSERTION RATHER THAN AS A
+## PARAGRAPH. An unconsumed ui_cancel from the open sheet walks up to this
+## node's _unhandled_input, which calls Net.leave() and changes scene - one
+## missed consume between a player pressing Escape on their inventory and being
+## dropped out of their friend's world. The driver sends the event and then
+## checks that the sheet closed AND that we are still in the game scene.
+func _hud_shot_sheet(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	_sheet.set_open(true)
+	# Pinned rather than left spinning, so the shot is comparable run to run
+	# for the same reason the creation screen's is.
+	_sheet.pin_preview(PI)
+	await get_tree().process_frame
+	print("[HudShot] %s: %s" % [name, _sheet.label_dump()])
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+	var escape := InputEventAction.new()
+	escape.action = "ui_cancel"
+	escape.pressed = true
+	Input.parse_input_event(escape)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var still_here := get_tree().current_scene == self
+	print("[HudShot] esc from the open sheet: sheet open %s, still in the game scene %s" % [
+		_sheet.is_open(), still_here])
+	if _sheet.is_open() or not still_here:
+		push_error("[HudShot] HARD RULE 10 FAILED: esc did not close the sheet, or left the session")
+	_sheet.set_open(false)
 
 
 ## The F8 character panel, open, over the world. Not part of the field register

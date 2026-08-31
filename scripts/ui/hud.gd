@@ -48,6 +48,14 @@ var _shown := 1.0
 var _since_change := 999.0
 var _last_row := {}
 
+## Set while a poster screen is open over the top. THE FIELD REGISTER AND THE
+## POSTER REGISTER ARE NOT SHOWN AT ONCE: the HUD is an instrument panel, and
+## instruments faintly visible behind a printed page is precisely the "UI
+## pasted on" the acceptance test warns about. The sheet's ink ground is 94%
+## opaque, so without this the bars and the strip ghost through it.
+var _suppressed := false
+
+
 ## The four conditions, kept as fields rather than locals so the F3 readout can
 ## print WHICH one is holding the HUD in. A fade nobody can explain is a fade
 ## that gets called broken.
@@ -368,7 +376,20 @@ func _is_safe() -> bool:
 		and _danger <= config.fade_danger_max
 
 
+## A screen is open over the HUD; stand down until it closes.
+func set_suppressed(on: bool) -> void:
+	if _suppressed == on:
+		return
+	_suppressed = on
+	_apply_opacity()
+
+
 func _apply_opacity() -> void:
+	if _suppressed:
+		for piece in [_cluster, _icons, _dot, _compass]:
+			if piece != null:
+				(piece as CanvasItem).modulate.a = 0.0
+		return
 	if _cluster != null:
 		_cluster.modulate.a = _shown
 	if _icons != null:

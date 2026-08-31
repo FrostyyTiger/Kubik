@@ -16,19 +16,13 @@ extends Control
 ## rows are a loop over a table, which is twenty lines as code and several
 ## hundred as scene nodes, and this machine has no editor to make them in.
 
-## The preview viewport. Alive only while this screen is open - it is a second
-## 3D scene and there is no reason to pay for it from the main menu.
-const PREVIEW_SIZE := Vector2i(512, 640)
-
-## Radians per second. Slow enough to read the face, fast enough that you do
-## not wait to see the back.
-const TURNTABLE_SPEED := 0.5
+## The preview rig's size and speed live on CharacterPreview now (ui v1
+## Stage 6). Alive only while this screen is open - it is a second 3D scene and
+## there is no reason to pay for it from the main menu.
 
 var def: CharacterDef = null
 
-var _view: CharacterView = null
-var _turntable: Node3D = null
-var _viewport: SubViewport = null
+var _preview: CharacterPreview = null
 var _name_edit: LineEdit = null
 var _rows := {}          # field name -> the Control holding that row
 var _labels := {}        # field name -> the Label showing the current option
@@ -54,129 +48,24 @@ func _shoot_ui() -> void:
 	get_tree().quit()
 
 
-func _process(delta: float) -> void:
-	# FROZEN UNDER A SHOT (ui v1 Stage 1), for the same reason SkyCycle has a
-	# `frozen` flag: this screen is photographed to be compared against the
-	# same screen at another commit, and a turntable that has been spinning for
-	# however long the settle frames took makes every re-shoot differ by an
-	# arbitrary rotation. Nothing else about the screen changes; the half-turn
-	# _build_preview() sets is still what is photographed.
-	if _turntable != null and not UiShot.wanted():
-		_turntable.rotation.y += TURNTABLE_SPEED * delta
+# --- The preview -------------------------------------------------------------
+#
+# THE RIG MOVED OUT (ui v1 Stage 6). Everything that was here - the SubViewport,
+# its own world, its own key light, the turntable's named half-turn and the
+# height-derived framing - is scripts/ui/character_preview.gd now, because the
+# character sheet wants exactly the same thing and the design doc asked for a
+# shared helper rather than a copy. This screen must survive the extraction
+# unchanged to the eye; the Stage 6 re-shoot is what says whether it did.
 
 
-# --- The preview --------------------------------------------------------------
-
-## A 3D scene in a box, with its own light and its own camera.
-##
-## ITS OWN LIGHT, not the world's: the creation screen has no world, and a
-## character lit by whatever the menu happens to have would be judged under
-## lighting the game never uses. This is a key light and a fill, aimed to show
-## a face and still separate the silhouette from the background.
-func _build_preview() -> SubViewportContainer:
-	var container := SubViewportContainer.new()
-	container.stretch = true
-	# PREVIEW_SIZE IS THE FLOOR, NOT THE SIZE (ui v1 Stage 1). With
-	# `canvas_items` stretch the container is laid out in logical pixels and
-	# then drawn at the window's scale, so on a 2560x1440 screen this box is
-	# painted at twice its logical size - and a SubViewport pinned to 512x640
-	# would be upscaled to fill it, which is the one place in the game where a
-	# character would go soft. The viewport follows the container's real size
-	# instead; see _on_preview_resized.
-	container.custom_minimum_size = Vector2(PREVIEW_SIZE)
-	container.resized.connect(_on_preview_resized.bind(container))
-
-	_viewport = SubViewport.new()
-	_viewport.size = PREVIEW_SIZE
-	_viewport.transparent_bg = false
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	container.add_child(_viewport)
-
-	var world := Node3D.new()
-	_viewport.add_child(world)
-
-	var env := WorldEnvironment.new()
-	var environment := Environment.new()
-	environment.background_mode = Environment.BG_COLOR
-	# Ink. The preview is a print mounted on the paper of the screen, and a
-	# character reads best against the darkest of the five colours.
-	environment.background_color = Deco.INK
-	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	environment.ambient_light_color = Color(0.55, 0.60, 0.70)
-	environment.ambient_light_energy = 0.35
-	# LINEAR, for the same reason SkyCycle uses it: there are no textures here,
-	# the palette IS the art direction, and a tonemapper that reshapes it is
-	# reshaping the art. A skin swatch that does not match the model it paints
-	# would make this screen actively misleading.
-	environment.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	env.environment = environment
-	world.add_child(env)
-
-	var key := DirectionalLight3D.new()
-	key.light_energy = 0.9
-	key.rotation = Vector3(deg_to_rad(-35.0), deg_to_rad(30.0), 0.0)
-	world.add_child(key)
-
-	_turntable = Node3D.new()
-	# FACING THE CAMERA TO START WITH. A character faces -Z and the camera
-	# stands at +Z, so a turntable left at zero opens this screen on the back
-	# of your own head - which is the same mistake the gallery's first "front"
-	# sheet made, and is worth a named half-turn in both places.
-	_turntable.rotation.y = PI
-	world.add_child(_turntable)
-
-	_view = CharacterView.new()
-	_turntable.add_child(_view)
-
-	var camera := Camera3D.new()
-	camera.fov = 40.0
-	camera.current = true
-	world.add_child(camera)
-	_preview_camera = camera
-	return container
-
-
-var _preview_camera: Camera3D = null
-
-
-## Render the preview at the number of pixels it is actually shown at.
-##
-## The DISPLAYED size, which under `canvas_items` stretch is the container's
-## logical size times the canvas scale - not the logical size, which is what a
-## Control reports. Floored at PREVIEW_SIZE so a small window never renders the
-## character at fewer pixels than the screen was designed around, and clamped
-## at the top so a very large window cannot ask for a viewport big enough to
-## cost real memory for no visible gain.
-func _on_preview_resized(container: SubViewportContainer) -> void:
-	if _viewport == null:
-		return
-	var scale := container.get_global_transform().get_scale()
-	var wanted := Vector2i(
-		int(round(container.size.x * maxf(scale.x, 0.01))),
-		int(round(container.size.y * maxf(scale.y, 0.01))))
-	wanted.x = clampi(wanted.x, PREVIEW_SIZE.x, PREVIEW_SIZE.x * 4)
-	wanted.y = clampi(wanted.y, PREVIEW_SIZE.y, PREVIEW_SIZE.y * 4)
-	if _viewport.size != wanted:
-		_viewport.size = wanted
-
-
-## Frame whatever is standing on the turntable.
-##
-## Derived from the character's own height rather than fixed, because a 1.5 m
-## dwarf and a 2.25 m elf in the same box need different framing and a screen
-## that cut the elf's ears off would be hiding the one feature that makes it an
-## elf.
-func _frame_preview() -> void:
-	if _preview_camera == null or _view == null:
-		return
-	var height := maxf(_view.height_m(true), 1.0)
-	var centre := height * 0.55
-	# 2.2 rather than 1.9: at 40 degrees the vertical frame is 1.6 times the
-	# character's height at this distance, which leaves a margin an elf's ears
-	# and a lizardfolk's crest both fit inside.
-	var distance := height * 2.2
-	_preview_camera.global_position = Vector3(0.0, centre + height * 0.12, distance)
-	_preview_camera.look_at(Vector3(0.0, centre, 0.0), Vector3.UP)
+func _build_preview() -> CharacterPreview:
+	_preview = CharacterPreview.new()
+	# FROZEN UNDER A SHOT, for the same reason SkyCycle has a `frozen` flag:
+	# this screen is photographed to be compared against itself at another
+	# commit, and a turntable that has been spinning for however long the
+	# settle frames took makes every re-shoot differ by an arbitrary rotation.
+	_preview.set_spinning(not UiShot.wanted())
+	return _preview
 
 
 # --- The controls -------------------------------------------------------------
@@ -449,8 +338,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Rebuild the preview and bring every control into line with the def.
 func _rebuild() -> void:
-	_view.build(def)
-	_frame_preview()
+	_preview.build(def)
 
 	for race in Races.RACE_COUNT:
 		(_race_buttons[race] as Button).button_pressed = (race == def.race)

@@ -58,6 +58,7 @@ sampled out of them are here.
 | 3 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`stats table`) |
 | 4 | `76cccdb6` | `(-44, -124)` | all green |
 | 5 | `76cccdb6` | `(-44, -124)` | all green, character selftest green **post-nametag-removal** |
+| 6 | `76cccdb6` | `(-44, -124)` | all green |
 
 ---
 
@@ -412,6 +413,77 @@ its own doc comment.
 Slot 1 is the slab tool and using it calls `Game.use_slab_tool()` ->
 `World.request_set_block()`, the same request the key made. The keybind crib on
 F3 reads `[1-5]/wheel hotbar, LMB use` now.
+
+---
+
+## Stage 6 - the character screen
+
+### The evidence [deterministic]
+
+`sheet.png`, and the driver's own label dump, which is how the count is
+verified: **there is no OCR on this box**, and the plan's answer is to verify
+by construction.
+
+    sheet: 6 sockets ["Torso", "Shoulders", "Back", "Head", "Legs", "Hands"]
+         | 5 skills ["Blades", "Bows", "Magic", "Mobility", "Gathering"]
+         | name "unnamed" | race "stocky human"
+
+**Six sockets, five skills**, and the name and race read off the LIVE player
+(`Player/View.def`, the runtime truth the F8 panel cycles and the wire carries)
+rather than off the file on disk - a sheet that showed the saved file would
+disagree with the body standing in the world.
+
+**Hard rule 10, as an assertion rather than a paragraph.** The driver sends
+`ui_cancel` with the sheet open and checks both halves:
+
+    esc from the open sheet: sheet open false, still in the game scene true
+
+An unconsumed `ui_cancel` walks up to `Game._unhandled_input`, which calls
+`Net.leave()` and changes scene - one missed consume between a player pressing
+Escape on their inventory and being dropped out of their friend's world. The
+sheet consumes it in `_input()` (which runs before every `_unhandled_input` in
+the tree) and only while open. The driver `push_error`s if either half fails,
+so a regression breaks the run rather than the session.
+
+### The creation screen survived the extraction
+
+`--shot-ui ui-v1-creation-after` against Stage 1's `ui-v1-stretch`:
+
+| sheet | differing px | worst channel | % |
+| --- | --- | --- | --- |
+| `main-menu.png` | 0 - **identical** | - | - |
+| `character-creation.png` | 1243 | 124 | **0.135%** |
+
+**0.135% is BELOW the 0.232% same-commit noise floor measured in Stage 1.** The
+turntable rig moving out of `character_creation.gd` and into
+`CharacterPreview` is a no-op to the eye, which is what the plan required.
+
+### `own_world_3d = true` is the load-bearing line
+
+The creation screen never needed it - it is its own scene and there is no other
+3D world to inherit. The sheet is opened **inside the game**, and a SubViewport
+sharing the game's `World3D` would render the live world into the portrait box
+and, far worse, its `camera.current` would fight the player's camera for the
+main viewport. The symptom would not be a wrong preview; it would be the
+player's view taken over by a portrait camera looking at their own feet.
+`UPDATE_WHEN_VISIBLE` for the matching reason: the sheet is shut most of the
+time and a second 3D scene rendering behind a closed screen is a cost with no
+picture attached.
+
+### One call the plan did not make
+
+**The field register stands down while the sheet is open.** The sheet's ink
+ground is 94% opaque, and in the first sheet shot the bars and the compass
+strip ghosted through it - instruments faintly visible behind a printed page,
+which is exactly the "UI pasted on" the acceptance test warns against. The
+sheet tells the HUD to suppress itself (`Hud.set_suppressed`) and releases it
+on close. The two registers are never shown at once.
+
+### Layer order
+
+Sheet at **5**: above the game, **under** both debug panels (10, 11) and the F9
+tuner (12). A debug panel you cannot see because a screen is over it is a tool
+made useless by a screen, and the tools win.
 
 ---
 
