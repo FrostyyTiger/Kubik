@@ -962,3 +962,73 @@ at 1,280 m; 0.15 starts it at 480 m and reads as aerial perspective (fleck
 3.50). **The recommendation is 0.15-0.20 and it is Marcel's call**; the shipped
 value is the plan's 0.40.
 
+---
+
+## Stage 6 - Docs, night 1
+
+Everything above is night 1. This section is the summary a person can read in
+one sitting, and it is the point the plan names as safe to stop at.
+
+### Night 1's numbers in one table
+
+`6-postcard`, far band rows 0-300, `ganymede, eye` for the shots and
+`deterministic` for the geometry.
+
+| | baseline `1ece781` | S1 vote | S2 grain | S3 axis | S4 reach | S5 fog |
+| --- | --- | --- | --- | --- | --- | --- |
+| fleck | 3.9398 | 3.9801 | 4.6173 | 4.5768 | **5.2168** | 5.2168 |
+| textured | 27.7% | 27.6% | 38.5% | 38.3% | **42.3%** | 42.3% |
+| dark40 | - | - | 8.81% | 8.83% | **20.13%** | 20.13% |
+| far mesh, in game | 262,312 | 262,312 | 262,312 | 262,312 | **320,764** | 320,764 |
+| idle rebuild, wall ms | - | - | - | 2,587 | **3,223** | 3,223 |
+| far probe | PASS | PASS | PASS | PASS | **PASS, rings 0-4** | PASS |
+| swatches | - | n/a | **identical** | n/a | n/a | **identical** |
+
+`17-rim`, rows 330-520, which is the only band in this project that can see
+past a kilometre:
+
+| | reach 800 m | reach 3,200 m |
+| --- | --- | --- |
+| fleck | **0.0502** | **5.0454** |
+| p95 | **0.00** | 24.99 |
+| textured | 0.54% | 36.17% |
+
+### Every constant this epic has moved, so far
+
+| constant | before | shipped | why, in one line |
+| --- | --- | --- | --- |
+| `far_vote` | - | **1.0**, on F4 | a far cell is the most common of four real materials; shore never wins, ties are the first sample |
+| `far_grain` | - | **0.065**, on F4 | the near field's own `grain_amount`, extended outward on a lattice that grows instead of fading |
+| `far_riser_axis` | - | **0.08**, on F4 | half the near field's own sun/anti-sun luma spread, so a far cube has four tones |
+| `far_fog_start_frac` | - | **0.4**, on F4 | DH's `farFogStart`, of the configured reach and never a metre value |
+| `RING_OUTER_M` | `[200, 400]` | **`[200, 400, 960, 1920]`** | two more rings; each doubling of the reach costs one more |
+| `RING_STEP_MULTIPLE` | `[1, 2, 4]` | **`[1, 2, 4, 8, 16]`** | 32 m and 64 m cells, powers of two, so the subset property holds |
+| High preset `fog_end` | 800 m | **3,200 m** | a 3,840 m far radius and a 4,000 m camera far plane: the region's rim from anywhere a player can stand |
+| High preset `far_tree` | 800 m | **800 m, unchanged** | decision 6 - the impostor ring does not follow the fog, and Stage 1's vote paints the ground past it |
+| Ultra preset `fog_end` | 1,000 m | **3,200 m** | the same reach; Ultra buys more voxels and more trees, not more country |
+| `FOG_FN`'s curve | `smoothstep` | **exp², density 2.5** | aerial perspective instead of a ramp |
+| `FOG_FN`'s distance | spherical | **cylindrical** | looking up must not fog the peaks' sky |
+| far field's material | the chunks' | **its own, spliced** | it needs uniforms the chunks must not have, and Stage 7 needs the seam |
+| `17-rim` | - | **appended to the tour** | the harness could not see the reach; a lane note, not a lane file |
+
+`PROPERTIES` and `hash_key()` are untouched. **`3d45b8fc` before and after every
+stage, heightmap `76cccdb6`, spawn `(-44, -124)`** - nothing this epic has added
+crosses the network or can refuse a join.
+
+### What night 1 bought, and what it cost
+
+Bought: the far country reads as a surface made of blocks rather than as a
+smooth thing with contour lines on it (`far_grain`, the largest single move in
+the fleck), the whole region is drawn (rings 3 and 4), and the fog wall is gone
+- **fleck 0.0502 to 5.0454 on the rim band, p95 0.00 to 24.99.**
+
+Cost, and both are named rather than buried:
+
+1. **The stream probe fails.** 25 holes and 8 holes, against hard rule 2. The
+   mechanism is Stage 4's rebuild latency and the remedy is Stage 7.
+2. **`dark40` on the postcard doubled**, 8.81% to 20.13%, because a kilometre
+   of mountain that used to be hazed is now drawn at full strength. That is
+   distance v2's carried item 14 reopening through the fog rather than through
+   the risers, and the lever is `far_fog_start_frac` and `fog_bands`, both of
+   which are on F4 and both of which are Marcel's.
+
