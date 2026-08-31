@@ -98,17 +98,29 @@ func _set_panel_visible(on: bool) -> void:
 
 func _build_panel() -> void:
 	_panel = PanelContainer.new()
-	_panel.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	_panel.position = Vector2(16, 16)
-	_panel.custom_minimum_size = Vector2(360, 0)
+	# ANCHORED TO THE LEFT EDGE, not positioned (ui v1 Stage 1). It used to sit
+	# at 16,16 with a 640 px scroll box inside it, which fits a 720 line window
+	# and nothing else: from Stage 1 the logical canvas is at least 1280x720 but
+	# can be TALLER, and a fixed 640 would leave a growing dead strip at the
+	# bottom of a tall window - while a window whose logical height the stretch
+	# mode ever put below 720 would push the panel's bottom off screen, which is
+	# the failure this number was picked to avoid in the first place.
+	#
+	# PRESET_LEFT_WIDE with offsets is the F4 panel's approach on the other
+	# side, so the two debug panels now size the same way and neither has a
+	# height in it.
+	_panel.set_anchors_preset(Control.PRESET_LEFT_WIDE)
+	_panel.offset_left = 16
+	_panel.offset_right = 376
+	_panel.offset_top = 16
+	_panel.offset_bottom = -16
 	_panel.visible = false
 	add_child(_panel)
 
 	var scroll := ScrollContainer.new()
 	# Twenty-seven knobs plus the cycling buttons is taller than a 720 line
-	# window, and a panel whose bottom half is off screen is a panel whose
-	# bottom half does not exist.
-	scroll.custom_minimum_size = Vector2(352, 640)
+	# window, so the rows scroll inside whatever height the anchors give.
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_panel.add_child(scroll)
 
 	var box := VBoxContainer.new()

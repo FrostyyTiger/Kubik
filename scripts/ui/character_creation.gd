@@ -55,7 +55,13 @@ func _shoot_ui() -> void:
 
 
 func _process(delta: float) -> void:
-	if _turntable != null:
+	# FROZEN UNDER A SHOT (ui v1 Stage 1), for the same reason SkyCycle has a
+	# `frozen` flag: this screen is photographed to be compared against the
+	# same screen at another commit, and a turntable that has been spinning for
+	# however long the settle frames took makes every re-shoot differ by an
+	# arbitrary rotation. Nothing else about the screen changes; the half-turn
+	# _build_preview() sets is still what is photographed.
+	if _turntable != null and not UiShot.wanted():
 		_turntable.rotation.y += TURNTABLE_SPEED * delta
 
 
@@ -70,7 +76,15 @@ func _process(delta: float) -> void:
 func _build_preview() -> SubViewportContainer:
 	var container := SubViewportContainer.new()
 	container.stretch = true
+	# PREVIEW_SIZE IS THE FLOOR, NOT THE SIZE (ui v1 Stage 1). With
+	# `canvas_items` stretch the container is laid out in logical pixels and
+	# then drawn at the window's scale, so on a 2560x1440 screen this box is
+	# painted at twice its logical size - and a SubViewport pinned to 512x640
+	# would be upscaled to fill it, which is the one place in the game where a
+	# character would go soft. The viewport follows the container's real size
+	# instead; see _on_preview_resized.
 	container.custom_minimum_size = Vector2(PREVIEW_SIZE)
+	container.resized.connect(_on_preview_resized.bind(container))
 
 	_viewport = SubViewport.new()
 	_viewport.size = PREVIEW_SIZE
@@ -123,6 +137,27 @@ func _build_preview() -> SubViewportContainer:
 
 
 var _preview_camera: Camera3D = null
+
+
+## Render the preview at the number of pixels it is actually shown at.
+##
+## The DISPLAYED size, which under `canvas_items` stretch is the container's
+## logical size times the canvas scale - not the logical size, which is what a
+## Control reports. Floored at PREVIEW_SIZE so a small window never renders the
+## character at fewer pixels than the screen was designed around, and clamped
+## at the top so a very large window cannot ask for a viewport big enough to
+## cost real memory for no visible gain.
+func _on_preview_resized(container: SubViewportContainer) -> void:
+	if _viewport == null:
+		return
+	var scale := container.get_global_transform().get_scale()
+	var wanted := Vector2i(
+		int(round(container.size.x * maxf(scale.x, 0.01))),
+		int(round(container.size.y * maxf(scale.y, 0.01))))
+	wanted.x = clampi(wanted.x, PREVIEW_SIZE.x, PREVIEW_SIZE.x * 4)
+	wanted.y = clampi(wanted.y, PREVIEW_SIZE.y, PREVIEW_SIZE.y * 4)
+	if _viewport.size != wanted:
+		_viewport.size = wanted
 
 
 ## Frame whatever is standing on the turntable.

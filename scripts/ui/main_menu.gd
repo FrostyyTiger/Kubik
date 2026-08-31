@@ -186,4 +186,17 @@ func _place_band() -> void:
 	var r := _title.get_global_rect()
 	if r.size.y <= 0.0:
 		return
-	_backdrop.set_title_band(r)
+	# INTO THE BACKDROP'S OWN SPACE, and until ui v1 Stage 1 this crossed by
+	# luck. set_title_band() takes a rectangle it will draw in its own _draw(),
+	# which is backdrop-local; what arrives here is global. The two happened to
+	# agree because the Backdrop is a full-rect Control sitting at the origin,
+	# so its transform was the identity - and a screen with a margin, an offset
+	# or a scale on the backdrop would have painted the band somewhere the type
+	# is not, with nothing to say why.
+	#
+	# The affine inverse rather than a position subtraction: it is the same
+	# answer when the transform is a translation and the right one when it is
+	# not.
+	var to_local := _backdrop.get_global_transform().affine_inverse()
+	_backdrop.set_title_band(Rect2(
+		to_local * r.position, r.size * to_local.get_scale()))
