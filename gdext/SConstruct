@@ -1,0 +1,31 @@
+#!/usr/bin/env python
+# Kubik's GDExtension: the far mesher in C++. 2026-09-01.
+#
+# godot-cpp lives OUTSIDE the repo as a sibling checkout (see docs/plans) and
+# is built against the API dumped from the exact pinned engine binary:
+#
+#   cd ../../godot-cpp
+#   godot --headless --dump-extension-api
+#   scons platform=macos target=editor custom_api_file=extension_api.json
+#
+# Then here:
+#
+#   scons platform=macos target=editor \
+#       custom_api_file=/Users/marcel/Documents/godot-cpp/extension_api.json
+#
+# The game NEVER requires this to run: scripts check for the class and fall
+# back to the GDScript mesher, so a checkout with no compiler still plays.
+import os
+
+godot_cpp = os.environ.get("GODOT_CPP", "../../godot-cpp")
+env = SConscript(os.path.join(godot_cpp, "SConstruct"))
+
+env.Append(CPPPATH=["src/"])
+sources = Glob("src/*.cpp")
+
+suffix = env["suffix"].replace(".dev", "").replace(".universal", "")
+lib = env.SharedLibrary(
+    "bin/libkubik%s%s" % (suffix, env["SHLIBSUFFIX"]),
+    source=sources,
+)
+Default(lib)

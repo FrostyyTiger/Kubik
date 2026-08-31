@@ -1,0 +1,13 @@
+[configuration]
+
+entry_symbol = "kubik_library_init"
+compatibility_minimum = "4.7"
+
+[libraries]
+
+macos.editor = "res://gdext/bin/libkubik.macos.editor.dylib"
+macos.template_debug = "res://gdext/bin/libkubik.macos.template_debug.dylib"
+macos.template_release = "res://gdext/bin/libkubik.macos.template_release.dylib"
+windows.editor.x86_64 = "res://gdext/bin/libkubik.windows.editor.x86_64.dll"
+windows.template_debug.x86_64 = "res://gdext/bin/libkubik.windows.template_debug.x86_64.dll"
+windows.template_release.x86_64 = "res://gdext/bin/libkubik.windows.template_release.x86_64.dll"

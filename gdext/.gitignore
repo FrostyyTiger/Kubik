@@ -1,0 +1,4 @@
+bin/
+.sconsign.dblite
+*.o
+*.os
