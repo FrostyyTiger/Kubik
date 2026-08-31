@@ -1675,3 +1675,32 @@ frame is one flat sheet of near-white in which no two neighbouring pixels
 differ by anything at all. The second is the same standpoint with the whole
 region in front of it, in blocks, out to the rim.
 
+### The landing
+
+**`main` moved during the run.** UI v1 landed on it - the game's first real UI,
+eight stages, `docs/status/ui-v1.md` - so `main` was merged into
+`feat/distance-v3` before the branch was merged back.
+
+**The two epics share no file that either of them wrote.** UI v1's diff touches
+nothing under `scripts/world/` except two appends to `world.gd`'s journal, and
+this epic does not open `world.gd` at all. Git conflicted in exactly one place,
+the opening paragraph of `STATUS.md`, and **`debug_hud.gd` took an appended
+block from each and merged itself** - which is what append-only outside the lane
+is for, twice over, from two runs that never spoke to each other.
+
+Re-checked against the merge commit, `ganymede`:
+
+| | before the merge | after |
+| --- | --- | --- |
+| self-test | all passed | **all passed** |
+| config hash | `3d45b8fc` | **`3d45b8fc`** |
+| far mesh in game | 322,988 | **322,988** |
+| idle rebuild, wall ms | 3,299 | **3,313** |
+| `swatches.png` / `swatch-ramp.png` | identical to `main`'s | **identical** |
+| `17-rim` far band, fleck | 5.0454 | **5.0454** |
+| `17-rim`, whole frame, against the pre-merge shot | - | **3 pixels differ** |
+
+The last row is also the answer to the obvious worry: **UI v1's HUD does not
+appear in a tour shot.** Three pixels over a whole 1280x720 frame is the
+renderer, not a bar.
+
