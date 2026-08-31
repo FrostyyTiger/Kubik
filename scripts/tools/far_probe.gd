@@ -155,6 +155,24 @@ const BOUNDARY_HALF_M := 25.0
 ## added and taken away again, not for arithmetic that nearly quantises.
 const TERRACE_EPS_BLOCKS := 0.002
 
+## THE TWO ROW BANDS EVERY PER-PIXEL NUMBER IN THIS EPIC IS TAKEN OVER.
+## Distance v3 Stage 0, and they are constants here because they are a finding
+## rather than a preference.
+##
+## Distance v2 measured two tours of IDENTICAL code: the far band came back at
+## mean |dL| 0.0000 and worst 0.0 - bit-identical - while the near field
+## differed by up to 48 luma levels, because which flora columns have finished
+## streaming when the shutter opens is not deterministic. So a whole-frame diff
+## of a tour pair proves nothing and a far-band diff proves everything, and any
+## number in the status doc that does not say which rows it came from is not a
+## number.
+##
+## The near band is not there to be diffed. It is the fleck REFERENCE: what a
+## surface made of real blocks measures on the same frame, which is the only
+## thing "the far country stops being mush" can be read against.
+const FLECK_FAR_ROWS := Vector2i(0, 300)
+const FLECK_NEAR_ROWS := Vector2i(500, 720)
+
 var _world: Node = null
 var _heightmap: Heightmap = null
 var _config: WorldgenConfig = null
@@ -192,6 +210,12 @@ func _go() -> void:
 		_config.far_terrace, _config.far_riser_shade,
 		_config.far_band_m, _config.far_band_step])
 
+	# THE COST TABLE, distance v3 Stage 0. See _cost_table().
+	if "--cost" in OS.get_cmdline_user_args():
+		await _cost_table()
+		get_tree().quit(0)
+		return
+
 	var t0 := Time.get_ticks_msec()
 	var first: PackedStringArray = await _measure()
 	var mid := Time.get_ticks_msec()
@@ -214,8 +238,90 @@ func _go() -> void:
 		print("[FarProbe] --- run 2 ---")
 		for line in second:
 			print(line)
+	_print_fleck_recipe()
 	print("[FarProbe] %s" % ["PASS" if same else "FAIL"])
 	get_tree().quit(0 if same else 1)
+
+
+## THE FLECK NUMBER IS NOT MEASURED HERE, AND THIS PRINTS WHERE IT IS.
+## Distance v3 Stage 0.
+##
+## "The far country stops being mush" is the epic's whole claim, and mush is a
+## property of PIXELS - neighbouring ones agreeing - which this probe cannot
+## see: it reads a mesh's triangles and never a frame. So the number lives in
+## tools/png_diff.py's --local-contrast mode, over a tour shot's far band, and
+## what belongs here is the command that takes it, printed with THIS run's own
+## band and knob values so the two halves of the instrument cannot drift apart.
+##
+## The near field's own band is printed beside it on purpose. A fleck number
+## means nothing on its own; it means something against the band of the same
+## frame where the blocks are real.
+func _print_fleck_recipe() -> void:
+	print("[FarProbe] the fleck number (mush is low, blocks are high) is taken from")
+	print("[FarProbe]   a tour shot, not from this probe - it is a pixel measurement:")
+	print("[FarProbe]   ~/.venvs/kubik/bin/python tools/png_diff.py --local-contrast \\")
+	print("[FarProbe]       --rows %d:%d build/tour/<label>          # the far band" % [
+		FLECK_FAR_ROWS.x, FLECK_FAR_ROWS.y])
+	print("[FarProbe]   ~/.venvs/kubik/bin/python tools/png_diff.py --local-contrast \\")
+	print("[FarProbe]       --rows %d:%d build/tour/<label>        # the near field, for reference" % [
+		FLECK_NEAR_ROWS.x, FLECK_NEAR_ROWS.y])
+
+
+## THE ABAB INSTRUMENT FOR WHAT A FAR MESH COSTS. Distance v3 Stage 0.
+##
+##     godot --headless --path . -- --host --seed 42 --far-probe --cost
+##
+## Hard rule 7 says perf claims are ABAB medians on ganymede, and the full table
+## above is four minutes a run - twenty-four for one three-and-three comparison,
+## at every stage that touches the job. This is the same builder, at the same
+## three vantages, with the geometry questions taken out: COST_REPEATS meshes
+## per vantage, the per-mesh job time reported as a median with its range, and
+## the vertex count reported beside it because the vertex count is deterministic
+## and a cost that moved without the geometry moving is a different finding from
+## one that moved with it.
+##
+## IT IS THE JOB'S OWN TIME, ON THE MAIN THREAD, WITH NOTHING ELSE HAPPENING -
+## the least contended number this project can take, and deliberately not the
+## number the player feels. What the player feels is `[FarField] first build`,
+## printed at world load, which waits for a worker pool that runs one GDScript
+## task at a time while 2,400 chunks are being generated on it. Both are in the
+## status doc; neither is the other.
+##
+## THE FRONTIER IS STILL EMPTY HERE, which is distance v2's carried item 13 and
+## is not fixed by this: FarFieldJob is built without one, so the per-sector
+## hole is dead code to it and the vertex count below is the disc's, not the
+## world's. That is why `[FarField] first build` is reported next to it.
+const COST_REPEATS := 3
+
+
+func _cost_table() -> void:
+	print("[FarProbe] cost: %d meshes per vantage, job ms on the main thread" % [
+		COST_REPEATS])
+	var all := PackedFloat32Array()
+	for v in _vantages():
+		var centre: Vector2i = v["centre"]
+		var ms := PackedFloat32Array()
+		var verts := 0
+		for k in COST_REPEATS:
+			await get_tree().process_frame
+			var job := FarFieldJob.new()
+			job.heightmap = _heightmap
+			job.generator = _generator
+			job.config = _config
+			job.center = centre
+			job.run()
+			ms.append(float(job.elapsed_ms))
+			verts = job.vertex_count
+			all.append(float(job.elapsed_ms))
+		var sorted := ms.duplicate()
+		sorted.sort()
+		print("[FarProbe] cost %-14s median %6.0f ms  (%.0f-%.0f)  %d vertices" % [
+			v["name"], sorted[sorted.size() / 2], sorted[0],
+			sorted[sorted.size() - 1], verts])
+	var s_all := all.duplicate()
+	s_all.sort()
+	print("[FarProbe] cost ALL            median %6.0f ms  (%.0f-%.0f) over %d meshes" % [
+		s_all[s_all.size() / 2], s_all[0], s_all[s_all.size() - 1], s_all.size()])
 
 
 # --- The table ----------------------------------------------------------------

@@ -74,6 +74,20 @@ func _process(_delta: float) -> void:
 	_last_wall_ms = int((Time.get_ticks_usec() - _started_us) / 1000)
 	_last_verts = _job.vertex_count
 	_rebuilds += 1
+	# THE FIRST BUILD, PRINTED. Distance v3 Stage 0, and it closes distance v2's
+	# carried item 13: the far probe is structurally blind to the frontier, so a
+	# change to the exclusion machinery passed seven stages of "identical on
+	# every geometry row" and was caught by the number the WORLD printed at load.
+	# That number is here rather than in world.gd - another lane's file - and it
+	# carries the two costs the probe cannot see, because the probe runs on the
+	# main thread with nothing else happening and this one waits for a worker
+	# pool that runs one GDScript task at a time.
+	#
+	# Once, on the first build of a session: this is a baseline line for a
+	# headless run, not a per-frame log.
+	if _rebuilds == 1:
+		print("[FarField] first build: %d vertices, %d ms job, %d ms wall" % [
+			_last_verts, _last_ms, _last_wall_ms])
 	mesh = ChunkMesher.arrays_to_mesh(_job.arrays)
 	# The frontier THIS MESH was cut to. Not the same as the world's current
 	# one: a rebuild takes a frame or two on a worker, and during that window
