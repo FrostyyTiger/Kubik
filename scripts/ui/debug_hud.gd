@@ -107,6 +107,13 @@ const LOCAL_TUNING_ROWS := [
 	# WITHOUT a reroll - see FarField.apply_far_knobs(), which is what the one
 	# appended line in game.gd calls.
 	["far_terrace", "distance: far terrace", 0.0, 1.0, 0.05],
+	# 2026-08-31: the vertical step off the cell width, onto the block lattice.
+	# 0 is the old cubic lock; 1 is the DH register - full vertical resolution,
+	# risers only where the ground really steps.
+	["far_step_y_blocks", "distance: step height (blk)", 0.0, 32.0, 1.0],
+	# 2026-09-01: the horizontal ladder. 4 is a standing-still preview - a
+	# ~40 s redraw on Marcel's box - until the far mesher is C++.
+	["far_ring_div", "distance: cell divide (1/2/4)", 1.0, 4.0, 1.0],
 	# The top of this range is 1.5, not 1.0, because the useful direction may be
 	# UP: a riser above 1.0 LIFTS an away-facing slope off the shade band, which
 	# is what the black crush in the treeline band wants. See the status doc.

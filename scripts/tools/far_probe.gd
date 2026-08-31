@@ -700,7 +700,7 @@ func _roughness(s: Surface, centre: Vector2i) -> Dictionary:
 	var bs: float = _config.block_size
 	var reach := _config.fog_end_m / bs
 	var start := maxf(_config.voxel_radius_chunks * Chunk.SIZE
-		- float(2 * _config.far_step), 0.0)
+		- float(2 * FarFieldJob.base_step_blocks(_config)), 0.0)
 	var sum := 0.0
 	var n := 0
 	for k in ROUGH_RAYS:
@@ -741,7 +741,8 @@ func _snap(b: int) -> int:
 ## knob at 0 and at 1. If it is wrong, this is where the step appears.
 func _seam_row(s: Surface, centre: Vector2i) -> String:
 	var r := maxf(float(_config.voxel_radius_chunks * Chunk.SIZE)
-		- float(2 * _config.far_step), 0.0) + float(SEAM_PROBE_OUT_BLOCKS)
+		- float(2 * FarFieldJob.base_step_blocks(_config)), 0.0) \
+		+ float(SEAM_PROBE_OUT_BLOCKS)
 	var worst := 0.0
 	var sum_sq := 0.0
 	var n := 0
@@ -874,8 +875,9 @@ class Surface extends RefCounted:
 		centre = job.center
 		y_off_blocks = -0.5 * config.detail_amp
 		seam_end_blocks = maxf(float(config.voxel_radius_chunks * Chunk.SIZE)
-			- float(2 * config.far_step), 0.0) \
-			+ float(config.far_step) * FarFieldJob.TERRACE_FADE_CELLS
+			- float(2 * FarFieldJob.base_step_blocks(config)), 0.0) \
+			+ float(FarFieldJob.base_step_blocks(config)) \
+			* FarFieldJob.TERRACE_FADE_CELLS
 		var verts: PackedVector3Array = job.arrays[Mesh.ARRAY_VERTEX] \
 			if not job.arrays.is_empty() else PackedVector3Array()
 

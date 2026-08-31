@@ -584,7 +584,8 @@ func far_field_exclusion_m(dir: Vector3) -> float:
 	# here is how the probe came to report 21 holes that were not there: the
 	# job had widened its overlap and this had not.
 	var blocks := maxf(float(f[s] * Chunk.SIZE)
-		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS * config.far_step), 0.0)
+		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS
+			* FarFieldJob.base_step_blocks(config)), 0.0)
 	return blocks * config.block_size
 
 

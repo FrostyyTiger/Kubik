@@ -163,7 +163,8 @@ func exclusion_blocks() -> float:
 	# two-cell margin. Same expression the job uses, same static, so the two
 	# cannot drift - which is the whole reason that static exists.
 	return maxf(voxel_radius_blocks
-		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS * _config.far_step), 0.0)
+		- float(FarFieldJob.FRONTIER_OVERLAP_CELLS
+			* FarFieldJob.base_step_blocks(_config)), 0.0)
 
 
 ## WHERE THE FAR FIELD STARTS, from far_overdraw. Distance v3 Stage 7.
@@ -185,7 +186,7 @@ static func apply_overdraw(config: WorldgenConfig) -> void:
 		return
 	var voxel_radius_blocks := float(config.voxel_radius_chunks * Chunk.SIZE)
 	var overlap := (1.0 - clampf(config.far_overdraw, 0.0, 1.0)) \
-		* voxel_radius_blocks / float(maxi(config.far_step, 1))
+		* voxel_radius_blocks / float(FarFieldJob.base_step_blocks(config))
 	FarFieldJob.FRONTIER_OVERLAP_CELLS = maxi(int(round(overlap)), 2)
 
 
@@ -283,6 +284,10 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# also triggers is redundant and costs one worker task nobody is
 	# waiting on.
 	"far_fog_start_frac", "far_overdraw", "far_dither_m", "far_tree_grain",
+	# 2026-08-31, the vertical-step ruling. Redraws the far mesh only.
+	"far_step_y_blocks",
+	# 2026-09-01, the horizontal ladder. Redraws the far mesh and the ring.
+	"far_ring_div",
 ]
 
 static var _knobs := {}

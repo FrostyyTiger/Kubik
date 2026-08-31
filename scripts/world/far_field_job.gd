@@ -68,12 +68,21 @@ const FOG_MARGIN := 1.2
 ## TWO MORE RINGS SINCE DISTANCE V3 STAGE 4, and they are what makes the whole
 ## region visible - decision 3, the monumental pillar made literal.
 ##
-## | ring | cells | covers        | step height |
-## | 0    | 4 m   | seam to 200 m | 4 m         |
-## | 1    | 8 m   | 200-400 m     | 8 m         |
-## | 2    | 16 m  | 400-960 m     | 16 m        |
-## | 3    | 32 m  | 960-1920 m    | 32 m        |
-## | 4    | 64 m  | 1920 m to the fog | 64 m    |
+## | ring | cells | covers        | cubic-lock step |
+## | 0    | 2 m   | seam to 150 m | 2 m             |
+## | 1    | 4 m   | 150-300 m     | 4 m             |
+## | 2    | 8 m   | 300-600 m     | 8 m             |
+## | 3    | 16 m  | 600-1200 m    | 16 m            |
+## | 4    | 32 m  | 1200-2400 m   | 32 m            |
+## | 5    | 64 m  | 2400 m to the fog | 64 m        |
+##
+## HALVED 2026-08-31, Marcel's ruling on the block-lattice look: the flat tops
+## were twice too wide at every range. The halving lives in the ring divisor
+## rather than in far_step's default because the panel now saves the config to
+## user://worldgen.tres, and a saved far_step would shadow a default forever.
+## The sixth ring keeps the horizon at 64 m cells, where the fog is the one
+## doing the drawing; the price of the whole halving is roughly 2x the quads,
+## not 4x.
 ##
 ## EACH DOUBLING OF THE REACH COSTS ONE MORE RING AND ABOUT WHAT THE LAST ONE
 ## COST. Ring area grows 4x per ring and cell area grows 4x with it, so the
@@ -91,11 +100,32 @@ const FOG_MARGIN := 1.2
 ## radius runs out inside - so Low and Medium simply never start rings 3 and 4,
 ## and a preset that reached ten kilometres would want a sixth entry and
 ## nothing else. CLAUDE.md, 2026-08-31.
-const RING_OUTER_M := [200.0, 400.0, 960.0, 1920.0]
+const RING_OUTER_M := [150.0, 300.0, 600.0, 1200.0, 2400.0]
 
-## Blocks per vertex in each ring, as a multiple of config.far_step. At the
-## default far_step of 8 blocks that is 4, 8, 16, 32 and 64 metres per vertex.
-const RING_STEP_MULTIPLE := [1, 2, 4, 8, 16]
+## Blocks per vertex in each ring, as a multiple of the BASE step below. At the
+## default far_step of 8 blocks that is 2, 4, 8, 16, 32 and 64 metres per
+## vertex.
+const RING_STEP_MULTIPLE := [1, 2, 4, 8, 16, 32]
+
+## The innermost cell is far_step / config.far_ring_div, in blocks - see the
+## table above for why the divisor exists at all. Every conversion between
+## overlap CELLS and BLOCKS must go through base_step_blocks() below, or the
+## exclusion radius and the job disagree about where the far mesh stops -
+## which is a hole.
+##
+## A KNOB SINCE 2026-09-01, because Marcel wants the cells smaller still and
+## GDScript cannot yet afford them: at 4 the whole schedule doubles again
+## (roughly 1.6 M vertices, a 40 s rebuild on his box). Judgeable standing
+## still today; playable when the far mesher lands in C++.
+static func ring_div(config: WorldgenConfig) -> int:
+	# 1, 2 or 4 - a power of two, so distance v2's shelf-subset property and
+	# the ring-boundary alignment hold. 3 on the panel rounds up.
+	return 4 if config.far_ring_div >= 3.0 else maxi(int(config.far_ring_div), 1)
+
+
+## The one base step every ring, overlap and exclusion derives from.
+static func base_step_blocks(config: WorldgenConfig) -> int:
+	return maxi(config.far_step / ring_div(config), 1)
 
 ## How far a skirt hangs below its edge, as a multiple of that ring's step in
 ## BLOCKS. At 1.0 a skirt covers any mismatch up to a 45 degree slope across
@@ -122,10 +152,14 @@ const SKIRT_DEPTH_CELLS := 1.0
 ## is back to the cheap coarse mesh, and the fade is what stops the boundary of
 ## the FIX becoming the new visible line.
 ##
-## 4 cells is 32 blocks, 16 m at the default far_step. Long enough that the
-## fade is not itself an edge, short enough that the extra noise samples are a
-## few hundred quads on a ring of tens of thousands.
-const SEAM_BAND_CELLS := 4.0
+## 8 cells is 32 blocks, 16 m at the default far_step and ring divisor - the
+## same METRES the band has always measured: it was 4 cells until 2026-08-31,
+## and the halving of the innermost cell doubled the count to keep the
+## distance. The band now scales with the cell: at far_ring_div 4 it is 8 m,
+## which still covers detail_amp's 1.5 m disagreement many times over. Long
+## enough that the fade is not itself an edge, short enough that the extra
+## noise samples are a few hundred quads on a ring of tens of thousands.
+const SEAM_BAND_CELLS := 8.0
 
 ## HOW MANY TIMES LONGER THE TERRACE'S OWN FADE IS. Distance v2 Stage 8.
 ##
@@ -400,6 +434,12 @@ var _t_amount := 0.0
 var _t_step := 0
 var _t_band := 0.0
 
+## config.far_step_y_blocks, read once per job like far_terrace. 0 keeps the
+## cubic lock (each ring quantises to its own cell width); above it the height
+## quantises to this many BLOCKS whatever the cell width, so the far country
+## keeps full vertical resolution on the block lattice.
+var _t_step_y := 0.0
+
 ## THE PYRAMID LEVEL THE TERRACE IS CUT FROM. One level for the WHOLE JOB, and
 ## both halves of that sentence were bought with a measurement. Distance v2
 ## Stage 1.
@@ -484,7 +524,7 @@ func run() -> void:
 	# startup total.
 	heightmap.build_pyramid()
 	var bs: float = config.block_size
-	var base_step: int = config.far_step
+	var base_step := base_step_blocks(config)
 	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
 	# forest zone in BLOCKS; _band_color works in metres.
 	_band_treeline = treeline_band(generator, config)
@@ -494,6 +534,10 @@ func run() -> void:
 	# and a value that changed half way through a build would terrace half a
 	# mesh.
 	_t_amount = clampf(config.far_terrace, 0.0, 1.0)
+	# THE VERTICAL STEP IS ITS OWN KNOB SINCE 2026-08-31 - Marcel's ruling on
+	# the distance look: flat cell tops stay, the shelf goes. Read once per job
+	# for the same reason far_terrace is.
+	_t_step_y = maxf(config.far_step_y_blocks, 0.0)
 	# DISTANCE V3 STAGE 1. Read once per job for the same reason far_terrace is:
 	# it is a knob on a shared config the main thread can write while this worker
 	# runs, and a value that changed half way through would vote on half a mesh.
@@ -1245,7 +1289,10 @@ func _cell(i: int, j: int) -> int:
 	var at := (i + _t_off) + (j + _t_off) * _t_w
 	if not is_nan(_t_hq[at]):
 		return at
-	var step := float(_t_step)
+	# far_step_y_blocks overrides the cubic lock: the cell stays as wide as its
+	# ring but its height lands on the block lattice, which is DH's model -
+	# horizontal-only decimation, full vertical resolution.
+	var step := _t_step_y if _t_step_y > 0.0 else float(_t_step)
 	var h := _cell_h(i, j)
 	# DECISION 9, AND THE SHAPE IT ENDED UP IN. A local maximum of the flank
 	# rounds onto a FINER grid - see RIDGE_SUBSTEP - and everything else rounds
@@ -1258,7 +1305,9 @@ func _cell(i: int, j: int) -> int:
 		# pyramid, and it turns out to be nearly the whole of the 76%
 		# improvement, not the cosmetic half. What the finer grid removes is the
 		# OVERSHOOT - a whole step became at most a quarter of one.
-		var fine := step / float(RIDGE_SUBSTEP)
+		# Never finer than one block: the block lattice is the floor of every
+		# quantisation here, and a sub-block ridge height would sit off it.
+		var fine := maxf(step / float(RIDGE_SUBSTEP), 1.0)
 		_t_hq[at] = ceil(h / fine) * fine
 	else:
 		_t_hq[at] = round(h / step) * step
@@ -1612,7 +1661,7 @@ static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 ## THE RING'S CELL WIDTH AT ONE DISTANCE, in blocks - which is also that ring's
 ## terrace step height, by decision 4's cubic lock. Distance v2 Stage 5.
 static func ring_step_blocks(config: WorldgenConfig, d_m: float) -> int:
-	var step: int = config.far_step
+	var step := base_step_blocks(config)
 	for i in RING_OUTER_M.size():
 		if d_m < RING_OUTER_M[i]:
 			return step * RING_STEP_MULTIPLE[i]
@@ -1623,7 +1672,7 @@ static func ring_step_blocks(config: WorldgenConfig, d_m: float) -> int:
 ## expression written out for the reason given there.
 static func terrace_level(heightmap: Heightmap, config: WorldgenConfig) -> float:
 	var ring := clampi(TERRACE_LEVEL_RING, 0, RING_STEP_MULTIPLE.size() - 1)
-	return clampf(log(float(config.far_step * RING_STEP_MULTIPLE[ring])
+	return clampf(log(float(base_step_blocks(config) * RING_STEP_MULTIPLE[ring])
 		/ float(heightmap.step)) * INV_LN2 + config.far_filter_bias,
 		0.0, float(Heightmap.MAX_LEVEL))
 

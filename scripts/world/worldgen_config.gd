@@ -1072,7 +1072,7 @@ const FOG_START_RATIO := 0.4
 ## docs/status/distance-v3.md and the call is Marcel's.
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed.
-@export var far_fog_start_frac := 0.4
+@export var far_fog_start_frac := 0.2
 
 ## HOW MUCH DARKER A RISER FACING ACROSS THE ASPECT AXIS IS, distance v3
 ## Stage 3. 0 is distance v2's behaviour exactly.
@@ -1129,7 +1129,7 @@ const FOG_START_RATIO := 0.4
 ## 0 is off and is the way back.
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed.
-@export var far_grain := 0.065
+@export var far_grain := 0.0
 
 ## WHETHER A FAR CELL IS ONE REAL MATERIAL, distance v3 Stage 1.
 ##
@@ -1154,7 +1154,7 @@ const FOG_START_RATIO := 0.4
 ## LOOK, NOT SHAPE. LOCAL and unhashed like every knob distance v1 and v2 added:
 ## it decides which of two real materials a cell is PAINTED, never what the
 ## world contains, and nothing that decides what a place IS reads it.
-@export var far_vote := 1.0
+@export var far_vote := 0.0
 
 ## HOW MUCH THE FAR COUNTRY IS MADE OF BLOCKS, distance v2 Stage 0.
 ##
@@ -1181,8 +1181,35 @@ const FOG_START_RATIO := 0.4
 ## untouched at every value.
 ##
 ## Shipped at 0.0 pending Marcel's ruling; set to 1.0 on 2026-08-31 for him to
-## judge in game.
+## judge in game. Judged the same day, both ways: the cell-width shelf reads as
+## "huge terraces" and the smooth mesh reads as "a different game", so flat
+## cells STAY and the vertical step moves off the cell width onto the block
+## lattice. See far_step_y_blocks, which is where the ruling actually lives.
 @export var far_terrace := 1.0
+
+## THE TERRACE'S VERTICAL STEP, IN BLOCKS - Marcel's 2026-08-31 ruling on the
+## whole distance look, the Distant Horizons register.
+##
+## 0 is the cubic lock exactly as distance v2 shipped it: each cell's height
+## quantises to its ring's own cell width, and a mountain at 600 m is drawn
+## out of sixteen-metre shelves. At 1.0 a cell keeps FULL vertical resolution
+## on the block lattice: flat cell tops, risers only as tall as the ground's
+## real step to its neighbour - horizontal-only decimation, per-cell height
+## and colour, which is DH's own data model on the machinery distance v2
+## built. Coarser values are the ladder between the two.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
+@export var far_step_y_blocks := 1.0
+
+## HOW MUCH FINER THE FAR CELLS ARE THAN far_step - the horizontal detail
+## ladder, 2026-09-01. 1 is distance v3's original schedule (4 m cells at the
+## seam), 2 is Marcel's 2026-08-31 halving, 4 halves it again to 1 m cells.
+## Powers of two only; 3 rounds up. Each doubling costs roughly 2x the
+## vertices and 2x the rebuild - 4 is a standing-still preview until the far
+## mesher is C++.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
+@export var far_ring_div := 2.0
 
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
@@ -1502,7 +1529,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
-	"far_terrace", "far_riser_shade", "far_riser_lift",
+	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
 	"far_overdraw", "far_dither_m", "far_tree_grain",
 	"ao_strength", "msaa_level",
