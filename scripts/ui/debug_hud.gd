@@ -20,14 +20,14 @@ signal reroll_requested(new_seed: int)
 signal config_changed()
 signal config_reload_requested()
 
-## True while a panel wants the mouse pointer.
+## UI V1 STAGE 2: THIS FLAG IS GONE, AND UiMouse HOLDS THE ANSWER NOW.
 ##
-## The camera grabs the cursor on any click, which would make the tuning panel
-## unusable - you would click a spinbox and the mouse would vanish. Cameras
-## check this flag before capturing. It is static because the camera has no
-## reference to the HUD and threading one through for a debug tool is not worth
-## it.
-static var ui_has_mouse := false
+## It was one static bool that every screen wanting the pointer wrote true and
+## then false, which cannot represent "somebody else still wants it": open F4,
+## open F8, close F8, and the cursor was recaptured with F4 still on screen and
+## still unclickable. See ui_mouse.gd. The reason the flag lived here at all -
+## that the camera has no reference to any UI - is unchanged, and UiMouse is
+## static for exactly it.
 
 ## property name, label, min, max, step. Wavelengths are shown as FREQUENCIES
 ## because that is what FastNoiseLite takes, but the label carries the
@@ -341,10 +341,13 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _set_panel_visible(on: bool) -> void:
 	_panel.visible = on
-	ui_has_mouse = on
-	# A panel you cannot click is not a panel. Release the cursor while it is
-	# open and hand it back to the camera when it closes.
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if on else Input.MOUSE_MODE_CAPTURED
+	# A panel you cannot click is not a panel. Take the cursor while it is open
+	# and give it back when it closes - but only give it back if nothing ELSE
+	# still wants it, which is the whole reason UiMouse is a set.
+	if on:
+		UiMouse.claim(self)
+	else:
+		UiMouse.release(self)
 
 
 func _do_reroll() -> void:

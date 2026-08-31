@@ -60,6 +60,8 @@ func _ready() -> void:
 		"push holds": _test_push_holds,
 		"heightmap pyramid": _test_heightmap_pyramid,
 		"far terrace knob": _test_far_terrace_knob,
+		# UI V1 STAGE 2, appended at the end of the list.
+		"ui mouse owners": _test_ui_mouse_owners,
 	}
 	var failures := 0
 	for name in tests:
@@ -1723,3 +1725,77 @@ func _pump_far_field(far_field: Node) -> void:
 			return
 		OS.delay_msec(2)
 	print("  far field never went idle - a rebuild is stuck")
+
+
+# --- UI V1 -------------------------------------------------------------------
+#
+# Appended at the end of the file, and nothing above it is touched. See
+# docs/plans/ui-v1-tech.md, Territory: this file is shared and append-only.
+
+
+## THE MOUSE IS OWNED BY A SET, NOT BY A BOOLEAN (ui v1 Stage 2).
+##
+## The bug this replaces is invisible from inside one screen and needs three to
+## show itself: the F4 panel, the F8 panel and - from Stage 6 - the character
+## sheet all want the cursor, and the boolean they used to share could not say
+## "somebody else still wants it". Open two, close one, and the camera grabbed
+## the pointer back with a panel still on screen.
+##
+## Headless-testable because UiMouse touches nothing but Input.mouse_mode,
+## which is a no-op under --headless and not what is being asserted anyway. The
+## assertion is about the SET.
+func _test_ui_mouse_owners():
+	var bad := 0
+	UiMouse.clear()
+	if UiMouse.held():
+		print("  a cleared UiMouse still claims to hold the cursor")
+		bad += 1
+
+	# Two owners, and the whole point: releasing one leaves the other holding.
+	var a := RefCounted.new()
+	var b := RefCounted.new()
+	UiMouse.claim(a)
+	UiMouse.claim(b)
+	if UiMouse.count() != 2:
+		print("  two claims counted %d owners" % UiMouse.count())
+		bad += 1
+	UiMouse.release(a)
+	if not UiMouse.held():
+		print("  releasing one of two owners let go of the cursor - THE BUG")
+		bad += 1
+	if UiMouse.count() != 1:
+		print("  one release of two claims left %d owners" % UiMouse.count())
+		bad += 1
+
+	# Release-all lets go.
+	UiMouse.release(b)
+	if UiMouse.held():
+		print("  releasing every owner did not let go of the cursor")
+		bad += 1
+
+	# Claiming twice is one claim, so a screen that re-opens without closing
+	# cannot leave a claim behind that nothing will ever release.
+	UiMouse.claim(a)
+	UiMouse.claim(a)
+	if UiMouse.count() != 1:
+		print("  claiming twice counted %d owners, not 1" % UiMouse.count())
+		bad += 1
+	# ...and one release is enough to undo it.
+	UiMouse.release(a)
+	if UiMouse.held():
+		print("  a doubled claim needed two releases")
+		bad += 1
+
+	# Double-release of an owner that is already gone is harmless, and does not
+	# reach into anybody else's claim.
+	UiMouse.claim(b)
+	UiMouse.release(a)
+	UiMouse.release(a)
+	if not UiMouse.held() or UiMouse.count() != 1:
+		print("  releasing a non-owner disturbed the set: held %s, %d owners" % [
+			UiMouse.held(), UiMouse.count()])
+		bad += 1
+	UiMouse.clear()
+
+	print("ui mouse owners: claim/release set, %d checks failed" % bad)
+	return 1 if bad > 0 else 0

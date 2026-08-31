@@ -213,10 +213,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
-	# Click back into the window after releasing the cursor - unless a debug
-	# panel is what wanted it released, or the panel could never be clicked.
+	# Click back into the window after releasing the cursor - unless a screen
+	# is what wanted it released, or that screen could never be clicked.
+	#
+	# NOT THE WHEEL, ui v1 Stage 2. A wheel notch is an InputEventMouseButton
+	# like any other, so scrolling with the cursor free used to recapture it -
+	# and from Stage 5 the wheel belongs to the hotbar, where a notch that also
+	# grabbed the pointer would be a bug with two symptoms and one cause.
 	if event is InputEventMouseButton and event.pressed and not _mouse_captured():
-		if DebugHUD.ui_has_mouse:
+		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN,
+				MOUSE_BUTTON_WHEEL_LEFT, MOUSE_BUTTON_WHEEL_RIGHT]:
+			return
+		if UiMouse.held():
 			return
 		_capture_mouse(true)
 		get_viewport().set_input_as_handled()

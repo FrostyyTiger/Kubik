@@ -54,6 +54,7 @@ sampled out of them are here.
 | --- | --- | --- | --- |
 | 0 | `76cccdb6` | `(-44, -124)` | all green |
 | 1 | `76cccdb6` | `(-44, -124)` | all green |
+| 2 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`ui mouse owners`) |
 
 ---
 
@@ -140,6 +141,37 @@ photograph, and the fixed 640 px scroll box it replaced is gone. But the
 plan also asked for a shot, and F8 lives in the game scene, which has no
 capture driver until Stage 4. The shot is taken there. Conservative path:
 nothing about the panel is claimed from the eye until it has been seen.
+
+---
+
+## Stage 2 - the mouse owner set
+
+`DebugHUD.ui_has_mouse` is gone. `UiMouse` (`scripts/ui/ui_mouse.gd`) holds a
+set of owners: the mouse goes VISIBLE on the first claim and CAPTURED on the
+last release. F4, F8 and - from Stage 6 - the character sheet are the three
+owners the boolean could not represent.
+
+`ui mouse owners` in `scenes/selftest.tscn`, **0 checks failed**
+[deterministic], asserting: two claims count two; releasing one of two leaves
+the cursor held (**the bug**); release-all lets go; a doubled claim is one
+claim and needs one release; releasing a non-owner disturbs nothing.
+
+`player.gd` now asks `UiMouse.held()` directly - the plan offered a one-line
+proxy on DebugHUD as an intermediate step and it was not needed, since the
+only caller was that one line. **The wheel is excluded from click-to-recapture**
+in the same edit: a wheel notch is an `InputEventMouseButton` like any other,
+so scrolling with the cursor free used to grab it back, and from Stage 5 the
+wheel belongs to the hotbar.
+
+`player.gd`'s own Esc path still sets the mouse mode directly rather than
+through `UiMouse`. It is not an owner - it frees the cursor without claiming
+it - so nothing in the set is bypassed. Left as it was; recorded so the next
+lane does not read it as an oversight.
+
+**Operational note for later stages:** a new `class_name` needs
+`$G --headless --path . --import` before any gate will parse. The plan says
+so; this run hit it anyway on `UiMouse` and the symptom is a *hang*, not a
+clean error - the selftest scene fails to load and the process sits there.
 
 ---
 

@@ -85,10 +85,15 @@ func _unhandled_input(event: InputEvent) -> void:
 func _set_panel_visible(on: bool) -> void:
 	_panel.visible = on
 	# WITHOUT THIS THE FIRST CLICK RECAPTURES THE MOUSE and the panel is
-	# unusable. Player._unhandled_input checks this flag before grabbing the
+	# unusable. Player._unhandled_input asks UiMouse before grabbing the
 	# cursor back; the F4 panel does exactly the same thing.
-	DebugHUD.ui_has_mouse = on
-	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if on else Input.MOUSE_MODE_CAPTURED
+	# A SET rather than the boolean this used to write (ui v1 Stage 2):
+	# closing this panel while F4 is still open must not hand the cursor back
+	# to the camera. See ui_mouse.gd.
+	if on:
+		UiMouse.claim(self)
+	else:
+		UiMouse.release(self)
 	if on:
 		_refresh_panel()
 		_refresh_summary()
