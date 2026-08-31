@@ -60,6 +60,8 @@ func _ready() -> void:
 		"push holds": _test_push_holds,
 		"heightmap pyramid": _test_heightmap_pyramid,
 		"far terrace knob": _test_far_terrace_knob,
+		# CREATURES V1
+		"behaviour library": _test_behaviour_library,
 	}
 	var failures := 0
 	for name in tests:
@@ -1723,3 +1725,80 @@ func _pump_far_field(far_field: Node) -> void:
 			return
 		OS.delay_msec(2)
 	print("  far field never went idle - a rebuild is stuck")
+
+
+# --- CREATURES V1 ------------------------------------------------------------
+#
+# Everything below this banner belongs to creatures v1. Appended, never
+# interleaved: two other lanes are editing this repo tonight and a merge that
+# has to reason about interleaved tests is a merge that goes wrong.
+
+
+## THE BEHAVIOUR LIBRARY LOADS, and which one it is.
+##
+## Stage 0's ladder came down on rung (b), Beehave 2.9.3, pure GDScript, and
+## the reason is recorded in docs/status/creatures-v1.md: LimboAI's GDExtension
+## reproducibly ABORTS Godot 4.7.2 (SIGABRT, core dumped, no message) at the
+## end of a cold `--headless --import`, on both v1.8.1 and v1.6.0, where a
+## project without it exits 0. The runtime was fine and the classes registered;
+## the setup command this project documents was not, and shipping the repo's
+## first GDExtension as a thing that core-dumps on checkout is not a trade this
+## lane gets to make on Marcel's behalf.
+##
+## THIS TEST IS THE RUNG, WRITTEN DOWN. It fails the day somebody deletes
+## addons/beehave or the day an upgrade renames a status constant - and either
+## of those silently changes what every creature's tree means, because the
+## wolf's tree reads SUCCESS and RUNNING by name.
+##
+## It asserts against Beehave's own numbers rather than restating them: what
+## matters is that the three are DISTINCT and that the names resolve at all,
+## not which integer each one happens to be.
+func _test_behaviour_library():
+	var bad := 0
+
+	# Resolving a class_name is a COMPILE-time fact in GDScript, so a missing
+	# addon is a parse error in this file rather than a failed assertion - and
+	# a parse error here would take the whole suite down. That is the correct
+	# loudness for "the behaviour library is gone".
+	var tree := BeehaveTree.new()
+	var seq := SequenceComposite.new()
+	var sel := SelectorComposite.new()
+	if tree == null or seq == null or sel == null:
+		print("  a Beehave node would not instance")
+		bad += 1
+
+	var statuses := {
+		"SUCCESS": BeehaveNode.SUCCESS,
+		"FAILURE": BeehaveNode.FAILURE,
+		"RUNNING": BeehaveNode.RUNNING,
+	}
+	var seen := {}
+	for key in statuses:
+		seen[statuses[key]] = key
+	if seen.size() != 3:
+		print("  the three tick statuses are not distinct: %s" % [statuses])
+		bad += 1
+
+	# The composites are Nodes, which is what makes a tree a subtree of the
+	# creature and lets the wolf's states be built with add_child rather than
+	# by a builder this project would have had to write.
+	if not (tree is Node and seq is Node and sel is Node):
+		print("  Beehave's nodes are not Nodes")
+		bad += 1
+
+	print("behaviour library: Beehave %s, statuses %s" % [
+		_beehave_version(), statuses])
+
+	tree.free()
+	seq.free()
+	sel.free()
+	return bad
+
+
+## The vendored addon's own version string, read from its plugin.cfg rather
+## than typed here - a pin nobody can forget to update is a pin.
+func _beehave_version() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load("res://addons/beehave/plugin.cfg") != OK:
+		return "UNKNOWN - plugin.cfg would not load"
+	return str(cfg.get_value("plugin", "version", "UNKNOWN"))
