@@ -82,6 +82,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+## Open or close the panel from outside. The shot harness needs it (ui v1
+## Stage 4): "the panel fits on screen" is a claim about a photograph, and
+## Stage 1 changed how this panel is sized without one to point at.
+func set_panel_open(on: bool) -> void:
+	_set_panel_visible(on)
+
+
 func _set_panel_visible(on: bool) -> void:
 	_panel.visible = on
 	# WITHOUT THIS THE FIRST CLICK RECAPTURES THE MOUSE and the panel is

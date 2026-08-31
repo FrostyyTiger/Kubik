@@ -85,6 +85,17 @@ func _apply_launch_args() -> void:
 		_shoot_ui()
 		return
 
+	# THE HUD HARNESS SKIPS THIS SCREEN ENTIRELY (ui v1 Stage 4). Straight
+	# into the game scene rather than through _on_host_pressed(), because
+	# game.gd falls back to Net.host_offline() when nothing is online - so
+	# the driver hosts with zero clients and BINDS NO PORT. That matters on
+	# a box where another lane may already be hosting on the default one:
+	# the tour's failure mode is sitting on this menu having printed
+	# "Couldn't create an ENet host" into a log nobody was watching.
+	if UiShot.hud_wanted():
+		_enter_game()
+		return
+
 	var args := OS.get_cmdline_user_args()
 	# The screenshot tour is a host session that drives itself, so it implies
 	# --host rather than needing both spelled out.

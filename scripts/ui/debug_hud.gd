@@ -130,6 +130,23 @@ var sky: SkyCycle = null
 ## separately rather than reached for through it.
 var far_trees: Node = null
 
+# UI V1 --------------------------------------------------------------------
+#
+# Appended, under the banner the plan asks for. Nothing above this line is
+# touched except the _set_panel_visible rewiring Stage 2 recorded, and nothing
+# here goes near TUNING_ROWS, LOCAL_TUNING_ROWS, _build_panel or _spin_row -
+# those belong to the concurrently-running distance lane.
+
+## The play HUD. Set by Game so the F3 readout can print what the fade is
+## thinking, and so the line the Status crib used to carry has somewhere to go
+## now that Decision 5 has retired it.
+var hud: Node = null
+
+
+func set_hud(p_hud: Node) -> void:
+	hud = p_hud
+
+
 ## Set false on clients in Stage 11 - a client that retunes its own terrain has
 ## silently left the host's world.
 var tuning_editable := true
@@ -302,9 +319,38 @@ func _compose_readout() -> String:
 			ff.get("vertices", 0), ff.get("build_ms", 0),
 			ff.get("wall_ms", 0), ff.get("rebuilds", 0)])
 
+	# UI V1. The Status crib's permanent line moved here (Decision 5) - it
+	# was a dev convenience from before there was a HUD, and the HUD replacing
+	# it is the point of that plan. Plus what the fade is thinking, because
+	# "the HUD will not go away" is a question with four possible answers and
+	# an opacity cannot tell you which one is holding it in.
+	var game := _game_node()
+	if game != null:
+		lines.append("")
+		lines.append(game.status_line())
+	if hud != null and hud.has_method("fade_line"):
+		lines.append(hud.fade_line())
+	if game != null:
+		lines.append(game.keybind_line())
+
 	lines.append("")
-	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll")
+	lines.append("[F3] readout  [F4] tuning  [F5] reload cfg  [F7] reroll  [F8] character  [F9] hud")
 	return String("\n").join(lines)
+
+
+## Game, if this HUD is in a game scene. Reached through the tree rather than
+## injected, because setup() is on the never-touch side of this file's
+## contract and one lookup a frame against a cached node is free.
+func _game_node() -> Node:
+	if _game != null and is_instance_valid(_game):
+		return _game
+	var scene := get_tree().current_scene if get_tree() != null else null
+	if scene != null and scene.has_method("status_line"):
+		_game = scene
+	return _game
+
+
+var _game: Node = null
 
 
 ## The real zone, jitter and all, at the player's own position - so the readout

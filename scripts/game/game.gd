@@ -26,6 +26,8 @@ const REMOTE_PLAYER_SCENE := preload("res://scenes/remote_player.tscn")
 @onready var _world: World = $World
 @onready var _player: Player = $Player
 @onready var _status: Label = $HUD/Status
+@onready var _hud: Hud = $HUD
+@onready var _hud_tuner: HudTuner = $HudTuner
 @onready var _players_root: Node3D = $Players
 
 ## Built in code rather than put in the scene, because it only ever has
@@ -149,6 +151,11 @@ func _ready() -> void:
 		Engine.physics_ticks_per_second])
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
+	# THE PLAY HUD (ui v1 Stage 4). Same shape as the line above it: this
+	# node asks these four for numbers and never tells them anything.
+	_hud.setup(_sky, _world, _player, self)
+	_hud_tuner.setup(_hud)
+	_debug.set_hud(_hud)
 	# The session's config, which may carry CLI overrides the saved file does
 	# not - so the far plane matches the fog this run actually uses.
 	_player.apply_view_config(config)
@@ -223,6 +230,9 @@ func _ready() -> void:
 	# DISTANCE V1 STAGE 0, appended at the end of the chain.
 	elif "--far-probe" in OS.get_cmdline_user_args():
 		_start_far_probe.call_deferred()
+	# UI V1 STAGE 4, appended after it.
+	elif UiShot.hud_wanted():
+		_start_hud_shots.call_deferred()
 
 	if Net.is_host():
 		# The host invents the world. Godot randomises its RNG seed at startup,
@@ -349,7 +359,9 @@ func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
 	# a set of bars at all.
 	if Net.is_host():
 		_stats.ensure_row(Net.local_peer_id())
-	_update_status()
+	# The load message has been answered. The status line is transient now
+	# (Decision 5) and a transient line that never clears is a permanent one.
+	_status.text = ""
 
 
 # --- Spawning ---------------------------------------------------------------
@@ -512,6 +524,134 @@ func _start_far_probe() -> void:
 ## The loaded frontier moved: hand the impostor ring the new one. The ring
 ## rebuilds on its own schedule (REBUILD_STEP_M); this only keeps the array it
 ## will use current.
+# --- The HUD shot harness (ui v1 Stage 4) -----------------------------------
+#
+#     xvfb-run -a godot --path . -- --shot-hud ui-v1-hud --seed 42
+#
+# writes build/ui/ui-v1-hud/{safe-noon,night,hurt,...}.png and quits.
+#
+# THE HARNESS COMES WITH THE HUD, NOT AFTER IT. Every stage from here on is
+# judged on one of these PNGs, so the thing that takes them is built first -
+# the alternative is three stages of work whose only evidence is that it
+# compiled.
+#
+# It drives the game rather than a mock of it: the real HUD, the real stats
+# table, the real fade, on the real world at seed 42. What it stages is the
+# SITUATION - noon, midnight, thirty points of damage - and it stages each one
+# through the same seam the game uses. There is no "shot mode" inside the HUD.
+
+## Seconds of simulated fade to settle before each capture. Comfortably past
+## fade_grace_s and either ease, so what is photographed is a steady state
+## rather than a moment somewhere inside a 1.4 s transition - and a state the
+## game can genuinely reach, because the settle runs the HUD's own _process.
+const HUD_SHOT_SETTLE_S := 20.0
+
+
+func _start_hud_shots() -> void:
+	var label := UiShot.hud_label()
+	print("[HudShot] %s: waiting for the world" % label)
+	# The debug layers stay out of every frame. They are tools, not the field
+	# register, and a photograph of the HUD with the F3 readout over it is a
+	# photograph of the F3 readout.
+	_debug.visible = false
+	$CharacterDebug.visible = false
+	_hud_tuner.visible = false
+	# The status line is a transient message line now (Decision 5) and it is
+	# still showing the world-load message; it is not part of the field
+	# register and must not be in the picture.
+	_status.visible = false
+
+	await _hud_shot_wait_for_world()
+	# THE CLOCK STOPS. A day is eight minutes and these shots take longer than
+	# that on a busy box, so without this the "noon" shot would be photographed
+	# at whatever hour rendering happened to reach - which is exactly the bug
+	# SkyCycle.frozen was added for, and the tour already leans on it.
+	_sky.frozen = true
+
+	await _hud_shot("safe-noon", 0.5)
+	await _hud_shot("night", 0.0)
+	# THIRTY POINTS, through apply_delta like everything else - so the journal
+	# records it and the bar reads 0.70 of its track, which is a COUNT the
+	# acceptance test can check rather than an impression.
+	_stats.apply_delta(Net.local_peer_id(), "hp", -30.0, "shot")
+	await _hud_shot("hurt", 0.5)
+
+	# THE F8 PANEL, ON SCREEN, AT 720 LOGICAL. Stage 1 replaced its hard-coded
+	# 352x640 scroll box with anchors and offsets and could not photograph the
+	# result, because F8 lives in this scene and this scene had no camera on it
+	# until now. The debt is discharged here rather than left in the status doc.
+	await _hud_shot_panel("panel-f8")
+
+	_dump_journal("after the scripted sequence")
+	print("[HudShot] done: %d shots in build/ui/%s" % [_hud_shots_taken, label])
+	await _hud_shot_shutdown()
+
+
+var _hud_shots_taken := 0
+
+
+## One shot: set the hour, settle the fade, capture.
+func _hud_shot(name: String, time_of_day: float) -> void:
+	_sky.time_of_day = time_of_day
+	_sky.apply()
+	# The fade reads the hour it was just given, so the settle has to come
+	# after it - and it is simulated rather than waited out, because
+	# fade_grace_s alone would be six seconds of wall clock per shot.
+	_hud.settle(HUD_SHOT_SETTLE_S)
+	print("[HudShot] %s: %s" % [name, _hud.fade_line()])
+	print("[HudShot]   %s" % _hud.layout_line())
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+
+
+## The F8 character panel, open, over the world. Not part of the field register
+## - it is a tool - so it is shot on its own and the play HUD stays out of it.
+func _hud_shot_panel(name: String) -> void:
+	_sky.time_of_day = 0.5
+	_sky.apply()
+	$CharacterDebug.visible = true
+	$CharacterDebug.set_panel_open(true)
+	var panel: Control = $CharacterDebug.get_child(0)
+	print("[HudShot] %s: panel rect %s in a %s canvas" % [
+		name, panel.get_global_rect(), get_viewport().get_visible_rect().size])
+	await UiShot.capture(get_tree(), name, UiShot.hud_label())
+	_hud_shots_taken += 1
+	$CharacterDebug.set_panel_open(false)
+	$CharacterDebug.visible = false
+
+
+## Everything the host wrote down, printed. The `use` step in Stage 5 is judged
+## on this, and the H key's stat_changed shows up here too.
+func _dump_journal(why: String) -> void:
+	var events := _journal.dump()
+	print("[HudShot] journal %s: %d events" % [why, events.size()])
+	for event in events:
+		print("[HudShot]   %s" % event)
+
+
+func _hud_shot_wait_for_world() -> void:
+	var frames := 0
+	# The same ceiling the tour uses. A world that has not settled in this many
+	# frames is a world with something wrong with it, and hanging forever is
+	# the worse of the two failures.
+	while frames < 5400:
+		if _world.is_world_ready() and _world.is_idle() and not _awaiting_ground:
+			return
+		await get_tree().process_frame
+		frames += 1
+	push_warning("[HudShot] gave up waiting for the world after %d frames" % frames)
+
+
+func _hud_shot_shutdown() -> void:
+	# Put the world down before ending the main loop, for the reason the tour
+	# gives at length: without it the process sits at 100% of several cores
+	# after writing its last image and never exits.
+	if _world != null and is_instance_valid(_world):
+		_world.reset()
+	await get_tree().process_frame
+	get_tree().quit()
+
+
 func _on_frontier_moved() -> void:
 	if _far_trees != null:
 		_far_trees.frontier = _world.loaded_frontier()
@@ -1130,12 +1270,32 @@ func _on_config_reload_requested() -> void:
 
 # --- HUD and debug ----------------------------------------------------------
 
+## THE PERMANENT LINE IS GONE (ui v1 Stage 4, Decision 5).
+##
+## It used to say peer id, chunk count, seed and the keybind crib, always, in
+## the top left of every frame - a dev convenience from before there was a HUD,
+## and the thing this whole plan exists to replace. Every one of those facts is
+## on the F3 readout now, where the rest of the instruments are.
+##
+## What is left is a TRANSIENT MESSAGE LINE: the reroll notice, the config
+## message, "only the host can reroll". Those are answers to something you just
+## did and they belong on screen for a moment. The line is left where it is,
+## and it is empty until something has something to say.
 func _update_status() -> void:
-	if not _world.is_world_ready():
-		return
-	_status.text = "%s (peer %d) | %d others | %d chunks in %d ms | seed %d | WASD+mouse, Space jump, [F] fly, [G] slab, [F3] debug, Esc" % [
+	pass
+
+
+## The line the crib used to be, for the F3 readout to print.
+func status_line() -> String:
+	return "%s (peer %d) | %d others | %d chunks in %d ms | seed %d" % [
 		_role_name(), Net.local_peer_id(), _players.size(),
 		_chunk_count, _build_ms, _world.world_seed]
+
+
+## The keys, for the same readout. Kept as data next to the line it prints on,
+## and the one place a new binding has to be written down.
+func keybind_line() -> String:
+	return "WASD+mouse, Space jump, [F] fly, [G] slab, [H] hurt, [C] sheet, Esc"
 
 
 func _unhandled_input(event: InputEvent) -> void:

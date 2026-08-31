@@ -74,7 +74,7 @@ static func shot_size() -> Vector2i:
 ## shoots itself does so from its own _ready and there is no earlier hook the
 ## two screens share. Setting it repeatedly is free once it already matches.
 static func pin_canvas(tree: SceneTree) -> void:
-	if not wanted() or tree == null:
+	if not any_wanted() or tree == null:
 		return
 	if DisplayServer.get_name() == "headless":
 		return
@@ -85,8 +85,24 @@ static func pin_canvas(tree: SceneTree) -> void:
 
 ## The label after `--shot-ui`, or "" when the flag is absent.
 static func label() -> String:
+	return _flag_value("--shot-ui")
+
+
+## The label after `--shot-hud`, or "" when the flag is absent (ui v1 Stage 4).
+##
+## A SECOND FLAG AND NOT A MODE OF THE FIRST, deliberately. `--shot-ui` means
+## "the menu photographs itself, presses Character, and that screen photographs
+## itself and quits" - a chain the two screens drive from their own _ready.
+## `--shot-hud` means "skip the menu, host offline, and let game.gd drive a
+## scripted sequence in the world". `wanted()` must stay false for the second
+## or the menu would shoot itself and quit before the world ever loaded.
+static func hud_label() -> String:
+	return _flag_value("--shot-hud")
+
+
+static func _flag_value(flag: String) -> String:
 	var args := OS.get_cmdline_user_args()
-	var i := args.find("--shot-ui")
+	var i := args.find(flag)
 	if i < 0:
 		return ""
 	if i + 1 < args.size() and not args[i + 1].begins_with("--"):
@@ -98,14 +114,25 @@ static func wanted() -> bool:
 	return not label().is_empty()
 
 
+static func hud_wanted() -> bool:
+	return not hud_label().is_empty()
+
+
+## Either harness is running, which is when the canvas is pinned.
+static func any_wanted() -> bool:
+	return wanted() or hud_wanted()
+
+
 ## Save the viewport as build/ui/<label>/<name>.png. Awaits the settle and
 ## the end of the frame, so call it with `await`.
-static func capture(tree: SceneTree, name: String) -> void:
+## `into` names the output directory; empty means the `--shot-ui` label. The
+## HUD driver passes hud_label(), so both harnesses write under build/ui/.
+static func capture(tree: SceneTree, name: String, into := "") -> void:
 	pin_canvas(tree)
 	for i in SETTLE_FRAMES:
 		await tree.process_frame
 	await RenderingServer.frame_post_draw
-	var dir := "%s/%s" % [ROOT, label()]
+	var dir := "%s/%s" % [ROOT, into if not into.is_empty() else label()]
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir))
 	print("[UiShot] logical canvas %s" % tree.root.size)
 	var image := tree.root.get_viewport().get_texture().get_image()

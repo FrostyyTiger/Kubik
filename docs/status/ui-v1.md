@@ -56,6 +56,7 @@ sampled out of them are here.
 | 1 | `76cccdb6` | `(-44, -124)` | all green |
 | 2 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`ui mouse owners`) |
 | 3 | `76cccdb6` | `(-44, -124)` | all green, **+1 selftest** (`stats table`) |
+| 4 | `76cccdb6` | `(-44, -124)` | all green |
 
 ---
 
@@ -240,9 +241,134 @@ so the boot smoke test ran `--port 24071`. The shot driver in Stage 4 hosts
 
 ---
 
+## Stage 4 - the HUD frame, the bars, the fade, and the harness
+
+### The harness, built first
+
+    xvfb-run -a ~/bin/godot --path . -- --shot-hud ui-v1-hud --seed 42
+
+writes `build/ui/ui-v1-hud/*.png` and quits. It **skips the main menu and
+hosts offline**, so it binds no ENet port - which matters on this box, where
+the concurrent distance-v3 lane may hold the default one; the failure mode of
+getting that wrong is sitting on the menu having printed "Couldn't create an
+ENet host" into a log nobody was watching.
+
+It drives the real game: the real HUD, the real stats table, the real fade, at
+seed 42. What it stages is the **situation**, and each one through the seam the
+game uses - `SkyCycle.frozen` for the hour, `apply_delta` for the damage.
+**There is no shot mode inside the HUD.**
+
+`Hud.settle(seconds)` advances the fade by simulated time **through the HUD's
+own `_process`**, in 0.05 s steps. Not a bypass, deliberately: a photograph
+caught halfway through a 1.4 s ease is a photograph of nothing checkable, and
+waiting out `fade_grace_s` in real frames is six seconds of wall clock per
+shot. Because it is the real code path, a wrong fade settles to the wrong
+state - which is the property a bypass would throw away.
+
+### The evidence [deterministic]
+
+Sampled with `~/.venvs/kubik/bin/python`, 9x9 windows. The bar cluster's
+region is **derived from `HudConfig`, not guessed**: cluster rect
+**(530, 663) 220x31** on a 1280x720 canvas, bars at rows 663, 675, 687.
+
+| shot | fade line | 9x9 at each bar | hp fill |
+| --- | --- | --- | --- |
+| `safe-noon.png` | `hud 0.00 shown \| full true, since 99.9/6.0 s, night 0.00/0.25, danger 0.00/0.35` | **no palette hits at all** on any of the three | **no SUN pixels** |
+| `night.png` | `hud 1.00 \| night 1.00/0.25` | INK 18 + SUN 54 / ALPINE_PALE 54 / ALPINE_DEEP 54 | 219/220 = 0.9955 |
+| `hurt.png` | `hud 1.00 \| full false` | INK 18 + SUN 54 / PALE 54 / DEEP 54 | **154/220 = 0.7000** |
+| `panel-f8.png` | - | panel rect **(16, 16) 463x688** in a 1280x720 canvas | - |
+
+- **`safe-noon` is the acceptance test and it passes exactly.** Zero HUD ink
+  in any of the three named regions - not faint, absent. Safety looks like a
+  clean screen. **[eye]** The frame reads as a world with nothing on it.
+- **`hurt` is 0.7000, not 0.70 ± 2 px.** 154 px of a 220 px track is 0.7
+  exactly, from a -30 on 100 through `apply_delta`.
+- `night` shows 219 of 220 rather than 220: the last pixel is the INK hairline
+  drawn over the fill's right edge. Not an error - the bar has an edge on
+  purpose, so it reads against a bright sky as well as a dark hillside.
+- **The journal dump contains exactly one event**, host-side:
+  `{peer: 1, stat: "hp", from: 100.0, to: 70.0, cause: "shot", kind: "stat_changed"}`.
+- **`panel-f8` discharges the Stage 1 debt.** The panel spans y 16-704 in a
+  720 canvas and its paper ground is continuous from y=30 to y=690 at x=400,
+  with terrain at x=500. It fits, and it is now photographed rather than
+  argued from anchors. It came out 463 px wide against the 360 the offsets ask
+  for - a `PanelContainer` honours its child's minimum width - which is wide
+  but nowhere near the edge; recorded, not fixed.
+
+### One real bug, found by the harness on its first run
+
+The cluster was placed with `Control.position`, and a Control under a
+CanvasLayer **does** resolve its anchors against the viewport - but `position`
+is measured from that rect's ORIGIN, not from the anchor. The cluster's global
+rect was `(-110, -57)`: off the top-left corner of the screen. **Every fade
+number read correctly the whole time** - `hud 1.00 shown`, `vis true` - and the
+shot was of a HUD that was present, visible, at full opacity and nowhere in the
+picture. Anchors and offsets now, and `Hud.layout_line()` prints the rect on
+every shot so the "invisible" and "off screen" cases can never look alike
+again. **This is the harness earning its place on the day it was built.**
+
+### Decision 5, done
+
+`_update_status()` is now `pass`. The permanent line - peer id, chunk count,
+seed, keybind crib - is on the F3 readout, appended under the `# UI V1` banner,
+alongside `Hud.fade_line()`, which names **which of the four conditions** is
+holding the HUD in. `Status` survives as a transient message line only (reroll,
+config, "only the host can reroll") and is cleared when the world is ready -
+a transient line that never clears is a permanent one.
+
+`debug_hud.gd` changes: the banner block, the `hud` field and `set_hud`, the F3
+appends, the `_game_node()` helper, and the Stage 2 `_set_panel_visible`
+rewiring. **`TUNING_ROWS`, `LOCAL_TUNING_ROWS`, `_build_panel`, `_spin_row` and
+the panel keys are untouched** - hard rule 3 holds.
+
+---
+
 ## F9 tunables - starting and final values
 
-Filled from Stage 4 onward.
+Every value this run chose by eye, all reachable from **F9** (layer 12), all
+saved to `user://ui.tres` by the panel's save button. **Hard rule 5.**
+"Final" is filled when Marcel moves one; until then the starting value is what
+ships, and every one of them was chosen from screenshots on a box with no
+monitor.
+
+| property | F9 row | start | final |
+| --- | --- | --- | --- |
+| `fade_grace_s` | fade: grace (s) | **6.0** | - |
+| `fade_night_max` | fade: night max | **0.25** | - |
+| `fade_danger_max` | fade: danger max | **0.35** | - |
+| `fade_out_s` | fade: out (s) | **1.4** | - |
+| `fade_in_s` | fade: in (s) | **0.25** | - |
+| `strip_floor_alpha` | strip: floor alpha | **0.0** | - |
+| `bar_width` | bar: width | **220.0** | - |
+| `bar_height` | bar: height | **7.0** | - |
+| `bar_gap` | bar: gap | **5.0** | - |
+| `cluster_margin_y` | cluster: bottom margin | **26.0** | - |
+| `slot_size` | hotbar: slot size | **46.0** | - |
+| `slot_gap` | hotbar: slot gap | **8.0** | - |
+| `strip_width` | strip: width | **460.0** | - |
+| `strip_height` | strip: height | **26.0** | - |
+| `strip_margin_y` | strip: top margin | **14.0** | - |
+| `strip_span_deg` | strip: span (deg) | **150.0** | - |
+| `icon_radius` | party: icon radius | **15.0** | - |
+| `icon_gap` | party: icon gap | **10.0** | - |
+| `dot_radius` | context dot radius | **2.5** | - |
+
+`fade_in_s` is deliberately much shorter than `fade_out_s`: instruments
+appearing is the game telling you something, and a leisurely fade-in tells you
+late.
+
+**Recorded caveat on `fade_danger_max`.** `danger_at()` normalises 0 at spawn
+to 1 at the furthest corner **of the current 3x3 km region**. The world is
+unbounded by design (CLAUDE.md), so that normalisation is a property of today's
+stage and not of the world. The fade reads it as an input and nothing bakes a
+world edge in; when danger becomes regional, the threshold is one F9 row to
+re-tune. Not a blocker, and named so the next lane does not find it as a
+surprise.
+
+**Recorded: time of day is per-client and unsynced.** Two players can disagree
+about whether it is night, and so about whether their own HUDs are showing.
+That is fine - the fade is a look input, not world truth, and nothing about the
+game's state depends on it.
 
 ---
 
