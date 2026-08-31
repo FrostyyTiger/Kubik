@@ -661,6 +661,32 @@ Named so the next lane does not go looking for them.
 
 ---
 
+## One question the plan does not answer, and the conservative path taken
+
+**`TODO.md`'s D1 line is now done and was left unticked.**
+
+    - [ ] D1 stats table: health, stamina, mana; damage through the one
+          mutation path
+
+This run built exactly that: `StatsTable`, all three stats, host-authoritative,
+and `apply_delta` as the one seam every change goes through. Pulling it forward
+out of Combat v1 was decision 3 of the design doc and Marcel's explicit call.
+
+The tech plan's Stage 7 lists four things to do - fill the acceptance table,
+finish this doc, point `STATUS.md` here, merge - and updating the queue is not
+among them. `TODO.md` is the queue, it is Marcel's, and a lane ticking someone
+else's box on the way past is how a queue stops being trustworthy. **So it is
+recorded here and not touched.** If Marcel wants it ticked it is one line, and
+the honest tick is a partial one: D1's *stats table* half is done and its
+*damage* half is not, because nothing in the game deals damage yet except a
+TEMPORARY debug key this plan's own successor deletes.
+
+The same applies to the F3/F9 keybind crib and the `[G] slab` entry that used
+to be in `TODO.md`-adjacent prose: those are in code and were updated; the
+queue was not.
+
+---
+
 ## What the next plans inherit
 
 - **Combat v1 (D):** `StatsTable` and its one mutation seam; the H key to
