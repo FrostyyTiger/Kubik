@@ -42,10 +42,21 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
 	_heightmap = generator.heightmap
 	_config = config
-	# One shared material with the chunks, so the renderer can batch the far
-	# field together with the voxels instead of breaking the batch at the
-	# horizon.
-	material_override = ChunkMesher.get_material()
+	# ITS OWN MATERIAL SINCE DISTANCE V3 STAGE 2, and it used to be the chunks'.
+	#
+	# The comment that stood here said "one shared material with the chunks, so
+	# the renderer can batch the far field together with the voxels instead of
+	# breaking the batch at the horizon". That was true and it is now paid for:
+	# the far field has uniforms the chunks must not have - the block-lattice
+	# grain, and Stage 7's dither - and a material is where a uniform lives. The
+	# cost is one extra draw group for ONE mesh, which is the same price
+	# figure_material() and far_tree_material() already pay, and it is measured
+	# rather than assumed in docs/status/distance-v3.md.
+	#
+	# The SOURCE is still the chunks' - Look.far_field_code() splices into
+	# OPAQUE_SHADER rather than editing it - so the near field's shader string is
+	# byte for byte the one main compiles.
+	material_override = Look.far_field_material()
 	# DISTANCE V2 STAGE 0. Remember what the far-only knobs are worth NOW, so
 	# the first turn of a spinbox after the world loads is seen as a change
 	# rather than as the value the snapshot happened to be seeded with.
@@ -190,7 +201,7 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# DISTANCE V3, appended. Every one of them redraws the far mesh or the
 	# impostor ring and nothing else, which is what earns a place on this
 	# list - and being on it is what makes a knob judgeable standing still.
-	"far_vote",
+	"far_vote", "far_grain",
 ]
 
 static var _knobs := {}

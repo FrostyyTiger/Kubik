@@ -502,6 +502,7 @@ static var _opaque: ShaderMaterial = null
 static var _water: ShaderMaterial = null
 static var _figure: ShaderMaterial = null
 static var _sky: ShaderMaterial = null
+static var _far_field: ShaderMaterial = null
 static var _mutex := Mutex.new()
 
 
@@ -668,6 +669,16 @@ static func apply_local_knobs(config: WorldgenConfig) -> void:
 	m.set_shader_parameter("grain_hue", config.grain_hue)
 	m.set_shader_parameter("grain_sparse", config.grain_sparse)
 	m.set_shader_parameter("contact_band", config.contact_band)
+	# DISTANCE V3, appended. The far field's own material takes the terrain's
+	# knobs too - it is the same shader - plus the ones only it has. Pushed here
+	# rather than at FarField.setup() so a move on F4 lands without a reroll,
+	# which is what every knob in this epic has to do.
+	var f := far_field_material()
+	f.set_shader_parameter("grain_amount", config.grain_amount)
+	f.set_shader_parameter("grain_hue", config.grain_hue)
+	f.set_shader_parameter("grain_sparse", config.grain_sparse)
+	f.set_shader_parameter("contact_band", config.contact_band)
+	f.set_shader_parameter("far_grain", config.far_grain)
 
 
 static func _set_color(name: StringName, c: Color) -> void:
@@ -757,6 +768,130 @@ static var _far_tree: ShaderMaterial = null
 ## impostor in the game stands at the voxel radius, 96 m at High. It can never
 ## be visible on one. Setting it to the terrain's value is a statement about
 ## which family this material belongs to, not an effect.
+## THE FAR FIELD'S OWN MATERIAL, distance v3 Stage 2.
+##
+## THE SAME SHADER SOURCE AS THE CHUNKS, WITH TWO BLOCKS SPLICED IN, and the
+## splice is the whole design rather than a shortcut.
+##
+## The compensating rule for opening look.gd in this epic is absolute: the near
+## field must be byte-identical at default knobs, checked by `swatches.png` and
+## `swatch-ramp.png`, after EVERY shader-touching stage. The obvious
+## implementation - one shader string with a `far_grain` uniform defaulting to
+## zero and an untaken branch - leaves that gate resting on a shader compiler
+## being indifferent to a branch it never enters. Probably true. Not provable
+## from here, and a gate that rests on "probably" is not a gate.
+##
+## So OPAQUE_SHADER is not edited at all. The far field's code is built from it
+## at runtime by inserting two blocks at two anchors, which means the string the
+## chunks compile is the string `main` compiled, character for character, and
+## the swatch gate holds by construction rather than by measurement.
+##
+## It also buys what Stage 7 needs anyway: a material seam. The far field stops
+## batching with the chunks - one extra draw group for one mesh, the same price
+## figure_material() and far_tree_material() already pay - and gains somewhere
+## for the Bayer dissolve to live.
+##
+## THE ANCHORS ARE ASSERTED. If somebody renames a line in OPAQUE_SHADER, this
+## fails loudly at startup rather than quietly drawing a far field with no
+## grain, which is a bug that would be found by eye a week later.
+const FAR_DECL_ANCHOR := "varying vec3 world_pos;"
+const FAR_CODE_ANCHOR := "\tALBEDO = vec3(1.0);"
+
+## THE GRAIN, ON A WORLD-SPACE BLOCK LATTICE. Distance v3 Stage 2, and it is
+## Distant Horizons' noise recipe (`docs/research/distant-horizons.md` §4) with
+## one change, which is the interesting part.
+##
+## DH's recipe, verbatim in mechanism: hash a world-space QUANTISED position, so
+## the fleck is stable under camera motion and does not swim; weight the
+## amplitude by a parabola in luminance peaking at mid-grey, so nothing happens
+## on blacks or whites; and brighten toward white - `c + (1 - c) * r` - rather
+## than perturbing RGB symmetrically, so it never muddies a hue. That last form
+## is also what makes it safe: r is zero-mean, so the EXPECTED colour is
+## unchanged and the far country gains variance without gaining a tint. Hard
+## rule 6, satisfied by the arithmetic rather than by a measurement - and
+## measured anyway, in Stage 2's gate 1.
+##
+## THE CHANGE: DH FADES ITS NOISE OUT PAST 1024 BLOCKS AND THIS GROWS ITS
+## LATTICE INSTEAD. DH's reason for the dropoff is that a quarter-block lattice
+## past a kilometre is sub-pixel and aliases. That is a statement about ANGULAR
+## size, and the fix that follows from it is to keep the angular size constant:
+## the lattice starts at one block - the near field's own grain cell, so the
+## seam has nothing to give it away - and grows with view distance at about two
+## screen pixels per cell. A far hillside at 3 km is then flecked in ten-metre
+## cells, which is a couple of pixels, rather than in half-metre cells nobody
+## can resolve. This is also what the block-atlas idea says: per-block detail
+## painted on geometry far coarser than a block, off a fract() of world
+## position, tiling once per lattice cell across a quad of any size.
+##
+## THE LATTICE BLENDS BETWEEN TWO LEVELS rather than jumping, the way a mip
+## chain does - two hashes and a mix on the fractional level. A hard jump in
+## lattice size is a visible ring on the ground at a fixed distance from the
+## player, which is the artefact distance v1 spent a stage removing from the
+## geometry and would be absurd to reintroduce in the paint.
+const FAR_GRAIN_DECL := """
+// DISTANCE V3 STAGE 2. Spliced into the far field's copy of this shader only;
+// the chunks compile the string above without these lines in it at all.
+uniform float far_grain = 0.0;
+// The lattice at the seam, in metres: one block, which is the near field's own
+// grain cell, so the two grains are the same grain.
+const float FAR_GRAIN_NEAR_M = 0.5;
+// Metres of lattice per metre of view distance - about two screen pixels at
+// 1280x720 and a 68 degree camera. This is DH's noise dropoff turned inside
+// out: keep the fleck at a constant angular size instead of switching it off.
+const float FAR_GRAIN_PX = 0.003;
+// 0.5 m * 2^7 = 64 m, which is the outermost ring's own cell.
+const float FAR_GRAIN_MAX_LEVEL = 7.0;
+
+"""
+
+const FAR_GRAIN_CODE := """
+	// THE FAR GRAIN. See Look.FAR_GRAIN_DECL for the whole argument.
+	if (far_grain > 0.0) {
+		float fg_d = length(VERTEX);
+		float fg_lvl = clamp(log2(max(fg_d * FAR_GRAIN_PX, FAR_GRAIN_NEAR_M)
+			/ FAR_GRAIN_NEAR_M), 0.0, FAR_GRAIN_MAX_LEVEL);
+		float fg_lo = floor(fg_lvl);
+		float fg_cell = FAR_GRAIN_NEAR_M * exp2(fg_lo);
+		// mod() before the hash for the reason the near grain does it: a raw
+		// world coordinate at the rim loses enough mantissa that the hash bands
+		// into stripes.
+		float fg_h = mix(
+			hash3(mod(floor(world_pos / fg_cell), 1024.0)),
+			hash3(mod(floor(world_pos / (fg_cell * 2.0)), 1024.0)),
+			fg_lvl - fg_lo);
+		float fg_lum = (v_albedo.r + v_albedo.g + v_albedo.b) / 3.0;
+		// The parabola, written as x*x rather than pow(x, 2.0): pow() with a
+		// negative base is undefined in GLSL and this base is negative for
+		// every colour darker than mid-grey, which is most of this world.
+		float fg_x = fg_lum * 2.0 - 1.0;
+		float fg_amp = (1.0 - fg_x * fg_x) * far_grain;
+		float fg_r = fg_h * 2.0 * fg_amp - fg_amp;
+		v_albedo = v_albedo + (1.0 - v_albedo) * fg_r;
+	}
+
+"""
+
+
+## OPAQUE_SHADER with the far field's blocks spliced in. See far_field_material.
+static func far_field_code() -> String:
+	var code := OPAQUE_SHADER
+	if not code.contains(FAR_DECL_ANCHOR) or not code.contains(FAR_CODE_ANCHOR):
+		push_error("[Look] the far-field shader anchors are gone from OPAQUE_SHADER")
+		return code
+	code = code.replace(FAR_DECL_ANCHOR, FAR_GRAIN_DECL + FAR_DECL_ANCHOR)
+	return code.replace(FAR_CODE_ANCHOR, FAR_GRAIN_CODE + FAR_CODE_ANCHOR)
+
+
+static func far_field_material() -> ShaderMaterial:
+	if _far_field != null:
+		return _far_field
+	_mutex.lock()
+	if _far_field == null:
+		_far_field = _make(far_field_code())
+	_mutex.unlock()
+	return _far_field
+
+
 static func far_tree_material() -> ShaderMaterial:
 	if _far_tree != null:
 		return _far_tree

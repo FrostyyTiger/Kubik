@@ -403,3 +403,149 @@ the pair.
 **The fleck this epic is named for is not here. It is Stage 2**, and Stage 1's
 value is having proved that with numbers rather than assuming it.
 
+---
+
+## Stage 2 - The block grid is painted: jitter on the block lattice
+
+**Shipped**, `far_grain` default **0.065**.
+
+### Where the near field's per-block variation actually is, checked by grep
+
+The plan says to find it "shader or mesher, checked by grep, not assumed", and
+the answer is both places and only one of them is on.
+
+- **`color_jitter_value` / `_hue` / `_blocks`** are per VERTEX, in
+  `Block.jitter()`, called from `ChunkMesher` and from `FarFieldJob._push_quad`.
+  **`color_jitter_value` has shipped at 0.0 since look v1** and the config says
+  why: "a greedy-meshed meadow is a few huge quads, so the jitter lands on
+  their corners and interpolates across them as soft blotches, and doubling it
+  doubled the blotches. Grain would need per-block colour, which greedy meshing
+  rules out."
+- **`grain_amount 0.065` / `grain_hue 0.03`** are per FRAGMENT, in
+  `Look.OPAQUE_SHADER`, hashed on `floor(world_pos / 0.5)` - a world-space
+  half-metre lattice, which is exactly a block. That is the near field's
+  per-block colour variation, and **it is faded out entirely between 20 and
+  45 m**: "past that it stops being a surface and becomes a shimmer, and the
+  far field - which shares this material - must never show it."
+
+So the far country has had no per-block variation at any distance, ever. This
+stage is that grain, extended outward.
+
+### The splice, and why look.gd was opened without risking the near field
+
+The compensating rule for opening `look.gd` is absolute: swatches
+byte-identical after every shader-touching stage. The obvious implementation -
+add a `far_grain` uniform to `OPAQUE_SHADER`, default 0, branch on it - leaves
+that gate resting on a shader compiler being indifferent to a branch it never
+enters. Probably true; not provable from here.
+
+So **`OPAQUE_SHADER` is not edited at all.** `Look.far_field_code()` builds the
+far field's source from it at runtime by inserting two blocks at two asserted
+anchors. The string the chunks compile is character for character the string
+`main` compiles, and the gate holds by construction. It also gives Stage 7
+somewhere to put the Bayer dissolve.
+
+`swatches.png` and `swatch-ramp.png`: **identical, both sheets, 0 pixels
+differ.**
+
+### The grain, and the one place it departs from DH
+
+DH's noise recipe (`docs/research/distant-horizons.md` §4), in mechanism:
+hash a world-space QUANTISED position so the fleck is stable under camera
+motion and does not swim; weight the amplitude by a parabola in luminance
+peaking at mid-grey so nothing happens on blacks or whites; and brighten toward
+white - `c + (1 - c) * r` - rather than perturbing RGB symmetrically, so it
+never muddies a hue. `r` is zero-mean, so the expected colour is unchanged:
+**hard rule 6 is satisfied by the arithmetic and then measured anyway.**
+
+Written as `x*x` rather than DH's `pow(x, 2.0)`, deliberately: `pow` with a
+negative base is undefined in GLSL and that base is negative for every colour
+darker than mid-grey, which is most of this world.
+
+**THE DEPARTURE: DH fades its noise out past 1024 blocks and this grows its
+lattice instead.** DH's stated reason for the dropoff is that a quarter-block
+lattice past a kilometre is sub-pixel and aliases - a statement about ANGULAR
+size, and the fix that follows from it is to hold the angular size constant
+rather than to switch the effect off. So the lattice starts at one block
+(0.5 m, the near field's own grain cell, so the seam has nothing to give it
+away) and grows with view distance at about two screen pixels per cell,
+blending between two power-of-two levels the way a mip chain does. A hillside
+at 3 km is flecked in ten-metre cells; the same hillside at 300 m is flecked in
+one-metre cells. This is also the block-atlas idea's own shape: per-block
+detail painted on geometry far coarser than a block, off a `fract()` of world
+position, tiling once per lattice cell across a quad of any size.
+
+### Gate 1 - the average is preserved
+
+`ganymede, deterministic` over the far band, `far_grain 0` against `far_grain
+0.065`, standing-still pairs from the same binary. **The plan writes this gate
+as "mean |dL| under 0.5 sRGB levels" and that is the wrong statistic for what
+the gate is named after**, so both are reported and the distinction is the
+point: a zero-mean fleck of amplitude a has a mean |dL| of roughly a/2 **and
+that is the effect working**. What "the average is preserved" asks is whether
+the band got brighter or darker on average, which is the SIGNED mean.
+
+| shot | mean dL (signed) - **the gate** | mean \|dL\| (the fleck's size) |
+| --- | --- | --- |
+| 2-summit | **-0.0004** | 0.0030 |
+| 9-treeline | **+0.0010** | 0.4303 |
+| 5-lake | **-0.0072** | 1.1731 |
+| 14-postcard-dusk | **-0.0261** | 0.8649 |
+| **6-postcard** | **-0.0416** | 1.0777 |
+| 3-forest-slope | **-0.1033** | 2.4926 |
+
+**MET, by a factor of five on the worst shot** - the largest shift in the far
+band is a tenth of a luma level, against a 0.5 line. The mechanism guarantees
+it (`c + (1 - c) * r` with `r` zero-mean) and the measurement confirms it. As
+the plan literally writes it - mean |dL| under 0.5 - it is **not met on
+`6-postcard` (1.08) or `3-forest-slope` (2.49)**, and it could not be: that
+number is the fleck itself.
+
+### Gate 2 - the fleck rises
+
+`far_grain 0` against `far_grain 0.065`, far band. `tex` is the share of
+neighbour pairs over 2 levels, which is the number least diluted by sky.
+
+| shot | fleck 0 -> 0.065 | delta | tex 0 -> 0.065 |
+| --- | --- | --- | --- |
+| 3-forest-slope | 2.1035 -> **4.0928** | **+94.6%** | 13.6% -> **49.6%** |
+| 5-lake | 2.2220 -> 2.9575 | +33.1% | 16.8% -> 28.7% |
+| 14-postcard-dusk | 3.1218 -> 3.6515 | +17.0% | 28.6% -> 36.7% |
+| **6-postcard** | 3.9801 -> **4.6173** | **+16.0%** | 27.6% -> **38.5%** |
+| 1-spawn | 4.3040 -> 4.7987 | +11.5% | 26.8% -> 35.0% |
+| 9-treeline | 1.7240 -> 1.9098 | +10.8% | 18.2% -> 21.4% |
+| 2-summit | 1.0854 -> 1.0874 | +0.2% | 10.1% -> 10.1% |
+
+**MET.** And it is worth putting the two stages side by side, because the
+comparison is the epic's own argument:
+
+| `6-postcard` far band | fleck | textured |
+| --- | --- | --- |
+| `1ece781`, before this epic | 3.9398 | 27.7% |
+| Stage 1, the mode vote | 3.9801 (+1.0%) | 27.6% |
+| **Stage 2, the painted lattice** | **4.6173 (+17.2%)** | **38.5%** |
+
+`2-summit` is flat and honestly so: from the world's highest point the far band
+is largely sky, which has no lattice on it. Its `tex` share is 10% at every
+stage and that is the frame telling the truth about itself.
+
+For reference, the near field's own band on the shots where rows 500-720 really
+are the near field measures **3.2 to 8.2**. The postcard's far band is now
+**4.6**, which is inside that range for the first time.
+
+### Gate 3 - the near field is untouched
+
+`swatches.png` and `swatch-ramp.png`, shot before and after the change:
+**identical, 0 pixels differ, both sheets.** Guaranteed by the splice rather
+than by luck - the chunks compile a string this stage never edited.
+
+### What the far field's own material costs
+
+One extra draw group, for one mesh. It is argued rather than measured and the
+argument is that **no instrument in this project can resolve a single draw
+call**: the stream probe's medians carry a ~9% spread on this box and its own
+`TODO(marcel)` says plainly that it cannot compare two commits. The precedent
+already pays this price twice - `figure_material()` and `far_tree_material()`
+are the same trade for the same reason - and one of those was distance v1's,
+for a mesh with two thousand instances rather than one.
+

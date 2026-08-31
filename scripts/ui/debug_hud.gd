@@ -116,6 +116,7 @@ const LOCAL_TUNING_ROWS := [
 	# the far country in place - no reroll, no chunk rebuilt, the player
 	# standing still - which is the property the whole epic is judged by.
 	["far_vote", "distance: far vote (0/1)", 0.0, 1.0, 1.0],
+	["far_grain", "distance: far grain", 0.0, 0.2, 0.005],
 ]
 
 var config: WorldgenConfig = null

@@ -960,6 +960,31 @@ const FOG_START_RATIO := 0.4
 ## 0 restores the flat constant exactly.
 @export var far_zone_cell_ratio := 0.06
 
+## HOW HARD THE FAR COUNTRY'S BLOCK LATTICE IS PAINTED, distance v3 Stage 2.
+##
+## The near field's per-block colour variation is `grain_amount`, in the poster
+## shader, on a world-space half-metre lattice - and it is faded out entirely by
+## 45 m, because past that "it stops being a surface and becomes a shimmer".
+## (The other half of the tint machinery, `color_jitter_value` / `_hue` /
+## `_blocks`, is per VERTEX in the mesher and has shipped at 0.0 since look v1:
+## a greedy-meshed meadow is a few huge quads, so per-vertex tint lands on their
+## corners and interpolates across them as blotches. Checked by grep, not
+## assumed.)
+##
+## So the far country has had no per-block variation at all, at any distance.
+## This is that grain, extended outward on a lattice that GROWS with view
+## distance instead of being switched off - Distant Horizons' noise recipe with
+## its dropoff turned inside out. See Look.FAR_GRAIN_DECL for the mechanism and
+## why the average colour is provably unmoved.
+##
+## Defaults to the near field's own `grain_amount`, which is the honest starting
+## value: it is the same effect, on the same kind of lattice, and the far
+## country asking for a different amount would be a taste claim nobody has made.
+## 0 is off and is the way back.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed.
+@export var far_grain := 0.065
+
 ## WHETHER A FAR CELL IS ONE REAL MATERIAL, distance v3 Stage 1.
 ##
 ## 0 is distance v2's path exactly: past ring 0 the far field asks for the zone
@@ -1332,7 +1357,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_riser_shade", "far_riser_lift",
-	"far_vote",
+	"far_vote", "far_grain",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
