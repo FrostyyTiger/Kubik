@@ -1,0 +1,93 @@
+# Builds the far-mesher GDExtension and runs the full self-test on every push
+# to main - the same gates the distance-v4 rig ran, on the same platform.
+#
+# Why Linux and not Windows: the far-parity gates are EXACT-ZERO comparisons,
+# and exact zero is honest only where the extension's compiler rounds the way
+# the engine's did. gcc on Linux does; MSVC on Windows lands a handful of
+# colour expressions one float ULP away (docs/status/distance-v4.md, the
+# Windows addendum), so a Windows leg would fail 7 checks by a hundred-millionth
+# of a colour channel until Marcel rules on an epsilon.
+#
+# Why the Godot binary is downloaded by hand: same reason as build.yml - a
+# pinned version can never drift, and the API json below must be dumped from
+# EXACTLY that binary, not a close-enough one (docs/plans/distance-v4.md,
+# stage 0). godot-cpp is pinned to the commit the port was proven against.
+
+name: selftest
+
+on:
+  push:
+    branches: [main]
+  # Lets you re-run the gates from the Actions tab without pushing anything.
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_CPP_COMMIT: "26fb7ab5821e6a1096f62c22f7462d1d70caa332"
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOT the ~/godot-cache key build.yml uses: that cache carries the 1.2 GB
+      # export templates too, and a cache this job populated without them would
+      # hand build.yml a hit with the templates missing.
+      - name: Download Godot
+        run: |
+          base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
+          curl -fsSL -o /tmp/godot.zip \
+            "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d ~/godot-bin
+          sudo install -m 755 \
+            ~/godot-bin/Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          godot --version
+
+      # The built static library plus the dumped API json - four minutes of
+      # compiling that only needs redoing when a pin moves, and both pins are
+      # in the cache key.
+      - name: Restore cached godot-cpp
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-cpp
+          key: godot-cpp-${{ env.GODOT_CPP_COMMIT }}-godot-${{ env.GODOT_VERSION }}-editor
+
+      - name: Install SCons
+        run: pipx install scons
+
+      - name: Build godot-cpp
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git ~/godot-cpp
+          cd ~/godot-cpp
+          git checkout "$GODOT_CPP_COMMIT"
+          godot --headless --dump-extension-api
+          scons platform=linux target=editor custom_api_file=extension_api.json -j"$(nproc)"
+
+      - name: Build the far mesher
+        run: |
+          cd gdext
+          GODOT_CPP=~/godot-cpp scons platform=linux target=editor \
+            custom_api_file="$HOME/godot-cpp/extension_api.json" -j"$(nproc)"
+
+      # A fresh clone has no import cache and no registered class names;
+      # without this pass the suite dies on "Identifier X not declared" before
+      # any test runs.
+      - name: Import assets
+        run: godot --headless --path . --import
+
+      # The parity gates self-skip when the library is absent, so a run where
+      # the extension failed to LOAD would come back green as a GDScript-only
+      # run and mean nothing. Prove the class is there before trusting the
+      # suite's opinion of it.
+      - name: The library actually loaded
+        run: godot --headless --path . -s gdext/check.gd
+
+      # Exits non-zero on any failed check - selftest.gd was written for
+      # exactly this seat.
+      - name: Self-test
+        run: godot --headless --path . scenes/selftest.tscn

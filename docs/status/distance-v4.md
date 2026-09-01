@@ -633,3 +633,52 @@ took nothing off the list, which is worth saying plainly.
 `build/tour/<label>/...` path here is a file **on ganymede**. The sets this
 document rests on are `s8-cpp` / `s8-gd` / `s8-cpp2` (the broken instrument)
 and `s8b-cpp` / `s8b-gd` / `s8b-cpp2` (the fixed one).
+
+---
+
+## Addendum - the Windows bring-up (2026-09-01, gemini, not ganymede)
+
+Stage 0's recipe, repeated on Marcel's Windows box the morning after the
+merge: scons 4.11.1 via pip, godot-cpp at the same `26fb7ab`,
+`extension_api.json` dumped from the same `4.7.2.stable.official.ed1daf0bf`,
+MSVC 2022 Build Tools - which scons finds unaided, no developer prompt.
+`gdext/bin/libkubik.windows.editor.x86_64.dll` in one build, and
+`gdext/.gitignore` gains `*.obj` for MSVC's droppings.
+
+| gate | result | provenance |
+| --- | --- | --- |
+| `-s gdext/check.gd` exits 0 | class exists true, ping answers, bench **21x** | gemini, single run |
+| far dispatch through the real `FarField` | 391,872 verts, **54 ms C++ against 2,503 ms GDScript (46x)**, meshes identical | gemini, single run |
+| full self-test | **`7 FAILED`, and all seven are last-bit rounding** | gemini, twice - the second with `/fp:strict`, byte-identical diffs |
+
+**What the seven are.** The exact-zero gates doing their job on a new
+compiler: the five parity cases at max colour diff 0.000000060-0.000000119
+(one to two float ULPs - positions, normals and indices at ZERO in all five),
+the pyramid's `slope` at 3.55e-15 (a double ULP), and zone parity's `vertex` -
+the `Look.to_wire` chain - at one ULP. Geometry is bit-exact everywhere, `far
+dispatch` passes with meshes identical, and the worst colour diff sits some
+33,000x below one 8-bit colour step. The library is safe to play on, and
+gemini now does.
+
+**Why.** Stage 2's own comment names the assumption: "on one machine's libm
+the same expression rounds the same way". That held on ganymede because gcc
+compiled the transcription to round like the gcc-built engine. On Windows the
+engine is one binary and the DLL is MSVC's; godot-cpp compiles ITS OWN copy of
+the engine's Color arithmetic, and MSVC lands an expression in the
+to_wire/jitter chain one ULP away. `/fp:strict` on the extension changes
+nothing - measured, not assumed - so it is not contraction in our five files.
+
+**For Marcel to rule on, item 5.** Either exact-zero is Linux doctrine - CI
+runs it there (`.github/workflows/selftest.yml`, added with this addendum) and
+a Windows dev checkout lives with `SELFTEST: 7 FAILED` as a known number - or
+the COLOUR rows get a documented epsilon of two float ULPs (2.4e-7) while
+geometry stays exact on every platform. Nothing was relaxed without the
+ruling.
+
+**And the carried CI item moved, halfway.** "The build is not in CI" (above):
+`selftest.yml` now builds the Linux editor library and runs every gate on each
+push to main, so the port can no longer rot silently. The half that stands:
+`build.yml`'s exported `Kubik.exe` still ships without a
+`windows.template_release` library and falls back to GDScript at
+`far_ring_div` 4. That needs a cross-compiled or Windows-runner template
+build and its own parity look, and it stays carried.

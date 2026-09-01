@@ -13,6 +13,11 @@
 #   scons platform=macos target=editor \
 #       custom_api_file=/Users/marcel/Documents/godot-cpp/extension_api.json
 #
+# On Windows the same two commands with platform=windows; MSVC 2022 Build
+# Tools are found by scons unaided, no developer prompt needed. Expect the
+# self-test to report 7 exact-zero parity failures there - last-bit colour
+# rounding, written down in docs/status/distance-v4.md's Windows addendum.
+#
 # The game NEVER requires this to run: scripts check for the class and fall
 # back to the GDScript mesher, so a checkout with no compiler still plays.
 import os
