@@ -666,3 +666,84 @@ v4's three precision notes are: **`_domain_warp` returns a `Vector2`, and a
 to the sample position. Done in double throughout, the whole map drifts by a
 fraction of a millimetre - which after quantisation is invisible until it is a
 different multiple of 1/1024 somewhere, and then it is a different world.
+
+---
+
+## Stage 5 - the resolution: MEASURED, AND IT WAITS
+
+Decision 5's gate is *"startup coarse-map wall ON GANYMEDE no worse than
+Stage 0's baseline despite 4x data (**C++ pays for the resolution, or the
+resolution waits**)"*. It was run, and the resolution waits.
+
+`coarse_step` stays at **4 blocks (2 m)**. **The world does not change on this
+branch**: seed 42 is still `4782edac`, spawn (-44, -124), 53 lakes, and no
+config hash is bumped. Marcel's advance acceptance of a same-seed world change
+is not spent.
+
+### What it would buy
+
+`--far-probe --cpp --set coarse_step=2`, ganymede, seed 42, deterministic.
+
+| | 2 m cells (shipped) | 1 m cells | |
+| --- | --- | --- | --- |
+| **far probe ROUGHNESS** | 13.2539 | **14.3523** | **+8.3%, the far country genuinely sharpens** |
+| ALL fizz rms | 0.981 | 0.913 | better |
+| ALL fizz max | 61.00 | 38.00 | better |
+| vertices per mesh | 3,358,739 | 3,289,743 | -2% |
+| static memory (stream probe) | 494.4 MB | 554.0 MB | **+59.6 MB**, inside the +120 MB budget |
+
+**The claim in decision 5 is true.** Four times the data makes the far country
+measurably sharper by the one number in this project that measures sharpness,
+and it does it while the fizz goes DOWN rather than up - the geomorph and the
+finer data are not fighting each other.
+
+### What it costs, and the gate it fails
+
+| | 2 m cells | 1 m cells | |
+| --- | --- | --- | --- |
+| **coarse heightmap** | 16,192 ms (Stage 0) / 4,753 ms (C++, Stage 4) | **18,562 ms** | **the gate: worse than Stage 0's baseline** |
+| `Lakes.compute` | ~1.5 s | **17,491 ms** | **11.7x** |
+| sprint, collidable front min | 56.0 / 64.0 m | **8.0 / 32.0 m** | |
+| sprint, worst frame | 34.5 / 32.3 ms | 42.5 / 57.9 ms | |
+| sprint, frames over 33 ms | 3 | 15 | |
+| sprint, chunks/s | 103.0 / 116.7 | 57.1 / 79.9 | |
+| holes | 0 / 0 | **0 / 0** | |
+
+**The heightmap gate fails by 15%** - and the interesting part is WHERE the
+time is, because it is not where the plan expected. The C++ tile builder does
+its share honestly: 10 ms a tile becomes 38 ms, which is 3.8x for 4x the data
+and still a third of the plan's 100 ms line. Of the 18,562 ms, about **5,500 is
+tiles and about 13,000 is `_resolve_zone_thresholds()`** - two GDScript passes
+over the whole map that this night did not touch and that scale with cell count
+exactly as the builder does.
+
+**And the streaming regression is worse than the startup one.** The collidable
+ground reaches **8 m** ahead at the sprint's worst against 56 m, because
+`column_surface_range()` walks the heightmap at `heightmap.step` and a step of 2
+is four times the samples per chunk. That is a playability regression that no
+amount of far-country sharpness pays for; holes stay at 0 only because the
+exclusion radius is honoured, which is distance v4's own caveat about a far mesh
+that has not landed.
+
+### So: the resolution is not a resolution problem
+
+**The next rung of the C++ ladder is not the chunk mesher.** It is, in order of
+measured cost at 1 m cells:
+
+1. **`Lakes.compute` - 17.5 s**, the single biggest number in a world load, and
+   11.7x for 4x the data rather than the 4x everything else paid. Superlinear,
+   and 241 lakes against 53 is part of why.
+2. **`TerrainGenerator._resolve_zone_thresholds` - ~13 s.** Two GDScript passes
+   over every cell, and one of them runs `ZONE_CORRECT_ROUNDS` times.
+3. **`column_surface_range` / chunk generation** - the reason the sprint's
+   front min collapses.
+
+All three are world truth, all three are the same shape of problem Stage 4 just
+solved for the height map, and Stage 4's tile seam is the pattern for all of
+them. **With those three across, 1 m cells cost about 5 s of startup and the
+sprint gets its 56 m back** - and the +59.6 MB of memory is already affordable.
+
+`--set coarse_step=2` runs it today, and the world it makes is a different
+world: heightmap `b02e6498`, spawn (10, 34), **241 lakes**. That is the change
+Marcel accepted in advance and it is deliberately not being spent on a build
+whose streaming is four times slower to arrive.
