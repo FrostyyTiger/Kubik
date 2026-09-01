@@ -140,6 +140,20 @@ var config: WorldgenConfig
 ## recomputing noise, so they cannot disagree about it.
 var heightmap: Heightmap = null
 
+## What each tile of the last build cost, in milliseconds, and which builder
+## built them. Distance v5 Stage 4 - the tile size is chosen on these.
+var tile_ms := PackedInt32Array()
+var heightmap_builder := "gdscript"
+
+## The C++ tile builder, when there is one. Null on a checkout with no compiled
+## library, which is hard rule 1: the game builds every tile in GDScript and the
+## world it gets is the same world, because both legs quantise.
+var _tiles: HeightTiles = null
+
+## Force the reference implementation, for the one probe that measures what the
+## QUANTUM does rather than what the crossing does.
+var force_gdscript_tiles := false
+
 ## Altitude, in blocks, of the top of each zone except the highest - so six
 ## values for seven zones. Resolved from the world's own altitude histogram at
 ## the end of build_heightmap(), and read-only from then on, which is what lets
@@ -227,21 +241,79 @@ func _make_noise(seed_offset: int, freq: float, octaves: int) -> FastNoiseLite:
 ## Note that Heightmap does not call back into here. It is a plain data
 ## structure that knows how to interpolate itself, and the generator fills it -
 ## the two referring to each other by type is a cycle GDScript cannot resolve.
+## BUILT IN TILES SINCE DISTANCE V5 STAGE 4, and the tiles are the world's
+## rather than this region's - see Heightmap's own note and decision 4. The
+## loop below walks exactly the cells the flat loop walked, in a different
+## order, and every cell is a pure function of its own position, so the
+## heightmap hash is identical across the change. That is Stage 4's own gate
+## and it is the reason the tiling could land before the crossing did.
+##
+## `tile_ms` is left behind for the status doc: the plan's rule for the tile
+## size is "under ~100 ms a tile", which needs the number.
 func build_heightmap() -> int:
 	var started := Time.get_ticks_msec()
 	heightmap = Heightmap.new(config)
+	tile_ms = PackedInt32Array()
+	var n := heightmap.tile_count()
 	var cols := heightmap.cols
-	for j in cols:
-		var bz := float(heightmap.cell_to_block(j))
-		var row := j * cols
-		for i in cols:
-			var bx := float(heightmap.cell_to_block(i))
-			heightmap.cells[row + i] = height_at_block(bx, bz)
+	# THE CROSSING, ONE OBJECT PER WORLD, ON THE MAIN THREAD. A failure to
+	# marshal is not an error: `_tiles` stays null and every tile is built in
+	# GDScript, which is the path this game shipped on and hard rule 1.
+	_tiles = null
+	if HeightTiles.available() and not force_gdscript_tiles:
+		var t := HeightTiles.new()
+		if t.setup(self, config):
+			_tiles = t
+		else:
+			push_warning("[Heightmap] the C++ tile builder would not take this world - building in GDScript")
+	heightmap_builder = "c++" if _tiles != null else "gdscript"
+	for tz in range(heightmap.tile_lo, heightmap.tile_hi + 1):
+		for tx in range(heightmap.tile_lo, heightmap.tile_hi + 1):
+			var t0 := Time.get_ticks_msec()
+			var r := heightmap.tile_cell_rect(tx, tz)
+			if r.size.x <= 0 or r.size.y <= 0:
+				continue
+			_build_tile(r)
+			tile_ms.append(Time.get_ticks_msec() - t0)
 	# The zones are percentiles of THIS world's altitudes, so they cannot be
 	# known until the altitudes are. Everything downstream - voxels, the far
 	# mesh, trees, the probe - reads them from here.
 	_resolve_zone_thresholds()
-	return Time.get_ticks_msec() - started
+	var total := Time.get_ticks_msec() - started
+	if not tile_ms.is_empty():
+		var sorted := tile_ms.duplicate()
+		sorted.sort()
+		print("[Heightmap] %d x %d tiles of %d blocks: median %d ms, worst %d ms, builder %s" % [
+			n, n, heightmap.tile_blocks, sorted[sorted.size() / 2],
+			sorted[sorted.size() - 1], heightmap_builder])
+	return total
+
+
+## One tile's cells. The whole of what a tile builder has to do, so the C++ one
+## replaces exactly this function and nothing around it.
+func _build_tile(r: Rect2i) -> void:
+	var cols := heightmap.cols
+	var bx0 := heightmap.cell_to_block(r.position.x)
+	var bz0 := heightmap.cell_to_block(r.position.y)
+	if _tiles != null:
+		var got := _tiles.build_tile(bx0, bz0, r.size.x, r.size.y, heightmap.step)
+		if got.size() == r.size.x * r.size.y:
+			for j in r.size.y:
+				var row := (r.position.y + j) * cols + r.position.x
+				var src := j * r.size.x
+				for i in r.size.x:
+					heightmap.cells[row + i] = got[src + i]
+			return
+		# A short tile is a marshalling bug rather than a slow path, and the
+		# answer to one is the reference implementation, loudly.
+		push_warning("[Heightmap] the C++ tile builder returned %d of %d cells - building this tile in GDScript"
+			% [got.size(), r.size.x * r.size.y])
+	for j in range(r.position.y, r.position.y + r.size.y):
+		var bz := float(heightmap.cell_to_block(j))
+		var row := j * cols
+		for i in range(r.position.x, r.position.x + r.size.x):
+			var bx := float(heightmap.cell_to_block(i))
+			heightmap.cells[row + i] = height_at_block(bx, bz)
 
 
 ## Turn the seven target shares of map area into six altitudes.
@@ -396,7 +468,42 @@ func height_at_block(bx: float, bz: float) -> float:
 	h = _flatten_valleys(h)
 	h = _terrace(h)
 	h = _benches_and_plateaus(h, wx, wz)
-	return clampf(h, config.min_altitude, config.max_altitude)
+	# QUANTISED TO 1/1024 OF A BLOCK, AS THE LAST STEP. Distance v5 Stage 4,
+	# decision 3, and it is hard rule zero rather than tidiness.
+	#
+	# Terrain is never sent over the network - both machines regenerate it from
+	# a seed - so if two builds of this project round one expression differently
+	# the two players walk different worlds and NEITHER MACHINE REPORTS AN
+	# ERROR. Distance v4's Windows bring-up measured exactly that: gcc and MSVC
+	# one float ULP apart on the same expression (docs/status/distance-v4.md,
+	# the Windows addendum). It did not matter there because the far mesh is
+	# look-only. It matters here, because spawn and lakes are computed from this
+	# number.
+	#
+	# Half a quantum is 0.24 mm of world and a ULP at these altitudes is about
+	# 0.00005 mm, so two compilers cannot round to different multiples of it.
+	# And k/1024 is EXACTLY representable in float32 for every k a world can
+	# produce, so what lands in `cells` is this value with no second rounding to
+	# disagree about.
+	#
+	# The C++ tile builder does the same thing in the same place - one edit,
+	# same commit - see scripts/world/height_tiles.gd.
+	return quantise_height(clampf(h, config.min_altitude, config.max_altitude))
+
+
+## Steps per block in the height map's quantisation. See height_at_block().
+##
+## A STATIC VAR RATHER THAN A CONST, and only so the Stage 4 ladder could be
+## measured - it is a determinism contract, not a knob, and nothing in the game
+## writes it. `scripts/tools/quantum_probe.gd` is the one caller.
+static var HEIGHT_QUANTUM := 1024.0
+
+
+## THE ONE PLACE A HEIGHT IS ROUNDED, so the two builders cannot drift.
+static func quantise_height(h: float) -> float:
+	if HEIGHT_QUANTUM <= 0.0:
+		return h
+	return round(h * HEIGHT_QUANTUM) / HEIGHT_QUANTUM
 
 
 ## Altitude window, as a fraction of the world's vertical range, in which each
@@ -547,6 +654,18 @@ func detail_at(bx: float, bz: float) -> float:
 
 
 ## Coarse cell index for a block position, or -1 outside the world.
+## THE RAW DETAIL FIELD, undamped, for the far mesh's own grain layer.
+## Distance v5 Stage 6.
+##
+## `detail_at()` is the voxel surface's roughness: the same noise, damped by
+## slope and faded out at a shore, and both of those are heightmap reads the far
+## mesh cannot afford per cell. This is the field underneath it, so the far
+## country's grain is the near country's grain and not a second invented
+## texture - see far_field_job.gd's own note.
+func detail_noise_at(bx: float, bz: float) -> float:
+	return _detail.get_noise_2d(bx, bz)
+
+
 func _cell_index(bx: float, bz: float) -> int:
 	if heightmap == null:
 		return -1

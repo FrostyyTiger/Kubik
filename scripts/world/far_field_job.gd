@@ -281,6 +281,35 @@ var config: WorldgenConfig = null
 ## Block position the disc is centred on.
 var center := Vector2i.ZERO
 
+## SLICED OUTPUT, distance v5 Stage 1, decision 1.
+##
+## THE UPLOAD IS THE FAR COUNTRY'S BINDING COST (STATUS items 11, 17 and 20):
+## `ChunkMesher.arrays_to_mesh` runs on the MAIN THREAD and costs 197 ms at
+## `far_ring_div` 4, every rebuild. It cannot be moved off the frame thread -
+## RenderingServer wants the main thread - so it is SPLIT instead, and the
+## thing it is split along is the frontier sector, which is the one partition
+## of the far disc this project already has a name and a function for.
+##
+## `slice` off is the mesh this file has emitted since terrain v1, in one set
+## of four arrays, byte for byte: the far probe, the parity harness and the
+## self-test all build that way and their numbers stay comparable across this
+## night. `slice` on fills `slices` instead - one set of four arrays per
+## sector, in sector order - and leaves `arrays` empty, because the runtime
+## path never wants the concatenation and assembling three million vertices to
+## throw them away is the cost this stage exists to remove.
+##
+## NOTHING NUMERIC MOVES. The walk is the same walk in the same order, every
+## expression is the same expression, and the only thing that changes is WHICH
+## four arrays a quad is appended to and what its index base is. That is what
+## lets decision 2's gate be exact rather than approximate: the concatenation
+## of the slices is the reference build's own quads, stably partitioned by
+## sector.
+var slice := false
+
+## One `[verts, normals, colors, indices]` per frontier sector, in sector
+## order. Empty unless `slice` is on.
+var slices: Array = []
+
 var arrays: Array = []
 var vertex_count := 0
 
@@ -475,6 +504,86 @@ var _t_step_y := 0.0
 ## construction. That is the subset property, exactly as written.
 var _t_level := 0.0
 
+# --- THE GEOMORPH, distance v5 Stage 3 ---------------------------------------
+#
+# STATUS ITEMS 9 AND 18, AND THE FIX THEY THEMSELVES WROTE DOWN. Distance v2
+# Stage 9 measured why a ring boundary is loud, and it is not the step ladder:
+#
+#     f23c3f0, smooth                                        21.57 blocks
+#     shipped: each ring quantises at its own step            80.00
+#     every ring at the SAME STEP, its own sample point       96.00 - worse
+#     every ring at the SAME SAMPLE POINT, its own step       16.00 - gone
+#
+# Two rings sample a cell's height at DIFFERENT WORLD POINTS - the fine ring at
+# the centre of its own cell, the coarse ring at the centre of the coarser cell
+# containing it, up to half a coarse cell apart. On a flank that is tens of
+# blocks of height before anything is quantised, and the player walking past the
+# boundary sees the ground jump by exactly that.
+#
+# So the fix has a smaller job than "blend two surfaces": blend the SAMPLE
+# POSITION. Over the last `far_geomorph_cells` cells before a ring's outer
+# boundary, the cell-height sample slides from this ring's cell centre to the
+# centre of the coarse ring's cell that contains it, and at the boundary the two
+# rings are reading the same point - which is the third row of that table, made
+# local instead of global. The third row was never shipped because sharing a
+# sample point EVERYWHERE means 16 m blocks at every range, which is the
+# opposite of the whole idea; sharing it only where two rings meet costs the
+# last two cells of each ring their independence and nothing else.
+#
+# WHAT IT DOES NOT TOUCH: the quantisation step, the ridge test, the corner
+# heights, the terrace fade, the seam band. One position, blended.
+
+## The ring's outer radius in blocks, and the width of the blend in blocks.
+## `_t_geo` is 0 when this ring has no coarser neighbour to hand over to - the
+## outermost ring, or a ring whose outer edge is the fog rather than a boundary.
+var _t_outer := 0.0
+var _t_geo := 0.0
+
+## The fog radius, in blocks. Read in _build_ring to decide whether a ring's
+## outer edge is a handover or the end of the world.
+var _far_radius := 0.0
+
+# --- THE DETAIL LAYER, distance v5 Stage 6 -----------------------------------
+#
+# WHAT THE PYRAMID CANNOT KNOW. The far mesh reads a filtered height map, so
+# everything finer than its level is gone by construction - that is what a mip
+# level IS. Distance v5 Stage 5 was meant to buy that information back by
+# doubling the height map's resolution and could not afford it (see the status
+# doc), so this is the other half of the same idea: put the GRAIN back
+# analytically where there is no data, and only where there is no data.
+#
+# THREE RULES, and each is a way this goes wrong without it:
+#
+#   1. WORLD SPACE. The sample position is the cell's own - the SAME position,
+#      geomorph and all, that the height was read at. So two rings meeting at a
+#      boundary read the same detail for the same reason they read the same
+#      height, and Stage 3's fix carries this layer across for free. A layer
+#      keyed to the ring, the step or the level would put the ring boundary
+#      back and undo the stage before it.
+#   2. FAR RINGS ONLY. Ring 0 is the seam band, where the far mesh is blending
+#      onto the actual voxel surface and there is nothing to invent - inventing
+#      there is a step exactly where distance v3 Stage 7 spent a stage removing
+#      one.
+#   3. LOOK ONLY. It is added to the CELL height the far mesh draws and to
+#      nothing else. The pyramid is not written, `heightmap.cells` is not
+#      touched, and spawn, lakes and the voxel surface read the same functions
+#      they read yesterday. Hard rule 8.
+#
+# THE NOISE IS THE VOXEL WORLD'S OWN. `TerrainGenerator._detail` is the field
+# the near ground's roughness comes from, and the far mesher already holds it
+# for the seam band. Using it here means the far country's grain is the grain
+# you walk on when you get there, rather than a second invented texture that
+# has to be kept in step with the first - and it costs no new marshalling and
+# no new parity risk, because it is an engine object sampled natively on both
+# sides of the seam.
+#
+# WHAT IT DOES NOT DO: it rides the CELL height, which is the terraced path, so
+# at `far_terrace` 0 there is no cell and this layer is absent. That is hard
+# rule 1 rather than an oversight - far_terrace 0 is the smooth mesh this
+# project shipped, and adding grain to it would make the way back not the way
+# back.
+var _t_detail := 0.0
+
 ## THE CELL CACHE, one entry per cell of the ring currently being built.
 ##
 ## A cell needs its own quantised height and its four neighbours', so the naive
@@ -529,6 +638,7 @@ func run() -> void:
 	# forest zone in BLOCKS; _band_color works in metres.
 	_band_treeline = treeline_band(generator, config)
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
+	_far_radius = far_radius
 	# DISTANCE V2 STAGE 0. Read once per job rather than per quad: it is a knob
 	# on a shared config that the main thread can write while this worker runs,
 	# and a value that changed half way through a build would terrace half a
@@ -589,6 +699,17 @@ func run() -> void:
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
 
+	# THE SINKS, one per sector - see `slice`. Allocated here rather than in
+	# _build_ring because a sector spans every ring, which is the whole point:
+	# a slice is a wedge of the whole disc, so uploading one lands a complete
+	# piece of far country from the seam to the fog rather than a complete
+	# inner ring and nothing beyond it.
+	slices = []
+	if slice:
+		for s in World.FRONTIER_SECTORS:
+			slices.append([PackedVector3Array(), PackedVector3Array(),
+				PackedColorArray(), PackedInt32Array()])
+
 	var inner := exclude
 	for ring in RING_STEP_MULTIPLE.size():
 		var step: int = base_step * RING_STEP_MULTIPLE[ring]
@@ -603,6 +724,34 @@ func run() -> void:
 			continue
 		_build_ring(ring, step, inner, outer, y_offset, verts, normals, colors, indices)
 		inner = outer
+
+	# THE SLICED PATH ENDS HERE. `arrays` stays empty and `vertex_count` is the
+	# sum over the sectors - the same number the whole-mesh path reports,
+	# because it is the same quads.
+	if slice:
+		vertex_count = 0
+		var out := []
+		for sink in slices:
+			vertex_count += sink[0].size()
+			# EACH SLICE AS MESH ARRAYS, the same shape the C++ mesher hands
+			# back and the shape `add_surface_from_arrays` takes. No copy: the
+			# four packed arrays are moved into the ARRAY_MAX-sized Array the
+			# renderer wants, and an empty sector emits an empty Array rather
+			# than a surface with nothing in it.
+			if sink[0].is_empty():
+				out.append([])
+				continue
+			var a := []
+			a.resize(Mesh.ARRAY_MAX)
+			a[Mesh.ARRAY_VERTEX] = sink[0]
+			a[Mesh.ARRAY_NORMAL] = sink[1]
+			a[Mesh.ARRAY_COLOR] = sink[2]
+			a[Mesh.ARRAY_INDEX] = sink[3]
+			out.append(a)
+		slices = out
+		arrays = []
+		elapsed_ms = Time.get_ticks_msec() - _t0
+		return
 
 	vertex_count = verts.size()
 	if verts.is_empty():
@@ -660,6 +809,16 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# entirely at far_terrace 0 - hard rule 1 is also a cost rule.
 	_t_step = step
 	_t_band = band
+	# THE GEOMORPH'S BAND FOR THIS RING - see the note by _t_geo. Only where
+	# there is a coarser ring on the other side of this boundary: the outermost
+	# ring hands over to nothing, and a ring whose outer edge is the fog rather
+	# than a ring boundary has nothing to agree with either.
+	_t_outer = outer
+	_t_geo = 0.0
+	if ring < RING_STEP_MULTIPLE.size() - 1 and outer < _far_radius:
+		_t_geo = clampf(config.far_geomorph_cells, 0.0, 8.0) * float(step)
+	# Rule 2: far rings only. `band` is non-zero on ring 0 and nowhere else.
+	_t_detail = config.far_detail if band <= 0.0 else 0.0
 	# Per ring, because the cell grid is per ring and a key from the last ring
 	# could collide with a cell of this one.
 	_vote_memo.clear()
@@ -692,6 +851,23 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
+
+			# WHICH SLICE THIS CELL'S QUADS GO IN. The cell's own sector, taken
+			# from its CENTRE by the same function _in_ring cuts the per-sector
+			# hole with - so a cell, its risers and its skirts land together and
+			# a slice is a wedge with no seams of its own inside it. One atan2
+			# per cell, and only when slicing.
+			var w_verts := verts
+			var w_normals := normals
+			var w_colors := colors
+			var w_indices := indices
+			if slice:
+				var sink: Array = slices[World.frontier_sector_of(
+					bx0 + step / 2 - center.x, bz0 + step / 2 - center.y)]
+				w_verts = sink[0]
+				w_normals = sink[1]
+				w_colors = sink[2]
+				w_indices = sink[3]
 
 			# THE TERRACE, Stage 2. One height for the whole cell, quantised to
 			# the ring's step, blended in from the true bilinear corners by
@@ -840,7 +1016,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			color = _band_color(color, mid_h * bs, band_m, band_tl)
 			var flank := _flank_normal(bx0 + step / 2, bz0 + step / 2)
 
-			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices, flank)
+			_push_quad(p0, p1, p2, p3, color, w_verts, w_normals, w_colors, w_indices, flank)
 
 			# One skirt per edge whose neighbour is not in this ring, and one
 			# RISER per edge whose neighbour is in this ring and lower. The four
@@ -889,7 +1065,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				var nbz: int = bz0 + e[3]
 				if not _in_ring(nbx, nbz, step, inner, outer):
 					_push_skirt(e[0], e[1], skirt_drop, shaded,
-						verts, normals, colors, indices)
+						w_verts, w_normals, w_colors, w_indices)
 					continue
 				if _t_amount <= 0.0:
 					continue
@@ -961,7 +1137,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				if da <= 0.0 and db <= 0.0:
 					continue
 				_push_riser(e[0], e[1], maxf(da, 0.0) * bs, maxf(db, 0.0) * bs,
-					riser, verts, normals, colors, indices)
+					riser, w_verts, w_normals, w_colors, w_indices)
 
 
 ## The zone of one far-field quad.
@@ -1351,10 +1527,37 @@ func _cell_h(i: int, j: int) -> float:
 	var half := _t_step / 2
 	var bx := float(_ring_cx + i * _t_step + half)
 	var bz := float(_ring_cz + j * _t_step + half)
+	# THE GEOMORPH. Over the last _t_geo blocks before this ring's outer
+	# boundary the sample slides onto the coarse ring's own lattice, so at the
+	# boundary both rings read the same point and the shelf stops moving. See
+	# the note by _t_geo.
+	if _t_geo > 0.0:
+		var gdx := bx - float(center.x)
+		var gdz := bz - float(center.y)
+		var w := clampf(
+			(sqrt(gdx * gdx + gdz * gdz) - (_t_outer - _t_geo)) / _t_geo, 0.0, 1.0)
+		if w > 0.0:
+			# The coarse ring's grid, derived exactly as _build_ring derives
+			# this one's: its step is twice ours, snapped to the same centre.
+			var coarse := _t_step * 2
+			var ccx := int(floor(float(center.x) / float(coarse))) * coarse
+			var ccz := int(floor(float(center.y) / float(coarse))) * coarse
+			var chalf := coarse / 2
+			var cbx := float(ccx
+				+ Chunk.floor_div(int(bx) - ccx, coarse) * coarse + chalf)
+			var cbz := float(ccz
+				+ Chunk.floor_div(int(bz) - ccz, coarse) * coarse + chalf)
+			bx = lerpf(bx, cbx, w)
+			bz = lerpf(bz, cbz, w)
 	v = heightmap.height_filtered(bx, bz, _t_level)
 	var gain: float = config.far_peak_gain
 	if gain > 0.0:
 		v = lerpf(v, heightmap.height_max_filtered(bx, bz, _t_level), gain)
+	# THE DETAIL LAYER - see the note by _t_detail. At the cell's own position,
+	# which is the geomorphed one, so the layer is boundary-stable for exactly
+	# the reason the height is.
+	if _t_detail > 0.0:
+		v += generator.detail_noise_at(bx, bz) * _t_detail
 	_t_h[at] = v
 	return v
 

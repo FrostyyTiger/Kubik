@@ -184,6 +184,15 @@ struct Mesher {
 	double t_amount = 0.0;
 	double t_step_y = 0.0;
 	double t_level = 0.0;
+	// THE GEOMORPH, distance v5 Stage 3. far_field_job.gd carries the argument
+	// and the measurement; this is the transcription. `t_geo` is 0 when the
+	// ring has no coarser neighbour to hand over to.
+	double t_outer = 0.0;
+	double t_geo = 0.0;
+	// THE DETAIL LAYER - far_field_job.gd carries the argument. Zero on ring 0
+	// and at far_detail 0.
+	double t_detail = 0.0;
+	double far_radius = 0.0;
 	int t_step = 0;
 	double t_band = 0.0;
 	bool t_full = false;
@@ -198,11 +207,18 @@ struct Mesher {
 	int band_treeline = 0;
 	std::unordered_map<int64_t, int> vote_memo;
 
-	// The output.
-	std::vector<Vector3> verts;
-	std::vector<Vector3> normals;
-	std::vector<Color> colors;
-	std::vector<int32_t> indices;
+	// The output. `sinks[0]` is the whole mesh when not slicing, and one
+	// sector each when slicing - see `slicing` and far_field_job.gd's `slice`.
+	struct Sink {
+		std::vector<Vector3> verts;
+		std::vector<Vector3> normals;
+		std::vector<Color> colors;
+		std::vector<int32_t> indices;
+	};
+	std::vector<Sink> sinks;
+	// Where push_quad writes. Set once per cell in build_ring.
+	Sink *out = nullptr;
+	bool slicing = false;
 
 	explicit Mesher(World &p_w) :
 			w(p_w), c(p_w.config), bs(p_w.config.block_size) {}
@@ -330,10 +346,36 @@ struct Mesher {
 		int64_t half = t_step / 2;
 		double bx = (double)(ring_cx + i * (int64_t)t_step + half);
 		double bz = (double)(ring_cz + j * (int64_t)t_step + half);
+		// THE GEOMORPH - see far_field_job.gd's own note.
+		if (t_geo > 0.0) {
+			double gdx = bx - (double)center_x;
+			double gdz = bz - (double)center_z;
+			double gw = Math::clamp(
+					(Math::sqrt(gdx * gdx + gdz * gdz) - (t_outer - t_geo)) / t_geo,
+					0.0, 1.0);
+			if (gw > 0.0) {
+				int64_t coarse = (int64_t)t_step * 2;
+				int64_t ccx = (int64_t)Math::floor((double)center_x / (double)coarse) * coarse;
+				int64_t ccz = (int64_t)Math::floor((double)center_z / (double)coarse) * coarse;
+				int64_t chalf = coarse / 2;
+				double cbx = (double)(ccx
+						+ floor_div((int64_t)bx - ccx, coarse) * coarse + chalf);
+				double cbz = (double)(ccz
+						+ floor_div((int64_t)bz - ccz, coarse) * coarse + chalf);
+				bx = Math::lerp(bx, cbx, gw);
+				bz = Math::lerp(bz, cbz, gw);
+			}
+		}
 		double v = w.height_filtered(bx, bz, t_level);
 		double gain = c.far_peak_gain;
 		if (gain > 0.0) {
 			v = Math::lerp(v, w.height_max_filtered(bx, bz, t_level), gain);
+		}
+		// THE DETAIL LAYER, at the cell's own (geomorphed) position - see
+		// far_field_job.gd. The same engine noise object the generator built,
+		// which is what makes it identical rather than merely similar.
+		if (t_detail > 0.0) {
+			v += (double)w.detail_noise->get_noise_2d(bx, bz) * t_detail;
 		}
 		t_h[at] = (float)v;
 		return v;
@@ -485,19 +527,20 @@ struct Mesher {
 		// ONCE PER QUAD, not once per vertex - the jitter is what varies
 		// across the four corners and the aspect shade is not.
 		Color shaded = aspect_shade(color, normal, c.slope_tint, c.aspect_tint);
-		int32_t first = (int32_t)verts.size();
+		Sink &o = *out;
+		int32_t first = (int32_t)o.verts.size();
 		const Vector3 quad[4] = { p0, p1, p2, p3 };
 		for (int k = 0; k < 4; k++) {
-			verts.push_back(quad[k]);
-			normals.push_back(normal);
-			colors.push_back(shade_vertex(shaded, quad[k]));
+			o.verts.push_back(quad[k]);
+			o.normals.push_back(normal);
+			o.colors.push_back(shade_vertex(shaded, quad[k]));
 		}
-		indices.push_back(first);
-		indices.push_back(first + 1);
-		indices.push_back(first + 2);
-		indices.push_back(first);
-		indices.push_back(first + 2);
-		indices.push_back(first + 3);
+		o.indices.push_back(first);
+		o.indices.push_back(first + 1);
+		o.indices.push_back(first + 2);
+		o.indices.push_back(first);
+		o.indices.push_back(first + 2);
+		o.indices.push_back(first + 3);
 	}
 
 	// The last three things that happen to a vertex colour: the aspect and
@@ -543,6 +586,12 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 
 	t_step = step;
 	t_band = band;
+	t_outer = outer;
+	t_geo = 0.0;
+	if (ring < RING_COUNT - 1 && outer < far_radius) {
+		t_geo = Math::clamp(c.far_geomorph_cells, 0.0, 8.0) * (double)step;
+	}
+	t_detail = band <= 0.0 ? c.far_detail : 0.0;
 	// Per ring, because the cell grid is per ring and a key from the last ring
 	// could collide with a cell of this one.
 	vote_memo.clear();
@@ -573,6 +622,15 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			}
 			int64_t bx1 = bx0 + step;
 			int64_t bz1 = bz0 + step;
+
+			// WHICH SLICE THIS CELL'S QUADS GO IN - far_field_job.gd's own
+			// note. The cell's sector, from its centre, by the same function
+			// in_ring cuts the per-sector hole with, so a cell, its risers and
+			// its skirts land together.
+			out = &sinks[slicing
+							? (size_t)frontier_sector_of(bx0 + step / 2 - center_x,
+									  bz0 + step / 2 - center_z)
+							: (size_t)0];
 
 			double h00, h10, h11, h01;
 			double r00 = 0.0, r10 = 0.0, r11 = 0.0, r01 = 0.0;
@@ -744,9 +802,15 @@ void Mesher::run(const Dictionary &args) {
 	int64_t overlap_cells = (int64_t)args.get("overlap_cells", 8);
 	PackedInt32Array frontier = args.get("frontier", PackedInt32Array());
 
+	slicing = (bool)args.get("slice", false);
+	sinks.clear();
+	sinks.resize(slicing ? (size_t)FRONTIER_SECTORS : (size_t)1);
+	out = &sinks[0];
+
 	bs = c.block_size;
 	int base_step = base_step_blocks(c);
-	double far_radius = c.fog_end_m / bs * FOG_MARGIN;
+	double far_radius_local = c.fog_end_m / bs * FOG_MARGIN;
+	far_radius = far_radius_local;
 	t_amount = Math::clamp(c.far_terrace, 0.0, 1.0);
 	t_step_y = Math::max(c.far_step_y_blocks, 0.0);
 	voting = c.far_vote > 0.0;
@@ -782,9 +846,9 @@ void Mesher::run(const Dictionary &args) {
 	double inner = exclude;
 	for (int ring = 0; ring < RING_COUNT; ring++) {
 		int step = base_step * RING_STEP_MULTIPLE[ring];
-		double outer = far_radius;
+		double outer = far_radius_local;
 		if (ring < 5) {
-			outer = Math::min(RING_OUTER_M[ring] / bs, far_radius);
+			outer = Math::min(RING_OUTER_M[ring] / bs, far_radius_local);
 		}
 		if (outer <= inner) {
 			inner = Math::max(inner, outer);
@@ -793,6 +857,43 @@ void Mesher::run(const Dictionary &args) {
 		build_ring(ring, step, inner, outer, y_offset);
 		inner = outer;
 	}
+}
+
+// One sink's four vectors as the mesh arrays Godot takes. Empty in, empty
+// Array out - a sector with no quads in it emits no surface at all.
+static Array sink_arrays(const Mesher::Sink &s) {
+	Array arrays;
+	if (s.verts.empty()) {
+		return arrays;
+	}
+	PackedVector3Array v;
+	PackedVector3Array n;
+	PackedColorArray col;
+	PackedInt32Array idx;
+	v.resize((int64_t)s.verts.size());
+	n.resize((int64_t)s.normals.size());
+	col.resize((int64_t)s.colors.size());
+	idx.resize((int64_t)s.indices.size());
+	{
+		Vector3 *vp = v.ptrw();
+		Vector3 *np = n.ptrw();
+		Color *cp = col.ptrw();
+		int32_t *ip = idx.ptrw();
+		for (size_t k = 0; k < s.verts.size(); k++) {
+			vp[k] = s.verts[k];
+			np[k] = s.normals[k];
+			cp[k] = s.colors[k];
+		}
+		for (size_t k = 0; k < s.indices.size(); k++) {
+			ip[k] = s.indices[k];
+		}
+	}
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = v;
+	arrays[Mesh::ARRAY_NORMAL] = n;
+	arrays[Mesh::ARRAY_COLOR] = col;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	return arrays;
 }
 
 Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
@@ -810,39 +911,25 @@ Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 	Mesher m(p_world);
 	m.run(p_args);
 
-	Array arrays;
-	if (!m.verts.empty()) {
-		PackedVector3Array v;
-		PackedVector3Array n;
-		PackedColorArray col;
-		PackedInt32Array idx;
-		v.resize((int64_t)m.verts.size());
-		n.resize((int64_t)m.normals.size());
-		col.resize((int64_t)m.colors.size());
-		idx.resize((int64_t)m.indices.size());
-		{
-			Vector3 *vp = v.ptrw();
-			Vector3 *np = n.ptrw();
-			Color *cp = col.ptrw();
-			int32_t *ip = idx.ptrw();
-			for (size_t k = 0; k < m.verts.size(); k++) {
-				vp[k] = m.verts[k];
-				np[k] = m.normals[k];
-				cp[k] = m.colors[k];
-			}
-			for (size_t k = 0; k < m.indices.size(); k++) {
-				ip[k] = m.indices[k];
-			}
-		}
-		arrays.resize(Mesh::ARRAY_MAX);
-		arrays[Mesh::ARRAY_VERTEX] = v;
-		arrays[Mesh::ARRAY_NORMAL] = n;
-		arrays[Mesh::ARRAY_COLOR] = col;
-		arrays[Mesh::ARRAY_INDEX] = idx;
+	int64_t total = 0;
+	for (const Mesher::Sink &s : m.sinks) {
+		total += (int64_t)s.verts.size();
 	}
 
-	out["arrays"] = arrays;
-	out["vertex_count"] = (int64_t)m.verts.size();
+	if (m.slicing) {
+		// ONE SET OF ARRAYS PER SECTOR, in sector order, and no concatenation:
+		// the runtime path never wants one and building it is the main-thread
+		// cost this stage exists to remove.
+		Array slices;
+		for (const Mesher::Sink &s : m.sinks) {
+			slices.push_back(sink_arrays(s));
+		}
+		out["slices"] = slices;
+	} else {
+		out["arrays"] = sink_arrays(m.sinks[0]);
+	}
+
+	out["vertex_count"] = total;
 	out["elapsed_ms"] = (int64_t)(Time::get_singleton()->get_ticks_msec() - t0);
 	return out;
 }

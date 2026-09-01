@@ -68,6 +68,13 @@ func _ready() -> void:
 		"far pyramid parity": _test_far_pyramid_parity,
 		"far zone parity": _test_far_zone_parity,
 		"far dispatch": _test_far_dispatch,
+		# DISTANCE V5 STAGE 1, appended at the end of the list.
+		"far slice parity": _test_far_slice_parity,
+		# DISTANCE V5 STAGES 3 AND 6, appended after it.
+		"far layer parity": _test_far_geomorph_parity,
+		# DISTANCE V5 STAGE 4, appended after it.
+		"height tile parity": _test_height_tile_parity,
+		"canonical world": _test_canonical_world,
 	}
 	var failures := 0
 	for name in tests:
@@ -1724,10 +1731,16 @@ func _test_far_terrace_knob():
 ## for a node in the scene tree. The Worlds these tests build are not, so
 ## without this the task completes on the worker and the mesh is never picked
 ## up - and the test would read the vertex count of the build before it.
+## DISTANCE V5 STAGE 1: AND UNTIL THE UPLOAD HAS LANDED. Since the handover is
+## budgeted, a build finishing is no longer the moment the mesh is on screen -
+## it is sixteen frames earlier - and a test that stopped at the old moment
+## would read the vertex count of the build before it, which is precisely the
+## bug this function was written for.
 func _pump_far_field(far_field: Node) -> void:
 	for i in 4000:
 		far_field._process(0.0)
-		if far_field._task == -1 and not far_field._has_pending:
+		if far_field._task == -1 and not far_field._has_pending \
+				and int(far_field.stats()["upload_pending"]) == 0:
 			return
 		OS.delay_msec(2)
 	print("  far field never went idle - a rebuild is stuck")
@@ -2382,11 +2395,33 @@ func _test_far_dispatch():
 ## The arrays of the mesh FarField is actually holding, read back off the
 ## Mesh rather than off the job - the job is gone by the time _process has
 ## applied it, and what is on screen is the thing being compared.
+## DISTANCE V5 STAGE 1: EVERY SURFACE, CONCATENATED. The far mesh is one
+## surface per frontier sector now, so surface 0 alone is a sixteenth of the
+## far country and comparing it would have quietly stopped checking the rest.
 func _far_mesh_arrays(far_field: Node) -> Array:
 	var m: Mesh = far_field.mesh
 	if m == null or m.get_surface_count() == 0:
 		return []
-	return m.surface_get_arrays(0)
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	for k in m.get_surface_count():
+		var a := m.surface_get_arrays(k)
+		var base := verts.size()
+		verts.append_array(a[Mesh.ARRAY_VERTEX])
+		normals.append_array(a[Mesh.ARRAY_NORMAL])
+		if a[Mesh.ARRAY_COLOR] != null:
+			colors.append_array(a[Mesh.ARRAY_COLOR])
+		for i in (a[Mesh.ARRAY_INDEX] as PackedInt32Array):
+			indices.append(i + base)
+	var out := []
+	out.resize(Mesh.ARRAY_MAX)
+	out[Mesh.ARRAY_VERTEX] = verts
+	out[Mesh.ARRAY_NORMAL] = normals
+	out[Mesh.ARRAY_COLOR] = colors
+	out[Mesh.ARRAY_INDEX] = indices
+	return out
 
 
 func _far_arrays_diff(a: Array, b: Array) -> float:
@@ -2403,3 +2438,582 @@ func _far_arrays_diff(a: Array, b: Array) -> float:
 		worst = maxf(worst, maxf(absf(p.x - q.x),
 			maxf(absf(p.y - q.y), absf(p.z - q.z))))
 	return worst
+
+
+# --- DISTANCE V5 -------------------------------------------------------------
+#
+# Appended at the end of the file, and nothing above it is touched.
+
+
+## THE SLICES ARE THE SAME MESH. Distance v5 Stage 1, decision 2.
+##
+## The upload is split along the frontier sector so it can be paid for a frame
+## at a time, and the whole risk of that is that the far country quietly stops
+## being the same far country. So: build the mesh both ways at the same centre
+## with the same config, and check that the slices between them hold EXACTLY
+## the reference build's quads - every one, once each, every position, normal
+## and colour bit-identical, and every slice's index buffer the quad pattern
+## over its own vertices.
+##
+## WHY IT IS A MULTISET MATCH AND NOT A DIFF OF TWO ARRAYS, which is what the
+## plan's decision 2 asks for in as many words.
+##
+## Grouping the quads by sector REORDERS them - that is what grouping is - so
+## the reference has to be put in the same order before a byte-for-byte diff
+## means anything, and putting it in that order means knowing which sector each
+## reference quad went to. That is recoverable for a ground quad, whose four
+## corners span its cell, and it is NOT recoverable for a RISER: a riser's four
+## corners span a cell EDGE, and the two cells either side of that edge can be
+## in different sectors. Written the naive way this test failed at
+## far_terrace 1.0 with a max position difference of exactly 100 blocks - both
+## meshers agreeing with each other and neither with the harness.
+##
+## So the comparison is: index the reference's quads by a hash of their twelve
+## position components, then consume one for every quad the slices emit,
+## checking the whole record - positions, normals and colours - on the way. A
+## quad the slices emit that the reference does not have, or emits twice, or
+## leaves behind, is a failure. That is exactly the claim decision 2 is
+## protecting ("the slicing must not change the union"), stated in the only
+## form the output can carry, and it is exact rather than a tolerance.
+##
+## Both meshers, because a slice mode that is right in C++ and wrong in
+## GDScript is a fallback that draws a different world.
+func _test_far_slice_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	var have_cpp := FarMesher.available() and mesher.setup(heightmap, generator, wcfg)
+
+	# The same partial frontier the parity test uses: three sectors short, the
+	# rest at the full radius. A slice test with an empty frontier would never
+	# exercise the per-sector hole, which is the one thing that can make two
+	# sectors legitimately different sizes.
+	var partial := PackedInt32Array()
+	partial.resize(16)
+	for k in 16:
+		partial[k] = wcfg.voxel_radius_chunks
+	partial[0] = 1
+	partial[1] = 1
+	partial[7] = 2
+
+	var cases := [
+		{"name": "terrace 0.0", "terrace": 0.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "terrace 1.0", "terrace": 1.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "ring_div 4", "terrace": 1.0, "div": 4.0,
+			"frontier": PackedInt32Array()},
+		{"name": "frontier", "terrace": 1.0, "div": 2.0, "frontier": partial},
+	]
+	var centre := Vector2i(0, 0)
+	var checks := 0
+	for c in cases:
+		wcfg.far_terrace = c["terrace"]
+		wcfg.far_ring_div = c["div"]
+		FarField.apply_overdraw(wcfg)
+
+		# The reference: the whole mesh, exactly as this project has emitted it
+		# since terrain v1.
+		var ref := FarFieldJob.new()
+		ref.heightmap = heightmap
+		ref.generator = generator
+		ref.config = wcfg
+		ref.center = centre
+		ref.frontier = c["frontier"]
+		ref.run()
+		var want := _slice_index(ref.arrays)
+
+		var sliced := FarFieldJob.new()
+		sliced.heightmap = heightmap
+		sliced.generator = generator
+		sliced.config = wcfg
+		sliced.center = centre
+		sliced.frontier = c["frontier"]
+		sliced.slice = true
+		sliced.run()
+		checks += 1
+		var d := _slice_match(ref.arrays, want, sliced.slices)
+		print("  %-12s gdscript %6d verts in %2d slices, %s" % [
+			c["name"], sliced.vertex_count, sliced.slices.size(), d["text"]])
+		if not d["ok"] or sliced.vertex_count != ref.vertex_count:
+			bad += 1
+
+		if not have_cpp:
+			continue
+		if not mesher.build(wcfg, centre, c["frontier"], true):
+			print("  %s: the c++ mesher refused to build sliced" % c["name"])
+			bad += 1
+			continue
+		var dc := _slice_match(ref.arrays, want, mesher.slices)
+		print("  %-12s c++      %6d verts in %2d slices, %s" % [
+			c["name"], mesher.vertex_count, mesher.slices.size(), dc["text"]])
+		if not dc["ok"] or mesher.vertex_count != ref.vertex_count:
+			bad += 1
+
+	print("far slice parity: %d checks, c++ %s" % [
+		checks, "compared" if have_cpp else "ABSENT (gdscript only)"])
+	world.free()
+	return bad
+
+
+## The reference build's quads, indexed by a hash of their twelve position
+## components. One entry per distinct footprint, holding every quad that has
+## it - the two windings of a two-sided riser share a footprint, and so do a
+## riser and the skirt over it.
+func _slice_index(arrays: Array) -> Dictionary:
+	var out := {}
+	if arrays.is_empty():
+		return out
+	var va: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	for q in va.size() / 4:
+		var key := _slice_key(va, q)
+		# READ, APPEND, WRITE BACK - and the write back is the point.
+		# `(out[key] as PackedInt32Array).append(q)` appends to a COPY: a
+		# packed array read out of a Dictionary through a cast is a value, not
+		# the container's own. Written that way this index silently kept only
+		# the FIRST quad of every repeated footprint - a two-sided riser and
+		# the skirt over it share one - and the test reported sixteen unmatched
+		# quads and sixteen left over, symmetric and repeatable, with both
+		# meshers agreeing and every component difference at zero.
+		var list: PackedInt32Array = out.get(key, PackedInt32Array())
+		list.append(q)
+		out[key] = list
+	return out
+
+
+func _slice_key(va: PackedVector3Array, q: int) -> int:
+	var f := PackedFloat32Array()
+	f.resize(12)
+	for k in 4:
+		var p := va[q * 4 + k]
+		f[k * 3] = p.x
+		f[k * 3 + 1] = p.y
+		f[k * 3 + 2] = p.z
+	return hash(f)
+
+
+## Every quad the slices emit, matched against the reference exactly once.
+func _slice_match(arrays: Array, index: Dictionary, slices: Array) -> Dictionary:
+	if arrays.is_empty():
+		var empty := true
+		for a in slices:
+			if not (a as Array).is_empty():
+				empty = false
+		return {"ok": empty, "text": "the reference emitted nothing"}
+	var va: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var na: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var ca: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	# One tick per reference quad. A quad matched twice is as much a failure as
+	# one never matched, and without this a slicer that emitted the same sector
+	# sixteen times would pass on count alone.
+	#
+	# FILLED, NOT MERELY RESIZED. `PackedByteArray.resize()` does not zero the
+	# new bytes, and the first run of this test reported sixteen unmatched
+	# quads and sixteen left over - a perfectly symmetric, perfectly repeatable
+	# failure that both meshers agreed on - because sixteen reference quads
+	# started out already ticked. The mesh was right the whole time.
+	var used := PackedByteArray()
+	used.resize(va.size() / 4)
+	used.fill(0)
+
+	var seen := 0
+	var unmatched := 0
+	var bad_indices := 0
+	for a in slices:
+		var arr: Array = a
+		if arr.is_empty():
+			continue
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var n: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var c: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+		var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		if idx.size() != v.size() / 4 * 6:
+			bad_indices += 1
+		for q in v.size() / 4:
+			seen += 1
+			if idx.size() == v.size() / 4 * 6 \
+					and (idx[q * 6] != q * 4 or idx[q * 6 + 1] != q * 4 + 1
+						or idx[q * 6 + 2] != q * 4 + 2 or idx[q * 6 + 3] != q * 4
+						or idx[q * 6 + 4] != q * 4 + 2 or idx[q * 6 + 5] != q * 4 + 3):
+				bad_indices += 1
+			var key := _slice_key(v, q)
+			if not index.has(key):
+				unmatched += 1
+				continue
+			var found := false
+			var candidates: PackedInt32Array = index[key]
+			for r in candidates:
+				if used[r] != 0:
+					continue
+				if not _slice_quad_equal(va, na, ca, r, v, n, c, q):
+					continue
+				used[r] = 1
+				found = true
+				break
+			if not found:
+				unmatched += 1
+				if unmatched <= 3:
+					_slice_report_miss(va, na, ca, index, key, v, n, c, q)
+
+	var left := 0
+	for u in used:
+		if u == 0:
+			left += 1
+	var ok := unmatched == 0 and left == 0 and bad_indices == 0 \
+		and seen == va.size() / 4
+	return {"ok": ok,
+		"text": "%d quads, %d unmatched, %d reference quads left over, %d bad index buffers%s" % [
+			seen, unmatched, left, bad_indices, "" if ok else "  FAILED"]}
+
+
+## WHAT A MISS ACTUALLY LOOKS LIKE. A count of unmatched quads says the
+## slicing changed something and never what, and "what" is the only thing a
+## failing gate is for. Prints the slice quad and the reference quad with the
+## same footprint beside it, field by field.
+func _slice_report_miss(va: PackedVector3Array, na: PackedVector3Array,
+		ca: PackedColorArray, index: Dictionary, key: int,
+		v: PackedVector3Array, n: PackedVector3Array, c: PackedColorArray,
+		q: int) -> void:
+	if not index.has(key):
+		print("    miss: p0 %v - no reference quad has this footprint at all" % [
+			v[q * 4]])
+		return
+	var candidates: PackedInt32Array = index[key]
+	for r in candidates:
+		var dp := 0.0
+		var dn := 0.0
+		var dc := 0.0
+		for k in 4:
+			dp = maxf(dp, (va[r * 4 + k] - v[q * 4 + k]).length())
+			dn = maxf(dn, (na[r * 4 + k] - n[q * 4 + k]).length())
+			var e := ca[r * 4 + k]
+			var f := c[q * 4 + k]
+			dc = maxf(dc, maxf(absf(e.r - f.r), maxf(absf(e.g - f.g),
+				absf(e.b - f.b))))
+		print("    miss: p0 %v vs ref %d: pos %.9f normal %.9f colour %.9f" % [
+			v[q * 4], r, dp, dn, dc])
+
+
+## One quad, component for component. Exact: both sides are float32 in packed
+## arrays and both came out of the same expression, so anything but equality is
+## the slicing having changed a number.
+func _slice_quad_equal(va: PackedVector3Array, na: PackedVector3Array,
+		ca: PackedColorArray, r: int, v: PackedVector3Array,
+		n: PackedVector3Array, c: PackedColorArray, q: int) -> bool:
+	for k in 4:
+		if va[r * 4 + k] != v[q * 4 + k]:
+			return false
+		if na[r * 4 + k] != n[q * 4 + k]:
+			return false
+		if ca[r * 4 + k] != c[q * 4 + k]:
+			return false
+	return true
+
+
+## THE GEOMORPH, ON A WORLD BIG ENOUGH TO HAVE A RING BOUNDARY IN IT. Distance
+## v5 Stage 3.
+##
+## THIS TEST EXISTS BECAUSE THE OTHER TWO CANNOT SEE THE THING IT TESTS, and
+## that was found by writing it rather than by reasoning about it. `far parity`
+## and `far slice parity` build a 400-block world at `fog_end_m` 90, where the
+## far radius is 216 blocks and ring 0's nominal outer edge is 300 - so ring 0
+## is clamped to the fog, it is the only ring drawn, there is no boundary, and
+## `_t_geo` is zero in every case. Both gates came back exact on the night the
+## geomorph landed and **neither had executed one line of it**. That is STATUS
+## item 13's lesson at a different address: a gate that is structurally blind
+## to a mechanism passes it forever.
+##
+## So: a world with a ring boundary inside the fog, and three questions.
+##
+##   1. The two meshers agree, exactly, WITH the geomorph on. Decision 2 - a
+##      mesh-output change lands in both meshers in the same commit or in
+##      neither, and this is what says it did.
+##   2. The slices are still the reference build's own quads, with it on.
+##   3. **It actually does something.** `far_geomorph_cells` 0 against 2 must
+##      produce a DIFFERENT mesh, or the two gates above are measuring a knob
+##      that is not wired to anything - which is exactly how distance v2's
+##      far_terrace test passed while the knob reached nothing.
+func _test_far_geomorph_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	# BIG ENOUGH TO HAVE A BOUNDARY IN IT, and no bigger. far_radius is
+	# fog_end_m / block_size * FOG_MARGIN = 480 blocks, so ring 0's outer edge
+	# at 300 blocks is a real handover to ring 1 and gets the geomorph, while
+	# ring 1's own outer edge is the fog and does not. The world is wide enough
+	# that the whole of ring 0's band is in bounds.
+	cfg.world_blocks_xz = 1400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 200.0
+	cfg.far_terrace = 1.0
+	cfg.far_ring_div = 2.0
+
+	var world := World.new()
+	world.setup(4242, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+	FarField.apply_overdraw(wcfg)
+	var centre := Vector2i(0, 0)
+
+	var mesher := FarMesher.new()
+	var have_cpp := FarMesher.available() and mesher.setup(heightmap, generator, wcfg)
+
+	var meshes := {}
+	# THE THREE COMBINATIONS THAT MATTER: neither layer, the geomorph alone,
+	# and both. Distance v5 Stage 6 added its layer to this test rather than to
+	# a second world, because a second world is another thirty seconds on every
+	# self-test run for a question this one can already answer.
+	for case in [["off", 0.0, 0.0], ["geo", 4.0, 0.0], ["both", 4.0, 1.0]]:
+		var cells: float = case[1]
+		wcfg.far_geomorph_cells = cells
+		wcfg.far_detail = case[2]
+		var job := FarFieldJob.new()
+		job.heightmap = heightmap
+		job.generator = generator
+		job.config = wcfg
+		job.center = centre
+		job.run()
+		meshes[case[0]] = job.arrays
+		print("  %-5s far_geomorph_cells %.0f, far_detail %.0f: %d verts" % [
+			case[0], cells, case[2], job.vertex_count])
+		if not have_cpp:
+			continue
+		if not mesher.build(wcfg, centre, PackedInt32Array()):
+			print("  the c++ mesher refused to build at far_geomorph_cells %.0f" % cells)
+			bad += 1
+			continue
+		var d := _far_parity_diff(job, mesher, FarMesher.colors_ready())
+		print("    gd %6d / cpp %6d, %s" % [
+			job.vertex_count, mesher.vertex_count, d["text"]])
+		if not d["ok"]:
+			bad += 1
+		# And the slices, with the geomorph on, on a world that has a boundary.
+		if not mesher.build(wcfg, centre, PackedInt32Array(), true):
+			print("  the c++ mesher refused to build sliced")
+			bad += 1
+			continue
+		var m := _slice_match(job.arrays, _slice_index(job.arrays), mesher.slices)
+		print("    slices: %s" % m["text"])
+		if not m["ok"]:
+			bad += 1
+
+	# 3. THE KNOB IS WIRED TO SOMETHING.
+	#
+	# THE COMPARISON IS OF SETS, NOT OF INDEX k AGAINST INDEX k. Turning the
+	# geomorph on changes the height of the cells near a boundary, which changes
+	# which of them are higher than their neighbours, which changes how many
+	# risers are emitted - so the two builds do not have the same vertex count
+	# and walking them in step compares quads that are not the same quad. The
+	# first version of this line reported a "worst" of 342 m, which is the
+	# distance between two unrelated pieces of ground.
+	#
+	# What it asserts is the honest thing: the mesh MOVED. A count and a
+	# footprint, both of which change only if the knob reaches code.
+	var verdicts := PackedStringArray()
+	for pair in [["off", "geo", "the geomorph"],
+			["geo", "both", "the detail layer"]]:
+		var off: Array = meshes[pair[0]]
+		var on: Array = meshes[pair[1]]
+		if off.is_empty() or on.is_empty():
+			print("  one of the two builds emitted nothing at all")
+			bad += 1
+			continue
+		var same_verts: bool = (off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() \
+			== (on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		var same_quads: Dictionary = _slice_match(off, _slice_index(off), [on])
+		var moved: bool = not bool(same_quads["ok"])
+		if same_verts and not moved:
+			print("  %s changed NOTHING - the knob reaches no code" % pair[2])
+			bad += 1
+		verdicts.append("%s %s" % [pair[2],
+			"CHANGES the mesh" if (not same_verts or moved) else "changes NOTHING"])
+	print("far layer parity: %s, c++ %s" % [
+		String(", ").join(verdicts), "compared" if have_cpp else "ABSENT"])
+	world.free()
+	return bad
+
+
+## THE HEIGHT MAP'S TWO BUILDERS AGREE, EXACTLY. Distance v5 Stage 4,
+## decision 3.
+##
+## This is the far mesher's parity gate at a higher stake. The far mesh is
+## look-only, so distance v4 could reason that a disagreement draws a slightly
+## different mountain. The height map is world truth: `world.gd` finds lakes and
+## spawn in it and every voxel column reads it, and terrain is never sent over
+## the network - both machines regenerate it from a seed. A disagreement here is
+## two players in different worlds and no error on either machine.
+##
+## So the gate is EQUAL, not close, and the reason it can be is decision 3's
+## quantisation: both builders round to 1/1024 of a block as their last step, so
+## a one-ULP difference in the expression above it cannot survive into the
+## answer. The test compares the quantised heights (which is what the world
+## uses) at ten thousand positions, including a quarter off the map on each
+## axis, because a clamp is exactly the kind of edge a transcription gets
+## subtly wrong.
+func _test_height_tile_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 800
+	cfg.view_distance = -1
+	var generator := TerrainGenerator.new(31337, cfg)
+	if not HeightTiles.available():
+		print("height tile parity: c++ tile builder absent, 0 checks")
+		return 0
+	var tiles := HeightTiles.new()
+	if not tiles.setup(generator, cfg):
+		print("  the c++ tile builder refused this world")
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 909
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var worst := 0.0
+	var differing := 0
+	var samples := 10000
+	for k in samples:
+		# A quarter of the samples land off the map on each axis.
+		var bx := rng.randf_range(-half * 1.5, half * 1.5)
+		var bz := rng.randf_range(-half * 1.5, half * 1.5)
+		var a := generator.height_at_block(bx, bz)
+		var b := tiles.height_at_block(bx, bz)
+		if a != b:
+			differing += 1
+		worst = maxf(worst, absf(a - b))
+	if differing > 0:
+		bad += 1
+
+	# AND A WHOLE TILE, through the array path rather than the scalar one -
+	# because the two are different code and the marshalling is where a tile
+	# comes back short, transposed or one row late.
+	var step := cfg.coarse_step
+	var cols := 64
+	var bx0 := -128
+	var bz0 := 64
+	var got := tiles.build_tile(bx0, bz0, cols, cols, step)
+	var tile_bad := 0
+	if got.size() != cols * cols:
+		print("  the tile came back %d cells, not %d" % [got.size(), cols * cols])
+		bad += 1
+	else:
+		for j in cols:
+			for i in cols:
+				var want := generator.height_at_block(
+					float(bx0 + i * step), float(bz0 + j * step))
+				if got[i + j * cols] != float(want):
+					tile_bad += 1
+		if tile_bad > 0:
+			bad += 1
+
+	print("height tile parity: %d samples, %d differing (worst %.17f); one %dx%d tile, %d cells differing" % [
+		samples, differing, worst, cols, cols, tile_bad])
+	return bad
+
+
+## THE CANONICAL WORLD, AND ITS FINGERPRINT. Distance v5 Stage 4.
+##
+## HARD RULE ZERO, AUTOMATED: same seed, same config, same world - and from
+## tonight that has to hold across a gcc build and an MSVC one, because the
+## height map now crosses to C++ and the height map is what spawn and lakes are
+## computed from.
+##
+## THIS TEST IS THE CROSS-BOX INSTRUMENT AND IT IS MEANT TO BE READ, not only
+## to pass. It prints the three numbers that describe the world, so running the
+## self-test on a second machine and comparing one line is the whole procedure.
+## The morning's job on gemini is exactly that - see docs/status/distance-v5.md.
+##
+## The expected values below are ganymede's, at the commit that wrote them. When
+## a stage deliberately changes the world - distance v5 Stage 5 changes the
+## resolution, and Marcel accepted that in advance - these move WITH the change,
+## in the same commit, and the status doc records the old and the new.
+const CANONICAL_SEED := 42
+
+## The QUANTISED map's fingerprint - distance v5 Stage 4. `main`'s was
+## `76cccdb6` and that is what this build produces with the quantisation turned
+## off, which is how the tiling was proved to change nothing; rounding every
+## height to 1/1024 of a block necessarily changes the stored bits and
+## therefore this number, and changes NOTHING ELSE about the world, which is
+## the point of the two lines under it.
+const CANONICAL_HEIGHTMAP := "4782edac"
+const CANONICAL_SPAWN := Vector2i(-44, -124)
+const CANONICAL_LAKES := 53
+
+
+## THE CANONICAL CONFIG, BUILT RATHER THAN LOADED. `load_or_default()` reads
+## `user://worldgen.tres`, so on a machine that has one this test would compare
+## two different worlds and call it a determinism failure. The two calls after
+## `new()` are exactly what `load_or_default()` does to a fresh config, and the
+## second of them is not optional: `apply_world_scale()` derives the continent
+## and mountain amplitudes and frequencies from `world_scale`, so a config
+## without it builds a world with a different SHAPE. Written down because the
+## first version of this test omitted it and reported the world had moved.
+static func canonical_config() -> WorldgenConfig:
+	var cfg := WorldgenConfig.new()
+	cfg.apply_view_preset()
+	cfg.apply_world_scale()
+	return cfg
+
+
+func _test_canonical_world():
+	var bad := 0
+	# BOTH LEGS, EVERY RUN. The expected values are one half of this test; the
+	# other half is that a checkout with no compiled library builds the SAME
+	# world - which is hard rule 1 and hard rule zero at once, and is the thing
+	# quantisation exists to buy.
+	var got := {}
+	for leg in ["c++", "gdscript"]:
+		var cfg := canonical_config()
+		var generator := TerrainGenerator.new(CANONICAL_SEED, cfg)
+		generator.force_gdscript_tiles = leg == "gdscript"
+		var ms := generator.build_heightmap()
+		var hm: Heightmap = generator.heightmap
+		var lakes := Lakes.new()
+		lakes.compute(hm, cfg)
+		generator.lakes = lakes
+		var spawn := generator.find_spawn()
+		got[leg] = {
+			"hash": hm.hash_key(), "spawn": spawn, "lakes": lakes.lake_count(),
+			"builder": generator.heightmap_builder, "ms": ms,
+		}
+		print("canonical world: seed %d, heightmap %s, spawn (%d, %d), %d lakes, %s builder, %d ms" % [
+			CANONICAL_SEED, got[leg]["hash"], spawn.x, spawn.y,
+			got[leg]["lakes"], got[leg]["builder"], ms])
+
+	# THE LINE THE MORNING COMPARES ACROSS TWO MACHINES is the one above. These
+	# three are what makes a mismatch legible rather than merely red.
+	var a: Dictionary = got["c++"]
+	if a["hash"] != CANONICAL_HEIGHTMAP:
+		print("  heightmap hash %s, expected %s - THE WORLD MOVED" % [
+			a["hash"], CANONICAL_HEIGHTMAP])
+		bad += 1
+	if a["spawn"] != CANONICAL_SPAWN:
+		print("  spawn (%d, %d), expected (%d, %d)" % [
+			a["spawn"].x, a["spawn"].y, CANONICAL_SPAWN.x, CANONICAL_SPAWN.y])
+		bad += 1
+	if a["lakes"] != CANONICAL_LAKES:
+		print("  %d lakes, expected %d" % [a["lakes"], CANONICAL_LAKES])
+		bad += 1
+
+	# AND THE TWO BUILDERS AGREE ON ALL THREE. Skipped, loudly, when there is
+	# no library to compare against - the two legs are then the same leg.
+	var b: Dictionary = got["gdscript"]
+	if a["builder"] == b["builder"]:
+		print("  (no compiled tile builder - both legs are gdscript)")
+	elif a["hash"] != b["hash"] or a["spawn"] != b["spawn"] \
+			or a["lakes"] != b["lakes"]:
+		print("  THE TWO BUILDERS DISAGREE: %s/%s, spawn %s/%s, lakes %d/%d" % [
+			a["hash"], b["hash"], a["spawn"], b["spawn"], a["lakes"], b["lakes"]])
+		bad += 1
+	return bad
+

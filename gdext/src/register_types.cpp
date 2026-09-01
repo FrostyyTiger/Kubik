@@ -5,6 +5,7 @@
 #include <godot_cpp/godot.hpp>
 
 #include "far_mesher.h"
+#include "height_tiles.h"
 
 using namespace godot;
 
@@ -13,6 +14,9 @@ void initialize_kubik_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 	GDREGISTER_CLASS(KubikFarMesher);
+	// DISTANCE V5 STAGE 4. The height map's tile builder - world truth, hence
+	// its own class rather than more methods on the look-only far mesher.
+	GDREGISTER_CLASS(KubikHeightTiles);
 }
 
 void uninitialize_kubik_module(ModuleInitializationLevel p_level) {

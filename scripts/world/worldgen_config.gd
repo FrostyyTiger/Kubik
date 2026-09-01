@@ -1240,6 +1240,141 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## HOW MUCH ANALYTIC GRAIN THE FAR MESH ADDS WHERE THE PYRAMID HAS NO DATA,
+## in blocks. Distance v5 Stage 6, decision 6. 0 is tonight-minus-this.
+##
+## The far mesh reads a FILTERED height map, so everything finer than its level
+## is gone by construction. Stage 5 was meant to buy that information back with
+## four times the real data and could not afford it; this puts the grain back
+## analytically, in the far rings only, sampled in WORLD space at the cell's own
+## position - so Stage 3's geomorph carries it across a ring boundary for free
+## and the two fixes cannot undo each other.
+##
+## 1.0 BLOCK, and the vertical step is why. `far_step_y_blocks` quantises every
+## cell to the block lattice, so a layer smaller than half a block is rounded
+## away entirely and one of about a block moves a shelf by one block - which is
+## the only grain a block-lattice far country can express, and exactly the
+## register the distance epics have been aiming at since v2.
+##
+## THE NOISE IS THE VOXEL WORLD'S OWN - `TerrainGenerator._detail`, the field
+## the ground you walk on is roughened with. So the far country's grain is the
+## grain you arrive at rather than a second texture somebody has to keep in
+## step with the first.
+##
+## LOOK, NOT SHAPE: it is added to the cell height the far mesh DRAWS and to
+## nothing else - not the pyramid, not `cells`, not the voxel surface, not
+## spawn, not lakes. LOCAL and unhashed, on FAR_ONLY_PROPERTIES.
+##
+## It rides the cell-height path, which is the terraced one, so at
+## `far_terrace` 0 it is absent - hard rule 1: that mesh is the way back and
+## has to stay the mesh this project shipped.
+@export var far_detail := 1.0
+
+## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
+##
+## The world is unbounded by design, so the height map is built in tiles
+## anchored to the ORIGIN rather than as one array sized to a region - see
+## Heightmap's own note for what that does and does not yet change.
+##
+## 512 IS A MEASUREMENT. The plan's rule is "the size that keeps a tile build
+## under ~100 ms". On ganymede, at `coarse_step` 4, the GDScript builder costs
+## about 7.2 us a cell, so a 512-block tile is 128 x 128 cells and about 118 ms
+## - and the C++ builder does the same tile in single-digit milliseconds.
+## Doubling the resolution (Stage 5) quadruples the GDScript number and leaves
+## the C++ one comfortable, which is the shape of the whole night: the fallback
+## sets the ceiling and the crossing is what makes the ceiling irrelevant.
+##
+## Rounded DOWN to a multiple of `coarse_step`, because a tile that ended
+## mid-cell would put one cell in two tiles.
+##
+## SHAPE, BUT NOT A SHAPE KNOB. The tiling is an ordering of the same
+## arithmetic and the heightmap hash is identical across it - which is Stage
+## 4's own gate. LOCAL and unhashed on that evidence.
+@export var heightmap_tile_blocks := 512.0
+
+## HOW MANY CELLS BEFORE A RING BOUNDARY THE CELL-HEIGHT SAMPLE SLIDES ONTO
+## THE COARSE RING'S LATTICE. Distance v5 Stage 3. 0 turns the geomorph off and
+## restores the ring boundaries STATUS items 9 and 18 describe.
+##
+## Ring boundaries are loud because two rings sample a cell's height at
+## DIFFERENT WORLD POINTS - the fine ring at its own cell centre, the coarse
+## one at the centre of the coarser cell containing it. Distance v2 Stage 9
+## measured the three candidate fixes and only one worked: share the sample
+## POINT, keep the step. Sharing it everywhere means 16 m blocks at every
+## range; sharing it over the last two cells of each ring costs those cells
+## their independence and nothing else.
+##
+## 4.0, AND IT IS A MEASUREMENT RATHER THAN THE PLAN'S GUESS. Distance v2
+## Stage 9 recommended "the last cell or two"; the far probe's ring-boundary
+## table on ganymede, seed 42, `far_ring_div` 4, says wider is better and
+## nothing it can see gets worse:
+##
+##     cells       150 m  300 m  600 m  1200 m  2400 m   ALL rms   roughness
+##     0 (off)      4.00  10.00  44.00   88.00  147.00     1.513     13.1954
+##     2            4.00  10.00  44.00   73.00   73.00     1.278     13.2349
+##     4            3.00   7.00  32.00   47.00   40.00     0.981     13.2539
+##     6            3.00   7.00  26.00   36.00   26.00     0.829     13.2457
+##
+## The reason wider helps is what a geomorph IS: it does not remove the height
+## difference between two rings, it spreads it over a band, and fizz is the
+## change a 32-block step of the player produces. Twice the band is half the
+## change per step.
+##
+## SO WHY NOT 6, OR THE WHOLE RING. Because the far probe cannot see the thing
+## that eventually goes wrong. A cell inside the band is drawn on the COARSE
+## ring's lattice, so a band as wide as the ring means the fine ring is not
+## fine any more - which is distance v2 Stage 9's third experiment, the one it
+## measured at "16.00, gone" and deliberately did not ship, because the far
+## country would be 16 m blocks at every range. Roughness has not moved at 6,
+## so the limit is further out than that; 4 is where the measured gain is
+## already 3.7x on the worst boundary and there is still obvious headroom in
+## the knob. Turning it up is one number on F4.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob, and on
+## FAR_ONLY_PROPERTIES so it is judgeable standing still.
+@export var far_geomorph_cells := 4.0
+
+## HOW FAR THE PLAYER MUST MOVE HORIZONTALLY BEFORE THE IMPOSTOR RING IS
+## REBUILT, in metres. Distance v5 Stage 2. 0 falls back to
+## FarTrees.REBUILD_STEP_M.
+##
+## The default is 24.0, which is that constant's own value since distance v1
+## Stage 7 and the number every measurement in this project was taken at - the
+## knob exists so the lever is in the panel, not to move the number.
+##
+## HORIZONTAL is the word that matters and it is the whole of STATUS item 21.
+## The ring is a function of the player's x and z alone, so a step measured in
+## three dimensions let ALTITUDE ask for a rebuild that produces the identical
+## ring - and a falling player asks every 24 m of fall, forever. See
+## FarTrees.update().
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob.
+@export var far_tree_step_m := 24.0
+
+## HOW MUCH OF A FRAME THE FAR SYSTEMS MAY SPEND HANDING MESHES TO THE
+## RENDERER, in milliseconds. Distance v5 Stage 1, decision 1.
+##
+## `ArrayMesh.add_surface_from_arrays` and `MultiMesh.buffer` are
+## RenderingServer calls and want the main thread, so the far country's
+## handover cannot be moved off the frame the player is looking at - it can
+## only be SPLIT. The far mesher emits one set of arrays per frontier sector
+## and FarUpload hands them over a few at a time.
+##
+## WHAT THE NUMBER MEANS. It is a line the pump stops AT, not one it never
+## crosses: a slice is atomic, so a frame that starts a sector 0.1 ms before
+## the budget runs out still pays for the whole sector. At `far_ring_div` 4 one
+## sector of sixteen is about 12 ms, so 4.0 buys "one sector a frame, sixteen
+## frames a rebuild" - a quarter of a second of handover, none of which is a
+## quarter-second frame.
+##
+## 0 RESTORES DISTANCE V4: everything queued goes up on the frame it arrives,
+## which is one `add_surface_from_arrays` per sector back to back, and is the
+## A/B for judging whether the budget bought anything.
+##
+## LOOK, NOT SHAPE - it changes WHEN a mesh reaches the screen and never what
+## is in it. LOCAL and unhashed, like every far knob.
+@export var far_upload_budget_ms := 4.0
+
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
 ##
@@ -1566,6 +1701,17 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# World.setup()'s clone drops it and the panel's value never reaches the
 	# world. Same failure the flora and AO knobs are guarded against above.
 	"far_cpp",
+	# DISTANCE V5 STAGE 1. LOCAL and unhashed for the same reason far_cpp is:
+	# it changes when a mesh reaches the screen and never what is in it.
+	"far_upload_budget_ms",
+	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
+	"far_tree_step_m",
+	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.
+	"far_geomorph_cells",
+	# DISTANCE V5 STAGE 4. The height map's tile edge.
+	"heightmap_tile_blocks",
+	# DISTANCE V5 STAGE 6. The far mesh's analytic grain.
+	"far_detail",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

@@ -232,6 +232,18 @@ func _go() -> void:
 		get_tree().quit(0)
 		return
 
+	# DISTANCE V5 STAGE 0, appended after it. The two cheap instruments this
+	# night's gates are read on - see _upload_table() and _idle_table().
+	if "--upload" in OS.get_cmdline_user_args():
+		await _upload_table()
+		get_tree().quit(0)
+		return
+
+	if "--idle" in OS.get_cmdline_user_args():
+		await _idle_table()
+		get_tree().quit(0)
+		return
+
 	var t0 := Time.get_ticks_msec()
 	var first: PackedStringArray = await _measure()
 	var mid := Time.get_ticks_msec()
@@ -1149,3 +1161,165 @@ func _bench_median(values: PackedFloat32Array) -> Array:
 	var sorted := values.duplicate()
 	sorted.sort()
 	return [sorted[sorted.size() / 2], sorted[0], sorted[sorted.size() - 1]]
+
+
+# --- DISTANCE V5 STAGE 0 - the two instruments this night's gates need --------
+#
+# Appended at the end of the file; nothing above it is touched.
+#
+# `--bench` already measures the upload and the rebuild, and it is expensive to
+# run - it takes the GDScript mesher through every vantage, which is 27 minutes
+# of table at div 4. Both modes below are the cheap C++-only halves of numbers
+# distance v5 has to take at Stage 0 and again at every stage that claims to
+# have moved one.
+
+
+## HOW LONG AN UPLOAD BLOCKS THE FRAME, C++ ONLY. `--far-probe --upload`.
+##
+## STATUS items 11 and 17, and this night's first subject: the mesh crosses to
+## the renderer on the MAIN THREAD, at 224 ms a rebuild at far_ring_div 4, and
+## distance v4 promoted that from a footnote to the far country's binding cost.
+##
+## Measured at both divisors, because the whole point of the number is how it
+## scales with the vertex count. Reported per divisor with the vertex count
+## beside it, so a later reading against a budgeted uploader is comparing like
+## with like: the SAME arrays, the same box, the same target.
+func _upload_table() -> void:
+	var mesher := FarMesher.new()
+	if not FarMesher.available() or not mesher.setup(_heightmap, _generator, _config):
+		print("[FarUpload] no c++ mesher - build gdext and re-run")
+		get_tree().quit(1)
+		return
+	print("[FarUpload] box ganymede, editor target, headless, seed %d, main thread" % [
+		_world.world_seed])
+	var div_was: float = _config.far_ring_div
+	var centre: Vector2i = _vantages()[0]["centre"]
+	for div in BENCH_DIVS:
+		_config.far_ring_div = div
+		FarField.apply_overdraw(_config)
+		mesher.build(_config, centre, PackedInt32Array())
+		var ms := PackedFloat32Array()
+		for k in BENCH_REPEATS:
+			await get_tree().process_frame
+			var t := Time.get_ticks_usec()
+			var m := ChunkMesher.arrays_to_mesh(mesher.arrays)
+			ms.append(float(Time.get_ticks_usec() - t) / 1000.0)
+			m = null
+		var u := _bench_median(ms)
+		print("[FarUpload] div %.0f  whole  arrays_to_mesh median %7.2f ms (%.2f-%.2f) at %d vertices" % [
+			div, u[0], u[1], u[2], mesher.vertex_count])
+
+		# DISTANCE V5 STAGE 1: THE SAME MESH, A SECTOR AT A TIME. The total is
+		# the same work - it has to be, it is the same quads - and the number
+		# the frame budget is about is the WORST SLICE, because a slice is
+		# atomic and is therefore the largest single thing a frame can be made
+		# to pay for.
+		mesher.build(_config, centre, PackedInt32Array(), true)
+		var totals := PackedFloat32Array()
+		var worsts := PackedFloat32Array()
+		var surfaces := 0
+		for k in BENCH_REPEATS:
+			await get_tree().process_frame
+			var m := ArrayMesh.new()
+			var total := 0.0
+			var worst := 0.0
+			surfaces = 0
+			for arrays in mesher.slices:
+				if (arrays as Array).is_empty():
+					continue
+				var t := Time.get_ticks_usec()
+				m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var one := float(Time.get_ticks_usec() - t) / 1000.0
+				total += one
+				worst = maxf(worst, one)
+				surfaces += 1
+			totals.append(total)
+			worsts.append(worst)
+			m = null
+		var ts := _bench_median(totals)
+		var ws := _bench_median(worsts)
+		print("[FarUpload] div %.0f  sliced total  median %7.2f ms (%.2f-%.2f) over %d surfaces, WORST SLICE median %6.2f ms (%.2f-%.2f)" % [
+			div, ts[0], ts[1], ts[2], surfaces, ws[0], ws[1], ws[2]])
+	_config.far_ring_div = div_was
+	FarField.apply_overdraw(_config)
+
+
+## HOW OFTEN THE FAR SYSTEMS REBUILD WHILE THE PLAYER STANDS STILL.
+## `--far-probe --idle [--idle-seconds N]`, default 60.
+##
+## Distance v4 Stage 8 found the impostor ring rebuilding 70-120 times over a
+## single stationary tour vantage (STATUS item 21) and could only find it
+## because a tour log happened to be open. Nothing in the project MEASURED it,
+## so distance v5 Stage 2's gate - "standing 60 s, 0 rebuilds" - had no
+## instrument to be read on. This is that instrument.
+##
+## It does nothing at all: the player is wherever the world put them, the probe
+## sleeps for N seconds of real frames and counts what the two far systems did
+## in the meantime. Anything above zero is work nobody asked for, and the frame
+## histogram beside it says what that work costs.
+##
+## FarTrees is Game's child rather than World's, so it is reached through the
+## parent by name - the same way debug_hud and screenshot_tour reach it, and
+## for the same reason: `scripts/game/game.gd` is another lane's file.
+const IDLE_SECONDS := 60.0
+
+
+func _idle_table() -> void:
+	var far_field: Node = _world.get_node_or_null("FarField")
+	var far_trees: Node = null
+	if _world.get_parent() != null:
+		far_trees = _world.get_parent().get_node_or_null("FarTrees")
+	var seconds := IDLE_SECONDS
+	var argv := OS.get_cmdline_user_args()
+	var at := argv.find("--idle-seconds")
+	if at >= 0 and at + 1 < argv.size():
+		seconds = maxf(float(argv[at + 1]), 1.0)
+
+	var field_before := 0
+	if far_field != null and far_field.has_method("stats"):
+		field_before = int(far_field.stats()["rebuilds"])
+	var trees_before := _idle_tree_count(far_trees)
+
+	print("[FarIdle] standing still for %.0f s at %s, far_ring_div %.0f, mesher %s" % [
+		seconds, str(_world.get_parent().get_node("Player").global_position
+			if _world.get_parent() != null
+				and _world.get_parent().has_node("Player") else Vector3.ZERO),
+		_config.far_ring_div,
+		"c++" if _config.far_cpp > 0.5 else "gdscript"])
+
+	var frames := 0
+	var over_33 := 0
+	var worst := 0.0
+	var t0 := Time.get_ticks_msec()
+	while float(Time.get_ticks_msec() - t0) / 1000.0 < seconds:
+		var f0 := Time.get_ticks_usec()
+		await get_tree().process_frame
+		var ms := float(Time.get_ticks_usec() - f0) / 1000.0
+		frames += 1
+		worst = maxf(worst, ms)
+		if ms > 33.0:
+			over_33 += 1
+
+	var field_after := field_before
+	if far_field != null and far_field.has_method("stats"):
+		field_after = int(far_field.stats()["rebuilds"])
+	print("[FarIdle] %d frames in %.0f s: far field %d rebuilds, impostor ring %d rebuilds" % [
+		frames, seconds, field_after - field_before,
+		_idle_tree_count(far_trees) - trees_before])
+	print("[FarIdle] worst frame %.1f ms, frames over 33 ms %d" % [worst, over_33])
+
+
+## How many rings FarTrees has built. It reports impostors and milliseconds and
+## not a count of rebuilds, so the count is taken off the signal - connected
+## here rather than added to that file, which the trees lane owns.
+var _idle_tree_rebuilds := 0
+var _idle_tree_hooked := false
+
+
+func _idle_tree_count(far_trees: Node) -> int:
+	if far_trees != null and not _idle_tree_hooked \
+			and far_trees.has_signal("rebuilt"):
+		far_trees.rebuilt.connect(func(_c: int, _ms: int) -> void:
+			_idle_tree_rebuilds += 1)
+		_idle_tree_hooked = true
+	return _idle_tree_rebuilds

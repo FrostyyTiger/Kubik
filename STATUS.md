@@ -1,365 +1,76 @@
 # Status
 
-The latest run is **distance v4**, one night, unattended on ganymede, on
-`feat/distance-v4` and merged to `main`: `docs/status/distance-v4.md`.
-**The far mesher crosses to C++, and it is the same mesh.**
+The latest run is **distance v5**, one night, unattended on ganymede, on
+`feat/distance-v5`: `docs/status/distance-v5.md`.
+**The far country gets real data, and stops costing frames.**
 
-Distance v2 made the far country block-SHAPED and v3 made it block-SURFACED
-and visible to the rim. Neither could be afforded: on the block-lattice ruling
-the far mesh cost **6.4 s a rebuild at `far_ring_div` 2 and 24.7 s at 4**,
-which was the whole game's worst number. It is now **158 ms and 661 ms** - a
-measured **37-43x**, interleaved ABAB on this box - so `far_ring_div` **now
-defaults to 4** and the 1 m far cell stops being a screenshot mode.
+Distance v4 made the far mesh 40x cheaper to build and turned its detail up 4x,
+and that surfaced three things. All three are closed.
 
-**The number to read first is not the speedup.** The C++ mesher and the
-GDScript one emit **byte-identical arrays** - same vertex count, zero max
-component difference on positions, normals and colours, zero index differences
-- across five configurations including a non-empty frontier and the vote and
-jitter paths the shipped config never takes; they produce **72 identical
-far-probe geometry rows** over 98 meshes; and every far-band tour shot diffs to
-**zero pixels**. The port is a transcription, not a rewrite.
+**The sprint's worst frame goes 244.4 ms to 39.6 ms and the count of frames
+over 33 ms goes 60 to 4** - interleaved ABAB, three runs each, on the same
+commit, `far_upload_budget_ms` 0 against 4. The far country's handover to the
+renderer is the same 196 ms of work it always was; it is now paid a sector at a
+time. Both meshers emit one set of arrays per frontier sector, `FarUpload` hands
+them over on a budget, and the finished mesh goes on screen in one assignment -
+so a rebuild in progress shows the OLD COMPLETE far country and never a mixed
+one. In the shipped configuration - `far_ring_div` 4, C++ - a 480 m sprint out
+and back now has **zero frames over 33 ms**, against forty before.
 
-**The GDScript mesher is the reference and the fallback, and it did not
-change.** `far_field_job.gd` is not in the diff at all. With no compiled
-library the game runs, plays, streams without a hole and passes the whole
-self-test; `far_cpp` on F4 forces that path in a running game for the A/B.
+**The loudest ring boundary goes 147.00 blocks of fizz to 39.00, and the far
+country got no smoother doing it** (roughness 13.1954 -> 13.2757). STATUS items
+9 and 18 are closed with the fix item 9 itself wrote down: two rings sample a
+cell's height at different world points, so over the last cells before a
+boundary the SAMPLE POSITION slides onto the coarse ring's lattice and both
+rings read the same point. `far_geomorph_cells`, default 4 - which is a
+measurement rather than the plan's guess, and there is more in the knob.
 
-Five things worth reading:
+**The height map crosses to C++ and both builders make the same world.**
+16,713 ms to 4,753 ms for the canonical map, built in tiles anchored to the
+origin. This one is not look-only - spawn and lakes are computed from it and
+terrain is never sent over the network - so both legs round every height to
+**1/1024 of a block** as their last step, and the self-test's `canonical world`
+gate asserts on every run that a library-less checkout produces the same
+heightmap hash, the same spawn and the same 53 lakes. That line is the
+cross-box procedure: run it on a second machine and compare it.
 
-- **The port made the CHUNK streamer faster without being asked.** The
-  collidable ground reaches **40 m -> 56 m** ahead at a sprint's worst and
-  chunks/s go **79.2 -> 99.8**. The far mesher had been monopolising a worker
-  pool that runs one GDScript task at a time; it stopped.
-- **Long frames went 4 -> 118, and it is arithmetic.** 15 far rebuilds became
-  **297**, and every completed rebuild pays `arrays_to_mesh` on the main
-  thread. GDScript did not have this problem because at 11.3 s a rebuild it
-  barely ever finished one. The far country now keeps up, and keeping up costs
-  an upload.
-- **The upload is the new binding cost: 224 ms at div 4, on the main thread,
-  3,266,076 vertices.** Items 11 and 17 are no longer a footnote. `far_ring_div`
-  2 puts it back; the real fix is an upload off the frame thread.
-- **Stage 8's gate was red and the fault was the instrument.** The far band
-  measured 12.59 between meshers - and two tours of the SAME code measured
-  0.0000 on that shot. `screenshot_tour.gd` waited for chunks and never for the
-  far field, so an eight-frame settle photographed a settled far mesh against
-  one built two vantages ago. The tour now waits; `6-postcard` went to zero.
-- **Decision 4's ladder landed on rung (a), plus a rung the plan did not
-  name.** Every zone and colour rule is a pure function and was ported. The two
-  that are not - `zone_jitter_at` and `detail_at` - are `FastNoiseLite`
-  samples, and the mesher holds the very same **engine** object the generator
-  built and calls it natively: no GDScript frame entered, no grid precomputed,
-  and bit-identical by construction.
+**The impostor ring stopped following the player down.** STATUS item 21's
+70-120 rebuilds at a stationary vantage is 615 over an 18-vantage tour, and it
+was the hysteresis being a 3D distance while the ring is a function of x and z
+alone - so altitude could ask for a rebuild whose output was the mesh already on
+screen, and a falling player asks every 24 m of fall. **615 -> 18, one per
+vantage, with every impostor count at every shutter identical.**
 
-**Nothing about the world moved.** Worldgen probe identical to the previous
-`main` line for line, heightmap `76cccdb6`, config `3d45b8fc`, spawn
-`(-44, -124)`, 53 lakes, 28,383 trees. `far_field_job.gd`, `world.gd`,
-`chunk_mesher.gd`, `terrain_generator.gd`, `lakes.gd`, `look.gd` and `block.gd`
-do not appear in the diff; `game.gd` needed nothing.
+**And one thing was measured and NOT taken.** Decision 5's resolution flip -
+2 m cells to 1 m - genuinely sharpens the far country (roughness 13.2539 ->
+14.3523) and costs a startup gate, 17.5 s of lake finding and a collapse of the
+sprint's collidable front min from 56 m to 8 m. `coarse_step` stays at 4 and
+the world does not change. The next rung of the C++ ladder is `Lakes.compute`,
+`_resolve_zone_thresholds` and `column_surface_range` - not the chunk mesher.
 
-The run before it is **distance v3**, one night, on `feat/distance-v3`:
-`docs/status/distance-v3.md`, below.
+**The world changed once, on purpose, and only its fingerprint.** Seed 42 is
+`4782edac` where it was `76cccdb6`; spawn is still (-44, -124) and there are
+still 53 lakes. The change is the quantisation and nothing else: a rounding
+that changes no stored bits is a rounding that does nothing.
 
----
+Earlier runs, newest first:
 
-# Previous: distance v3
-
-**The far country stops being mush, and the whole region is visible.**
-
-Distance v2 made the far country block-SHAPED. This one makes it
-block-SURFACED and makes all of it visible: a mode vote so a far cell is one
-real material rather than one sample of a smoothed surface, a world-space block
-lattice painted in the shader that GROWS with distance instead of fading out,
-an axis term so a far cube has four tones, two more LOD rings taking the reach
-from 960 m to 3,840 m, an exponential-squared fog measured cylindrically over
-the configured reach, the far mesh drawn under the whole voxel disc and sunk
-below it, and per-tree colour in the impostor forest.
-
-**The one pair to look at is `build/tour/s5-rim-end800/17-rim.png` against
-`build/tour/final/17-rim.png`** - the same standpoint, the reach before and
-after. Over that frame's own band the first measures **fleck 0.0502 with a p95
-of exactly 0.00**, which is what a fog wall is when you write it down: past
-about 600 m no two neighbouring pixels differ by anything. The second is the
-whole region in blocks out to the rim, at **5.0454**.
-
-Five things worth reading even if you read nothing else:
-
-- **Holes went 25 to 0 and it took a correction to the plan.** Stage 4's reach
-  took the far-mesh rebuild to 6.3 s of wall during a sprint, which puts the
-  disc that reaches the screen 82 m behind the player and sticks its hole out
-  behind the voxel disc: 25 holes in one run, against hard rule 2. The plan
-  asked for DH's 0.85 overdraw, which is LESS overlap than what already
-  shipped. The arithmetic asks for the far mesh to cover the whole voxel disc,
-  sunk `detail_amp` below it - **0 holes in all six runs since**, for +0.7% of
-  vertices.
-- **A mode vote is a median filter, and this far field was never averaging.**
-  Stage 1 is very nearly a null result and it is the useful kind: `backdrop_zone`
-  has painted one real zone's surface block at full saturation since distance
-  v1, so the mush is a LOW-PASS rather than a blend, and a vote has nothing to
-  rescue. The fleck the epic is named for comes from Stage 2's lattice instead
-  - `6-postcard` 3.98 to 4.62 and the textured share 27.6% to 38.5%.
-- **`look.gd` was opened and the near field is byte-identical anyway.**
-  `OPAQUE_SHADER` is not edited at all: the far field's source is built from it
-  at runtime by splicing two blocks at two asserted anchors, so the string the
-  chunks compile is character for character the one `main` compiles.
-  `swatches.png` and `swatch-ramp.png` came back identical after every
-  shader-touching stage.
-- **The harness could not see the reach, and Stage 5 found out by failing.**
-  Moving the fog's start from 1,280 m to 480 m changed ZERO pixels of the
-  postcard's far band; so did quadrupling the band count. 99.3% of that frame
-  is within 640 m, and every one of the tour's sixteen vantages is either
-  enclosed by its own valley or a hundred metres from its subject. `17-rim` -
-  on the summit, looking out - is appended to the tour and is the epic's
-  acceptance frame.
-- **The crawl finally has an instrument, and TAA takes 69% of it off.** 60
-  frames walking forward, no settle between them, diffed pairwise: MSAA 4x
-  shimmers 3.6483 on the far band and TAA 1.1159, for 2.4% of local contrast on
-  the daylight stills. **Nothing was adopted** - Stage 9 changes no defaults and
-  the game still ships MSAA 4x.
-
-**The one thing that got worse, and it is not in the acceptance table: the far
-mesh's vertex upload is on the main thread and is now 23% bigger.** ABAB, three
-runs each, the reach on and off: holes **0** on all six, streaming throughput
-unmoved (76.0 against 75.6 chunks/s out), and **two frames of 283-291 ms** at
-the new reach against one of 247 ms at the old. About thirty uploads of 322,988
-vertices happen over a 480 m sprint. It is distance v2's carried item 11 grown,
-it is item 17 below, and the lever is not a constant.
-
-**Nothing about the world moved at any stage** - config `3d45b8fc`, heightmap
-`76cccdb6`, spawn `(-44, -124)`, 580 impostors. `world.gd`, `chunk_mesher.gd`
-and `scripts/character/` do not appear in the diff at all, and `game.gd` needed
-nothing.
-
-**Seven new knobs, all on F4, all live standing still without F7**, and two of
-them are Marcel's to rule on before anything else: **`far_fog_start_frac`
-ships at the plan's 0.4 and the recommendation is 0.15-0.20** (at 0.4 the air
-begins at 1,280 m, which is further than most of what a player looks at, and
-the postcard's dead-black share doubled), and **`fog_bands` is now a
-resolution rather than a style** - four bands tuned against a 480 m span cover
-1,920 m, so the first band boundary moved from 400 m to 1,558 m. Neither was
-changed; both are one number.
-
-The run before it is **UI v1**, one night, on `feat/ui-v1`:
-`docs/status/ui-v1.md` - the game's first real UI, below. **The two epics
-share no file that either of them wrote.** UI v1's diff touches nothing
-under `scripts/world/` but two appends to `world.gd`'s journal, and
-distance v3's touches `world.gd` not at all; the merge conflicted in one
-paragraph of this file and in nothing else, and `debug_hud.gd` took an
-append from each and merged itself.
-
----
-
-# Previous: UI v1
-
-`docs/status/ui-v1.md`.
-**The screen stays clean so the world reads huge** - the game's first real UI,
-built to the design in `docs/plans/ui-v1.md` and the procedure in
-`docs/plans/ui-v1-tech.md`.
-
-The load-bearing idea is the **fade**: one furniture cluster at the bottom
-centre, one thin compass strip at the top, four empty corners - and when all
-four safety conditions hold at once (stats full, nothing changed a stat
-recently, daylight, low danger) it eases to **literally zero**. Cozy does not
-look like a warm-coloured HUD; it looks like a clean screen with a huge world
-behind it, and danger looks like instruments appearing. `safe-noon.png` is the
-acceptance test and it passes on a count: **zero HUD ink in any sampled bar
-region**.
-
-What else is in it: `canvas_items` stretch, so every Control finally scales;
-the host-authoritative stats table (hp/sp/mp) riding the existing 20 Hz packet
-as three more row keys; a five-slot hotbar with a stand-in slab tool that
-proves select-and-use end to end through the one mutation path; the compass
-strip, which declares **north is -Z** for the first time anywhere in this
-repo; party icons carrying the peer hue; the character sheet with its six
-armour sockets and five read-only skills; and **the floating `Label3D` nametag
-is gone**.
-
-Five things worth reading even if you read nothing else:
-
-- **Block edits are journalled now.** They were `CLAUDE.md`'s own first example
-  of habit 2 and were the one event still not being recorded. Two appends to
-  `world.gd` - `+25 lines, -0`, not one existing line touched.
-- **The shot harness found the bug the numbers could not.** The HUD cluster was
-  placed with `Control.position`, which is measured from the parent rect's
-  origin and not from the anchor, so it sat at `(-110, -57)` - off screen while
-  every fade number read correctly and the layer reported visible at full
-  opacity. It was built first for exactly this reason.
-- **The plan's 2x stretch gate was not measurable and is replaced.** The
-  capture reads the logical canvas *before* the stretch transform scales it, so
-  there is no 2x row to sample. What ran instead measures the thing that
-  matters: the logical canvas at 1280x720, 1280x1000 and 1900x720, never below
-  the design size in either dimension, with the title band tracking the type.
-- **Hard rule 10 is an assertion, not a paragraph.** The driver sends Escape
-  with the character sheet open and checks that the sheet closed *and* that we
-  are still in the game scene. One missed consume is the difference between
-  closing your inventory and being dropped out of your friend's world.
-- **Nineteen values were chosen by eye from screenshots on a box with no
-  monitor.** Every one is on the new **F9** panel and listed in the status doc
-  with its starting value. Five taste calls are left explicitly open for
-  Marcel, and `dusk-poster.png` is framed and left for him to disagree with.
-
-**Nothing about the world moved.** Heightmap `76cccdb6` and spawn `(-44, -124)`
-at every one of the eight stages; no file under `scripts/world/` was written
-except the two journal appends above, and `worldgen_config.gd` was never
-opened.
-
----
-
-# Previous: trees v1
-
-`docs/status/trees-v1.md`. **No two alike, and the ziggurat arrives** - all
-seven tree species re-authored against `docs/research/art-direction.md` §2.5
-"Forest", which look v2 wrote and parked. Marcel's ask was "no variation,
-they're all symmetrical, a bit boring - let's sort of nail this so we won't
-have to think about it for a while", and Stage 0's instruments found it was
-worse than the complaint: **TWINS 1.00 on spruce and beech**, meaning two trees
-hashed from two different cells were the SAME TREE down to the pixel, from
-every azimuth.
-
-Now: the §2.5 spire, whose tiers are whorl ARMS of unequal length around a
-solid core, each yawed a golden-angle step from the one below; the larch as a
-**ziggurat**, four to six shelves with real air between them, so its sky shows
-through the GAPS and not through the crown volume; the beech as a lobed oblate
-scallop, bitten from outside, that has stopped being a solid of revolution; a
-birch that bows rather than tilts and never closes its foliage over its own
-pale bark; a wind-flagged krummholz cushion, and every one in a world combs the
-same way off a wind direction hashed once from the seed; three snags; and a
-hero that is no longer its parent scaled. Then a second colour: **authored
-slivers under the whorls**, where a shelf stands proud of the one below.
-
-**Nothing about where a tree stands moved, at any stage** - heightmap
-`76cccdb6`, 28,383 trees, the species mix to the decimal, spawn `(-44, -124)`.
-`tree_placement.gd` was never opened and neither were the `far_*` files.
-
-Five things worth reading even if you read nothing else:
-
-- **TWINS is 0.72 or better on all seven species and no species pair is over
-  0.56.** SYMMETRY is met on five of seven; the spruce misses at 0.86 against a
-  0.80 target and was **priced deliberately** - §2.5 says a conifer is a dark
-  cut-out with a jagged edge and a SOLID body, and a solid body is a
-  symmetrical one.
-- **The sparse species are 24-65% CHEAPER in quads than they began**, and the
-  whole gallery sheet fell 21,582 quads to 15,608 with the second colour on.
-  Per-block holes are the worst input greedy meshing can be handed; the
-  openness moved into the shape, where the mesher charges nothing for it.
-- **There is not one floating block left in the forest.**
-  `scripts/tools/loose_check.gd` is a committed tool now and reports 0 on all
-  seven species over 1,673 specimens each. It found 3,002 on spruce, 18,548 on
-  larch, 9,813 on birch and 1,076 on krummholz on the way there. The mechanism
-  is a flood from the tree's own axis - build the set, flood it, write only
-  what the flood reached.
-- **An authored dark colour does not land where it was authored.** The sliver's
-  first hex was `#2A2F3E` (H225 S32) and it photographed at H270 S6 - a neutral
-  black band. This world's noon sun lands on the channels at ~(0.72, 0.54,
-  0.38), so blue arrives at 53% of red. `#1F2A46` is that transform run
-  backwards, and the finding is in `block.gd` beside the entry because the next
-  authored dark colour will hit it too.
-- **Streaming did not move**: ABAB, three runs each against pre-epic
-  `93b32bd`, on ganymede, both medians inside the other side's range on both
-  legs, holes 0 in all six runs. The only frame over 33 ms was on the pre-epic
-  side.
-
-**The one failed gate is canopy closure, and it is item 2 below with new
-numbers.** Old growth **0.694 -> 0.648**, grove **0.523 -> 0.481**, between
-groves 0.373 -> 0.354. The plan's self-fail clause says closure must not get
-WORSE where the design said fuller, and it did. It ships anyway: §2.5's spire
-proportion - max width one third of height - narrowed old-growth spruce crowns
-by about 30% of disc area, §2.5 is the taste authority, and the visual
-acceptance frames improved from the same change (the forest interior reads as
-trees rather than columns; `15-under-canopy` shows a closed roof).
-**The reconciliation is stem DENSITY, not fatter trees** - more trunks at the
-same proportion closes a canopy without contradicting §2.5 - and density is
-placement, which this epic's rules forbade it to touch. It is exactly the open
-`TODO(marcel)` at `WorldgenConfig.grove_floor` (with `old_growth_keep` as its
-other half), which now has a second measurement feeding it. **Marcel decides.**
-
-The run before it is **distance v2, both nights**, on `feat/distance-v2`:
-`docs/status/distance-v2.md`. **The far country is made of blocks too** - one
-height per far-field cell, quantised to that ring's own cell width, with the
-difference to each lower neighbour drawn as a vertical riser. 4 m steps at the
-seam, 8 m at 200 m, 16 m to the fog, lit tops and shaded risers in the near
-field's own lighting language, and the impostor forest is stepped pyramids
-standing on the shelves instead of six-sided cones floating over them.
-
-**It ships OFF.** `far_terrace` is on F4 at 0.0, and 0.0 is `f23c3f0` byte for
-byte - checked by the far probe at seven stages and pixel-for-pixel in the tour.
-Turning it up rebuilds the far mesh and the impostor ring **in place**, without
-a reroll, without rebuilding a voxel chunk and without the player moving, which
-is how the whole epic is meant to be judged.
-
-Five things in it are worth reading even if you read nothing else:
-
-- **PEAK LOSS at 600 m went from +55.28 blocks to +13.40.** The far field draws
-  a summit 27 m short at the real scale, against 110 m before this epic and
-  120 m before distance v1. Carried item 4 has never had a better number.
-- **Past 500 m the far country now holds perfectly still** - FIZZ exactly `0.00`
-  in every band at every vantage, against 2.11-3.27 before.
-- **Hard rule 2 needed restating and the measurement found out why.** "No player
-  term in the height quantisation" was satisfied to the letter by the first
-  implementation, which quantised a height whose INPUT was a mip level chosen
-  from the distance to the player. The terraces swam - rms 9.8-13.6 blocks over
-  a 200 m walk. Nothing the quantisation reads may depend on the player either.
-- **The knob was wired end to end and reached nothing.** `World.setup()` keeps a
-  deliberate CLONE of the config, so the F4 panel and the far-field jobs were
-  reading different objects. It compiled, logged a rebuild every time and
-  changed nothing on screen. What caught it was a self-test printing the vertex
-  count at 0.0 and at 1.0 and getting the same number twice.
-- **`--rendering-driver` after the `--` selects nothing**, so the "both
-  renderers" half of every check in this project may have been taken twice on
-  Forward+. Fixed in the README; no earlier epic's `-gl` set has been checked.
-
-**The acceptance test, for Marcel:** stand in the valley where
-`Screenshot 2026-08-28 161152.png` was taken, open F4, and move
-`distance: far terrace` from 0 to 1. The far country should redraw in under two
-seconds without the world streaming back in around you, and the mountains should
-stop being a different game.
-`build/tour/final-t1/6-postcard.png` against `build/tour/n1-t0/6-postcard.png`
-is that comparison on ganymede, and `final-t1-gl` / `n1-t0-gl` is the same pair
-on Compatibility.
-
-**Two agents were then given the postcards and none of the reasoning.** They
-confirmed both shipped taste calls, overruled one of them upward, and found
-three things the measurements had missed - a **zone bug** (the far terrain was
-choosing meadow-or-rock from the SNAPPED shelf altitude instead of the true one,
-so the treeline could move 4 m; fixed), the **black crush** (terracing more than
-doubles the dead-black area of the far band, 7.08% -> 15.63%, because a slope
-facing away from the sun becomes a wall of risers that all land on the shade
-rung), and **summits that read as a city skyline** rather than as peaks. Only
-the first is fixed; the other two are items 14 and 15 below.
-
-**What it did not fix, measured:** the 400 m ring boundary is 3.7x LOUDER with
-the terrace on - 80.00 blocks against 21.57 - and Stage 9 found out why, which
-is not what the plan assumed. See item 9 below.
-
-**Distance v2 and character v2 landed on the same day, from lanes that shared
-three files and never collided.** `scripts/character/` and `scripts/world/world.gd`
-do not appear in distance v2's diff at all, `scripts/world/look.gd` was never
-opened by it, and the two `game.gd` / `debug_hud.gd` edits it did make were pure
-appends. The merge conflicted in one paragraph of this file and nowhere else.
-
-The run before that is **character v2**, on `feat/character-v2`:
-`docs/status/character-v2.md`. Fourteen stages over two nights - the model grid
-from 64 to 96 voxels, a liner slot that ended four black shirts, a knee and an
-elbow, the lizardfolk rebuilt until **no two races' silhouettes overlap by more
-than 0.70 for the first time in this project**, six armour slots on a bumped
-wire format, and a walk with a contact pose in it. It is also the run that found
-the gallery's own sheets are not bit-reproducible on this GPU, which changes
-what counts as evidence for everything after it.
-
-The run before that is **distance v1, both nights**, on `feat/distance-v1`:
-`docs/status/distance-v1.md`. Night 1 is the far country's geometry and colour -
-a filtered heightmap pyramid, a mip level continuous in distance, a peak-gain
-dilation, and the end of the far field's zone dither. Night 2 is what grows on
-it: the impostor forest stops being drawn as a CHARACTER, converges towards the
-hillside it stands on, and runs to the fog instead of half way. **The meadow is
-still gravel and its Stage 8 says why** - see item 8 below.
-
-The run before that is **world feel v1**, finished 2026-08-27 on
-`feat/world-feel-v1`: `docs/status/world-feel-v1.md`.
+- `docs/status/distance-v4.md` - the far mesher crosses to C++, 2026-09-01,
+  merged to `main`; its Windows addendum is why distance v5 quantises
 
 ## Open items for Marcel
 
-**20. `far_ring_div` now defaults to 4, and the 224 ms upload is why to look at
-it first.** Distance v4 Stage 10 flipped it on decision 5's gate - the C++
+**20. ~~`far_ring_div` now defaults to 4, and the 224 ms upload is why to look
+at it first.~~ CLOSED by distance v5 Stage 1, and so are items 11 and 17.** The
+upload is split along the frontier sector and handed over on a budget
+(`far_upload_budget_ms`, default 4.0 ms a frame). Interleaved ABAB, three runs
+each, same commit: the sprint's worst frame **244.4 ms -> 39.6 ms** and frames
+over 33 ms **60 -> 4**; the worst single slice at div 4 is **15.90 ms** against
+a 230 ms whole-mesh upload. Holes 0 at both divisors, both legs. The original
+entry follows.
+
+**20 (original). `far_ring_div` now defaults to 4, and the 224 ms upload is why
+to look at it first.** Distance v4 Stage 10 flipped it on decision 5's gate - the C++
 rebuild at div 4 measures **661 ms** against the plan's 1.5 s line. What the
 flip costs is not the rebuild: div 4 is **3,266,076 vertices** against div 2's
 941,724, `ChunkMesher.arrays_to_mesh` runs on the **main thread** at
@@ -369,7 +80,22 @@ flip costs is not the rebuild: div 4 is **3,266,076 vertices** against div 2's
 2 on F4 puts every one of those back and costs the 1 m cell. This is items 11
 and 17 grown from a footnote into the far country's binding cost.
 
-**21. The impostor ring rebuilds 70-120 times while the player stands still.**
+**21. ~~The impostor ring rebuilds 70-120 times while the player stands
+still.~~ CLOSED by distance v5 Stage 2, and the mechanism was not the one the
+count suggested.** Standing still, in an ordinary session, it rebuilt **zero**
+times and always had - `FarTrees.update()` has had a 24 m hysteresis since
+distance v1 Stage 7. What it measured that step in was a **3D** distance, while
+the ring's centre is computed from x and z alone, so ALTITUDE could ask for a
+rebuild whose output was by construction the mesh already on screen. And
+something is falling: `screenshot_tour.gd` freezes the player on purpose and
+`Game._release_player_when_ground_exists()` unfreezes it again, so a player
+teleported to a vantage with no collision under it falls out of the world and
+drags the ring behind it at one rebuild per 24 m. **615 rebuilds over 18
+vantages became 18**, with every impostor count at every shutter identical. The
+half that belongs to the tour is carried below. The original entry follows.
+
+**21 (original). The impostor ring rebuilds 70-120 times while the player
+stands still.**
 Found by distance v4's Stage 8 harness rather than looked for: over a single
 stationary tour vantage, `FarTrees` logs between seventy and a hundred and
 twenty rebuilds, its count drifting (1,096 -> 1,016 -> 939) before it settles.
@@ -384,9 +110,64 @@ parity is unaffected either way - but one of the two is wrong, and item 16's
 own argument ("harmless under a round-up, ruinous under a finer grid") says
 which one would matter.
 
-**23. The GDExtension is not built by CI, and after the `far_ring_div` flip
-that matters more.** `gdext/bin/` is gitignored and nothing on GitHub Actions
-builds it, so the Windows artifact ships without the library and falls back to
+**24. Three things the height map's crossing did not take with it, and they
+are the next rung.** Measured at 1 m cells (distance v5 Stage 5), where the C++
+tile builder pays its own share honestly - 10 ms a tile becomes 38 for four
+times the data - and everything around it does not:
+
+* **`Lakes.compute`: ~1.5 s -> 17.5 s**, the biggest single number in a world
+  load, and 11.7x for 4x the data rather than 4x.
+* **`TerrainGenerator._resolve_zone_thresholds`: ~3.3 s -> ~13 s.** Two
+  GDScript passes over every cell, one of them `ZONE_CORRECT_ROUNDS` times.
+* **`column_surface_range` / chunk generation**, which is why the sprint's
+  collidable front min collapses from 56 m to 8 m at 1 m cells: it walks the
+  height map at `heightmap.step`.
+
+Distance v4 said the chunk mesher was next on the C++ ladder. On these numbers
+it is not. Stage 4's tile seam - `KubikHeightTiles`, data in and arrays out,
+quantised on both legs - is the pattern for all three.
+
+**25. The height map is tiled in the BUILDER and not in the STORE.** Distance
+v5 Stage 4 made the tiles real - anchored to the origin, a config knob, 12 x 12
+of them over today's region with a partial edge tile - and they still write into
+one region array, `Heightmap.cells`, which lakes, spawn, the two zone passes,
+four probes, the self-test and the far mesher's marshal all index as
+`i + j * cols`. Making each tile own its array is a change across eight files
+whose acceptance gate is a byte-identical world. The apron the plan asked for is
+in the same position: the pyramid is built over the region in one pass, so there
+is no tile seam for it to see until they stop sharing an array. Both notes are
+in `heightmap.gd` beside the code.
+
+**26. `screenshot_tour.gd` freezes the player and `game.gd` unfreezes it.**
+The tour sets `_player.set_physics_process(false)` with the comment "or it
+would spend the tour falling";
+`Game._release_player_when_ground_exists()` then calls
+`set_physics_process(true)` once, early, and the tour spends the rest of its run
+photographing a world with a falling player in it. Distance v5 Stage 2 removed
+the SYMPTOM this had - the impostor ring no longer follows the player down - and
+deliberately did not touch either file. What remains is that a tour's flora and
+chunk streaming are driven by a player who is not where the camera is, which is
+a plausible contributor to STATUS item 13a's non-determinism.
+
+**27. The morning has one command to run on gemini, and until it does, no
+co-op session mixes a gcc build and an MSVC one.** Distance v5 decision 3: the
+height map now crosses to C++ and it is world truth, so hard rule zero has to
+hold across two compilers. It is proven on ganymede - both legs, `4782edac`,
+(-44, -124), 53 lakes - and the cross-box half cannot be run from here. The
+command and what to compare are at the end of `docs/status/distance-v5.md`.
+
+**23. ~~The GDExtension is not built by CI~~ - PARTLY CLOSED, and the half that
+remains is the export.** `selftest.yml` has built the Linux library and run
+every gate on each push to `main` since distance v4's Windows addendum, and
+since distance v5 it does the same on every `feat/**` branch - which is what
+makes "CI green on the branch's final push" a merge condition anybody can
+check rather than a badge read after merging. **`build.yml` is still red** and
+the Windows artifact still ships without the library. The original entry
+follows.
+
+**23 (original). The GDExtension is not built by CI, and after the
+`far_ring_div` flip that matters more.** `gdext/bin/` is gitignored and nothing
+on GitHub Actions builds it, so the Windows artifact ships without the library and falls back to
 the GDScript mesher at div 4 - a **45 s** rebuild, measured. It still runs,
 plays and streams with **holes 0** (hard rule 1, checked), but the far country
 is effectively frozen. Also: the engine prints three `ERROR` lines when
@@ -610,8 +391,19 @@ look-pass decision about `shade_desat` — 0.55 at noon is what makes every
 shaded surface in the game a variant of one grey-violet, and the meadow speckle
 is downstream of it.
 
-**9. The 400 m far-mesh ring boundary is 3.7x louder with `far_terrace` on, and
-distance v2 found out why.** 80.00 blocks of worst-case FIZZ against
+**9 and 18. ~~The ring boundaries are loud.~~ CLOSED by distance v5 Stage 3**,
+with the fix item 9 itself wrote down: the sample POSITION slides onto the
+coarse ring's lattice over the last `far_geomorph_cells` cells before a
+boundary, so at the boundary both rings read the same point. At the shipped
+`far_ring_div` 4 the boundaries are at 150/300/600/1200/2400 m and max fizz goes
+**4/10/44/88/147 -> 3/7/32/48/39 blocks**, the whole table's rms **1.513 ->
+0.982**, and roughness goes UP (13.1954 -> 13.2757), so nothing was smoothed to
+buy it. **These are not the numbers below**: those were measured at
+`far_ring_div` 2, which distance v4 stopped shipping. The original entries
+follow.
+
+**9 (original). The 400 m far-mesh ring boundary is 3.7x louder with
+`far_terrace` on, and distance v2 found out why.** 80.00 blocks of worst-case FIZZ against
 `f23c3f0`'s 21.57. It is the largest single regression in that epic and it is
 the one thing in it that is worse rather than better.
 
