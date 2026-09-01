@@ -1500,3 +1500,33 @@ the summit. The assets repo carrying the tool and the baked library.
 And the block-tree code - three thousand lines that taught this game what a
 tree is - deleted, with its lessons written into the header of the file that
 replaced it.
+
+---
+
+## Addendum - the merge, and CI on it
+
+Merged to `main` at **`5f29d9e`**, all gates green.
+
+| workflow on the merge commit | result | |
+| --- | --- | --- |
+| **`selftest`** | **success**, run 33568119344 | **this epic's gate** |
+| `build` | failure, run 33568119328 | **pre-existing, not this lane's** |
+
+`build.yml` fails with the same error distance v4's addendum promoted from
+silent to loud, distance v5 confirmed on ITS merge commit, and this epic's own
+plan names in its Sequencing section:
+
+```
+ERROR: Can't open dynamic library, file not found:
+  '.../gdext/bin/libkubik.linux.editor.x86_64.so'
+ERROR: GDExtension dynamic library not found: 'res://kubik.gdextension'
+```
+
+The Windows exe export runs on a linux runner that has never built the C++
+library, so it cannot load the `.gdextension`. **Nothing in trees v3 touches
+the extension, the export preset or that workflow** - `gdext/` is not in this
+epic's diff at all. It is STATUS item 23's export half and it needs either a
+cross-compiled `windows.template_release` library in CI or an export that
+tolerates a `.gdextension` naming platforms nobody built. Recorded here for
+the third epic running, because a red badge nobody explains is a red badge
+everybody stops reading.
