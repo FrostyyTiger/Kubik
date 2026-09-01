@@ -200,7 +200,19 @@ static func masks_for(gen: TerrainGenerator) -> Masks:
 ##
 ## Returned by stamp_column() rather than computed separately: the candidate
 ## scan is the expensive part and it has already run.
-static func stamp_column(writer, gen: TerrainGenerator,
+## TREES V3 STAGE 7: THIS WAS `stamp_column()` AND IT WRITES NOTHING NOW.
+##
+## The scan half is byte-for-byte what it was - the same footprint walk, the
+## same `max_reach` margin, the same crown-area sum - and the writer half is
+## gone with the block trees. What comes back is what always came back:
+## `canopy_cover`, the share of this column's sky its own trees cover, which
+## `ChunkMesher._under_canopy()` shades the forest floor with.
+##
+## THE FOREST FLOOR IS UNAFFECTED BY THE DELETION, and that is decision 6's
+## whole claim: the shade's input always came from THIS SCAN and never from
+## the voxels. A column asks which trees reach it, sums their crowns, and
+## darkens its ground. It never once looked at a leaf block to do it.
+static func cover_column(gen: TerrainGenerator,
 		chunk_x: int, chunk_z: int) -> float:
 	var config := gen.config
 	var cell: int = config.tree_cell_blocks
@@ -223,7 +235,6 @@ static func stamp_column(writer, gen: TerrainGenerator,
 			var found := decide(gen, cx, cz, masks)
 			if found.is_empty():
 				continue
-			_stamp_found(writer, gen, found)
 			# Only the part of the crown that is over THIS column counts, and
 			# a crown centred a long way off contributes nothing - so the sum
 			# is weighted by how much of the trunk's own cell overlaps us.
@@ -239,52 +250,6 @@ static func stamp_column(writer, gen: TerrainGenerator,
 				* clampf(1.0 - maxf(dx, dz) / maxf(reach, 0.001), 0.0, 1.0)
 	var column_area := float(Chunk.SIZE * Chunk.SIZE)
 	return clampf(crown_area / column_area, 0.0, 1.0)
-
-
-static func stamp_chunk(chunk: Chunk, gen: TerrainGenerator) -> void:
-	var config := gen.config
-	var cell: int = config.tree_cell_blocks
-	if cell <= 0:
-		return
-
-	var origin := chunk.origin()
-	var margin := TreeSpecies.max_reach(config) + config.tree_jitter_blocks
-	var masks := masks_for(gen)
-
-	var writer := TreeSpecies.ChunkWriter.new()
-	writer.bind(chunk)
-
-	var cx0 := Chunk.floor_div(origin.x - margin, cell)
-	var cx1 := Chunk.floor_div(origin.x + Chunk.SIZE - 1 + margin, cell)
-	var cz0 := Chunk.floor_div(origin.z - margin, cell)
-	var cz1 := Chunk.floor_div(origin.z + Chunk.SIZE - 1 + margin, cell)
-
-	for cz in range(cz0, cz1 + 1):
-		for cx in range(cx0, cx1 + 1):
-			stamp_cell(writer, gen, cx, cz, masks)
-
-
-## Draw one candidate cell's tree, if it has one.
-##
-## Called by every chunk the tree reaches, and MUST produce the same tree for
-## all of them - which is why nothing in here reads the chunk, the writer, or
-## anything else that differs between those calls.
-## Draw a tree that has already been decided. Split out of stamp_cell() so
-## stamp_column() can count crowns without deciding twice.
-static func _stamp_found(writer, gen: TerrainGenerator, found: Dictionary) -> void:
-	if found.is_empty():
-		return
-	TreeSpecies.draw(writer, found["species"], found["bx"], found["ground"],
-		found["bz"], found["params"], gen.config)
-
-
-static func stamp_cell(writer, gen: TerrainGenerator, cell_x: int, cell_z: int,
-		masks: Masks = null) -> void:
-	var found := decide(gen, cell_x, cell_z, masks)
-	if found.is_empty():
-		return
-	TreeSpecies.draw(writer, found["species"], found["bx"], found["ground"],
-		found["bz"], found["params"], gen.config)
 
 
 ## Everything about the tree at one candidate, or {} if there is none.

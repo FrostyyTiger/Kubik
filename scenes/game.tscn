@@ -5,7 +5,7 @@
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="3_player"]
 [ext_resource type="Script" path="res://scripts/ui/debug_hud.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/world/sky_cycle.gd" id="5_sky"]
-[ext_resource type="Script" path="res://scripts/world/flora/far_trees.gd" id="6_fartrees"]
+[ext_resource type="Script" path="res://scripts/world/flora/tree_field.gd" id="6_fartrees"]
 [ext_resource type="Script" path="res://scripts/ui/character_debug.gd" id="7_chardebug"]
 [ext_resource type="Script" path="res://scripts/ui/hud.gd" id="8_hud"]
 [ext_resource type="Script" path="res://scripts/ui/hud_tuner.gd" id="9_hudtuner"]
@@ -35,7 +35,7 @@ shadow_enabled = true
 [node name="World" type="Node3D" parent="."]
 script = ExtResource("2_world")
 
-[node name="FarTrees" type="Node3D" parent="."]
+[node name="TreeField" type="Node3D" parent="."]
 script = ExtResource("6_fartrees")
 
 [node name="Players" type="Node3D" parent="."]

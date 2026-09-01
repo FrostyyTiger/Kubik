@@ -42,14 +42,14 @@ func _ready() -> void:
 	var tests := {
 		"winding": _test_winding,
 		"ao cost": _measure_ao_cost,
-		"tree borders": _test_tree_borders,
+		"cover determinism": _test_cover_determinism,
 		"chunk determinism": _test_chunk_determinism,
 		"edit during generation": _test_edit_during_generation,
 		"facing": _test_facing,
 		"day cycle": _test_day_cycle,
 		"config contract": _test_config_contract,
 		"sky reserve": _test_sky_reserve,
-		"species borders": _test_species_borders,
+		"registry determinism": _test_registry_determinism,
 		"flora determinism": _test_flora_determinism,
 		"flora removal": _test_flora_removal,
 		"flora winding": _test_flora_winding,
@@ -75,6 +75,17 @@ func _ready() -> void:
 		# DISTANCE V5 STAGE 4, appended after it.
 		"height tile parity": _test_height_tile_parity,
 		"canonical world": _test_canonical_world,
+		# TREES V3 STAGE 2, appended at the end of the list.
+		"tree winding": _test_tree_winding,
+		"tree library": _test_tree_library,
+		# TREES V3 STAGE 3.
+		"tree table": _test_tree_table,
+		# TREES V3 STAGE 4.
+		"tree field": _test_tree_field,
+		# TREES V3 STAGE 6.
+		"tree colliders": _test_tree_colliders,
+		# TREES V3 STAGE 8.
+		"tree swatches": _test_tree_swatches,
 	}
 	var failures := 0
 	for name in tests:
@@ -209,57 +220,6 @@ func _test_winding():
 ## region into a second copy. Stamping is idempotent - trunk over trunk changes
 ## nothing, leaves are only drawn over air - so if the normal margin is wide
 ## enough the two chunks are identical byte for byte. If it is too narrow, the
-## wide pass finds blocks the normal one missed.
-func _test_tree_borders():
-	var cfg := WorldgenConfig.new()
-	var gen := TerrainGenerator.new(4242, cfg)
-	gen.build_heightmap()
-
-	var bad := 0
-	var tested := 0
-	var tree_blocks := 0
-
-	for cx in range(-6, 7, 3):
-		for cz in range(-6, 7, 3):
-			for cy in range(4, 14):
-				var narrow := Chunk.new(Vector3i(cx, cy, cz))
-				gen.generate_into(narrow)
-
-				var wide := Chunk.new(Vector3i(cx, cy, cz))
-				gen.generate_into(wide)
-				# SIX TIMES the margin the world actually uses, so a tree the
-				# real scan missed lands in `wide` and shows up as a differing
-				# voxel. Derived from the species table, not from a config
-				# knob, for the same reason the real margin is: the widest
-				# crown is a property of the table and grows when it does.
-				var span := 6 * TreeSpecies.max_reach(cfg) + Chunk.SIZE
-				var c0x := Chunk.floor_div(cx * Chunk.SIZE - span, cfg.tree_cell_blocks)
-				var c1x := Chunk.floor_div(cx * Chunk.SIZE + span, cfg.tree_cell_blocks)
-				var c0z := Chunk.floor_div(cz * Chunk.SIZE - span, cfg.tree_cell_blocks)
-				var c1z := Chunk.floor_div(cz * Chunk.SIZE + span, cfg.tree_cell_blocks)
-				var writer := TreeSpecies.ChunkWriter.new()
-				writer.bind(wide)
-				for tz in range(c0z, c1z + 1):
-					for tx in range(c0x, c1x + 1):
-						TreePlacement.stamp_cell(writer, gen, tx, tz)
-
-				tested += 1
-				for i in Chunk.VOLUME:
-					if narrow.voxels[i] != wide.voxels[i]:
-						bad += 1
-						break
-				for i in Chunk.VOLUME:
-					if TreeSpecies.is_tree_block(narrow.voxels[i]):
-						tree_blocks += 1
-
-	print("tree borders: %d chunks, %d tree blocks, %d differed under a 6x margin" % [
-		tested, tree_blocks, bad])
-	if tree_blocks == 0:
-		print("  WARNING: no tree blocks in the sample - this test proved nothing")
-		return 1
-	return 1 if bad > 0 else 0
-
-
 ## EVERY FLORA TRIANGLE MUST FACE OUTWARDS.
 ##
 ## The terrain has had a winding self-test since v1 and it earned its keep
@@ -548,164 +508,169 @@ func _flora_buffers(gen: TerrainGenerator, cfg: WorldgenConfig,
 	return job.buffers
 
 
-## EVERY SPECIES MUST SURVIVE BEING CUT UP BY CHUNK BOUNDARIES.
+## THE SKY RESERVE MUST BE GONE, AND THE COLUMN MUST END AT THE TERRAIN.
 ##
-## _test_tree_borders proves the world's candidate scan is wide enough, but it
-## can only prove it for the species the world actually grows - which until
-## Stage 4 is spruce and nothing else. Six shapes would therefore reach Stage 4
-## having never been drawn across a boundary at all, and the ones most likely
-## to break are exactly the ones that write furthest from their root: a hero
-## with a 2 x 2 trunk and a crown of 8, a krummholz whose lean moves its whole
-## body one block sideways.
+## THIS GATE IS INVERTED BY TREES V3 STAGE 7 AND KEPT RATHER THAN DELETED.
 ##
-## THE TEST IS THE DEFINITION OF CORRECT, stated directly. Draw the tree once
-## into an unbounded buffer - the whole tree, clipped by nothing. Then draw it
-## again into each of the chunks around it, through the writer the world uses.
-## The union of the clipped copies must equal the unbounded one, block for
-## block, with nothing missing and nothing extra. That is precisely what "every
-## chunk draws its own share" means, so there is no gap between what is checked
-## and what is required.
-func _test_species_borders():
-	var cfg := WorldgenConfig.new()
-	var bad := 0
-	var checked := 0
-
-	for species in TreeSpecies.table(cfg).size():
-		# Rooted deliberately AWKWARDLY: one block inside a chunk corner, so
-		# the tree straddles boundaries on both axes at once and the biggest
-		# crowns reach three chunks out.
-		var root := Vector3i(15, 40, 15)
-		var params := TreeSpecies.params_for(species, 3, 5, 777, cfg)
-
-		var whole := {}   # Vector3i -> block id
-		var loose := LooseWriter.new()
-		loose.blocks = whole
-		TreeSpecies.draw(loose, species, root.x, root.y, root.z, params, cfg)
-		if whole.is_empty():
-			print("  %s drew nothing" % TreeSpecies.table(cfg)[species]["name"])
-			bad += 1
-			continue
-
-		# Every chunk the tree could possibly have reached, and two beyond.
-		var pieces := {}
-		var reach := TreeSpecies.max_reach(cfg) + 2
-		var lo := Chunk.world_to_chunk(root - Vector3i(reach, 2, reach))
-		var hi := Chunk.world_to_chunk(
-			root + Vector3i(reach, TreeSpecies.max_height(cfg) + 2, reach))
-		for cy in range(lo.y, hi.y + 1):
-			for cz in range(lo.z, hi.z + 1):
-				for cx in range(lo.x, hi.x + 1):
-					var chunk := Chunk.new(Vector3i(cx, cy, cz))
-					var writer := TreeSpecies.ChunkWriter.new()
-					writer.bind(chunk)
-					TreeSpecies.draw(writer, species, root.x, root.y, root.z,
-						params, cfg)
-					var origin := chunk.origin()
-					for i in Chunk.VOLUME:
-						if chunk.voxels[i] == Block.AIR:
-							continue
-						var ly := i / Chunk.SIZE_SQ
-						var rem := i % Chunk.SIZE_SQ
-						pieces[origin + Vector3i(
-							rem % Chunk.SIZE, ly, rem / Chunk.SIZE)] = chunk.voxels[i]
-
-		var missing := 0
-		var extra := 0
-		for pos in whole:
-			if not pieces.has(pos):
-				missing += 1
-		for pos in pieces:
-			if not whole.has(pos):
-				extra += 1
-		checked += 1
-		if missing > 0 or extra > 0:
-			print("  %s: %d blocks missing, %d extra, of %d" % [
-				TreeSpecies.table(cfg)[species]["name"], missing, extra,
-				whole.size()])
-			bad += 1
-
-	print("species borders: %d species stamped across chunk boundaries, %d wrong" % [
-		checked, bad])
-	return bad
-
-
-## A writer that clips to nothing, for the reference copy above.
-class LooseWriter extends RefCounted:
-	var blocks := {}
-
-	func set_block(bx: int, by: int, bz: int, id: int, only_air: bool) -> void:
-		var pos := Vector3i(bx, by, bz)
-		if only_air and blocks.has(pos):
-			return
-		blocks[pos] = id
-
-
-## THE SKY RESERVE MUST COVER THE TALLEST TREE THE TABLE CAN GROW.
+## It used to assert that `WorldgenConfig` reserved ENOUGH empty sky above
+## every column for the tallest tree `TreeSpecies` could grow - because a
+## species taller than the reserve would have its crown cut off by a chunk
+## nobody queued, and the symptom was not an error but a flat-topped tree in
+## some columns, sometimes. The two numbers lived apart on purpose and this
+## test was the coupling.
 ##
-## World builds only the chunks a column's terrain passes through, plus
-## max_tree_height() of empty sky above it. If a species is ever added that is
-## taller than WorldgenConfig's REF_MAX_TREE_BLOCKS, the world stops queueing
-## the chunk that species' crown needs - and the symptom is not an error. It is
-## a tree with a flat top, sometimes, in some columns, depending on where the
-## terrain happened to sit relative to a chunk ceiling.
+## Nothing writes above the terrain any more. `TreeField` instances a model
+## library and never touches a voxel, so the reserve is dead weight - about
+## twenty-one metres of empty chunks per column, on every column in the world.
+## The gate now asserts the OPPOSITE: that `world_height_blocks` does NOT
+## carry a tree's height in it, at every scale a knob can reach.
 ##
-## The two numbers live apart on purpose: WorldgenConfig sizing itself from
-## TreeSpecies, which takes a WorldgenConfig in every signature, would make the
-## two mutually dependent for the sake of an integer. This is the cheaper half
-## of that trade - the coupling is a test rather than an import, and the test
-## says exactly what breaks.
-## THE COMPOSED MAXIMUM SINCE WORLD FEEL V1 STAGE 5. There are two scales now -
-## what the land asks for and what the player asks for - and the reserve has to
-## clear their product, because the tallest species takes the full read scale.
+## Why keep it at all. Because `REF_MAX_TREE_BLOCKS` and `tree_read_scale` are
+## still in the file, and the expression that used them is the kind of thing
+## somebody restores while fixing something else. This says, in a runnable
+## form, that putting it back is a regression.
 func _test_sky_reserve():
 	var bad := 0
 	var checked := 0
 	for scale in [0.5, 1.0, 1.7, 2.5]:
 		for read in [1.0, 2.0, 3.0]:
-			var cfg := WorldgenConfig.new()
-			cfg.tree_size_scale = scale
-			cfg.tree_read_scale = read
-			var needed := TreeSpecies.max_height(cfg)
-			# The same expression apply_world_scale() reserves with, including
-			# old growth - max_height() takes it, so this must too.
-			var reserved := int(ceil(
-				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * read
-					* maxf(cfg.old_growth_scale, 1.0)
-				+ WorldgenConfig.TREE_RESERVE_MARGIN))
-			checked += 1
-			if needed > reserved:
-				print("  scale %.2f read %.1f: table needs %d blocks, config reserves %d" % [
-					scale, read, needed, reserved])
-				bad += 1
-	# OLD GROWTH IS A THIRD SCALE (world feel v1 Stage 6) and the reserve has to
-	# cover it too. It happens to be safe today because the hero takes the full
-	# read scale and nothing else is old growth AND a hero - a spruce at
-	# 21 x 2 x 1.5 = 63 blocks against the hero's 42 x 2 = 84 - but "happens to
-	# be" is exactly the kind of thing that stops being true when someone
-	# raises old_growth_scale, and the symptom is a flat-topped tree in some
-	# columns rather than an error.
-	for scale in [1.0, 2.0]:
-		for og in [1.5, 2.0, 3.0]:
-			var cfg2 := WorldgenConfig.new()
-			cfg2.tree_read_scale = scale
-			cfg2.old_growth_scale = og
-			var tallest := 0
-			for row in TreeSpecies.table(cfg2):
-				var h: int = int(row["height"].y)
-				if int(row["name"] == "hero") == 0:
-					h = int(round(float(h) * (1.0 + (og - 1.0) * float(row.get("read", 0.0)))))
-				tallest = maxi(tallest, h)
-			var reserved2 := int(ceil(
-				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * maxf(og, 1.0)
-				+ WorldgenConfig.TREE_RESERVE_MARGIN))
-			checked += 1
-			if tallest > reserved2:
-				print("  read %.1f old growth %.1f: tallest %d blocks, config reserves %d" % [
-					scale, og, tallest, reserved2])
-				bad += 1
-	print("sky reserve: %d scale/read pairs checked, %d short" % [checked, bad])
+			for og in [1.0, 2.0, 3.0]:
+				var cfg := WorldgenConfig.new()
+				cfg.tree_size_scale = scale
+				cfg.tree_read_scale = read
+				cfg.old_growth_scale = og
+				cfg.apply_world_scale()
+				var a := cfg.world_height_blocks
+				# The same config with every tree knob at its smallest. If the
+				# reserve were still in there, these two would differ.
+				var flat := WorldgenConfig.new()
+				flat.tree_size_scale = 0.5
+				flat.tree_read_scale = 1.0
+				flat.old_growth_scale = 1.0
+				flat.apply_world_scale()
+				checked += 1
+				if a != flat.world_height_blocks:
+					print("  scale %.2f read %.1f old growth %.1f: height %d, tree-free height %d" % [
+						scale, read, og, a, flat.world_height_blocks])
+					bad += 1
+	print("sky reserve: %d knob combinations, %d still reserve sky for trees" % [
+		checked, bad])
 	return bad
 
+
+## THE FOREST FLOOR'S SHADE MUST NOT DEPEND ON WHO ASKED.
+##
+## `cover_column()` is what is left of the tree stamper: the same candidate
+## walk over the same `max_reach` margin, returning the share of a column's sky
+## its trees cover. `ChunkMesher._under_canopy()` darkens the ground with it,
+## so if two calls disagreed - or if a column and its neighbour disagreed about
+## a tree that straddles them - the forest floor would be shaded differently
+## depending on which column was built first, which is exactly the class of bug
+## the old `tree borders` test existed to catch on the block stamp.
+##
+## THIS IS THAT TEST, ASKED OF THE SCAN INSTEAD OF THE VOLUME, and it is
+## strictly stronger in one way: it works on BOTH LEGS. `tree borders` could
+## only prove anything where tree blocks existed, and after tonight they exist
+## nowhere.
+##
+## Two claims:
+##   REPEATABLE   the same column twice is the same number, bit for bit.
+##   SHARED       a tree whose crown spans a column boundary is counted by
+##                BOTH columns - so the sum over a rectangle does not change
+##                when the rectangle is walked in a different order.
+func _test_cover_determinism():
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg)
+	gen.build_heightmap()
+	var bad := 0
+	var columns := 0
+	var covered := 0
+	var total := 0.0
+	var seen := {}
+	for cz in range(-6, 7, 2):
+		for cx in range(-6, 7, 2):
+			var a := TreePlacement.cover_column(gen, cx, cz)
+			var b := TreePlacement.cover_column(gen, cx, cz)
+			columns += 1
+			total += a
+			if a > 0.0:
+				covered += 1
+			if a != b:
+				print("  column (%d, %d): %.9f then %.9f" % [cx, cz, a, b])
+				bad += 1
+			seen[Vector2i(cx, cz)] = a
+
+	# WALKED BACKWARDS, which is the order test. Nothing in the scan should
+	# care, and a scan that cached anything across columns would fail here.
+	for cz in range(6, -7, -2):
+		for cx in range(6, -7, -2):
+			var a: float = seen[Vector2i(cx, cz)]
+			var b := TreePlacement.cover_column(gen, cx, cz)
+			if a != b:
+				print("  column (%d, %d) differed when walked backwards" % [cx, cz])
+				bad += 1
+
+	print("cover determinism: %d columns, %d with cover, mean %.4f, %d differed" % [
+		columns, covered, total / float(maxi(columns, 1)), bad])
+	if covered == 0:
+		print("  WARNING: no canopy cover in the sample - this test proved nothing")
+		return 1
+	return bad
+
+
+## `decide()` OVER A FIXED RECTANGLE MUST HASH EQUAL ON REPEAT.
+##
+## The registry of what stands where is the whole determinism contract now.
+## Until tonight it was checked indirectly - two machines stamping the same
+## leaf blocks into the same chunk - and the blocks are gone, so it is checked
+## directly: walk a rectangle of candidates, hash everything `decide()` said,
+## and do it again.
+##
+## EVERYTHING, NOT JUST THE POSITIONS. Species, old growth, the jittered trunk
+## position, the ground it stands on, its height and crown, AND THE VARIANT the
+## library table picks for it - because the variant is hashed on a new salt
+## (232) that no earlier test has ever exercised, and a variant that differed
+## between two machines would be two players looking at different trees in the
+## same place.
+func _test_registry_determinism():
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg)
+	gen.build_heightmap()
+	var trees := 0
+	var variants := {}
+	var hashes := []
+	for run in 2:
+		var h := 0
+		var masks := TreePlacement.masks_for(gen)
+		for cz in range(-24, 25):
+			for cx in range(-24, 25):
+				var f := TreePlacement.decide(gen, cx, cz, masks)
+				if f.is_empty():
+					continue
+				if run == 0:
+					trees += 1
+				var v := TreeFieldJob.variant_of(gen, cfg, f)
+				if run == 0 and v != &"":
+					variants[v] = int(variants.get(v, 0)) + 1
+				var p: Dictionary = f["params"]
+				# A string, then hashed: every field in one place, and a field
+				# added later that nobody hashes is a field this test would
+				# silently stop covering.
+				h = hash("%d|%s|%d|%d|%d|%d|%d|%d|%s|%d" % [
+					h, f["cell"], f["species"], int(f["old_growth"]),
+					f["bx"], f["bz"], f["ground"],
+					p["height"], v, p["crown"]])
+		hashes.append(h)
+	var bad := 0 if hashes[0] == hashes[1] else 1
+	if bad > 0:
+		print("  the registry hashed %d then %d over the same rectangle" % [
+			hashes[0], hashes[1]])
+	print("registry determinism: %d trees, %d distinct variants, hash %d, %d differed" % [
+		trees, variants.size(), hashes[0], bad])
+	if trees == 0:
+		print("  WARNING: no trees in the sample - this test proved nothing")
+		return 1
+	return bad
 
 ## Same seed, same config, same chunks - byte for byte. This is the guarantee
 ## the whole terrain-is-never-sent contract rests on.
@@ -3017,3 +2982,548 @@ func _test_canonical_world():
 		bad += 1
 	return bad
 
+
+
+# --- Trees v3 -----------------------------------------------------------------
+
+## EVERY TREE TRIANGLE MUST FACE OUTWARDS, AND THIS IS WHY IT IS NOT ARGUED.
+##
+## `FloraModels`' own winding note records that all six of its faces were
+## backwards on the first attempt, and - the part worth repeating - that the
+## symptom was NOT an inside-out model. Nothing vanished. What appeared was
+## thin horizontal gaps through every rounded blob, which survived being
+## explained as a raggedness setting, as the voxel scale and as shadow acne.
+##
+## `TreeModels` writes six faces of its own, as RECTANGLES rather than voxel
+## faces, with a per-face winding flip - which is six more chances to make the
+## same mistake in a form that looks like a modelling choice. So it is checked
+## with the cross product and never with eyes:
+##
+##     (p1 - p0) x (p2 - p0) == -normal
+##
+## SELF-SKIPS WITHOUT THE LIBRARY, and says so. That is hard rule 3's absent
+## leg, and a gate that silently passed on a public build would be no gate.
+func _test_tree_winding():
+	if not TreeModels.available():
+		print("tree winding: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	var checked := 0
+	var faces := {}
+	for variant in TreeModels.variants():
+		for lod in TreeModels.LOD_COUNT:
+			var mesh := TreeModels.mesh_for(variant, lod, 0.5)
+			if mesh == null:
+				continue
+			var arrays := mesh.surface_get_arrays(0)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var wrong := 0
+			var i := 0
+			while i + 2 < indices.size():
+				var p0 := verts[indices[i]]
+				var p1 := verts[indices[i + 1]]
+				var p2 := verts[indices[i + 2]]
+				var n := normals[indices[i]]
+				var cross := (p1 - p0).cross(p2 - p0)
+				if cross.length() > 0.0 and cross.normalized().dot(-n) < 0.99:
+					wrong += 1
+					# WHICH face, not just how many. Six flips means six
+					# independent mistakes, and a count alone would send
+					# somebody looking at all of them.
+					faces[n] = int(faces.get(n, 0)) + 1
+				checked += 1
+				i += 3
+			if wrong > 0:
+				print("  %s lod %d: %d of %d triangles wound the wrong way" % [
+					variant, lod, wrong, indices.size() / 3])
+				bad += 1
+	for n in faces:
+		print("  normal %s: %d wrong" % [n, faces[n]])
+	print("tree winding: %d triangles across %d variants x %d rungs, %d wrong" % [
+		checked, TreeModels.variants().size(), TreeModels.LOD_COUNT, bad])
+	if checked == 0:
+		print("  WARNING: a library is mounted but it built no triangles")
+		return 1
+	return bad
+
+
+## THE LIBRARY MUST AGREE WITH ITS OWN SIDECARS, AND WITH THE LADDER.
+##
+## The triangle counts in this document's Stage 1 table were printed by a
+## Python tool that has no Godot in it, and the meshes the game draws are
+## assembled by a GDScript loader that has never seen a `.vox`. Those two
+## agreeing is the whole claim that the offline bake and the online assembly
+## are the same geometry - so it is asserted rather than believed, on every
+## variant at every rung.
+##
+## AND THE LADDER WITH IT. `TreeModels.VOXELS_PER_BLOCK` and the tool's own
+## copy are two numbers that must be one number; if they drift, every tree in
+## the world is the wrong size and nothing else in the project would say so.
+func _test_tree_library():
+	if not TreeModels.available():
+		print("tree library: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	var checked := 0
+	var worst := 0
+	var worst_name := ""
+	var total := 0
+	for variant in TreeModels.variants():
+		var d := TreeModels.info(variant)
+		var lods: Array = d.get("lods", [])
+		if lods.size() != TreeModels.LOD_COUNT:
+			print("  %s has %d rungs, the loader reads %d" % [
+				variant, lods.size(), TreeModels.LOD_COUNT])
+			bad += 1
+			continue
+		# The ladder, restated from the sidecar's own numbers: a model's height
+		# in metres IS its voxel count times the rung's voxel size.
+		var expect_m := float(int((d["size"] as Array)[1])) \
+			* 0.5 / float(TreeModels.VOXELS_PER_BLOCK) \
+			* float(d.get("base_step", 1))
+		if absf(expect_m - TreeModels.height_m(variant)) > 0.001:
+			print("  %s: sidecar says %.4f m, the ladder says %.4f m" % [
+				variant, TreeModels.height_m(variant), expect_m])
+			bad += 1
+		# Every variant must have a palette row, or its whole crown falls back
+		# to BARK_DARK and the tree is drawn in mud.
+		if not TreePalette.has(variant):
+			print("  %s has no row in TreePalette.PACK_FAMILIES" % variant)
+			bad += 1
+		for lod in TreeModels.LOD_COUNT:
+			var want := int((lods[lod] as Dictionary).get("triangles", -1))
+			var got := TreeModels.triangles_for(variant, lod, 0.5)
+			checked += 1
+			if want != got:
+				print("  %s lod %d: the tool baked %d triangles, the loader built %d" % [
+					variant, lod, want, got])
+				bad += 1
+			if lod == 0:
+				total += got
+				if got > worst:
+					worst = got
+					worst_name = String(variant)
+	print("tree library: %d variants x %d rungs checked, %d wrong" % [
+		TreeModels.variants().size(), TreeModels.LOD_COUNT, bad])
+	print("  worst LOD0 %s at %d triangles, %d over the library" % [
+		worst_name, worst, total])
+	if checked == 0:
+		print("  WARNING: a library is mounted but nothing was checked")
+		return 1
+	return bad
+
+
+## THE MAPPING TABLE MUST AGREE WITH THE LIBRARY, AND COVER IT.
+##
+## `TreeTable.lint()` carries the rules; this runs it and prints what it says.
+## The rule that matters most is the third one: every variant in the library
+## must be either used by a row or explicitly benched with a reason. A pack
+## that gains a species folder then FAILS here rather than quietly not
+## appearing in the world, which is the failure mode a mapping table has.
+##
+## AND EVERY GAME SPECIES MUST FIND A ROW. `TreeSpecies` names seven species
+## and placement can return any of them; a slot with no row draws nothing, so
+## the forest would simply be missing its larches with no error anywhere.
+func _test_tree_table():
+	if not TreeModels.available():
+		print("tree table: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	for complaint in TreeTable.lint():
+		print("  " + complaint)
+		bad += 1
+	var cfg := WorldgenConfig.new()
+	var covered := 0
+	for species in TreeSpecies.table(cfg).size():
+		var slot := TreeTable.slot_of(species, cfg)
+		if TreeTable.row_for(slot).is_empty():
+			print("  species %s has no row in TreeTable" % slot)
+			bad += 1
+		else:
+			covered += 1
+	# DETERMINISM, on the spot rather than as a separate gate: the same cell
+	# must pick the same variant twice, and two cells must not all pick one.
+	var picks := {}
+	for i in 400:
+		var slot := TreeTable.slot_of(TreeSpecies.SPRUCE, cfg)
+		var a := TreeTable.variant_at(slot, i, i * 7, 42)
+		var b := TreeTable.variant_at(slot, i, i * 7, 42)
+		if a != b:
+			print("  variant_at is not deterministic at cell (%d, %d)" % [i, i * 7])
+			bad += 1
+			break
+		picks[a] = int(picks.get(a, 0)) + 1
+	print("tree table: %d species covered, %d live variants over 400 spruce cells, %d complaints" % [
+		covered, picks.size(), bad])
+	if picks.size() < 2:
+		print("  WARNING: 400 cells drew %d distinct variants - the hash or the weights are wrong" % picks.size())
+		return 1
+	return bad
+
+
+## THE FIELD MUST DRAW EVERY TREE PLACEMENT PUTS THERE, AND NO OTHERS.
+##
+## Trees v3 hard rule 1: placement does not move. The field is now the only
+## thing that draws a library species, so "the forest is complete" stops being
+## a property of the chunk stamper and becomes a property of this walk - and
+## the walk has bands, strides, an annulus test and a per-sector frontier hole
+## in it, any one of which could quietly drop a tree.
+##
+## So: run the real `TreeFieldJob` over a small ring, count the model instances
+## it emitted per variant, and compare that against `TreePlacement.decide()`
+## asked directly over the SAME cells. Exact equality, not a tolerance.
+##
+## THE NEAREST BAND IS WHERE THIS IS CHECKABLE, and only there. The outer bands
+## walk one candidate cell in four, sixteen and sixty-four on purpose (distance
+## v1 Stage 7), so the field is DESIGNED to draw fewer trees than placement
+## decides out there. Inside `lod_blocks` the stride is 1 and every candidate
+## is visited, which is the band the handover to the player happens in and the
+## one the gate is about.
+func _test_tree_field():
+	if not TreeModels.available():
+		print("tree field: no library mounted, 0 checks (public build)")
+		return 0
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(42, cfg)
+	gen.build_heightmap()
+
+	var job := TreeFieldJob.new()
+	job.center = Vector2i(0, 0)
+	job.generator = gen
+	job.config = cfg
+	job.heightmap = gen.heightmap
+	# NO FRONTIER, so the inner edge is the nominal radius rather than a
+	# per-sector one - and for a model species the inner edge does not apply at
+	# all, which is the thing being checked.
+	job.inner_blocks = float(cfg.voxel_radius_chunks * Chunk.SIZE)
+	job.outer_blocks = job.inner_blocks * 1.6
+	# Every band collapsed onto the first, so the whole scan is stride 1 and
+	# the comparison is against every candidate rather than a lattice.
+	job.lod_blocks = job.outer_blocks
+	job.lod2_blocks = job.outer_blocks
+	job.lod3_blocks = job.outer_blocks
+	job.run()
+
+	var drawn := {}
+	var models := 0
+	for key in job.buffers:
+		var n: int = (job.buffers[key] as PackedFloat32Array).size() \
+			/ TreeFieldJob.FLOATS_PER_INSTANCE
+		var m := TreeFieldJob.model_of_key(String(key))
+		if String(m[0]).is_empty():
+			continue
+		drawn[StringName(m[0])] = int(drawn.get(StringName(m[0]), 0)) + n
+		models += n
+
+	# The same annulus, asked of placement directly.
+	var want := {}
+	var expect := 0
+	var cell: int = cfg.tree_cell_blocks
+	var masks := TreePlacement.masks_for(gen)
+	var outer_sq := job.outer_blocks * job.outer_blocks
+	var reach := int(ceil(job.outer_blocks))
+	for cz in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+		for cx in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+			var dx := float(cx * cell)
+			var dz := float(cz * cell)
+			var d_sq := dx * dx + dz * dz
+			if d_sq > outer_sq or d_sq <= -1.0:
+				continue
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			if not TreeTable.drawn_as_model(found["species"], cfg):
+				continue
+			# THROUGH THE JOB'S OWN FUNCTION, not a reimplementation of it -
+			# see its note. A gate that restates the rule it is checking will
+			# eventually check a different rule.
+			var v := TreeFieldJob.variant_of(gen, cfg, found)
+			if v == &"":
+				continue
+			want[v] = int(want.get(v, 0)) + 1
+			expect += 1
+
+	var bad := 0
+	for v in want:
+		if int(drawn.get(v, 0)) != int(want[v]):
+			print("  %s: the field drew %d, placement decided %d" % [
+				v, int(drawn.get(v, 0)), int(want[v])])
+			bad += 1
+	for v in drawn:
+		if not want.has(v):
+			print("  %s: the field drew %d that placement did not decide" % [
+				v, int(drawn[v])])
+			bad += 1
+	print("tree field: %d model instances over %d variants, placement says %d, %d disagree" % [
+		models, drawn.size(), expect, bad])
+	if expect == 0:
+		print("  WARNING: no model species in the sample - this test proved nothing")
+		return 1
+	return bad
+
+
+## A TRUNK MUST STOP YOU, AND THE COUNT MUST MATCH PLACEMENT.
+##
+## Trees left the block grid, so "is there a tree here" stopped being a
+## question about the voxel volume - and with it went the collision the volume
+## gave for free. Decision 8 replaces it with an explicit cylinder per trunk
+## inside the sim radius, which is a thing that can silently be in the wrong
+## place, the wrong size, or absent.
+##
+## Two claims, and the second is the one that matters to a player:
+##
+##   COUNT   the ring holds exactly one cylinder per tree placement decides
+##           inside the radius - not one per DRAWN tree, which would let a
+##           fade or an LOD rung quietly remove collision.
+##   BODY    a ray fired horizontally at a trunk, at chest height, from
+##           outside it, HITS. That is "walk into a trunk, be stopped" in the
+##           only form a headless test can carry, and it exercises the real
+##           shape at its real position through the real physics server.
+func _test_tree_colliders():
+	if not TreeModels.available():
+		print("tree colliders: no library mounted, 0 checks (public build)")
+		return 0
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(42, cfg)
+	gen.build_heightmap()
+
+	var job := TreeFieldJob.new()
+	job.center = Vector2i(0, 0)
+	job.generator = gen
+	job.config = cfg
+	job.heightmap = gen.heightmap
+	job.inner_blocks = float(cfg.voxel_radius_chunks * Chunk.SIZE)
+	job.outer_blocks = job.inner_blocks * 1.6
+	job.lod_blocks = job.outer_blocks
+	job.lod2_blocks = job.outer_blocks
+	job.lod3_blocks = job.outer_blocks
+	# DELIBERATELY WIDER THAN THE GAME'S sim radius, because seed 42's spawn
+	# has a 24 m tree clearing around it by design and a 32 m ring there holds
+	# nothing at all. A test whose sample is empty proves nothing.
+	job.collider_blocks = job.outer_blocks
+	job.run()
+
+	# The same annulus, asked of placement directly.
+	var expect := 0
+	var cell: int = cfg.tree_cell_blocks
+	var masks := TreePlacement.masks_for(gen)
+	var r_sq := job.collider_blocks * job.collider_blocks
+	var reach := int(ceil(job.collider_blocks))
+	for cz in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+		for cx in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+			var d_sq := float(cx * cell) * float(cx * cell) \
+				+ float(cz * cell) * float(cz * cell)
+			if d_sq > r_sq or d_sq <= -1.0:
+				continue
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			if not TreeTable.drawn_as_model(found["species"], cfg):
+				continue
+			var v := TreeFieldJob.variant_of(gen, cfg, found)
+			if v == &"":
+				continue
+			# A variant whose sidecar reports no trunk gets no cylinder, and
+			# the expectation has to know that or it counts a tree the ring
+			# was right not to build.
+			if TreeModels.trunk_of(v) == Vector2.ZERO:
+				continue
+			expect += 1
+
+	var bad := 0
+	if job.colliders.size() != expect:
+		print("  the ring holds %d cylinders, placement decides %d trees" % [
+			job.colliders.size(), expect])
+		bad += 1
+	if job.colliders.is_empty():
+		print("  WARNING: no colliders in the sample - this test proved nothing")
+		return 1
+
+	# Every cylinder must be a real trunk: a positive radius, a positive
+	# height, and its foot at or above the ground rather than buried.
+	var silly := 0
+	for row in job.colliders:
+		if float(row[1]) <= 0.0 or float(row[2]) <= 0.0:
+			silly += 1
+	if silly > 0:
+		print("  %d cylinders have a non-positive radius or height" % silly)
+		bad += 1
+
+	# THE BODY TEST, ON ITS OWN PHYSICS SPACE AND WITHOUT `await`.
+	#
+	# The obvious version adds a StaticBody3D to this scene and fires a ray at
+	# it - and it does not work, because a body is not in its space until a
+	# physics frame has passed, so the test has to await one. An awaiting test
+	# breaks this harness's whole detection method: it reports a crash by
+	# returning something that is not an int, and a coroutine is not an int
+	# either. `_ready` refused to call it at all.
+	#
+	# So: a space of this test's own, through PhysicsServer3D, which is live
+	# the moment it is created and needs no frame. It is the same Jolt server
+	# the game runs on and the same cylinder shape the ring builds, queried the
+	# same way - the only thing given up is the scene tree, which was never
+	# part of the claim.
+	var space := PhysicsServer3D.space_create()
+	PhysicsServer3D.space_set_active(space, true)
+	var body := PhysicsServer3D.body_create()
+	PhysicsServer3D.body_set_mode(body, PhysicsServer3D.BODY_MODE_STATIC)
+	PhysicsServer3D.body_set_space(body, space)
+	var shape := PhysicsServer3D.cylinder_shape_create()
+	var first: Array = job.colliders[0]
+	PhysicsServer3D.shape_set_data(shape,
+		{"radius": float(first[1]), "height": float(first[2])})
+	var centre: Vector3 = first[0]
+	PhysicsServer3D.body_add_shape(body, shape, Transform3D(Basis(), centre))
+
+	var stopped := false
+	var leaked := false
+	var st := PhysicsServer3D.space_get_direct_state(space)
+	if st != null:
+		# Fired horizontally at the trunk's own centre height, from three
+		# metres outside its radius. This is "walk into it and be stopped".
+		var from := centre + Vector3(float(first[1]) + 3.0, 0.0, 0.0)
+		stopped = not st.intersect_ray(
+			PhysicsRayQueryParameters3D.create(from, centre)).is_empty()
+		# AND THE MIRROR OF IT, because a test that only checks for a hit
+		# passes on a shape the size of the world: a ray twenty metres to the
+		# side, at the same height, must MISS.
+		var clear := centre + Vector3(0.0, 0.0, 20.0)
+		leaked = not st.intersect_ray(PhysicsRayQueryParameters3D.create(
+			clear + Vector3(float(first[1]) + 3.0, 0.0, 0.0),
+			clear)).is_empty()
+	if not stopped:
+		print("  a ray fired at a trunk from 3 m away did not hit it")
+		bad += 1
+	if leaked:
+		print("  a ray fired 20 m clear of the trunk hit something")
+		bad += 1
+	PhysicsServer3D.free_rid(shape)
+	PhysicsServer3D.free_rid(body)
+	PhysicsServer3D.free_rid(space)
+
+	var radii := Vector2(1e9, 0.0)
+	var heights := Vector2(1e9, 0.0)
+	for row in job.colliders:
+		radii = Vector2(minf(radii.x, row[1]), maxf(radii.y, row[1]))
+		heights = Vector2(minf(heights.x, row[2]), maxf(heights.y, row[2]))
+	print("tree colliders: %d cylinders, placement says %d; radius %.2f-%.2f m, height %.2f-%.2f m; ray hit %s" % [
+		job.colliders.size(), expect, radii.x, radii.y, heights.x, heights.y,
+		"yes" if stopped else "NO"])
+	return bad
+
+
+## One vertex colour as the three bytes the renderer will actually read.
+static func _swatch_bytes(c: Color) -> Vector3i:
+	return Vector3i(
+		int(clampf(c.r, 0.0, 1.0) * 255.0),
+		int(clampf(c.g, 0.0, 1.0) * 255.0),
+		int(clampf(c.b, 0.0, 1.0) * 255.0))
+
+
+## WHAT IS AUTHORED IN `TreePalette` MUST BE WHAT LANDS IN THE MESH.
+##
+## THE SWATCH GATE, AND IT IS A TEST RATHER THAN A SHEET. The plan offers a
+## choice - extend the character gallery's swatch sheet or add a tree strip -
+## and this takes a third option, which is to assert the thing the sheet was
+## looking for instead of photographing it.
+##
+## What the sheet catches is the colour path going wrong: a linear value pushed
+## into a vertex colour without `Look.to_wire()` draws far brighter and far less
+## saturated than intended, which is a mistake this project has made and paid a
+## whole screenshot tour to find (`FloraModels.COLORS`' note, and look v2 Stage
+## 0's). It is a ROUND TRIP, and a round trip is exactly checkable.
+##
+## So: for every variant, assemble the real mesh, read the vertex colours the
+## loader actually pushed, and require every one of them to be a family from
+## `TreePalette` converted exactly once. A colour converted twice, not at all,
+## or looked up from the wrong table fails.
+##
+## The 6-unit tolerance the plan names is the character gallery's, and it is
+## about a PHOTOGRAPH - light, shade and a renderer stand between an authored
+## hex and a pixel. Nothing stands between an authored hex and a vertex colour,
+## so this is exact to a float epsilon instead, which is a stronger claim than
+## the one being asked for.
+func _test_tree_swatches():
+	if not TreeModels.available():
+		print("tree swatches: no library mounted, 0 checks (public build)")
+		return 0
+	# EVERY AUTHORED FAMILY, CONVERTED THE ONE WAY THE LOADER CONVERTS, AS THE
+	# BYTES THE RENDERER WILL READ - and matched to WITHIN ONE UNIT, which is
+	# the whole of what this gate's tolerance had to be worked out from.
+	#
+	# An ArrayMesh stores a vertex colour in eight bits per channel and hands
+	# back the quantised value rather than the float that was pushed. The first
+	# version of this gate compared floats exactly and failed on all 638,164
+	# vertex colours in the library, which is what a tolerance bug looks like
+	# when the tolerance is zero. The second quantised both sides by ROUNDING
+	# and failed on all of them too - Godot TRUNCATES (`c * 255` cast to a
+	# byte), so an authored `0.2195` goes in as 55.97 and comes back as 55.
+	#
+	# Truncating both sides is right in principle and lands on a knife edge in
+	# practice: `0.2823 * 255` is 71.99 authored and 70.99 read back, so a
+	# single float ulp moves the answer by a whole unit. So: within one unit
+	# per channel, which is the SMALLEST tolerance eight bits admits and far
+	# tighter than the 6 units the plan offers - that number is the character
+	# gallery's, and it is about a PHOTOGRAPH, with light and a renderer in the
+	# way. Nothing stands between an authored hex and these bytes but one
+	# documented conversion and one quantisation.
+	var wire := []
+	for family in TreePalette.FAMILIES:
+		wire.append([_swatch_bytes(Look.to_wire(TreePalette.FAMILIES[family])),
+			family])
+	var bad := 0
+	var checked := 0
+	var seen := {}
+	var sway_lo := 2.0
+	var sway_hi := -1.0
+	for variant in TreeModels.variants():
+		var mesh := TreeModels.mesh_for(variant, 0, 0.5)
+		if mesh == null:
+			continue
+		var cols: PackedColorArray = mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+		var wrong := 0
+		for c in cols:
+			checked += 1
+			var got := _swatch_bytes(c)
+			var hit := &""
+			for entry in wire:
+				var want: Vector3i = entry[0]
+				if absi(want.x - got.x) <= 1 and absi(want.y - got.y) <= 1 \
+						and absi(want.z - got.z) <= 1:
+					hit = entry[1]
+					break
+			if hit == &"":
+				wrong += 1
+			else:
+				seen[hit] = true
+			# THE SWAY WEIGHT RIDES IN ALPHA and must stay inside 0..1, or the
+			# shader squares a number bigger than one and a crown leaves the
+			# frame. Checked here because this is the only place that reads
+			# every vertex the loader wrote.
+			sway_lo = minf(sway_lo, c.a)
+			sway_hi = maxf(sway_hi, c.a)
+		if wrong > 0:
+			print("  %s: %d of %d vertex colours are not an authored family" % [
+				variant, wrong, cols.size()])
+			bad += 1
+	if sway_lo < 0.0 or sway_hi > 1.0:
+		print("  the sway weight leaves 0..1: %.4f to %.4f" % [sway_lo, sway_hi])
+		bad += 1
+	# AND EVERY AUTHORED FAMILY SHOULD BE REACHABLE. A family nothing points at
+	# is a colour nobody can see, which is worth knowing about rather than
+	# failing on - `BARK_DEAD` is deliberately one of them.
+	var unused := PackedStringArray()
+	for family in TreePalette.FAMILIES:
+		if not seen.has(family):
+			unused.append(String(family))
+	print("tree swatches: %d vertex colours over %d variants, %d variants wrong" % [
+		checked, TreeModels.variants().size(), bad])
+	print("  sway weight %.4f to %.4f; %d of %d families reachable%s" % [
+		sway_lo, sway_hi, seen.size(), TreePalette.FAMILIES.size(),
+		"" if unused.is_empty() else " (unused: %s)" % ", ".join(unused)])
+	if checked == 0:
+		print("  WARNING: no vertex colours in the sample - this proved nothing")
+		return 1
+	return bad

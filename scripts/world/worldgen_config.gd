@@ -83,6 +83,15 @@ const REAL_PLAYER_HEIGHT_M := 1.75
 ## into it makes the two mutually dependent for the sake of two integers. The
 ## self-test asserts the two agree instead, which is the same guarantee without
 ## the cycle - see "sky reserve" in selftest.gd.
+## RETIRED BY TREES V3 STAGE 7, AND THE NUMBERS ARE KEPT AS A RECORD.
+##
+## `REF_MAX_TREE_BLOCKS` was the tallest tree the table could grow, and
+## `world_height_blocks` reserved that much empty sky above every column so a
+## canopy had somewhere to land. Trees are models now and nothing is written
+## above the terrain, so the reserve is gone and these describe a world that no
+## longer exists. They are left because the self-test's `sky reserve` gate is
+## rewritten against them - it now asserts the reserve is ABSENT rather than
+## sufficient - and because a constant deleted is a number somebody re-derives.
 const REF_TREE_MAX_BLOCKS := 21.0
 const REF_MAX_TREE_BLOCKS := 42.0
 
@@ -152,7 +161,7 @@ const VIEW_PRESETS := [
 	# half of it, so the far half of every wooded ridge was bald and the far
 	# field painted it forest-green: a mown slope. World feel v1 Stage 7 raised
 	# High from 300 to 400 for this reason and did not close the gap; this
-	# closes it. What pays for it is the LOD ramp in FarTreesJob, which keeps
+	# closes it. What pays for it is the LOD ramp in TreeFieldJob, which keeps
 	# the candidate count growing with the radius rather than with its square.
 	# AND FROM DISTANCE V3 STAGE 4 THE TOP TWO PRESETS SEE THE WHOLE REGION,
 	# which is decision 3 and the monumental north star as a number.
@@ -1270,6 +1279,61 @@ const FOG_START_RATIO := 0.4
 ## has to stay the mesh this project shipped.
 @export var far_detail := 1.0
 
+## HOW HARD THE WIND MOVES A CROWN. Trees v3 Stage 8, decision 9.
+##
+## A multiplier on the tree material's sway, weighted by each vertex's height
+## as a fraction of its own model's - so the crown moves, the roots do not, and
+## a 28 m conifer and a 2 m stump take the same proportion of it.
+##
+## LOOK, NOT SHAPE, and therefore LOCAL and unhashed (hard rule 5). It moves
+## vertices in a shader and nothing else: not placement, not the collider, not
+## the canopy cover the forest floor is shaded by. Two machines at different
+## values grow the same forest and one of them is windier, which is exactly
+## what a look knob is allowed to be.
+##
+## SEPARATE FROM `wind_strength`, which is the plants'. They are not one wind
+## and should not share a slider: grass at the value a tree wants is stiff, and
+## a tree at the value grass wants is made of rubber. What ties them together
+## is that they read the same clock and the same world position, so they move
+## in step without moving by the same amount.
+##
+## 0 is a still forest, and it is what every stage before 8 shipped.
+@export var tree_sway := 0.5
+
+## DO TREES HAVE TRUNK COLLIDERS? Trees v3 Stage 6, decision 8.
+##
+## LOCAL and unhashed, and that classification takes a moment to justify
+## because a collider sounds like world truth. It is not: the world truth is
+## WHERE THE TREE IS, which is `TreePlacement.decide()` and is hashed. Whether
+## this machine has built a cylinder there is a rendering-side fact of the same
+## kind as whether it has built the ground's own collider, and the host is
+## authoritative for movement either way (world feel v1's host-authoritative
+## input). Two machines at different values still agree about the forest.
+##
+## The lever exists because a ring of six hundred cylinders is the one thing in
+## this epic that costs the PHYSICS server rather than the renderer, and a
+## number you can turn to 0 is how that gets measured.
+@export var tree_colliders := true
+
+## THE SEASON, 0 FOR SUMMER AND 1 FOR AUTUMN. Trees v3 Stage 8.
+##
+## A bias on which VARIANT a cell picks, not a tint: the pack ships each tree
+## in green and autumn as separate palettes over one shared geometry, so an
+## autumn forest is the autumn trees rather than the green ones painted orange,
+## and it costs no new mesh. At 1 the autumn twins take four times their table
+## weight and the greens fall to a third of theirs - which leaves turning trees
+## among green ones rather than a uniformly orange wood.
+##
+## A SHAPE KNOB, NOT A LOOK KNOB, so it is on PROPERTIES and travels in the
+## join handshake (hard rule 5). It changes WHICH TREE a cell grows, and two
+## machines that disagreed about it would draw different forests while the
+## handshake reported a match. That is exactly the failure the two lists exist
+## to prevent.
+##
+## Snow-dust has no knob and wants none: it is driven by ALTITUDE, out of the
+## same treeline band the far field's colour convergence reads.
+@export var tree_season := 0.0
+
 ## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
 ##
 ## The world is unbounded by design, so the height map is built in tiles
@@ -1336,7 +1400,7 @@ const FOG_START_RATIO := 0.4
 
 ## HOW FAR THE PLAYER MUST MOVE HORIZONTALLY BEFORE THE IMPOSTOR RING IS
 ## REBUILT, in metres. Distance v5 Stage 2. 0 falls back to
-## FarTrees.REBUILD_STEP_M.
+## TreeField.REBUILD_STEP_M.
 ##
 ## The default is 24.0, which is that constant's own value since distance v1
 ## Stage 7 and the number every measurement in this project was taken at - the
@@ -1346,7 +1410,7 @@ const FOG_START_RATIO := 0.4
 ## The ring is a function of the player's x and z alone, so a step measured in
 ## three dimensions let ALTITUDE ask for a rebuild that produces the identical
 ## ring - and a falling player asks every 24 m of fall, forever. See
-## FarTrees.update().
+## TreeField.update().
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob.
 @export var far_tree_step_m := 24.0
@@ -1566,6 +1630,9 @@ const FOG_START_RATIO := 0.4
 ## different terrain with the handshake reporting a match. Found by auditing
 ## the list against the @export block; see STATUS.md.
 const PROPERTIES: PackedStringArray = [
+	# TREES V3 STAGE 8. The season decides which VARIANT a cell grows, so it is
+	# world truth and travels in the join handshake (hard rule 5).
+	"tree_season",
 	"block_size", "world_scale",
 	"world_blocks_xz", "world_height_blocks", "coarse_step",
 	"voxel_depth_chunks",
@@ -1712,6 +1779,11 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"heightmap_tile_blocks",
 	# DISTANCE V5 STAGE 6. The far mesh's analytic grain.
 	"far_detail",
+	# TREES V3 STAGE 2. The wind in the crowns - a look knob, so LOCAL: two
+	# machines at different values grow the same forest.
+	"tree_sway",
+	# TREES V3 STAGE 6. The trunk collider ring.
+	"tree_colliders",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
@@ -1850,10 +1922,20 @@ func apply_world_scale() -> void:
 	# Free safety is worth taking - the alternative is a reserve that is
 	# correct today and silently short the moment someone raises a knob, with
 	# a flat-topped tree in some columns as the only symptom.
-	var needed := max_altitude \
-		+ REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale \
-			* maxf(old_growth_scale, 1.0) \
-		+ TREE_RESERVE_MARGIN + 16.0
+	# TREES V3 STAGE 7: THE SKY RESERVE IS GONE, AND THE COLUMN ENDS AT THE
+	# TERRAIN.
+	#
+	# This used to add REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale
+	# * old_growth_scale + a margin - about 21 metres of empty chunks above
+	# every column in the world - because a crown stamped into the volume must
+	# not be cut off by a chunk nobody built. Nothing writes above the terrain
+	# any more: `TreeField` instances a model library and never touches a
+	# voxel, so the tallest thing a column can contain is its own ground.
+	#
+	# THE 16 STAYS and it is not the trees'. It is one chunk of headroom over
+	# the highest ground, which the mesher's neighbour lookups and the
+	# streamer's own rounding both want, and it predates the reserve.
+	var needed := max_altitude + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a

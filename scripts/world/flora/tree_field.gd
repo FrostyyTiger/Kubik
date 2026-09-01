@@ -1,25 +1,36 @@
-class_name FarTrees
+class_name TreeField
 extends Node3D
 
-## The forest beyond the voxel radius, as impostors.
+## EVERY TREE IN THE GAME. Trees v3 decision 1.
 ##
-## Follows FarField exactly - a worker builds the new ring while the old one
-## stays on screen, and the swap is invisible. Building 2,000 transforms on the
-## frame the player crosses a threshold would be a hitch every sixteen metres
-## of walking, which is every second and a bit at sprint.
+## THIS WAS `FarTrees`, THE IMPOSTOR RING, AND THE RENAME IS THE EPIC. It drew
+## the forest BEYOND the voxel radius as six-triangle cones, because the real
+## trees were blocks in the chunk volume and stopped at the seam. There are no
+## block trees any more and there is no seam: this walks the placement lattice
+## from the player's boots to the fog and draws a library mesh at every
+## candidate, at a coarser LOD rung the further out it stands.
+##
+## The machine is unchanged and that is deliberate - the ring-walk in four
+## stride bands, the per-sector frontier holes, the inner and outer fades, the
+## terrace footing lift, the backdrop convergence, distance v5's horizontal
+## debounce and its budgeted uploader are all INHERITED, not rewritten. What
+## changed is what a candidate draws.
 ##
 ##
-## SIX TO TWELVE TRIANGLES PER TREE, AND THAT IS THE WHOLE DESIGN.
+## GEOMETRY ALL THE WAY OUT. NO CARDS (ruling 4).
 ##
-## A voxel spruce is several hundred triangles. Two thousand of them in a ring
-## is most of a million, which is the entire flora budget spent on trees you
-## cannot walk to. A cone is six, and at 150 m a cone and a spruce are the same
-## handful of pixels - the silhouette carries all the information that survives
-## the distance, and the silhouette is exactly what an impostor is.
+## There are no impostor billboards, no baked octahedral sheets and no painted
+## far ring. The far register is a DOWNSAMPLED VERSION OF THE SAME GRID - the
+## Distant Horizons move applied to a model library - so the near/far seam
+## stops being a KIND boundary (block tree against cone) and becomes only a
+## RESOLUTION boundary. Two things follow, and both were bought deliberately:
+## a walking eye cannot find the handover, and looking down from a peak works,
+## which cards never did.
 ##
 ## What it must NOT do is scatter its own trees. It walks the same candidate
-## lattice the voxel stamper walks, so the tree you see at 200 m is the tree
-## you arrive at.
+## lattice `TreePlacement.decide()` answers for, so the tree you see at 200 m
+## is the tree you arrive at - which was true of the impostor ring and is the
+## one property that had to survive becoming the only renderer.
 
 signal rebuilt(count: int, elapsed_ms: int)
 
@@ -74,12 +85,12 @@ const LOD_COARSE_M := 400.0
 
 ## And the third, which the plan did not ask for and the measurement did. Past
 ## it one cell in sixty-four, drawn eight times as wide. See the band table in
-## FarTreesJob: three bands cost 1.52x the Stage 6 ring against a gate of
+## TreeFieldJob: three bands cost 1.52x the Stage 6 ring against a gate of
 ## 1.25x, and took 9% off the stream probe's chunks/s on the way back - which
 ## is hard rule 6. 600 m is where the fog is already 87% of the frame.
 const LOD_COARSEST_M := 600.0
 
-var _job: FarTreesJob = null
+var _job: TreeFieldJob = null
 var _task := -1
 var _pending := Vector2i.ZERO
 var _has_pending := false
@@ -87,12 +98,33 @@ var _has_pending := false
 ## Per-sector radius in chunks out to which the real trees have landed. Set by
 ## Game from World.loaded_frontier() when the frontier moves.
 var frontier := PackedInt32Array()
+
+## FELLED TREES, KEYED BY PLACEMENT CELL. Decision 8's seam.
+##
+## EMPTY, AND NOTHING IN THIS EPIC WRITES TO IT. Chopping is fell-as-a-unit now
+## (ruling 2) and the ONE MUTATION PATH will be its only writer - a client
+## proposes, the host validates against the allowed list and applies, exactly
+## as a block edit is treated (CLAUDE.md habit 3). It is threaded through the
+## job, the draw and the collider ring while all three are being written
+## because adding it afterwards would mean touching all three again, and
+## because a seam nobody has tried to thread is a seam nobody knows the shape
+## of. Flora carries `_flora_removed` for the same reason and got it right the
+## same way.
+var removed_trees := {}
 var _last_center_m := Vector3(INF, INF, INF)
 
 var _generator: TerrainGenerator = null
 var _config: WorldgenConfig = null
-var _slots := {}   # species -> MultiMeshInstance3D
+## SLOT KEY -> MultiMeshInstance3D. The key is TreeFieldJob's - `c<species>`
+## for a cone and `m<variant>|<lod>` for a library mesh - so one species with
+## seven variants at three rungs is up to twenty-one slots and one draw call
+## each. See the note on TreeFieldJob.buffers.
+var _slots := {}
+var _trunks: StaticBody3D = null
+var _shapes: Array = []
+var _collider_count := 0
 var _count := 0
+var _models := 0
 var _triangles := 0
 var _last_ms := 0
 
@@ -101,10 +133,11 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
 	_config = config
 	_last_center_m = Vector3(INF, INF, INF)
-	for species in _slots:
-		_slots[species].queue_free()
+	for key in _slots:
+		_slots[key].queue_free()
 	_slots.clear()
 	_count = 0
+	_models = 0
 
 
 ## Called every frame with the player's position. Cheap when nothing has moved.
@@ -160,12 +193,12 @@ func _start_if_idle() -> void:
 	if _task != -1 or not _has_pending or _generator == null:
 		return
 	_has_pending = false
-	var job := FarTreesJob.new()
+	var job := TreeFieldJob.new()
 	job.center = _pending
 	job.generator = _generator
 	job.config = _config
 	# The heightmap the far mesh draws from, for the colour convergence in
-	# FarTreesJob._tint_at(). The generator owns it and neither of them is
+	# TreeFieldJob._tint_at(). The generator owns it and neither of them is
 	# written after setup.
 	job.heightmap = _generator.heightmap
 	# INNER EDGE AT THE FRONTIER, because the real trees are inside it and
@@ -194,6 +227,16 @@ func _start_if_idle() -> void:
 	# INSIDE the first, which would silently drop the 1-in-4 band entirely.
 	job.lod2_blocks = maxf(LOD_COARSE_M / _config.block_size, job.lod_blocks)
 	job.lod3_blocks = maxf(LOD_COARSEST_M / _config.block_size, job.lod2_blocks)
+	# THE COLLIDER RING, trees v3 Stage 6. The sim radius, because a collider is
+	# a GAMEPLAY fact and the sim radius is the ring World already streams
+	# collidable ground into for every simulated peer - so a tree you can walk
+	# into is a tree standing on ground you can walk on, by construction rather
+	# than by two radii that happen to agree.
+	job.collider_blocks = float(_config.sim_radius_chunks * Chunk.SIZE) \
+		if _config.tree_colliders else 0.0
+	# The felled set. Nothing writes to it tonight - see the note on the job's
+	# own field, and on `removed_trees` below.
+	job.removed = removed_trees
 	_job = job
 	_task = WorkerThreadPool.add_task(job.run, false, "kubik far trees")
 
@@ -211,60 +254,122 @@ func _start_if_idle() -> void:
 ##
 ## No uploader means no FarField, which means no world: applied directly, which
 ## is what the self-test's small Worlds and any future headless caller get.
-func _apply(job: FarTreesJob) -> void:
+func _apply(job: TreeFieldJob) -> void:
 	_triangles = 0
 	var up := _uploader()
 	if up == null:
-		for species in job.buffers:
-			_apply_species(job, species)
+		for key in job.buffers:
+			_apply_species(job, key)
+		_apply_colliders(job)
 		_apply_tail(job)
 		return
 	var work: Array[Callable] = []
-	for species in job.buffers:
-		work.append(_apply_species.bind(job, species))
-	up.submit(&"far_trees", work, _apply_tail.bind(job))
+	for key in job.buffers:
+		work.append(_apply_species.bind(job, key))
+	# THE COLLIDER BATCH IS A SLICE LIKE ANY OTHER (decision 10, and v5 hard
+	# rule 6 adopted verbatim). It is a few hundred shape writes and has never
+	# measured above a millisecond - it is on the budget because "every
+	# handover" is a rule, and a rule with an exception is a thing somebody has
+	# to remember.
+	work.append(_apply_colliders.bind(job))
+	up.submit(&"tree_field", work, _apply_tail.bind(job))
 
 
-func _apply_species(job: FarTreesJob, species: int) -> void:
-	var buf: PackedFloat32Array = job.buffers[species]
-	var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
+func _apply_species(job: TreeFieldJob, key: String) -> void:
+	var buf: PackedFloat32Array = job.buffers[key]
+	var n := buf.size() / TreeFieldJob.FLOATS_PER_INSTANCE
 	if n <= 0:
 		return
-	var slot: MultiMeshInstance3D = _slots.get(species)
+	var mesh := _mesh_for_key(key)
+	if mesh == null:
+		# A library slot with no mesh: the mount went away between the job
+		# being submitted and its buffers landing, which the self-test's
+		# absent leg can actually produce. Drop the slice rather than
+		# assigning null to a MultiMesh, which is an error per instance.
+		return
+	var slot: MultiMeshInstance3D = _slots.get(key)
 	if slot == null:
-		slot = _make_slot(species)
-		_slots[species] = slot
-	# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
-	# chooses between the cone and the stepped pyramid (hard rule 1: at 0
-	# the ring is the one f23c3f0 drew), and a slot built once at the old
-	# value would keep drawing cones on terraced ground until the species
-	# happened to disappear and come back. FarTreeMeshes caches both, so
-	# this is a dictionary lookup and not a rebuild.
-	slot.multimesh.mesh = FarTreeMeshes.for_species(species, _config)
+		slot = _make_slot(key, mesh)
+		_slots[key] = slot
+	# THE MESH IS RE-READ EVERY REBUILD, and the reason has changed with the
+	# meshes. Distance v2 re-read it so `far_terrace` could swap a cone for a
+	# stepped pyramid without an F7; now it is so a library reloaded or a
+	# palette retuned at runtime lands without one. TreeModels caches, so this
+	# is a dictionary lookup and not a rebuild.
+	slot.multimesh.mesh = mesh
 	slot.multimesh.instance_count = n
 	slot.multimesh.buffer = buf
 	slot.visible = true
-	# Triangles the ring actually draws - the gate for Stage 5 is a ratio
-	# against the cone ring and nothing reported one.
-	_triangles += n * (slot.multimesh.mesh.surface_get_array_len(0) / 3)
+	# Triangles the field actually draws, off the INDEX array - a library mesh
+	# is indexed and `surface_get_array_len` would give its vertex count, which
+	# on a greedy quad mesh is two thirds of the answer.
+	var idx: int = mesh.surface_get_array_index_len(0)
+	_triangles += n * (idx / 3)
 
 
-func _apply_tail(job: FarTreesJob) -> void:
-	for species in _slots:
-		if not job.buffers.has(species):
-			_slots[species].multimesh.instance_count = 0
-			_slots[species].visible = false
+## The mesh one slot key names: a library rung, `m<variant>|<lod>`.
+func _mesh_for_key(key: String) -> Mesh:
+	var m := TreeFieldJob.model_of_key(key)
+	return TreeModels.mesh_for(StringName(m[0]), int(m[1]), _config.block_size)
+
+
+## THE TRUNK COLLIDERS, decision 8.
+##
+## One StaticBody3D holding every trunk in the sim radius, with the shapes
+## POOLED across rebuilds - a CollisionShape3D is a node and a shape is a
+## server resource, and building six hundred of each every twenty-four metres
+## of walking is the kind of allocation churn that shows up as a stutter rather
+## than as a number.
+##
+## THE CANOPY DOES NOT COLLIDE, and never meaningfully did: leaf blocks were
+## written with `only_air`, which made them decoration you could stand inside.
+## A trunk is what a player bumps into, and a cylinder is what a trunk is.
+func _apply_colliders(job: TreeFieldJob) -> void:
+	if _trunks == null:
+		_trunks = StaticBody3D.new()
+		_trunks.name = "Trunks"
+		add_child(_trunks)
+	var want := job.colliders.size()
+	# Grow the pool. Shrinking it is deliberately not done: the ring is a
+	# roughly constant size and freeing nodes to rebuild them next rebuild is
+	# the churn this pool exists to avoid.
+	while _shapes.size() < want:
+		var cs := CollisionShape3D.new()
+		var cyl := CylinderShape3D.new()
+		cs.shape = cyl
+		_trunks.add_child(cs)
+		_shapes.append(cs)
+	for i in _shapes.size():
+		var cs: CollisionShape3D = _shapes[i]
+		if i >= want:
+			cs.disabled = true
+			continue
+		var row: Array = job.colliders[i]
+		var cyl: CylinderShape3D = cs.shape
+		cyl.radius = float(row[1])
+		cyl.height = float(row[2])
+		cs.position = row[0]
+		cs.disabled = false
+	_collider_count = want
+
+
+func _apply_tail(job: TreeFieldJob) -> void:
+	for key in _slots:
+		if not job.buffers.has(key):
+			_slots[key].multimesh.instance_count = 0
+			_slots[key].visible = false
 	_count = job.count
+	_models = job.model_count
 	# THE TRIANGLE COUNT, printed here rather than folded into Game's
-	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
+	# "[TreeField] N impostors in N ms" line: game.gd is append-only in this
 	# epic and has already spent its one line. Stage 5's gate is a ratio and
 	# nothing in the project reported the numerator.
-	print("[FarTrees] %d triangles over %d species meshes" % [
-		_triangles, _slots.size()])
+	print("[TreeField] %d triangles over %d slots (%d model instances of %d), %d trunk colliders" % [
+		_triangles, _slots.size(), _models, _count, _collider_count])
 	rebuilt.emit(job.count, _last_ms)
 
 
-## The far mesh's uploader, reached through the tree. FarTrees is Game's child
+## The far mesh's uploader, reached through the tree. TreeField is Game's child
 ## and FarField is World's, so this is the same reach `apply_far_knobs` makes
 ## in the other direction - and it is looked up per rebuild rather than cached
 ## because a reroll builds a new World under the same parent and a cached node
@@ -279,13 +384,13 @@ func _uploader() -> FarUpload:
 	return far_field.uploader()
 
 
-func _make_slot(species: int) -> MultiMeshInstance3D:
+func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	mm.mesh = FarTreeMeshes.for_species(species, _config)
+	mm.mesh = mesh
 	var node := MultiMeshInstance3D.new()
-	node.name = "Species%d" % species
+	node.name = key
 	node.multimesh = mm
 	# NO SHADOWS FROM THE RING. A cone's shadow is not a tree's shadow, and at
 	# 200 m nobody can tell there is one - but the shadow map pays for every
@@ -298,7 +403,8 @@ func _make_slot(species: int) -> MultiMeshInstance3D:
 ## Impostors drawn, and how long the last rebuild took. For the F3 readout and
 ## for STATUS.md.
 func stats() -> Dictionary:
-	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles}
+	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles,
+		"models": _models, "colliders": _collider_count}
 
 
 ## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even

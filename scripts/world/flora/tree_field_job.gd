@@ -1,21 +1,23 @@
-class_name FarTreesJob
+class_name TreeFieldJob
 extends RefCounted
 
-## The impostor ring's contents, computed on a worker thread.
+## The tree field's contents, computed on a worker thread.
 ##
 ## Sibling of FarFieldJob, and the same shape for the same reasons: it captures
 ## what it needs at submit time, calls back into nothing, and returns packed
 ## arrays because MultiMesh belongs to the main thread.
 ##
 ##
-## WHY THIS EXISTS AT ALL.
+## WHY THIS EXISTS AT ALL, AND WHY IT NOW EXISTS FOR EVERYTHING.
 ##
-## Real voxel trees stop at the voxel radius - 96 m at High. Beyond that the
-## far field draws the coarse heightmap coloured by zone, so a forest becomes a
-## flat dark-green slope. Nobody noticed that under thick fog and with 35,000
-## evenly scattered cones; with the forest Stage 4 built it is the first thing
-## you see from a meadow, because the forest visibly STOPS at a circle centred
-## on the player and moves when they do.
+## It began as the impostor ring: real voxel trees stopped at the voxel radius
+## and beyond it a forest became a flat dark-green slope, visibly ENDING at a
+## circle centred on the player and moving when they did.
+##
+## Trees v3 deleted the block trees, so there is no inner edge left to start
+## from and this walk is the only thing that draws a tree anywhere. The band
+## structure survives unchanged - it is what makes a 600 m radius affordable -
+## and its innermost band is now stride 1 at LOD0 from distance zero.
 ##
 ##
 ## THE SAME CANDIDATES, THE SAME HASH.
@@ -96,12 +98,80 @@ var lod_blocks := 0.0
 var lod2_blocks := 0.0
 var lod3_blocks := 0.0
 
+## WHICH LOD RUNG EACH BAND DRAWS A LIBRARY MESH AT. Trees v3 Stage 5, and
+## open question 1, decided on the numbers rather than on taste.
+##
+## Stage 4 drew LOD0 in every band, deliberately, so its gate could be read
+## with nothing hidden behind a downsample - and one species cost 606,484
+## triangles where the whole cone ring had cost 17,700. All seven species at
+## LOD0 everywhere is not a configuration this game can afford.
+##
+##     band          radius           stride   rung   voxel
+##     0             0 -> 1.6 x r     1        LOD0   12.5 cm
+##     1             1.6 r -> 400 m   2        LOD1   25 cm
+##     2             400 -> 600 m     4        LOD2   50 cm
+##     3             600 m -> fog     8        LOD2   50 cm
+##
+## THE NEAREST BAND IS STRIDE 1 AND LOD0 ALL THE WAY TO THE OLD SEAM, which
+## answers the second half of open question 1: there is no nearer cut. That
+## band covers 0 to 1.6 times the voxel radius - 154 m at High - and it is the
+## band a player walks through, stands under and looks at. Every tree in it is
+## the tree the artist drew, at 12.5 cm voxels, and the handover to the rung
+## above happens well beyond where anyone can resolve a voxel.
+##
+## THE OUTER TWO BANDS SHARE LOD2 rather than adding a fourth rung. The tool
+## bakes three, and band 3 is past 600 m where the fog is already 87% of the
+## frame (distance v1 Stage 7's own note) - a rung nobody can see is a rung
+## nobody should pay to bake, and the merged-lump step the plan records as the
+## next move is what band 3 actually wants if the fog ever moves out.
+const BAND_LOD := [0, 1, 2, 2]
+
 ## The heightmap the far mesh draws from, for the colour convergence below.
 ## Read-only here, and its pyramid is built on first use under its own mutex.
 var heightmap: Heightmap = null
 
-## The result: species id -> PackedFloat32Array, 16 floats per instance.
+## The result: SLOT KEY -> PackedFloat32Array, 16 floats per instance.
+##
+## THE KEY IS A STRING NOW AND IT USED TO BE A SPECIES ID (trees v3 Stage 4).
+## One species draws many library variants at several LOD rungs, and each
+## (variant, rung) pair is its own mesh and therefore its own MultiMesh - so
+## the key has to name both. Two forms, and they are told apart by their
+## prefix rather than by a flag:
+##
+##     "m<variant>|<lod>"    a library mesh at one rung
+##
+## THE `c<species>` FORM IS GONE (Stage 7). It named a cone, and there are no
+## cones - the prefix is kept on the surviving form so a stored key from an
+## older build cannot be mistaken for a variant name.
 var buffers := {}
+
+## WITHIN THIS RADIUS, IN BLOCKS, A TREE GETS A TRUNK COLLIDER. 0 disables.
+##
+## The sim radius rather than the voxel radius, because a collider is a
+## GAMEPLAY fact and the sim radius is where gameplay happens - it is the ring
+## World already streams collidable ground into for every simulated peer.
+var collider_blocks := 0.0
+
+## HOST-OWNED SET OF FELLED TREES, keyed by placement cell, snapshotted at
+## submit time. Trees v3 decision 8's seam, and NOTHING WRITES TO IT TONIGHT.
+##
+## It is threaded through anyway, and that is deliberate rather than
+## speculative: chopping is fell-as-a-unit now (ruling 2), the one mutation
+## path will be its only writer, and a removed-set added later would have to be
+## threaded through this walk, `cover_column()` and the collider ring in one
+## go. Threading it while both are being written costs three lines and proves
+## the shape of the seam - the `_flora_removed` pattern, which flora already
+## carries for exactly this reason.
+var removed := {}
+
+## Trunk colliders for the trees inside `collider_blocks`, for the main thread.
+## Each is [Vector3 centre in metres, radius m, height m].
+var colliders: Array = []
+
+## Instances that are library models rather than cones, for the log line and
+## for Stage 4's gate - which is "the instance count for this species equals
+## its placement count".
+var model_count := 0
 var count := 0
 var elapsed_usec := 0
 
@@ -165,16 +235,22 @@ func run() -> void:
 		# the centre belonged to band 1. It is always inside the frontier and
 		# never survives, but the two scans agreeing on it is what makes "the
 		# same scan, walked in a better order" checkable rather than believed.
-		[1, -1.0, lod_sq, 1.0],
-		[2, lod_sq, lod2_sq, 2.0],
-		[4, lod2_sq, lod3_sq, 4.0],
-		[8, lod3_sq, outer_sq, 8.0],
+		[1, -1.0, lod_sq, 1.0, BAND_LOD[0]],
+		[2, lod_sq, lod2_sq, 2.0, BAND_LOD[1]],
+		[4, lod2_sq, lod3_sq, 4.0, BAND_LOD[2]],
+		[8, lod3_sq, outer_sq, 8.0, BAND_LOD[3]],
 	]
+	# Is anything drawn from the library at all? False in the public build and
+	# false before Stage 4's slot list has anything in it, and when it is false
+	# every line below behaves exactly as it did before trees v3.
+	var any_models := TreeModels.available()
+
 	for band in bands:
 		var stride: int = band[0]
 		var lo_sq: float = band[1]
 		var hi_sq: float = minf(band[2], outer_sq)
 		var spread: float = band[3]
+		var lod_of_band: int = band[4]
 		if lo_sq >= outer_sq:
 			continue
 		var reach := int(ceil(minf(sqrt(hi_sq), outer_blocks)))
@@ -211,17 +287,61 @@ func run() -> void:
 						int(cx * cell - center.x), int(cz * cell - center.y))
 					var f := float(frontier[s] * Chunk.SIZE)
 					inner_here_sq = f * f
-				if d_sq < inner_here_sq:
-					continue
+				# THE INNER TEST MOVED BELOW decide() IN TREES V3 STAGE 4, and
+				# that is the whole of "the walk extends inward to distance
+				# zero". It still applies, unchanged, to every species the
+				# block stamper still owns - a cone must not stand where a real
+				# voxel tree has landed. It does NOT apply to a species drawn
+				# from the library, because for those there is no voxel tree to
+				# collide with: the field is the only thing that draws them, so
+				# it has to draw them from the player's boots outward.
+				#
+				# It costs a placement decision for the candidates inside the
+				# frontier that used to be rejected on two multiplies. At a 96 m
+				# voxel radius against a 600 m ring that is about 2.5% more
+				# area, and Stage 5's numbers are read with it in.
+				# THE INNER TEST IS DEAD AND ITS RADIUS IS NOT.
+				#
+				# `inner_here_sq` was where the real voxel trees began, and a
+				# cone must not stand where one had landed. There are no voxel
+				# trees: the field draws every tree in the game, from distance
+				# zero outward, and there is nothing for it to collide with.
+				# The frontier is still READ, because `TreeField` still hands
+				# it over and a future rung (the merged lump the plan records)
+				# will want it.
 				scanned += 1
 
 				var found := TreePlacement.decide(generator, cx, cz, masks)
 				if found.is_empty():
 					continue
+				# THE FELLED SET, checked once, here. A tree that has been cut
+				# down is not drawn and does not collide, and both follow from
+				# this one line rather than from two that could disagree.
+				if not removed.is_empty() and removed.has(found["cell"]):
+					continue
 
 				var species: int = found["species"]
-				if not by_species.has(species):
-					by_species[species] = []
+				# NO VARIANT, NO TREE. That is three different situations with
+				# one answer: the public build has no library mounted, a
+				# species could have every weight in its row parked at 0, and
+				# a species could be missing a row altogether. In all three the
+				# field draws nothing there and the world is treeless in that
+				# spot, which is ruling 6 - the public build ships treeless and
+				# that is the design, not a fallback.
+				# THE SNOW BIAS, and it is ALTITUDE rather than a knob: how far
+				# this tree stands up its own zone's band toward the treeline.
+				# 0 in the valley, 1 at the top, so a snow-dusted crown is a
+				# thing you climb to. Read off the same `zone_band` the far
+				# field's colour convergence uses, so the white on a distant
+				# ridge and the white on the tree standing on it agree about
+				# where the treeline is.
+				var variant := variant_of(generator, config, found) \
+					if any_models else &""
+				if variant == &"":
+					continue
+				var key := "m%s|%d" % [variant, lod_of_band]
+				if not by_species.has(key):
+					by_species[key] = []
 				var d := sqrt(d_sq)
 				# THE FOOTING, distance v2 Stage 5. The hillside this impostor
 				# stands on has shelves now, so its base has to sit on the SHELF
@@ -240,7 +360,24 @@ func run() -> void:
 				if _terrace_on():
 					lift = FarFieldJob.terrace_offset(heightmap, config,
 						found["bx"], found["bz"], d * config.block_size)
-				by_species[species].append({
+				# THE TRUNK COLLIDER, decided here because this is where the
+				# variant is known and the sidecar's trunk dimensions hang off
+				# it. Inside the sim radius only: a cylinder per tree over a
+				# 600 m field would be sixty thousand shapes for a world nobody
+				# is standing in.
+				if variant != &"" and collider_blocks > 0.0 \
+						and d_sq <= collider_blocks * collider_blocks:
+					var trunk := TreeModels.trunk_of(variant)
+					if trunk.x > 0.0 and trunk.y > 0.0:
+						var foot := (float(found["ground"] + 1) + lift) \
+							* config.block_size
+						colliders.append([
+							Vector3(float(found["bx"]) * config.block_size,
+								foot + trunk.y * 0.5,
+								float(found["bz"]) * config.block_size),
+							trunk.x, trunk.y])
+				by_species[key].append({
+					"variant": variant,
 					"spread": spread,
 					"pos": Vector3(
 						float(found["bx"]) * config.block_size,
@@ -255,10 +392,52 @@ func run() -> void:
 					"tint": _tint_at(found["bx"], found["bz"], d),
 				})
 
-	for species in by_species:
-		buffers[species] = _pack(by_species[species], species)
-		count += by_species[species].size()
+	for key in by_species:
+		buffers[key] = _pack(by_species[key], key)
+		count += by_species[key].size()
+		if String(key).begins_with("m"):
+			model_count += by_species[key].size()
 	elapsed_usec = Time.get_ticks_usec() - started
+
+
+## WHICH VARIANT STANDS AT A DECIDED TREE. ONE FUNCTION, ASKED BY EVERYTHING.
+##
+## The walk asks it, the collider ring asks it through the walk, and the
+## self-test's `tree field` and `registry determinism` gates ask it directly -
+## and the first version was a snippet inside the walk that the gates
+## reimplemented. They diverged inside one stage: Stage 8 gave the roll a SNOW
+## BIAS from altitude, the walk computed it and the gates passed 0, and
+## thirteen of two hundred and thirteen trees came out as different variants.
+## The gate caught it, which is what it is for, and the fix is not to teach the
+## gate the same arithmetic - it is to have one place that knows it.
+##
+## `TreePlacement.decide()`'s own note makes the same argument for the same
+## reason: three restatements of a placement rule would have drifted apart by
+## the second stage.
+##
+## THE SNOW BIAS IS ALTITUDE, NOT A KNOB: how far up its own zone's band this
+## tree stands, 0 in the valley and 1 at the treeline. Read off the same
+## `zone_band` the far field's colour convergence uses, so the white on a
+## distant ridge and the white on the tree standing on it agree about where the
+## treeline is.
+static func variant_of(generator: TerrainGenerator, config: WorldgenConfig,
+		found: Dictionary) -> StringName:
+	var snow := 0.0
+	var zb := generator.zone_band(generator.surface_zone_at(
+		found["bx"], found["bz"], found["surface"]))
+	if zb.y > zb.x:
+		snow = clampf((float(found["surface"]) - zb.x) / (zb.y - zb.x),
+			0.0, 1.0)
+	return TreeTable.variant_for(found["species"], found["cell"],
+		generator.world_seed, config, snow)
+
+
+## The variant and rung a model key names, or ["", 0].
+static func model_of_key(key: String) -> Array:
+	if not key.begins_with("m"):
+		return ["", 0]
+	var bits := key.substr(1).split("|")
+	return [bits[0], int(bits[1]) if bits.size() > 1 else 0]
 
 
 ## Scale multiplier at this distance from the centre.
@@ -408,21 +587,83 @@ func _far_tree_grain(mul: Color, cell: Vector2i) -> Color:
 		maxf(mul.b * v * (1.0 - h), 0.0), 1.0)
 
 
-func _pack(instances: Array, species: int) -> PackedFloat32Array:
+## THE SCALE JITTER'S SALT. New, in the 232+ range this epic was given, and
+## clear of the SALT_CLUMP series `217 + key * 7919` (hard rule 2).
+##
+## ITS OWN SALT RATHER THAN THE YAW'S, for the reason every salt in this
+## project has its own: a tree that was both turned further and grown taller
+## than its neighbour would put a visible correlation in a stand, and the whole
+## point of hashing two things separately is that they do not agree.
+const SALT_TREE_SCALE := 233
+
+## How much a library tree may differ from its authored size, either way.
+##
+## FIFTEEN PER CENT, which is the most that does not turn into a size RANGE.
+## The block trees had one (`TreeSpecies` rolls height between the table's two
+## numbers) and a model does not - it is exactly as tall as it was drawn - so
+## this is what puts a stand of one variant back into a stand of trees rather
+## than a row of copies. Bigger than this and a spruce and its neighbour read
+## as two different species; smaller and it reads as nothing at all.
+const MODEL_SCALE_JITTER := 0.15
+
+
+func _pack(instances: Array, key: String) -> PackedFloat32Array:
 	var buf := PackedFloat32Array()
 	buf.resize(instances.size() * FLOATS_PER_INSTANCE)
-	# The mesh's own colour, once per species. See _instance_color().
-	var base_lin := FarTreeMeshes.color_of_species(species, config)
+	# THE MESH'S OWN COLOUR, once per slot - the variant's dominant canopy
+	# colour through the palette table, which is decision 7's pin. It is what
+	# _instance_color() divides by to turn "mix this tree half way to its
+	# hillside" into "what do you multiply its colour by to land there".
+	#
+	# TREES V3 STAGE 7: THE CONE BRANCH IS GONE WITH THE CONES. It read
+	# `FarTreeMeshes.color_of_species()`, which read `Block.color_of(leaves)`,
+	# which is dead the night leaf blocks die.
+	var base_lin := TreeModels.canopy_color(StringName(model_of_key(key)[0]))
 	var base_wire := Look.to_wire(base_lin)
 	var i := 0
 	for inst in instances:
 		var pos: Vector3 = inst["pos"]
 		var fade: float = inst["fade"]
-		# The impostor mesh is a UNIT shape - one metre tall, half a metre
-		# across - so the transform carries the tree's real size. That is what
-		# lets one mesh serve every spruce in the world at every height it can
-		# grow to, which is the whole point of a MultiMesh.
 		var spread: float = inst["spread"]
+		var cell0: Vector2i = inst["cell"]
+
+		# A LIBRARY MESH IS ALREADY THE RIGHT SIZE, and that is ruling 3 in one
+		# branch. A cone is a UNIT shape and the transform carries the tree's
+		# height and crown; a model was authored at world size like a character,
+		# so its transform carries only the jitter. Scaling a model by the
+		# placement table's height would be scaling the artist's tree to fit a
+		# number that describes a different tree.
+		if inst["variant"] != &"":
+			var j := 1.0 + (WorldHash.hash01(cell0.x, cell0.y,
+				generator.world_seed, SALT_TREE_SCALE) * 2.0 - 1.0) \
+				* MODEL_SCALE_JITTER
+			# The fade still applies: it is what turns the handover at the
+			# outer edge into an appearance rather than a pop, and a model
+			# shrinking away into the fog needs it exactly as a cone did.
+			var mbase := maxf(j * fade, 0.001)
+			# THE BAND'S SPREAD APPLIES TO A MODEL EXACTLY AS IT DID TO A CONE,
+			# and it has to. The outer bands walk one candidate cell in four,
+			# sixteen and sixty-four; without widening what they DO draw, the
+			# far forest would be sixty-four times sparser than the near one and
+			# the treeline would thin out into nothing. The cone ring solved
+			# this in distance v1 Stage 7 and the arithmetic is unchanged:
+			# full width, and height by half a step per doubling, so the outer
+			# band reads as a canopy rather than as a skyline of towers.
+			var mxz := mbase * spread
+			var msy := mbase * (1.0 + 0.15 * (log(spread) * INV_LN2))
+			var myaw := WorldHash.hash01(cell0.x, cell0.y, 0, 931) * TAU
+			var mc := cos(myaw) * mxz
+			var msn := sin(myaw) * mxz
+			buf[i] = mc;       buf[i + 1] = 0.0; buf[i + 2] = msn; buf[i + 3] = pos.x
+			buf[i + 4] = 0.0;  buf[i + 5] = msy; buf[i + 6] = 0.0; buf[i + 7] = pos.y
+			buf[i + 8] = -msn; buf[i + 9] = 0.0; buf[i + 10] = mc; buf[i + 11] = pos.z
+			var mtint: Color = inst["tint"]
+			var mmul := _far_tree_grain(
+				_instance_color(base_lin, base_wire, mtint), cell0)
+			buf[i + 12] = mmul.r; buf[i + 13] = mmul.g
+			buf[i + 14] = mmul.b; buf[i + 15] = 1.0
+			i += FLOATS_PER_INSTANCE
+			continue
 		# Height barely grows with the LOD. A quarter of the trees drawn four
 		# times as tall would be a skyline of towers; drawn twice as wide they
 		# are a canopy with the same coverage, which is what a forest is at

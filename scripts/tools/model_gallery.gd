@@ -7,6 +7,7 @@ extends Node3D
 ##     godot --path . scenes/gallery.tscn -- --label some-name --vary spruce 8
 ##     godot --path . scenes/gallery.tscn -- --label some-name --stand spruce
 ##     godot --path . scenes/gallery.tscn -- --label some-name --masks
+##     godot --path . scenes/gallery.tscn -- --label some-name --trees
 ##
 ## THE THREE EXTRA MODES ARE TREES V1 STAGE 0, and they exist because the
 ## default sheet answers a question the trees epic is not asking. Three sizes
@@ -124,6 +125,7 @@ enum {
 	MODE_VARY = 1,      # --vary <species> <n>
 	MODE_STAND = 2,     # --stand <species>
 	MODE_MASKS = 3,     # --masks
+	MODE_TREES = 4,     # --trees  (trees v3 Stage 2)
 }
 
 ## The size `--vary` and `--masks` compare variation at.
@@ -222,11 +224,31 @@ func _ready() -> void:
 	_camera.current = true
 
 	_resolve_mode()
-	if _mode == MODE_MASKS:
-		# THE MASK SHEET BUILDS NOTHING UP FRONT. Every other mode lays out one
-		# pad and photographs it; a mask is one tree alone in an empty frame, so
-		# the volume, the mesh and the camera are rebuilt seventy-seven times.
-		_shoot_masks.call_deferred()
+	# TREES V3 STAGE 7: THE BLOCK-TREE MODES ARE RETIRED WITH THE BLOCK TREES.
+	#
+	# `--vary`, `--stand` and `--masks` were trees v1 Stage 0's instruments and
+	# good ones - a variation row, a stand at the world's own cell pitch, and a
+	# silhouette metric that turned "they're all the same" into TWINS 1.00 ->
+	# 0.72 on seven species. Every one of them stamped a SHAPE FUNCTION into a
+	# scratch volume, and there are no shape functions.
+	#
+	# They are not reimplemented against the library, and that is a decision
+	# rather than an omission. Variety is `variant library x rotation x scale
+	# jitter` now (trees v2 decision 4, carried into v3), so "do two spruces
+	# look the same" is answered by counting rows in `TreeTable` rather than by
+	# measuring silhouettes - and `--trees` photographs every variant beside
+	# the player capsule, which is the picture those modes were reaching for.
+	if _mode == MODE_VARY or _mode == MODE_STAND or _mode == MODE_MASKS:
+		print("[Gallery] --vary, --stand and --masks retired with the block trees")
+		print("[Gallery] (trees v3 Stage 7). Use --trees: every library variant,")
+		print("[Gallery] beside the player capsule, and every LOD beside its LOD0.")
+		get_tree().quit()
+		return
+	if _mode == MODE_TREES:
+		# THE LIBRARY SHEET BUILDS NO PAD, for the same reason the mask sheet
+		# does not: its subjects are loaded meshes rather than stamped blocks,
+		# and it re-lays the frame out once per sheet.
+		_shoot_trees.call_deferred()
 		return
 	_build()
 	_shoot.call_deferred()
@@ -236,195 +258,23 @@ func _ready() -> void:
 
 func _build() -> void:
 	var vol := ScratchVolume.new()
-	match _mode:
-		MODE_VARY:
-			_build_vary(vol)
-		MODE_STAND:
-			_build_stand(vol)
-		_:
-			_build_species_rows(vol)
-
+	# TREES V3 STAGE 7: THE SPECIES ROWS ARE GONE AND THE PLANT STRIP IS NOT.
+	#
+	# This laid out seven tree species at three sizes each and then a 1:1 strip
+	# of ground cover beside them, so a 30 cm grass tuft and a 21 m spruce were
+	# in one frame and the two rows of `DESIGN.md`'s read-against table could be
+	# checked against each other. Half of that comparison moved: `--trees`
+	# photographs the library beside the same player capsule, at the same 1:1,
+	# under the same frozen noon sun. The plants keep this sheet.
 	_stamp_pad(vol)
+	_place_plant_models()
 	_publish(vol)
-	if _mode == MODE_GALLERY:
-		# THE STRIP FIRST, THEN THE RULER. The capsule has to stand at the same
-		# depth as the plants it is there to measure - put four metres in front
-		# of them it is much nearer the camera, and perspective pushes it out of
-		# the frame it is supposed to be the reference in. Its position therefore
-		# depends on where the strip ended up, which is only known once it is
-		# built.
-		_place_plant_models()
-		_place_scale_figure(_pad_min().x + 4)
+	_place_scale_figure(_pad_min().x + 6)
 
-	var total_blocks := 0
-	var total_quads := 0
-	for s in _specimens:
-		total_blocks += int(s["blocks"])
-		total_quads += int(s["quads"])
-	print("[Gallery] %d specimens, %d species, %d tree blocks, %d quads" % [
-		_specimens.size(), _by_species.size(), total_blocks, total_quads])
-
-
-## The default sheet: every species at its min, mid and max.
-func _build_species_rows(vol: ScratchVolume) -> void:
-	var species := TreeSpecies.gallery_rows(_config)
-	var layout := _layout(species.size())
-	for i in species.size():
-		var row: Dictionary = species[i]
-		var bay: Vector2i = layout[i]
-		for j in 3:
-			# MINUS, not plus. The camera stands at -Z and looks along +Z, and
-			# with Godot's right-handed axes that puts +X on the LEFT of the
-			# frame - so a bay laid out in increasing X photographs backwards.
-			# Negating here makes min, mid, max read left to right in the
-			# image, which is the only place anybody reads them.
-			var bx := bay.x - (j - 1) * SIZE_BLOCKS
-			var bz := bay.y
-			# min, mid, max of the species' own range, in that order. `t` is
-			# handed to the stamper rather than a height in blocks, so a
-			# species whose size is not a simple height - the hero, which
-			# scales its parent - still has three honest sizes.
-			var t := float(j) * 0.5
-			_add_specimen(vol, int(row["id"]), String(row["name"]),
-				["min", "mid", "max"][j], bx, bz, t,
-				TreeSpecies.specimen_cell(int(row["id"]), t))
-
-
-## `--vary <species> <n>`: n specimens of ONE species at ONE size, in a row.
-##
-## THE INSTRUMENT THE TREES EPIC IS ABOUT. Everything that separates these n
-## trees was hashed from their cells, so the row is a direct photograph of how
-## much variation the shape code actually has in it - one picture, and no size
-## difference in the way of reading it.
-func _build_vary(vol: ScratchVolume) -> void:
-	# Enough clear ground that two neighbours cannot touch even at the widest
-	# crown the species' own table row admits - measured from the table rather
-	# than typed, so the row still spaces itself correctly when a later stage
-	# gives a species a different envelope.
-	var row: Dictionary = TreeSpecies.table(_config)[_subject]
-	var pitch := maxi(SIZE_BLOCKS, 2 * int(row["crown"].y) + 6)
-	for i in _vary_count:
-		# Negated for the same reason the size row is - see _build_species_rows.
-		var bx := -int(round((float(i) - float(_vary_count - 1) * 0.5)
-			* float(pitch)))
-		_add_specimen(vol, _subject, _subject_name, "vary %d" % i, bx, 0,
-			VARY_SIZE, vary_cell(i))
-
-
-## The cell specimen `i` of a variation row is hashed from.
-static func vary_cell(i: int) -> Vector2i:
-	return VARY_CELL_ORIGIN + VARY_CELL_STEP * i
-
-
-## `--stand <species>`: a dozen of one species at the world's own cell pitch.
-##
-## WHERE A REPEATED SILHOUETTE GIVES ITSELF AWAY. A variation row is n trees
-## with clear sky between them, which is the kindest possible view of them.
-## The forest is not that: it is trunks at eight blocks, crowns overlapping,
-## every tree read against the one behind it. A shape that varies enough in a
-## row and not enough in a stand has not varied enough.
-func _build_stand(vol: ScratchVolume) -> void:
-	var cell: int = maxi(int(_config.tree_cell_blocks), 1)
-	var jitter: int = maxi(int(_config.tree_jitter_blocks), 0)
-	for r in STAND_ROWS:
-		for c in STAND_COLS:
-			var cx := STAND_CELL_ORIGIN.x + c
-			var cz := STAND_CELL_ORIGIN.y + r
-			# Negated for the same reason every other row is.
-			var bx := -int(round((float(c) - float(STAND_COLS - 1) * 0.5)
-				* float(cell)))
-			var bz := int(round((float(r) - float(STAND_ROWS - 1) * 0.5)
-				* float(cell)))
-			if jitter > 0:
-				bx += WorldHash.hash_range(cx, cz, TreeSpecies.SPECIMEN_SEED,
-					SALT_STAND_JITTER_X, -jitter, jitter)
-				bz += WorldHash.hash_range(cx, cz, TreeSpecies.SPECIMEN_SEED,
-					SALT_STAND_JITTER_Z, -jitter, jitter)
-			var t := float(WorldHash.hash_range(cx, cz,
-				TreeSpecies.SPECIMEN_SEED, SALT_STAND_SIZE,
-				0, STAND_SIZE_STEPS)) / float(STAND_SIZE_STEPS)
-			_add_specimen(vol, _subject, _subject_name,
-				"stand %d,%d" % [c, r], bx, bz, t, Vector2i(cx, cz))
-
-
-## Stamp one specimen onto the pad, record where it landed, and price it.
-##
-## THE COST LINE IS PRINTED HERE AND NOWHERE ELSE, so every mode prices its
-## trees the same way and a cost table from one sheet can be read against a
-## cost table from another.
-func _add_specimen(vol: ScratchVolume, species: int, name: String,
-		size_label: String, bx: int, bz: int, t: float,
-		cell: Vector2i) -> Dictionary:
-	var drawn: Dictionary = TreeSpecies.stamp_specimen_at(
-		vol, species, bx, GROUND, bz, t, cell.x, cell.y, _config)
-	var entry := {
-		"name": name,
-		"size": size_label,
-		"center": _to_metres(bx, GROUND + drawn["height"] / 2, bz),
-		"height_m": float(drawn["height"]) * _config.block_size,
-		"blocks": int(drawn["blocks"]),
-		"quads": _quads_alone(species, t, cell, bx, bz),
-	}
-	_specimens.append(entry)
-	if not _by_species.has(name):
-		_by_species[name] = []
-	_by_species[name].append(entry)
-	_print_cost(name, t, int(entry["blocks"]), int(entry["quads"]), cell)
-	return entry
-
-
-## Blocks asked for, quads the real mesher makes, and the format both are
-## reported in.
-##
-## TWO NUMBERS, NOT ONE, and the gap between them is the point. `draw()`
-## returns what the shape ASKED for; the mesher returns what it costs to draw,
-## and the two are not proportional at all - a max larch is 791 blocks and
-## 2,049 quads while a max beech is 6,154 blocks and 1,834. Per-block holes are
-## the worst input greedy meshing can be handed, and a cost line that only
-## counted blocks would have said the larch was the cheap one.
 func _print_cost(name: String, t: float, blocks: int, quads: int,
 		cell: Vector2i) -> void:
 	print("[Cost] %s t=%.1f blocks %d quads %d cell (%d, %d)" % [
 		name, t, blocks, quads, cell.x, cell.y])
-
-
-## What one specimen costs, meshed ALONE but stamped WHERE IT STANDS.
-##
-## ALONE, because on the pad a tree shares chunks with its neighbours and with
-## two blocks of meadow, and a quad count taken there would be a count of the
-## whole sheet divided by however many trees happened to be on it. The tree is
-## stamped into its own scratch volume, meshed through the real ChunkMesher,
-## and its indices counted: six per quad, two triangles each.
-##
-## WHERE IT STANDS, and this cost one wrong answer worth recording. The first
-## version stamped every specimen at the origin, and the sparse species came
-## back with block counts that did not match the trees in the picture - a larch
-## measured 240 blocks where the pad had drawn 248. `SALT_SPARSE` hashes a
-## crown's holes from the BLOCK's world position, not from the cell, so moving
-## a larch sideways gives it different holes and a different block count. A
-## sparse tree's identity is therefore not entirely in its cell today, which is
-## one more thing trees v1's clumped fill has to answer for.
-##
-## The QUAD count moves with position even for a solid species, and for a
-## different reason: greedy meshing runs per chunk, so a tree that straddles a
-## chunk boundary in a different place has its faces cut into a different
-## number of pieces. A max spruce measured 1,553 quads on the pad and 1,584 at
-## the origin - 2%. Compare quads within one sheet, never across two.
-##
-## The count excludes the ground: a tree standing on meadow has its underside
-## hidden and costs a handful fewer quads than the same tree in mid-air (four,
-## on a max spruce). Alone is the reproducible measurement, and the handful is
-## smaller than anything this line exists to catch.
-func _quads_alone(species: int, t: float, cell: Vector2i,
-		bx: int, bz: int) -> int:
-	var vol := ScratchVolume.new()
-	TreeSpecies.stamp_specimen_at(vol, species, bx, GROUND, bz, t,
-		cell.x, cell.y, _config)
-	return _mesh_quads(vol, null)
-
-
-## Mesh every chunk of a volume, count its quads, and optionally hang the
-## meshes under `root`.
 func _mesh_quads(vol: ScratchVolume, root: Node3D) -> int:
 	var indices := 0
 	for cpos in vol.chunks:
@@ -643,55 +493,14 @@ func _build_plant_strip() -> void:
 func _shoot() -> void:
 	await _settle()
 
-	if _mode == MODE_VARY:
-		# One frame, low, with sky behind every crown: a variation row is only
-		# worth photographing if the silhouettes can be compared, and they can
-		# only be compared against the same background.
-		await _shoot_spread("vary-%s" % _subject_name, 10.0)
-		print("[Gallery] done, 1 image in %s" % _out_dir)
-		get_tree().quit()
-		return
-	if _mode == MODE_STAND:
-		# LOWER AND FURTHER BACK than the variation row. A stand is judged from
-		# where a player stands in one, not from above it: the shot has to let
-		# the back row hide behind the front one, because that overlap is
-		# exactly what a repeated silhouette hides in.
-		await _shoot_spread("stand-%s" % _subject_name, 6.0)
-		print("[Gallery] done, 1 image in %s" % _out_dir)
-		get_tree().quit()
-		return
-
-	# THE WIDE SHOT. Every species at every size in one frame, from the front
-	# and above, so the two rows read as two rows.
-	var box := _extent()
-	var all_h := _tallest(_specimens)
-	await _capture("gallery",
-		_fit(0.0, float(box.size.x) * _config.block_size, all_h,
-			float(box.size.y - PLANT_APRON) * _config.block_size, 30.0, all_h),
-		_look_at(0.0, all_h))
-
-	# ONE CLOSE-UP PER SPECIES. Framed on that species' three sizes only, from
-	# nearer and lower, which is the view a shape is actually judged from - a
-	# silhouette read against the sky rather than an overview.
-	for name in _by_species:
-		var group: Array = _by_species[name]
-		var cx := 0.0
-		for s in group:
-			cx += float(s["center"].x)
-		cx /= float(group.size())
-		var h := _tallest(group)
-		# The three sizes of one species share a row, so there is no depth to
-		# allow for beyond the tree itself - unlike the wide shot, which has to
-		# fit both rows in. Passing the whole pad's depth here would push the
-		# camera back until the close-up stopped being close.
-		var bay := float(2 * SIZE_BLOCKS + 2 * PAD_MARGIN) * _config.block_size
-		await _capture("species-%s" % name,
-			_fit(cx, bay, _fit_span(h, 12.0), 6.0, 12.0, h), _look_at(cx, h))
-
+	# TREES V3 STAGE 7: THE WIDE SHOT AND THE PER-SPECIES CLOSE-UPS WENT WITH
+	# THE SPECIES ROWS. What is left is the picture this sheet was always best
+	# at and `--trees` cannot take: ground cover at 1:1, from a metre away, with
+	# the player capsule in frame.
 	await _shoot_plants()
 
-	print("[Gallery] done, %d images in %s" % [
-		2 + _by_species.size(), _out_dir])
+
+	print("[Gallery] done, %d images in %s" % [1, _out_dir])
 	get_tree().quit()
 
 
@@ -778,51 +587,6 @@ func _fit_span(height_m: float, pitch_deg: float) -> float:
 	var p := deg_to_rad(pitch_deg)
 	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
 	return 2.0 * above * (cos(p) + sin(p) * tan_v)
-
-
-## One frame around every specimen on the pad, whatever laid them out.
-##
-## Used by --vary and --stand, which are both "a group of one species" and want
-## the same framing rule: the whole group, framed from the extent the trees
-## actually landed in rather than from the constants that placed them - the
-## same discipline _fit()'s own comment argues for and for the same reason.
-func _shoot_spread(image_name: String, pitch_deg: float) -> void:
-	var lo := Vector2(1e9, 1e9)
-	var hi := Vector2(-1e9, -1e9)
-	for s in _specimens:
-		var c: Vector3 = s["center"]
-		lo = Vector2(minf(lo.x, c.x), minf(lo.y, c.z))
-		hi = Vector2(maxf(hi.x, c.x), maxf(hi.y, c.z))
-	var h := _tallest(_specimens)
-	var cx := (lo.x + hi.x) * 0.5
-	# The centres, plus a crown's worth of clear air on each side, plus the
-	# pad's own margin - the outermost tree is a radius wide and its centre is
-	# what was measured.
-	var width := (hi.x - lo.x) + float(2 * PAD_MARGIN) * _config.block_size
-	var depth := (hi.y - lo.y) + float(PAD_MARGIN) * _config.block_size
-	await _capture(image_name,
-		_fit(cx, width, _fit_span(h, pitch_deg), depth, pitch_deg, h),
-		_look_at(cx, h))
-
-
-## Where to stand so a box this size fills the frame.
-##
-## COMPUTED, NOT GUESSED, and that is the whole reason the gallery can be
-## trusted across stages. The pad grows from one species to seven between
-## Stage 1 and Stage 3; a camera at a hardcoded distance would photograph a
-## postage stamp on the first run and crop the outer species on the last, and
-## the two images could not be compared with each other. Fitting the subject
-## means the framing changes exactly when the subject does.
-##
-## MEASURE THE SUBJECT, NOT THE LAYOUT CONSTANTS. The first version of this
-## multiplied the species count by the bay pitch, which was right until the
-## species wrapped into two rows - after which it claimed the pad was seventy
-## per cent wider than it is and shot the whole gallery from too far away.
-## Reading the extent the specimens actually landed in cannot drift like that.
-##
-## Godot's `fov` is the VERTICAL angle, so the horizontal one has to be
-## recovered through the aspect ratio - getting that backwards crops the sides
-## on a wide window, which is every window here.
 func _fit(cx: float, width_m: float, height_m: float, depth_m: float,
 		pitch_deg: float, look_height_m: float) -> Vector3:
 	var aspect := float(get_viewport().get_visible_rect().size.aspect())
@@ -918,147 +682,6 @@ var _mask_material: StandardMaterial3D = null
 var _mask_root: Node3D = null
 
 
-## Every specimen, one at a time, white on black, and the three numbers.
-func _shoot_masks() -> void:
-	DirAccess.make_dir_recursive_absolute(
-		ProjectSettings.globalize_path("%s/%s" % [_out_dir, MASK_SUBDIR]))
-	_enter_mask_mode()
-	await _settle()
-
-	var rows := TreeSpecies.gallery_rows(_config)
-	# species name -> {"sizes": [3 masks], "twins": [TWIN_COUNT masks]}
-	var sheet := {}
-	for row in rows:
-		var id := int(row["id"])
-		var species_name := String(row["name"])
-		var sizes := []
-		for j in 3:
-			var t := float(j) * 0.5
-			sizes.append(await _mask_of(id, species_name, t,
-				TreeSpecies.specimen_cell(id, t), j,
-				"%s-%s" % [species_name, ["min", "mid", "max"][j]]))
-		var twins := []
-		for i in TWIN_COUNT:
-			twins.append(await _mask_of(id, species_name, VARY_SIZE,
-				vary_cell(i), 3 + i, "%s-vary-%d" % [species_name, i]))
-		sheet[species_name] = {"sizes": sizes, "twins": twins}
-
-	_leave_mask_mode()
-	_report_masks(rows, sheet)
-	print("[Gallery] done, %d masks in %s/%s" % [
-		rows.size() * (3 + TWIN_COUNT), _out_dir, MASK_SUBDIR])
-	get_tree().quit()
-
-
-## SYMMETRY, TWINS and the species-pair matrix, printed.
-func _report_masks(rows: Array, sheet: Dictionary) -> void:
-	print("[Masks] SYMMETRY is the median IoU of a mask against its own mirror,")
-	print("[Masks] over all %d specimens of a species; TWINS is the median" % (3 + TWIN_COUNT))
-	print("[Masks] pairwise IoU over the %d specimens at t=%.1f from different cells." % [
-		TWIN_COUNT, VARY_SIZE])
-	for row in rows:
-		var species_name := String(row["name"])
-		var entry: Dictionary = sheet[species_name]
-		var all: Array = (entry["sizes"] as Array) + (entry["twins"] as Array)
-
-		var symmetry := []
-		for m in all:
-			symmetry.append(_mask_iou(m, _mirror_mask(m)))
-
-		var twins := []
-		var t_masks: Array = entry["twins"]
-		for i in t_masks.size():
-			for j in range(i + 1, t_masks.size()):
-				twins.append(_mask_iou(t_masks[i], t_masks[j]))
-
-		print("[Masks] %s SYMMETRY %.2f TWINS %.2f" % [
-			species_name, _median(symmetry), _median(twins)])
-
-	# THE PAIR MATRIX AT ONE SIZE, because a matrix that mixed sizes would be
-	# measuring the size range and reporting it as a shape difference. t = 0.5
-	# is the mid specimen of the default sheet, which is the tree every other
-	# number here is also taken from.
-	print("[Masks] species-pair IoU at t=%.1f, bottom-centre aligned:" % VARY_SIZE)
-	var header := "[Masks]   %-11s" % ""
-	for row in rows:
-		header += " %8s" % String(row["name"]).substr(0, 8)
-	print(header)
-	for i in rows.size():
-		var line := "[Masks]   %-11s" % String(rows[i]["name"])
-		for j in rows.size():
-			var a: Dictionary = sheet[String(rows[i]["name"])]["sizes"][1]
-			var b: Dictionary = sheet[String(rows[j]["name"])]["sizes"][1]
-			line += " %8.2f" % (1.0 if i == j else _mask_iou(a, b))
-		print(line)
-	# And again one pair per line, because a matrix is for looking at and a
-	# line is for grepping.
-	for i in rows.size():
-		for j in range(i + 1, rows.size()):
-			var a: Dictionary = sheet[String(rows[i]["name"])]["sizes"][1]
-			var b: Dictionary = sheet[String(rows[j]["name"])]["sizes"][1]
-			print("[Masks] PAIR %s %s %.2f" % [
-				String(rows[i]["name"]), String(rows[j]["name"]),
-				_mask_iou(a, b)])
-
-
-## One specimen, alone in an empty white frame, saved and cropped.
-##
-## `index` is the specimen's place in its species' run, and it decides WHERE the
-## tree is stamped: one tree-cell further along X for each. That is not
-## cosmetic. A sparse crown's holes are hashed from each block's WORLD POSITION
-## (`SALT_SPARSE`), so eight larches all stamped at the origin would be eight
-## copies of one larch with only their leaf shade to tell them apart - and
-## TWINS would come back at exactly 1.00 as an artefact of the harness rather
-## than as a fact about the species. Different cells stand in different places
-## in the world; the mask sheet stands them in different places too.
-func _mask_of(species: int, species_name: String, t: float, cell: Vector2i,
-		index: int, image_name: String) -> Dictionary:
-	for child in _mask_root.get_children():
-		child.free()
-	var bx := index * maxi(int(_config.tree_cell_blocks), 1)
-	var vol := ScratchVolume.new()
-	var drawn: Dictionary = TreeSpecies.stamp_specimen_at(
-		vol, species, bx, GROUND, 0, t, cell.x, cell.y, _config)
-	var quads := _mesh_quads(vol, _mask_root)
-	_print_cost(species_name, t, int(drawn["blocks"]), quads, cell)
-	for child in _mask_root.get_children():
-		_paint_mask(child)
-
-	# THE CAMERA IS THE SAME FOR EVERY MASK AND IT IS ORTHOGONAL, which is the
-	# one thing that makes these numbers comparable at all. Under perspective a
-	# tree's apparent size depends on how far back the framing pushed the
-	# camera, so a mask of a snag and a mask of a hero would be measured in
-	# different units and every pair number would be a fitting artefact. An
-	# orthogonal frame sized from the TABLE's tallest species is fixed for the
-	# life of the epic: a block is the same number of pixels in all 77 shots.
-	#
-	# THE TABLE, NOT max_height(). max_height() is the world's SKY RESERVE and
-	# includes the old-growth multiplier and a rounding margin - 66 blocks
-	# against a table ceiling of 42. Framing to it wasted a third of every mask
-	# on empty sky and cost the small species half their resolution, which is
-	# resolution the IoU is measured in.
-	var view := float(_tallest_in_table()) * _config.block_size \
-		+ MASK_FLOOR_M * 2.0
-	_camera.size = view
-	var base := float(GROUND + 1) * _config.block_size
-	var centre := base - MASK_FLOOR_M + view * 0.5
-	var cx := float(bx) * _config.block_size
-	_camera.global_position = Vector3(cx, centre, -MASK_DISTANCE)
-	_camera.look_at(Vector3(cx, centre, 0.0), Vector3.UP)
-
-	var image := await _shutter()
-	_save_image(image, "%s/%s" % [MASK_SUBDIR, image_name])
-	return _crop_mask(image)
-
-
-## Unshaded black on flat white, with the ground, the sky and the fog taken
-## away.
-##
-## The pad goes because a silhouette is measured against nothing; the fog goes
-## because at any distance it would grey the mask out and move the threshold;
-## and the material override is SHADING_MODE_UNSHADED so the sun's angle cannot
-## make one species' mask thinner than another's. The projection goes
-## orthogonal for the reason _mask_of() gives.
 func _enter_mask_mode() -> void:
 	_mask_material = StandardMaterial3D.new()
 	_mask_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -1231,6 +854,9 @@ func _resolve_time() -> float:
 ## falls back, and the warning is the first line of the log.
 func _resolve_mode() -> void:
 	var argv := OS.get_cmdline_user_args()
+	if argv.has("--trees"):
+		_mode = MODE_TREES
+		return
 	if argv.has("--masks"):
 		_mode = MODE_MASKS
 		return
@@ -1329,3 +955,230 @@ class ScratchVolume extends RefCounted:
 			return false
 		var l := Chunk.world_to_local(p)
 		return Block.is_solid(chunk.voxels[Chunk.index(l.x, l.y, l.z)])
+
+
+# --- Trees v3 Stage 2: the library sheet -------------------------------------
+
+## `--trees`: every variant in the purchased library, at 1:1, beside the player.
+##
+##     godot --path . scenes/gallery.tscn -- --label some-name --trees
+##
+## WHY THIS IS ITS OWN MODE AND NOT A ROW ON THE DEFAULT SHEET.
+##
+## The default sheet photographs SEVEN species at three sizes each, laid out by
+## a builder that stamps blocks into a scratch volume. A library variant is not
+## a species and has no size range - it is one sculpted model, exactly as tall
+## as the artist drew it - and there are fifty-five of them. Threading that
+## through `_build_species_rows` would have meant making the block stamper and
+## the model loader interchangeable, which they are not and should not be.
+##
+## THE CAPSULE IS THE WHOLE POINT, exactly as it is for the plant strip.
+## Ruling 3 moves the trees from 13-21 m to 21-28 m and calls that "the
+## monumental north star, chosen with the numbers on the table". A number on a
+## table is not a picture. This is the picture: every variant standing next to
+## a capsule of the player's exact dimensions, so "is this the right size" is
+## answered against the only thing whose size is not in question.
+##
+## AND EVERY LOD BESIDE ITS OWN LOD0, which is the other half of the gate.
+## Ruling 4 replaces the impostor cards with downsampled versions of the same
+## grid, and the claim it rests on is that the near/far seam becomes a
+## RESOLUTION boundary rather than a KIND boundary. Three rungs of one tree in
+## one frame is that claim, photographed.
+##
+## SELF-SKIPS WITHOUT THE LIBRARY, prints "no library" and exits 0 - which is
+## the public build, and is a gate rather than a courtesy.
+## FIVE PER SHEET, NOT EIGHT. Eight variants of Tree 09 side by side is 150 m
+## of frame, which puts each tree at a hundred pixels - wide enough to count
+## them and far too small to judge one. Five is the most that leaves a 25 m
+## tree tall enough to read its crown against the sky.
+const TREE_ROW := 5
+const TREE_GAP_M := 3.0
+
+## Extra headroom on the library sheets, over the default sheet's 1.12.
+##
+## A LIBRARY ROW IS MUCH WIDER THAN IT IS TALL, so its outermost subjects sit
+## far off the camera axis - and a subject off-axis is projected OUTWARD and
+## UPWARD by the perspective, which is what cropped the first sheet's leftmost
+## crown while the middle tree fitted comfortably. The default sheet never hits
+## this because its bays are narrow. This is the margin, not a framing fudge:
+## the fit is the same fit.
+const TREE_MARGIN := 1.34
+
+func _shoot_trees() -> void:
+	if not TreeModels.available():
+		print("[Gallery] --trees: no library mounted, nothing to photograph")
+		get_tree().quit()
+		return
+
+	var variants := TreeModels.variants()
+	print("[Gallery] --trees: %d variants, %d rungs each" % [
+		variants.size(), TreeModels.LOD_COUNT])
+
+	# One sheet per row of variants, and one sheet per species' LOD ladder.
+	var rows := []
+	for i in range(0, variants.size(), TREE_ROW):
+		rows.append(variants.slice(i, mini(i + TREE_ROW, variants.size())))
+
+	var written := 0
+	var missing := []
+	for r in rows.size():
+		var row: Array = rows[r]
+		_clear_pad()
+		var placed := _place_tree_row(row, 0, missing)
+		if placed.is_empty():
+			continue
+		written += 1
+		await _shoot_tree_frame("trees-%02d" % (r + 1), placed)
+
+	# THE LOD LADDER, one sheet per pack species: its first variant at all
+	# three rungs, side by side, at the same size. What must be visible is that
+	# they are the SAME TREE getting coarser - not three different trees.
+	for sp in TreeModels.species():
+		var of_species := TreeModels.variants_of(sp)
+		if of_species.is_empty():
+			continue
+		_clear_pad()
+		var placed := _place_lod_ladder(StringName(of_species[0]))
+		if placed.is_empty():
+			continue
+		written += 1
+		await _shoot_tree_frame("lods-%s" % sp, placed)
+
+	if not missing.is_empty():
+		print("[Gallery] %d variants built no mesh: %s" % [
+			missing.size(), ", ".join(missing)])
+	print("[Gallery] done, %d images in %s" % [written, _out_dir])
+	get_tree().quit()
+
+
+## The library sheet's own pad: ground, and the capsule at the left of it.
+func _clear_pad() -> void:
+	for child in get_children():
+		if child.name == "TreePad" or child.name == "ScaleFigure":
+			remove_child(child)
+			child.queue_free()
+
+
+## Lay out one row of variants along X, each standing on the origin plane.
+## Returns [{"name", "x", "height_m", "triangles"}], and appends any variant
+## that built no mesh to `missing`.
+func _place_tree_row(row: Array, lod: int, missing: Array) -> Array:
+	var root := Node3D.new()
+	root.name = "TreePad"
+	add_child(root)
+	var placed := []
+	var x := 0.0
+	for name in row:
+		var mesh := TreeModels.mesh_for(name, lod, _config.block_size)
+		if mesh == null:
+			missing.append(String(name))
+			continue
+		var h := TreeModels.height_m(name)
+		var aabb := mesh.get_aabb()
+		# SPACED BY WHAT THE MESH ACTUALLY IS, not by a constant. Tree 09 is
+		# 20 m wide and Tree 16 is 2 m; a fixed pitch would either overlap the
+		# sprawlers or strand the stumps in empty frame.
+		var half := maxf(aabb.size.x, 0.5) * 0.5
+		x += half
+		var node := MeshInstance3D.new()
+		node.name = String(name)
+		node.mesh = mesh
+		node.position = Vector3(x, 0.0, 0.0)
+		root.add_child(node)
+		placed.append({
+			"name": String(name), "x": x, "height_m": h,
+			"triangles": TreeModels.triangles_for(name, lod, _config.block_size),
+			"half": half,
+		})
+		x += half + TREE_GAP_M
+	if not placed.is_empty():
+		_place_tree_capsule(root, -2.0)
+	return placed
+
+
+## One variant at all three rungs, at the same place along Z, spread on X.
+func _place_lod_ladder(variant: StringName) -> Array:
+	var root := Node3D.new()
+	root.name = "TreePad"
+	add_child(root)
+	var placed := []
+	var x := 0.0
+	for lod in TreeModels.LOD_COUNT:
+		var mesh := TreeModels.mesh_for(variant, lod, _config.block_size)
+		if mesh == null:
+			continue
+		var aabb := mesh.get_aabb()
+		var half := maxf(aabb.size.x, 0.5) * 0.5
+		x += half
+		var node := MeshInstance3D.new()
+		node.name = "%s_lod%d" % [variant, lod]
+		node.mesh = mesh
+		node.position = Vector3(x, 0.0, 0.0)
+		root.add_child(node)
+		placed.append({
+			"name": "%s lod%d" % [variant, lod], "x": x,
+			"height_m": TreeModels.height_m(variant),
+			"triangles": TreeModels.triangles_for(variant, lod, _config.block_size),
+			"half": half,
+		})
+		x += half + TREE_GAP_M
+	if not placed.is_empty():
+		_place_tree_capsule(root, -2.0)
+	return placed
+
+
+## The ruler. Same dimensions as `_place_scale_figure`'s, standing on the same
+## plane the trees do - which for a library model is y = 0, because the model's
+## own origin is its bottom centre.
+func _place_tree_capsule(root: Node3D, x: float) -> void:
+	var height_m: float = _config.player_height_blocks * _config.block_size
+	var mesh := CapsuleMesh.new()
+	mesh.radius = _config.player_radius_blocks * _config.block_size
+	mesh.height = height_m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.12, 0.14)
+	mat.roughness = 1.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mesh.material = mat
+	var node := MeshInstance3D.new()
+	node.name = "Capsule"
+	node.mesh = mesh
+	node.position = Vector3(x, height_m * 0.5, 0.0)
+	root.add_child(node)
+
+
+## Frame a laid-out row and take the picture, printing the cost line.
+func _shoot_tree_frame(image_name: String, placed: Array) -> void:
+	var lo := -3.0
+	var hi := 0.0
+	var tallest := 0.0
+	var total := 0
+	for p in placed:
+		lo = minf(lo, float(p["x"]) - float(p["half"]))
+		hi = maxf(hi, float(p["x"]) + float(p["half"]))
+		tallest = maxf(tallest, float(p["height_m"]))
+		total += int(p["triangles"])
+	var cx := (lo + hi) * 0.5
+	var width := hi - lo
+	# The look point and the fit are the default sheet's own, so a library
+	# variant and a block species are framed by the same rule and their two
+	# sheets can be held side by side.
+	var look := Vector3(cx, tallest * LOOK_FRACTION, 0.0)
+	var aspect := float(get_viewport().get_visible_rect().size.aspect())
+	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
+	var need_h := (width * 0.5) / maxf(tan_v * aspect, 0.001)
+	var need_v := (_fit_span(tallest, 6.0) * 0.5) / maxf(tan_v, 0.001)
+	var dist := maxf(maxf(need_h, need_v), 8.0) * TREE_MARGIN
+	# SIX DEGREES, not the default sheet's twelve. A library variant is judged
+	# on its SILHOUETTE against the sky, and every degree of down-pitch trades
+	# sky for pad.
+	var pitch := deg_to_rad(6.0)
+	_camera.global_position = look + Vector3(0.0, sin(pitch), -cos(pitch)) * dist
+	_camera.look_at(look, Vector3.UP)
+	_save_image(await _shutter(), image_name)
+	var names := PackedStringArray()
+	for p in placed:
+		names.append("%s %.1fm %dtri" % [
+			p["name"], p["height_m"], p["triangles"]])
+	print("[Gallery]      %s: %d subjects, %d triangles - %s" % [
+		image_name, placed.size(), total, ", ".join(names)])

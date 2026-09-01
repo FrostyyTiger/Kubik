@@ -91,7 +91,7 @@ const LOCAL_TUNING_ROWS := [
 	["flora_far_m", "flora far ring (m)", 0.0, 320.0, 8.0],
 	["flora_far_fraction", "flora far density", 0.0, 1.0, 0.05],
 	["flora_draw_fraction", "flora drawn", 0.0, 1.0, 0.05],
-	["far_tree_m", "far trees (m)", 0.0, 600.0, 20.0],
+	["far_tree_m", "tree field (m)", 0.0, 600.0, 20.0],
 	["wind_strength", "wind", 0.0, 3.0, 0.1],
 	["night_life", "night life", 0.0, 2.0, 0.1],
 	# DISTANCE V1, appended at the end of the table. Hard rule 12: every
@@ -150,7 +150,7 @@ var sky: SkyCycle = null
 
 ## The impostor ring. A sibling of World in the game scene, so it is handed in
 ## separately rather than reached for through it.
-var far_trees: Node = null
+var tree_field: Node = null
 
 # UI V1 --------------------------------------------------------------------
 #
@@ -187,8 +187,8 @@ func _ready() -> void:
 	set_process(true)
 
 
-func set_far_trees(p_far_trees: Node) -> void:
-	far_trees = p_far_trees
+func set_tree_field(p_tree_field: Node) -> void:
+	tree_field = p_tree_field
 
 
 func setup(p_config: WorldgenConfig, p_world: Node, p_player: Node3D,
@@ -278,10 +278,10 @@ func _compose_readout() -> String:
 				f["instances"], f["triangles"], f["columns"], f["pending"], f.get("cached", 0)])
 			lines.append("flora     %.2f ms per column on workers, %d built" % [
 				f.get("ms_per_column", 0.0), f.get("built", 0)])
-	if far_trees != null and far_trees.has_method("stats"):
-		var t: Dictionary = far_trees.stats()
-		lines.append("far trees %d impostors, %d ms rebuild" % [
-			t.get("impostors", 0), t.get("rebuild_ms", 0)])
+	if tree_field != null and tree_field.has_method("stats"):
+		var t: Dictionary = tree_field.stats()
+		lines.append("tree field %d trees (%d models), %d ms rebuild" % [
+			t.get("impostors", 0), t.get("models", 0), t.get("rebuild_ms", 0)])
 		if world.has_method("lake_count"):
 			lines.append("lakes     %d" % world.lake_count())
 

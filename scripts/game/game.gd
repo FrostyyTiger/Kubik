@@ -46,7 +46,7 @@ var _body_field: BodyField = null
 ## of it, exactly as FarField is not: the plan for this stage says the ring is
 ## a node in the game scene, and it keeps World's edits down to the four flora
 ## hooks the plan allows.
-@onready var _far_trees: FarTrees = $FarTrees
+@onready var _tree_field: TreeField = $TreeField
 
 ## Every tunable number. Loaded once here and handed to World, so there is
 ## exactly one instance per session and no chance of two halves of the game
@@ -161,11 +161,16 @@ func _ready() -> void:
 	# The session's config, which may carry CLI overrides the saved file does
 	# not - so the far plane matches the fog this run actually uses.
 	_player.apply_view_config(config)
-	_debug.set_far_trees(_far_trees)
+	_debug.set_tree_field(_tree_field)
 	# Wind and night are LOCAL knobs and live on the shared flora materials, so
 	# they are pushed once here and again whenever the F4 panel moves.
 	FloraModels.apply_local_knobs(config)
 	Look.apply_local_knobs(config)
+	# TREES V3 STAGE 8. Its own call rather than a line inside
+	# apply_local_knobs(), because the tree material is not one of the four
+	# that function pushes to and folding it in would make a knob that moves
+	# the WIND look like a knob that moves the terrain's grain.
+	Look.apply_tree_knobs(config)
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -245,8 +250,8 @@ func _ready() -> void:
 		_world.setup(_startup_seed(), config)
 		print("[Game] hosting world: seed %d, config %s" % [
 			_world.world_seed, _world.config.hash_key()])
-		_far_trees.setup(_world.generator, _world.config)
-		_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
+		_tree_field.setup(_world.generator, _world.config)
+		_tree_field.rebuilt.connect(_on_tree_field_rebuilt)
 		# The impostor ring cuts its inner edge to the frontier, so it wants to
 		# know when the frontier moves (world feel v1 Stage 3).
 		_world.frontier_moved.connect(_on_frontier_moved)
@@ -293,9 +298,9 @@ func _process(delta: float) -> void:
 	if _world.has_seed():
 		_world.set_center_from_position(_player.global_position)
 		# And impostor trees exist only beyond them. Asked every frame and
-		# cheap when nothing has moved - FarTrees decides for itself whether
+		# cheap when nothing has moved - TreeField decides for itself whether
 		# the player has gone far enough to be worth a rebuild.
-		_far_trees.update(_player.global_position)
+		_tree_field.update(_player.global_position)
 	_release_player_when_ground_exists()
 	# WHAT EVERYBODY IS STANDING ON, once a frame rather than once a tick.
 	# A zone lookup is a heightmap read and a noise sample, and a body crosses
@@ -348,8 +353,8 @@ func _process(delta: float) -> void:
 
 ## Reported once per rebuild rather than every frame - a ring is rebuilt every
 ## sixteen metres of walking, and its cost is the number Stage 7 is judged on.
-func _on_far_trees_rebuilt(count: int, elapsed_ms: int) -> void:
-	print("[FarTrees] %d impostors in %d ms" % [count, elapsed_ms])
+func _on_tree_field_rebuilt(count: int, elapsed_ms: int) -> void:
+	print("[TreeField] %d trees in %d ms" % [count, elapsed_ms])
 
 
 func _on_world_ready(chunk_count: int, elapsed_ms: int) -> void:
@@ -778,8 +783,8 @@ func _hud_shot_shutdown() -> void:
 
 
 func _on_frontier_moved() -> void:
-	if _far_trees != null:
-		_far_trees.frontier = _world.loaded_frontier()
+	if _tree_field != null:
+		_tree_field.frontier = _world.loaded_frontier()
 
 
 # --- Join handshake ---------------------------------------------------------
@@ -815,8 +820,8 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 	_world.setup(seed_value, config)
 	print("[Game] joined world: seed %d, config %s" % [
 		seed_value, _world.config.hash_key()])
-	_far_trees.setup(_world.generator, _world.config)
-	_far_trees.rebuilt.connect(_on_far_trees_rebuilt)
+	_tree_field.setup(_world.generator, _world.config)
+	_tree_field.rebuilt.connect(_on_tree_field_rebuilt)
 	_spawn_player()
 	# Safe to apply before the chunks exist: World records edits immediately
 	# and replays them as each chunk is generated.
@@ -1395,6 +1400,11 @@ func _on_config_changed() -> void:
 	# into rather than immediately.
 	FloraModels.apply_local_knobs(config)
 	Look.apply_local_knobs(config)
+	# TREES V3 STAGE 8. Its own call rather than a line inside
+	# apply_local_knobs(), because the tree material is not one of the four
+	# that function pushes to and folding it in would make a knob that moves
+	# the WIND look like a knob that moves the terrain's grain.
+	Look.apply_tree_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
 	# DISTANCE V2 STAGE 0, AND THIS IS THE ONE LINE THIS EPIC SPENDS HERE.
 	# far_terrace, far_riser_shade and distance v1's four geometry knobs change
@@ -1404,7 +1414,7 @@ func _on_config_changed() -> void:
 	# the whole decision, including which knobs qualify and whether one actually
 	# moved; this keeps whatever message it hands back. See
 	# FarField.apply_far_knobs().
-	_status.text = FarField.apply_far_knobs(_world, _far_trees, config, _status.text)
+	_status.text = FarField.apply_far_knobs(_world, _tree_field, config, _status.text)
 
 
 func _on_config_reload_requested() -> void:

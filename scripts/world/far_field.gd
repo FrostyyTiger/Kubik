@@ -352,7 +352,7 @@ func stats() -> Dictionary:
 
 ## THE BUDGETED UPLOADER, for anything else with a far-system handover to make.
 ##
-## `FarTrees` is Game's child rather than World's, so it asks for this the way
+## `TreeField` is Game's child rather than World's, so it asks for this the way
 ## `apply_far_knobs` asks for `FarField` - by node name, through the tree. That
 ## is not elegant and it is the same trade `debug_hud` and `screenshot_tour`
 ## already take: reaching across is cheaper than a wiring line in another
@@ -507,7 +507,7 @@ static func _moved_knobs(config: WorldgenConfig) -> PackedStringArray:
 ## `world` is asked for its FarField by node name rather than through an
 ## accessor because `scripts/world/world.gd` is another lane's file this epic
 ## does not touch - the same reason debug_hud reaches for it that way.
-static func apply_far_knobs(world: Node, far_trees: Node,
+static func apply_far_knobs(world: Node, tree_field: Node,
 		config: WorldgenConfig, fallback: String) -> String:
 	var moved := _moved_knobs(config)
 	if moved.is_empty():
@@ -525,7 +525,7 @@ static func apply_far_knobs(world: Node, far_trees: Node,
 	# leaving the ones already around the player alone - a world that disagrees
 	# with itself along a line you cannot see." That reasoning is exactly right
 	# for a SHAPE knob and has nothing to say about these eleven, every one of
-	# which is read only by FarFieldJob and FarTreesJob - checked by grep, not
+	# which is read only by FarFieldJob and TreeFieldJob - checked by grep, not
 	# assumed - and both of which rebuild their whole output at once. There is
 	# no half-old half-new state for a look knob to leave behind.
 	#
@@ -546,9 +546,9 @@ static func apply_far_knobs(world: Node, far_trees: Node,
 		return fallback
 	# The ring is rebuilt too: far_terrace moves the shelf every impostor
 	# stands on (Stage 5) and far_tree_tint moves its colour. Cheap to ask for
-	# either way - FarTrees drops the request if it is already building.
-	if far_trees != null and far_trees.has_method("force_rebuild"):
-		far_trees.force_rebuild()
+	# either way - TreeField drops the request if it is already building.
+	if tree_field != null and tree_field.has_method("force_rebuild"):
+		tree_field.force_rebuild()
 	return "%s changed - far country redrawing, no reroll needed" % \
 		String(", ").join(moved)
 

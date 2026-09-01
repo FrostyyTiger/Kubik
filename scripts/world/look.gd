@@ -998,3 +998,131 @@ static func far_tree_material() -> ShaderMaterial:
 		_far_tree.set_shader_parameter("contact_band", 1.0)
 	_mutex.unlock()
 	return _far_tree
+
+
+# --- Trees v3 Stage 2: the tree material ------------------------------------
+
+static var _tree: ShaderMaterial = null
+
+
+## A TREE IS SCENERY WITH SWAY.
+##
+## `far_tree_material()` above already settled the first half and its note is
+## the argument: `fog_dark_mix` 0.0 so a wooded ridge RECEDES into the mountain
+## instead of being pasted onto it, and `contact_band` 1.0 because the contact
+## band draws a dark line along the bottom of every half-metre cell of a
+## vertical face and a tree is not made of half-metre cells. Do not change
+## either back.
+##
+## What that material cannot do is move a vertex, and trees v3 decision 9 is
+## that trees sway. So this is the same treatment on a shader with a `vertex()`
+## - the same relationship `FloraModels.material()` has to the opaque shader,
+## for the same reason and at the same cost of one extra draw group.
+##
+## THE WEIGHT IS COLOR's ALPHA, and open question 3 is answered there rather
+## than here: `TreeModels._build()` bakes each vertex's height as a fraction of
+## its own model's, 0 at the roots and 1 at the top. A tree is the one model
+## family in this game with no emissive parts, so the channel the mushrooms use
+## for their glow is free - and using it costs no attribute, no second stream
+## and no branch.
+##
+## SQUARED, so the crown moves and the roots do not even slightly. A linear
+## weight leaves a spruce's lowest branches visibly shearing sideways, which is
+## the artefact `FloraModels`' own sway note describes as "grass that slides
+## sideways as a rigid block reads as a bug" - and a trunk is far more rigid
+## than a blade of grass.
+##
+## PHASE FROM THE INSTANCE'S WORLD POSITION, exactly as the plants do, so a
+## stand of trees moves in one wave rather than each shivering on its own. The
+## period is longer and the amplitude smaller than grass: a 25 m tree that
+## moves like a tuft is a tree made of rubber.
+static func tree_material() -> ShaderMaterial:
+	if _tree != null:
+		return _tree
+	_mutex.lock()
+	if _tree == null:
+		_tree = _make(tree_shader_code())
+		_tree.set_shader_parameter("fog_dark_mix", 0.0)
+		_tree.set_shader_parameter("contact_band", 1.0)
+		# Off until Stage 8, which is where the sway is judged. The shader is
+		# in from Stage 2 so that the thing Stage 8 turns on is a UNIFORM and
+		# not a new material - swapping a material mid-epic would move every
+		# tree's colour on the same night the sway arrives, and then neither
+		# could be judged.
+		_tree.set_shader_parameter("tree_sway", 0.0)
+	_mutex.unlock()
+	return _tree
+
+
+## Push the tree knobs. Called beside `apply_local_knobs`, from the main thread.
+static func apply_tree_knobs(config: WorldgenConfig) -> void:
+	var m := tree_material()
+	m.set_shader_parameter("tree_sway", config.tree_sway)
+	m.set_shader_parameter("grain_amount", config.grain_amount)
+	m.set_shader_parameter("grain_hue", config.grain_hue)
+	m.set_shader_parameter("grain_sparse", config.grain_sparse)
+	m.set_shader_parameter("far_fog_start_frac", config.far_fog_start_frac)
+
+
+## THE OPAQUE SHADER WITH A `vertex()` SPLICED IN, and the splice is the same
+## discipline distance v3 used for the far field: the fragment half, the ramp,
+## the fog and the grain are the shared source, character for character, so a
+## tree and the ground it stands on can never disagree about what shade looks
+## like. Only the vertex program is new.
+static func tree_shader_code() -> String:
+	var code := OPAQUE_SHADER
+	if not code.contains(TREE_DECL_ANCHOR) or not code.contains(TREE_SWAY_ANCHOR):
+		push_error("[Look] the tree shader's anchors are gone from OPAQUE_SHADER")
+		return code
+	code = code.replace(TREE_DECL_ANCHOR, TREE_DECL + TREE_DECL_ANCHOR)
+	return code.replace(TREE_SWAY_ANCHOR, TREE_SWAY + TREE_SWAY_ANCHOR)
+
+
+## THE SWAY GOES INSIDE THE OPAQUE SHADER'S OWN `vertex()`, NOT BESIDE IT.
+##
+## The first attempt appended a second `vertex()` before `fragment()` and the
+## compiler said `Redefinition of 'vertex'` - OPAQUE_SHADER has had one since
+## look v2, computing `world_pos` and `world_normal` for the grain and the fog.
+##
+## Which turns out to be the right place anyway, and not a consolation. The
+## sway has to run BEFORE `world_pos` is taken, or the grain and the banded fog
+## would be sampled at the position the vertex would have had in still air -
+## so a swaying crown would shimmer through the grain field as it moved. The
+## anchor is that assignment, and the splice puts the displacement immediately
+## above it.
+##
+## Both anchors are checked before the replace, the same discipline
+## `far_field_code()` uses: a shader that silently failed to splice would draw
+## a forest that simply never moves, which nobody would file a bug about.
+const TREE_DECL_ANCHOR := "void vertex() {"
+const TREE_SWAY_ANCHOR := "\tworld_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;"
+
+const TREE_DECL := """uniform float tree_sway = 0.0;
+
+"""
+
+const TREE_SWAY := """	// THE SWAY. COLOR.a is the vertex's height as a fraction of its own
+	// model's, baked by TreeModels - 0 at the roots, 1 at the top - and it is
+	// SQUARED here so the bottom third of a trunk is effectively still. A
+	// linear weight shears a spruce's lowest branches sideways, which reads as
+	// the tree sliding rather than bending.
+	//
+	// Driven by the INSTANCE's world position rather than by the vertex's, so
+	// every vertex of one tree shares a phase and the tree bends as ONE THING.
+	// FloraModels drives its grass the same way for the neighbouring reason: a
+	// meadow moving in waves rather than each blade shivering on its own.
+	//
+	// ABOVE world_pos DELIBERATELY - see the anchor's note. The grain and the
+	// fog must be sampled where the vertex ACTUALLY IS, or a moving crown
+	// shimmers through a grain field that thinks it is standing still.
+	float tree_w = COLOR.a * COLOR.a * tree_sway;
+	if (tree_w > 0.0) {
+		vec3 tree_at = MODEL_MATRIX[3].xyz;
+		// About half the frequency of grass and a third of its amplitude
+		// relative to height. A 25 m tree that moves like a tuft is a tree
+		// made of rubber.
+		float tree_phase = TIME * 0.6 + tree_at.x * 0.11 + tree_at.z * 0.07;
+		VERTEX.x += sin(tree_phase) * tree_w * 0.55;
+		VERTEX.z += cos(tree_phase * 0.77) * tree_w * 0.38;
+	}
+"""
