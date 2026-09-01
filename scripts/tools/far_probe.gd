@@ -216,6 +216,12 @@ func _go() -> void:
 		get_tree().quit(0)
 		return
 
+	# THE PORT'S OWN NUMBERS, distance v4 Stage 6. See _bench_table().
+	if "--bench" in OS.get_cmdline_user_args():
+		await _bench_table()
+		get_tree().quit(0)
+		return
+
 	var t0 := Time.get_ticks_msec()
 	var first: PackedStringArray = await _measure()
 	var mid := Time.get_ticks_msec()
@@ -957,3 +963,155 @@ class Surface extends RefCounted:
 		if v <= u:
 			return y00 + (y10 - y00) * (u - v) + (y11 - y00) * v
 		return y00 + (y11 - y00) * u + (y01 - y00) * (v - u)
+
+
+# --- DISTANCE V4 STAGE 6: WHAT THE PORT ACTUALLY BOUGHT -----------------------
+#
+#     godot --headless --path . -- --host --seed 42 --far-probe --bench
+#
+# Appended, and nothing above it is touched. Hard rule 4: the far probe may
+# gain code, it may not lose assertions.
+#
+# THREE MEASUREMENTS, AND THEY ANSWER THREE DIFFERENT QUESTIONS.
+#
+#   JOB TIME, INTERLEAVED ABAB. The mesher's own work at three vantages, on the
+#   main thread, with nothing else happening. GDScript and C++ alternate mesh by
+#   mesh rather than run-block by run-block, because STATUS.md item 5 is this
+#   project's most expensive lesson: this box drifts, and a block of A followed
+#   by a block of B measures the drift as well as the change. This is the least
+#   contended number available and it is the honest measure of THE PORT.
+#
+#   WALL TIME THROUGH FarField, THE POOL IDLE. rebuild_in_place() called the way
+#   the F4 panel calls it, which is a person standing still moving a slider. It
+#   includes the worker handoff and the main-thread upload, so it is the number
+#   Marcel feels and the one "far_ring_div 4 is playable" has to be judged on.
+#
+#   THE UPLOAD, MEASURED ON ITS OWN. ChunkMesher.arrays_to_mesh() runs on the
+#   main thread, at div 4's vertex count, and this port does not touch it.
+#   STATUS items 11 and 17 are exactly this cost and tonight makes the mesh it
+#   uploads bigger without making the upload faster - so its number goes on the
+#   record where the morning can see it rather than being discovered later.
+
+## Meshes per vantage per leg. Three, per the plan's "three runs each".
+const BENCH_REPEATS := 3
+
+## The ladder the night is about: 2 is what ships, 4 is the 1 m cell.
+const BENCH_DIVS := [2.0, 4.0]
+
+
+func _bench_table() -> void:
+	var mesher := FarMesher.new()
+	var have_cpp := FarMesher.available() \
+		and mesher.setup(_heightmap, _generator, _config)
+	print("[FarBench] c++ mesher: %s" % ["present" if have_cpp else "ABSENT"])
+	if not have_cpp:
+		print("[FarBench] nothing to compare - build gdext and re-run")
+		return
+	print("[FarBench] box ganymede, editor target, headless, seed %d" % _world.world_seed)
+	print("[FarBench] job time is INTERLEAVED ABAB, %d meshes per vantage per leg" % [
+		BENCH_REPEATS])
+
+	var div_was: float = _config.far_ring_div
+	var cpp_was: float = _config.far_cpp
+	for div in BENCH_DIVS:
+		_config.far_ring_div = div
+		# The overlap is derived from the divisor through base_step_blocks, and
+		# it is a static both meshers read - so it is pushed on the main thread
+		# whenever the divisor moves, exactly as FarField does it.
+		FarField.apply_overdraw(_config)
+		# The knobs crossed at setup(); the divisor crosses again with every
+		# build(), so the mesher does not need re-marshalling here.
+		await _bench_jobs(div, mesher)
+		await _bench_wall(div)
+	_config.far_ring_div = div_was
+	_config.far_cpp = cpp_was
+	FarField.apply_overdraw(_config)
+
+
+## The mesher's own time, GDScript against C++, alternating mesh by mesh.
+func _bench_jobs(div: float, mesher: FarMesher) -> void:
+	var gd := PackedFloat32Array()
+	var cpp := PackedFloat32Array()
+	var verts_gd := 0
+	var verts_cpp := 0
+	for v in _vantages():
+		var centre: Vector2i = v["centre"]
+		for k in BENCH_REPEATS:
+			await get_tree().process_frame
+			var job := FarFieldJob.new()
+			job.heightmap = _heightmap
+			job.generator = _generator
+			job.config = _config
+			job.center = centre
+			job.run()
+			gd.append(float(job.elapsed_ms))
+			verts_gd = job.vertex_count
+			await get_tree().process_frame
+			mesher.build(_config, centre, PackedInt32Array())
+			cpp.append(float(mesher.elapsed_ms))
+			verts_cpp = mesher.vertex_count
+	var g := _bench_median(gd)
+	var c := _bench_median(cpp)
+	print("[FarBench] div %.0f  job  gdscript median %7.0f ms (%.0f-%.0f)   c++ median %6.0f ms (%.0f-%.0f)   %.1fx   %d/%d verts%s" % [
+		div, g[0], g[1], g[2], c[0], c[1], c[2],
+		g[0] / maxf(c[0], 1.0), verts_gd, verts_cpp,
+		"" if verts_gd == verts_cpp else "  VERTEX COUNTS DIFFER"])
+
+
+## The wall time a person standing still actually waits, both ways.
+func _bench_wall(div: float) -> void:
+	var far_field: Node = _world.get_node_or_null("FarField")
+	if far_field == null or not far_field.has_method("rebuild_in_place"):
+		print("[FarBench] div %.0f  wall: no FarField to ask" % div)
+		return
+	var walls := {"gdscript": PackedFloat32Array(), "c++": PackedFloat32Array()}
+	var uploads := PackedFloat32Array()
+	var verts := 0
+	for k in BENCH_REPEATS:
+		# ALTERNATING, for the reason the job leg alternates.
+		for leg in [0.0, 1.0]:
+			_config.far_cpp = leg
+			var before: int = far_field.stats()["rebuilds"]
+			if not far_field.rebuild_in_place():
+				print("[FarBench] div %.0f  wall: FarField refused" % div)
+				return
+			var frames := 0
+			while int(far_field.stats()["rebuilds"]) == before and frames < 100000:
+				await get_tree().process_frame
+				frames += 1
+			var st: Dictionary = far_field.stats()
+			walls[String(st.get("mesher", "?"))].append(float(st["wall_ms"]))
+			verts = int(st["vertices"])
+	var g := _bench_median(walls["gdscript"])
+	var c := _bench_median(walls["c++"])
+	print("[FarBench] div %.0f  wall gdscript median %7.0f ms (%.0f-%.0f)   c++ median %6.0f ms (%.0f-%.0f)   %.1fx   %d verts" % [
+		div, g[0], g[1], g[2], c[0], c[1], c[2],
+		g[0] / maxf(c[0], 1.0), verts])
+
+	# THE UPLOAD, ON ITS OWN. STATUS items 11 and 17: arrays_to_mesh runs on the
+	# main thread and this port does not touch it. Measured here so the morning
+	# has the number rather than the inference.
+	var job := FarFieldJob.new()
+	job.heightmap = _heightmap
+	job.generator = _generator
+	job.config = _config
+	job.center = _vantages()[0]["centre"]
+	job.run()
+	for k in BENCH_REPEATS:
+		await get_tree().process_frame
+		var t := Time.get_ticks_usec()
+		var m := ChunkMesher.arrays_to_mesh(job.arrays)
+		uploads.append(float(Time.get_ticks_usec() - t) / 1000.0)
+		m = null
+	var u := _bench_median(uploads)
+	print("[FarBench] div %.0f  upload arrays_to_mesh median %6.2f ms (%.2f-%.2f) at %d vertices, MAIN THREAD, unchanged by this port" % [
+		div, u[0], u[1], u[2], job.vertex_count])
+
+
+## Median, low, high.
+func _bench_median(values: PackedFloat32Array) -> Array:
+	if values.is_empty():
+		return [0.0, 0.0, 0.0]
+	var sorted := values.duplicate()
+	sorted.sort()
+	return [sorted[sorted.size() / 2], sorted[0], sorted[sorted.size() - 1]]
