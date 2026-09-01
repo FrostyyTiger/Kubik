@@ -89,7 +89,11 @@ to be re-derived; the older rulings they overturn are named.
    ring-walk, per-sector frontier holes, fades, terrace footing lift
    (`FarFieldJob.terrace_offset()`), backdrop convergence, distance-v5's
    debounce and its budgeted-uploader routing are all inherited, not
-   rewritten.
+   rewritten. One shipped fact about that debounce (distance lane,
+   post-merge): the knob is `far_tree_step_m`, default 24.0, and it
+   measures HORIZONTAL distance deliberately - the thrash it killed was a
+   3D step retriggered by altitude changes. If the cadence is touched,
+   the measurement stays horizontal.
 2. **The library is baked offline, in the assets repo, by a Python tool.**
    `Kubik-assets/tools/trees_convert.py` (the `weapons_convert.py` /
    `derived/knight/vox_parse.py` precedents), run on a machine, committed
@@ -126,11 +130,12 @@ to be re-derived; the older rulings they overturn are named.
    public build and must be a first-class, self-tested state.
 5. **Placement does not move, but its baseline is reprinted.** `decide()`
    at `tree_placement.gd:297` returns the same dictionary to the same four
-   consumers. But distance-v5's Stage 5 doubles heightmap resolution and
-   shifts the world on the same seed (accepted by Marcel in that plan), so
-   trees-v2's "73,675 trees on seed 42" is dead as a number: Stage 0
-   reprints tree count, species mix and spawn against POST-v5 main and
-   THAT tuple is this epic's invariant. Variant, rotation, jitter, tint and
+   consumers. Distance-v5 landed (58641b3) with the heightmap TILED
+   (`heightmap_tile_blocks` 512) but its resolution step DEFERRED -
+   `coarse_step` stays 4 blocks and the world is UNCHANGED on the same
+   seed - so trees-v2's counts likely still hold. Stage 0 reprints tree
+   count, species mix and spawn against post-v5 main anyway (the reprint
+   is discipline, not doubt) and THAT tuple is this epic's invariant. Variant, rotation, jitter, tint and
    scale-jitter are hashed from the cell on NEW salts (232+; stay clear of
    the `SALT_CLUMP` series `217 + key*7919`) - never stored, never synced.
    No code may assume a heightmap cell size; it is a config knob after v5.
@@ -171,13 +176,18 @@ to be re-derived; the older rulings they overturn are named.
    into COLOR alpha is the obvious slot - trees have no emissive) -
    recorded either way. Per-instance MultiMesh colour stays a *multiplier*
    for seasonal/altitude/grain tint, exactly the far ring's existing trick.
-10. **The uploader contract is read, not guessed.** Distance-v5 left the
-    uploader's owner (World vs FarField) and slice granularity (sector vs
-    ring) as the executor's choice, recorded in
-    `docs/status/distance-v5.md`. This plan's Stage 0 READS that status doc
-    and conforms; every `TreeField` multimesh commit and every collider
-    batch flows through that uploader or under a measured 1 ms (v5 hard
-    rule 6 is adopted here verbatim).
+10. **The uploader contract is read, not guessed.** It shipped: class
+    `FarUpload` in `scripts/world/far_upload.gd`, knob
+    `far_upload_budget_ms` (F4, default 4.0), slices per frontier sector
+    with an atomic swap - a build in progress shows the OLD complete far
+    country, never a mixed one. `docs/status/distance-v5.md` ("Stage 1 -
+    the uploader", "Where the uploader lives") records the placement
+    decision and the enqueue contract; `FarTrees`' multimesh commits
+    already flow through it and are the in-tree client example to crib.
+    Stage 0 still READS that status doc before the first commit flows;
+    every `TreeField` multimesh commit and every collider batch goes
+    through `FarUpload` or under a measured 1 ms (v5 hard rule 6 is
+    adopted here verbatim).
 11. **No far-mesher edits. None.** `far_field.gd`, `far_field_job.gd`,
     `far_build.cpp`, `far_mesher.gd`, `heightmap.gd`: read-only to this
     epic. Forest lumps stamped into the far terrain were considered and
@@ -271,9 +281,13 @@ to be re-derived; the older rulings they overturn are named.
 
 ## Sequencing
 
-- **After `feat/distance-v5` merges.** This plan consumes its uploader,
-  its debounce, and its post-Stage-5 world as the baseline. Its status
-  doc is required reading (decision 10).
+- **After `feat/distance-v5` merges - SATISFIED 2026-09-01:** merged to
+  main at 58641b3, all gates green, and the morning's cross-box hash ran
+  (`docs/status` a684445). This plan consumes its uploader and debounce;
+  its status doc is required reading (decision 10). Note `build.yml` (the
+  Windows exe export) was red on the merge commit - a pre-existing
+  condition of main, not this lane's gate; trees-v3 gates on the selftest
+  workflow.
 - **Ganymede has ONE working tree.** Do not start while the distance
   session holds it; do not resume the idle creatures-v1 tmux session,
   which holds the checkout hostage if touched. (Both flagged by the
