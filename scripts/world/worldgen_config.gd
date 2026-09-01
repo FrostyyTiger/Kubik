@@ -1270,6 +1270,27 @@ const FOG_START_RATIO := 0.4
 ## has to stay the mesh this project shipped.
 @export var far_detail := 1.0
 
+## HOW HARD THE WIND MOVES A CROWN. Trees v3 Stage 8, decision 9.
+##
+## A multiplier on the tree material's sway, weighted by each vertex's height
+## as a fraction of its own model's - so the crown moves, the roots do not, and
+## a 28 m conifer and a 2 m stump take the same proportion of it.
+##
+## LOOK, NOT SHAPE, and therefore LOCAL and unhashed (hard rule 5). It moves
+## vertices in a shader and nothing else: not placement, not the collider, not
+## the canopy cover the forest floor is shaded by. Two machines at different
+## values grow the same forest and one of them is windier, which is exactly
+## what a look knob is allowed to be.
+##
+## SEPARATE FROM `wind_strength`, which is the plants'. They are not one wind
+## and should not share a slider: grass at the value a tree wants is stiff, and
+## a tree at the value grass wants is made of rubber. What ties them together
+## is that they read the same clock and the same world position, so they move
+## in step without moving by the same amount.
+##
+## 0 is a still forest, and it is what every stage before 8 shipped.
+@export var tree_sway := 0.5
+
 ## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
 ##
 ## The world is unbounded by design, so the height map is built in tiles
@@ -1712,6 +1733,9 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"heightmap_tile_blocks",
 	# DISTANCE V5 STAGE 6. The far mesh's analytic grain.
 	"far_detail",
+	# TREES V3 STAGE 2. The wind in the crowns - a look knob, so LOCAL: two
+	# machines at different values grow the same forest.
+	"tree_sway",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

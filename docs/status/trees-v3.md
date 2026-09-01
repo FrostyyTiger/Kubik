@@ -367,3 +367,168 @@ measured rather than estimated.
 2. **There is no `python` on this box, only `python3`.** The plan's command
    block says `python scripts/tools/sync_assets.py`.
 
+
+---
+
+## Stage 2 - `TreeModels`, the palette table, and the gallery
+
+**The library loads, assembles and photographs - and the gallery sheet found
+a bug in a parser this project has been shipping since character v2.**
+
+### What was built
+
+| | |
+| --- | --- |
+| **`TreeModels`** | `scripts/world/flora/tree_models.gd`. `available()`, `variants()`, `mesh_for()`, `triangles_for()`, `trunk_of()`, `canopy_color()`, a mutex-guarded lazy cache. A SIBLING of `FloraModels` per decision 4 - its own ids, its own material, and the two files never refer to each other. |
+| **`TreePalette`** | `scripts/world/flora/tree_palette.gd`. Sixteen named colour families and an explicit per-variant index -> family table. |
+| **`Look.tree_material()`** | The far-tree treatment (`fog_dark_mix` 0.0, `contact_band` 1.0) on a shader with a `vertex()`, plus `tree_sway` - a LOCAL, unhashed knob, default 0.5, held at 0 until Stage 8. |
+| **`--trees` in the gallery** | Every variant at 1:1 beside the player capsule, and every LOD rung beside its own LOD0. |
+| **two self-test gates** | `tree winding` and `tree library`, both self-skipping without the mount and saying so. |
+
+### The palette table is keyed on the VARIANT, not the species
+
+Decision 3 asks for "each species' palette indices mapped to authored Kubik
+colours", and **a species' indices are not stable across its own
+colourways**. Tree 13's palette index 3 is green foliage on `t13_1`, autumn
+on `t13_2` and crimson on `t13_4`. Keying by species produced eighty-odd
+disagreements, every one of them a twin overwriting its sibling. A colourway
+IS a palette, so the table is per file: **55 rows.**
+
+**Generated, then authored.**
+`Kubik-assets/tools/trees_palette_table.py` printed the block from the baked
+sidecars and it is checked in as data - Marcel edits a cell and that
+variant's colour moves, with no tool, no re-bake and no assets-repo commit.
+**Only palette INDICES and Kubik family names cross into the public repo;
+the pack's RGB never does** (hard rule 8).
+
+**The classification rule is on its second version and the first led with the
+wrong half.** It took the sidecar's `canopy_share` to decide foliage-or-bark
+and then chose a family inside that role - which put Tree 12's greens on the
+BARK ramp (their share fell just under the line on three variants, and
+nothing in Kubik has green bark) and Tree 16's cut stumps on the AUTUMN ramp
+(a stump is all "canopy" by height, and its brown sits in the warm hue band).
+
+What actually separates the two in this pack is **saturation**, and it
+separates them with room to spare:
+
+| | saturation | examples |
+| --- | --- | --- |
+| bark browns | **26 - 69** | the pack's trunk ramp |
+| autumn foliage | **78 - 92** | the pack's autumn ramp |
+
+So hue picks the ramp, saturation splits the one ambiguous band, and the
+geometry is kept for the single question colour genuinely cannot answer: **a
+near-white index high in a tree is snow dust and low in a tree is pale bark,
+and `#FFFFFF` is `#FFFFFF` either way.**
+
+Four families are new because the block world had nothing to be: `AUTUMN_A`
+(a deep burnt orange under the larch ramp), `BARK_DARK` (which is the
+most-used family in the whole table - this pack shades trunks far darker than
+one block id ever could), and `CRIMSON_A/B` + `PINK_A/B` for the two parked
+colourways. Everything else points at an existing `block.gd` row, which is
+what keeps a purchased forest in the same palette as the terrain it stands on.
+
+**The pack's colours are neon and Kubik's are not, and the mapping
+desaturating them is the mapping doing its job** - the brightest autumn in
+the pack is `V 98, S 92` and `LEAVES_LARCH` is a muted gold. That is the
+whole reason the colour is mapped in the game rather than shipped from the
+tool.
+
+### `vox_parse.py` ignored MagicaVoxel's rotations, and it looked like art
+
+**The gallery sheet found it, which is what a gallery is for.** Tree 09 came
+out as a bare stick with a flat green plate balanced on top, and Tree 10 the
+same. The mesher was verified exact against the source occupancy first -
+88,408 exposed faces on Tree 13, every one covered exactly once, right
+colour, nothing missing and nothing extra - so the geometry was arriving
+wrong before the mesher ever saw it.
+
+`vox_parse.walk` read the scene graph's `_t` translation and **dropped its
+`_r` rotation.** That is invisible on a model whose parts are axis-aligned -
+which is every model this tool had been pointed at - and catastrophic on one
+whose parts are the SAME PIECE ROTATED. **Tree 09 is a coconut palm**: five
+trunk segments and twenty-four fronds, every frond the same flat two-voxel
+model turned into place. Without `_r` all twenty-four lay flat at the top in
+overlapping PAIRS - `Leaf (2)_3` and `Leaf (2)_4` at byte-identical bounds,
+which is the signature worth recognising.
+
+`_r` is a packed byte: two bits for the column of row 0's non-zero entry, two
+for row 1's, three sign bits. Two details the fix has to get right and a
+naive version would not: **the pivot is the model's centre BEFORE rotation
+and the placement is the rotated box's centre AFTER**, so each axis shifts by
+the ROTATED extent or an oblong part lands offset by half the difference; and
+a child's `_t` is expressed in its PARENT's rotated frame, so rotations
+compose down the graph.
+
+| | before | after |
+| --- | --- | --- |
+| tree files whose geometry changed | - | **29 of 55** |
+| Tree 09_1 depth | 99 voxels (fronds overlapping) | **162** (fronds radiating) |
+| worst LOD0 triangle count | 36,386 | **33,194** |
+| library LOD0 total | 251,912 | **246,334** |
+| knight files changed | - | **none** - the regression check |
+
+**Nothing shipped moves.** `vox_parse.py` is an offline tool, it is
+referenced nowhere in the game, and nothing in `game/` was ever generated
+from the creature or weapon `.vox` through it. The game's own reader,
+`scripts/character/vox_loader.gd`, is a flat chunk walk with no scene graph
+at all and is untouched. **But the creature `.vox` files DO parse differently
+now, and anyone who reached for this tool before got wrong geometry from
+them** - which is worth knowing before the creature trio is modelled.
+
+### And a finding the mapping table has to answer
+
+**Trees 09 and 10 are coconut palms.** Decision 12 reads them as "sprawling
+bare 09/10 = the krummholz/snag register", and that reading was taken off
+shape statistics computed from the broken geometry - 163 voxels wide, 13,000
+voxels, no dense slice anywhere. With the rotations in they are unmistakable:
+a slender segmented trunk and a crown of flat radiating fronds. Stage 3
+benches them, in a comment, and the reason is in this paragraph.
+
+### Two more bugs the pictures found
+
+1. **`StringName.sort()` is not lexicographic.** It compares the internal
+   POINTER - which is the point of a StringName and why comparing one is an
+   integer compare - so `[&"t16_6", &"t05", &"t5_5", &"t09_1"].sort()`
+   returns `[t09_1, t5_5, t05, t16_6]`. Stable, arbitrary, and it changes
+   with allocation. The symptom does not look like a sort bug: the first
+   sheet came out `t5_5, t16_6, t16_5, t16_4 ...`, which reads as a
+   deliberate REVERSE sort rather than as no sort at all.
+2. **The winding table was wrong on four faces of six**, and the cross
+   product found it - 326,514 triangles of 481,654, with `+X`, `-X`, `+Y`
+   and `-Y` backwards and the two Z faces right. The rule, once derived
+   rather than guessed: the corner order traces `(0,0) (w,0) (w,h) (0,h)` in
+   the face's own `(u, v)` plane, so the triangle normal is `+(u x v)` -
+   which for X is `y x z = +x` and for Z is `x x y = +z`, both along the
+   axis, but for **Y is `x x z = -y`, against it.** So the flip is
+   `offset == 1` on X and Z and `offset == 0` on Y, and Y being the odd one
+   out is the whole of it. `FloraModels` records the identical experience
+   from the other side; its advice - check winding with the cross product,
+   not with your eyes - is why this took one run.
+
+Also recorded because it wasted a compile: **`OPAQUE_SHADER` already has a
+`vertex()`**, so the sway could not be appended beside it. Splicing it INSIDE
+that function turns out to be required rather than a consolation - the
+displacement has to happen before `world_pos` is taken, or the grain and the
+banded fog are sampled where the vertex would have been in still air and a
+moving crown shimmers through them.
+
+### The gate
+
+| Stage 2 gate (plan) | result |
+| --- | --- |
+| the loader per decision 4 | `TreeModels`, a sibling of `FloraModels` |
+| `Look.tree_material()` per decision 9 | built, with the sway shipped at Stage 2 and its knob held at 0 until Stage 8 |
+| the palette table per decision 3 | `TreePalette`, 16 families, 55 variant rows |
+| gallery `--trees`, every variant beside the capsule | **22 sheets**, `build/gallery/trees-v3-s2` |
+| every LOD beside its LOD0 | 11 `lods-*.png`, one per pack species |
+| self-test, mount present | **green** - `tree winding` 474,460 triangles 0 wrong, `tree library` 55 x 3 rungs 0 wrong |
+| self-test, mount absent | **green** - `TreeModels.available()` false, both tree gates print "no library mounted, 0 checks (public build)" |
+| gallery `--trees` absent leg prints "no library" and exits 0 | yes |
+| **triangle counts at load match Stage 1's table** | **exactly, on all 55 variants at all 3 rungs** - the Python tool has no Godot in it and the GDScript loader has never seen a `.vox`, and they agree to the triangle |
+
+**Worst LOD0 at load: `t10_3`, 33,194 triangles. 319,082 over the library** -
+which is 55 variants counting twins, against the tool's 246,334 over 38
+distinct geometries. Two denominators, both correct: the tool bakes
+geometries and the loader assembles variants.
+

@@ -7,6 +7,7 @@ extends Node3D
 ##     godot --path . scenes/gallery.tscn -- --label some-name --vary spruce 8
 ##     godot --path . scenes/gallery.tscn -- --label some-name --stand spruce
 ##     godot --path . scenes/gallery.tscn -- --label some-name --masks
+##     godot --path . scenes/gallery.tscn -- --label some-name --trees
 ##
 ## THE THREE EXTRA MODES ARE TREES V1 STAGE 0, and they exist because the
 ## default sheet answers a question the trees epic is not asking. Three sizes
@@ -124,6 +125,7 @@ enum {
 	MODE_VARY = 1,      # --vary <species> <n>
 	MODE_STAND = 2,     # --stand <species>
 	MODE_MASKS = 3,     # --masks
+	MODE_TREES = 4,     # --trees  (trees v3 Stage 2)
 }
 
 ## The size `--vary` and `--masks` compare variation at.
@@ -222,6 +224,12 @@ func _ready() -> void:
 	_camera.current = true
 
 	_resolve_mode()
+	if _mode == MODE_TREES:
+		# THE LIBRARY SHEET BUILDS NO PAD, for the same reason the mask sheet
+		# does not: its subjects are loaded meshes rather than stamped blocks,
+		# and it re-lays the frame out once per sheet.
+		_shoot_trees.call_deferred()
+		return
 	if _mode == MODE_MASKS:
 		# THE MASK SHEET BUILDS NOTHING UP FRONT. Every other mode lays out one
 		# pad and photographs it; a mask is one tree alone in an empty frame, so
@@ -1231,6 +1239,9 @@ func _resolve_time() -> float:
 ## falls back, and the warning is the first line of the log.
 func _resolve_mode() -> void:
 	var argv := OS.get_cmdline_user_args()
+	if argv.has("--trees"):
+		_mode = MODE_TREES
+		return
 	if argv.has("--masks"):
 		_mode = MODE_MASKS
 		return
@@ -1329,3 +1340,230 @@ class ScratchVolume extends RefCounted:
 			return false
 		var l := Chunk.world_to_local(p)
 		return Block.is_solid(chunk.voxels[Chunk.index(l.x, l.y, l.z)])
+
+
+# --- Trees v3 Stage 2: the library sheet -------------------------------------
+
+## `--trees`: every variant in the purchased library, at 1:1, beside the player.
+##
+##     godot --path . scenes/gallery.tscn -- --label some-name --trees
+##
+## WHY THIS IS ITS OWN MODE AND NOT A ROW ON THE DEFAULT SHEET.
+##
+## The default sheet photographs SEVEN species at three sizes each, laid out by
+## a builder that stamps blocks into a scratch volume. A library variant is not
+## a species and has no size range - it is one sculpted model, exactly as tall
+## as the artist drew it - and there are fifty-five of them. Threading that
+## through `_build_species_rows` would have meant making the block stamper and
+## the model loader interchangeable, which they are not and should not be.
+##
+## THE CAPSULE IS THE WHOLE POINT, exactly as it is for the plant strip.
+## Ruling 3 moves the trees from 13-21 m to 21-28 m and calls that "the
+## monumental north star, chosen with the numbers on the table". A number on a
+## table is not a picture. This is the picture: every variant standing next to
+## a capsule of the player's exact dimensions, so "is this the right size" is
+## answered against the only thing whose size is not in question.
+##
+## AND EVERY LOD BESIDE ITS OWN LOD0, which is the other half of the gate.
+## Ruling 4 replaces the impostor cards with downsampled versions of the same
+## grid, and the claim it rests on is that the near/far seam becomes a
+## RESOLUTION boundary rather than a KIND boundary. Three rungs of one tree in
+## one frame is that claim, photographed.
+##
+## SELF-SKIPS WITHOUT THE LIBRARY, prints "no library" and exits 0 - which is
+## the public build, and is a gate rather than a courtesy.
+## FIVE PER SHEET, NOT EIGHT. Eight variants of Tree 09 side by side is 150 m
+## of frame, which puts each tree at a hundred pixels - wide enough to count
+## them and far too small to judge one. Five is the most that leaves a 25 m
+## tree tall enough to read its crown against the sky.
+const TREE_ROW := 5
+const TREE_GAP_M := 3.0
+
+## Extra headroom on the library sheets, over the default sheet's 1.12.
+##
+## A LIBRARY ROW IS MUCH WIDER THAN IT IS TALL, so its outermost subjects sit
+## far off the camera axis - and a subject off-axis is projected OUTWARD and
+## UPWARD by the perspective, which is what cropped the first sheet's leftmost
+## crown while the middle tree fitted comfortably. The default sheet never hits
+## this because its bays are narrow. This is the margin, not a framing fudge:
+## the fit is the same fit.
+const TREE_MARGIN := 1.34
+
+func _shoot_trees() -> void:
+	if not TreeModels.available():
+		print("[Gallery] --trees: no library mounted, nothing to photograph")
+		get_tree().quit()
+		return
+
+	var variants := TreeModels.variants()
+	print("[Gallery] --trees: %d variants, %d rungs each" % [
+		variants.size(), TreeModels.LOD_COUNT])
+
+	# One sheet per row of variants, and one sheet per species' LOD ladder.
+	var rows := []
+	for i in range(0, variants.size(), TREE_ROW):
+		rows.append(variants.slice(i, mini(i + TREE_ROW, variants.size())))
+
+	var written := 0
+	var missing := []
+	for r in rows.size():
+		var row: Array = rows[r]
+		_clear_pad()
+		var placed := _place_tree_row(row, 0, missing)
+		if placed.is_empty():
+			continue
+		written += 1
+		await _shoot_tree_frame("trees-%02d" % (r + 1), placed)
+
+	# THE LOD LADDER, one sheet per pack species: its first variant at all
+	# three rungs, side by side, at the same size. What must be visible is that
+	# they are the SAME TREE getting coarser - not three different trees.
+	for sp in TreeModels.species():
+		var of_species := TreeModels.variants_of(sp)
+		if of_species.is_empty():
+			continue
+		_clear_pad()
+		var placed := _place_lod_ladder(StringName(of_species[0]))
+		if placed.is_empty():
+			continue
+		written += 1
+		await _shoot_tree_frame("lods-%s" % sp, placed)
+
+	if not missing.is_empty():
+		print("[Gallery] %d variants built no mesh: %s" % [
+			missing.size(), ", ".join(missing)])
+	print("[Gallery] done, %d images in %s" % [written, _out_dir])
+	get_tree().quit()
+
+
+## The library sheet's own pad: ground, and the capsule at the left of it.
+func _clear_pad() -> void:
+	for child in get_children():
+		if child.name == "TreePad" or child.name == "ScaleFigure":
+			remove_child(child)
+			child.queue_free()
+
+
+## Lay out one row of variants along X, each standing on the origin plane.
+## Returns [{"name", "x", "height_m", "triangles"}], and appends any variant
+## that built no mesh to `missing`.
+func _place_tree_row(row: Array, lod: int, missing: Array) -> Array:
+	var root := Node3D.new()
+	root.name = "TreePad"
+	add_child(root)
+	var placed := []
+	var x := 0.0
+	for name in row:
+		var mesh := TreeModels.mesh_for(name, lod, _config.block_size)
+		if mesh == null:
+			missing.append(String(name))
+			continue
+		var h := TreeModels.height_m(name)
+		var aabb := mesh.get_aabb()
+		# SPACED BY WHAT THE MESH ACTUALLY IS, not by a constant. Tree 09 is
+		# 20 m wide and Tree 16 is 2 m; a fixed pitch would either overlap the
+		# sprawlers or strand the stumps in empty frame.
+		var half := maxf(aabb.size.x, 0.5) * 0.5
+		x += half
+		var node := MeshInstance3D.new()
+		node.name = String(name)
+		node.mesh = mesh
+		node.position = Vector3(x, 0.0, 0.0)
+		root.add_child(node)
+		placed.append({
+			"name": String(name), "x": x, "height_m": h,
+			"triangles": TreeModels.triangles_for(name, lod, _config.block_size),
+			"half": half,
+		})
+		x += half + TREE_GAP_M
+	if not placed.is_empty():
+		_place_tree_capsule(root, -2.0)
+	return placed
+
+
+## One variant at all three rungs, at the same place along Z, spread on X.
+func _place_lod_ladder(variant: StringName) -> Array:
+	var root := Node3D.new()
+	root.name = "TreePad"
+	add_child(root)
+	var placed := []
+	var x := 0.0
+	for lod in TreeModels.LOD_COUNT:
+		var mesh := TreeModels.mesh_for(variant, lod, _config.block_size)
+		if mesh == null:
+			continue
+		var aabb := mesh.get_aabb()
+		var half := maxf(aabb.size.x, 0.5) * 0.5
+		x += half
+		var node := MeshInstance3D.new()
+		node.name = "%s_lod%d" % [variant, lod]
+		node.mesh = mesh
+		node.position = Vector3(x, 0.0, 0.0)
+		root.add_child(node)
+		placed.append({
+			"name": "%s lod%d" % [variant, lod], "x": x,
+			"height_m": TreeModels.height_m(variant),
+			"triangles": TreeModels.triangles_for(variant, lod, _config.block_size),
+			"half": half,
+		})
+		x += half + TREE_GAP_M
+	if not placed.is_empty():
+		_place_tree_capsule(root, -2.0)
+	return placed
+
+
+## The ruler. Same dimensions as `_place_scale_figure`'s, standing on the same
+## plane the trees do - which for a library model is y = 0, because the model's
+## own origin is its bottom centre.
+func _place_tree_capsule(root: Node3D, x: float) -> void:
+	var height_m: float = _config.player_height_blocks * _config.block_size
+	var mesh := CapsuleMesh.new()
+	mesh.radius = _config.player_radius_blocks * _config.block_size
+	mesh.height = height_m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.55, 0.12, 0.14)
+	mat.roughness = 1.0
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mesh.material = mat
+	var node := MeshInstance3D.new()
+	node.name = "Capsule"
+	node.mesh = mesh
+	node.position = Vector3(x, height_m * 0.5, 0.0)
+	root.add_child(node)
+
+
+## Frame a laid-out row and take the picture, printing the cost line.
+func _shoot_tree_frame(image_name: String, placed: Array) -> void:
+	var lo := -3.0
+	var hi := 0.0
+	var tallest := 0.0
+	var total := 0
+	for p in placed:
+		lo = minf(lo, float(p["x"]) - float(p["half"]))
+		hi = maxf(hi, float(p["x"]) + float(p["half"]))
+		tallest = maxf(tallest, float(p["height_m"]))
+		total += int(p["triangles"])
+	var cx := (lo + hi) * 0.5
+	var width := hi - lo
+	# The look point and the fit are the default sheet's own, so a library
+	# variant and a block species are framed by the same rule and their two
+	# sheets can be held side by side.
+	var look := Vector3(cx, tallest * LOOK_FRACTION, 0.0)
+	var aspect := float(get_viewport().get_visible_rect().size.aspect())
+	var tan_v := tan(deg_to_rad(_camera.fov) * 0.5)
+	var need_h := (width * 0.5) / maxf(tan_v * aspect, 0.001)
+	var need_v := (_fit_span(tallest, 6.0) * 0.5) / maxf(tan_v, 0.001)
+	var dist := maxf(maxf(need_h, need_v), 8.0) * TREE_MARGIN
+	# SIX DEGREES, not the default sheet's twelve. A library variant is judged
+	# on its SILHOUETTE against the sky, and every degree of down-pitch trades
+	# sky for pad.
+	var pitch := deg_to_rad(6.0)
+	_camera.global_position = look + Vector3(0.0, sin(pitch), -cos(pitch)) * dist
+	_camera.look_at(look, Vector3.UP)
+	_save_image(await _shutter(), image_name)
+	var names := PackedStringArray()
+	for p in placed:
+		names.append("%s %.1fm %dtri" % [
+			p["name"], p["height_m"], p["triangles"]])
+	print("[Gallery]      %s: %d subjects, %d triangles - %s" % [
+		image_name, placed.size(), total, ", ".join(names)])

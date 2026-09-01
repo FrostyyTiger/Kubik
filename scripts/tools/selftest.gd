@@ -75,6 +75,9 @@ func _ready() -> void:
 		# DISTANCE V5 STAGE 4, appended after it.
 		"height tile parity": _test_height_tile_parity,
 		"canonical world": _test_canonical_world,
+		# TREES V3 STAGE 2, appended at the end of the list.
+		"tree winding": _test_tree_winding,
+		"tree library": _test_tree_library,
 	}
 	var failures := 0
 	for name in tests:
@@ -3017,3 +3020,134 @@ func _test_canonical_world():
 		bad += 1
 	return bad
 
+
+
+# --- Trees v3 -----------------------------------------------------------------
+
+## EVERY TREE TRIANGLE MUST FACE OUTWARDS, AND THIS IS WHY IT IS NOT ARGUED.
+##
+## `FloraModels`' own winding note records that all six of its faces were
+## backwards on the first attempt, and - the part worth repeating - that the
+## symptom was NOT an inside-out model. Nothing vanished. What appeared was
+## thin horizontal gaps through every rounded blob, which survived being
+## explained as a raggedness setting, as the voxel scale and as shadow acne.
+##
+## `TreeModels` writes six faces of its own, as RECTANGLES rather than voxel
+## faces, with a per-face winding flip - which is six more chances to make the
+## same mistake in a form that looks like a modelling choice. So it is checked
+## with the cross product and never with eyes:
+##
+##     (p1 - p0) x (p2 - p0) == -normal
+##
+## SELF-SKIPS WITHOUT THE LIBRARY, and says so. That is hard rule 3's absent
+## leg, and a gate that silently passed on a public build would be no gate.
+func _test_tree_winding():
+	if not TreeModels.available():
+		print("tree winding: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	var checked := 0
+	var faces := {}
+	for variant in TreeModels.variants():
+		for lod in TreeModels.LOD_COUNT:
+			var mesh := TreeModels.mesh_for(variant, lod, 0.5)
+			if mesh == null:
+				continue
+			var arrays := mesh.surface_get_arrays(0)
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+			var wrong := 0
+			var i := 0
+			while i + 2 < indices.size():
+				var p0 := verts[indices[i]]
+				var p1 := verts[indices[i + 1]]
+				var p2 := verts[indices[i + 2]]
+				var n := normals[indices[i]]
+				var cross := (p1 - p0).cross(p2 - p0)
+				if cross.length() > 0.0 and cross.normalized().dot(-n) < 0.99:
+					wrong += 1
+					# WHICH face, not just how many. Six flips means six
+					# independent mistakes, and a count alone would send
+					# somebody looking at all of them.
+					faces[n] = int(faces.get(n, 0)) + 1
+				checked += 1
+				i += 3
+			if wrong > 0:
+				print("  %s lod %d: %d of %d triangles wound the wrong way" % [
+					variant, lod, wrong, indices.size() / 3])
+				bad += 1
+	for n in faces:
+		print("  normal %s: %d wrong" % [n, faces[n]])
+	print("tree winding: %d triangles across %d variants x %d rungs, %d wrong" % [
+		checked, TreeModels.variants().size(), TreeModels.LOD_COUNT, bad])
+	if checked == 0:
+		print("  WARNING: a library is mounted but it built no triangles")
+		return 1
+	return bad
+
+
+## THE LIBRARY MUST AGREE WITH ITS OWN SIDECARS, AND WITH THE LADDER.
+##
+## The triangle counts in this document's Stage 1 table were printed by a
+## Python tool that has no Godot in it, and the meshes the game draws are
+## assembled by a GDScript loader that has never seen a `.vox`. Those two
+## agreeing is the whole claim that the offline bake and the online assembly
+## are the same geometry - so it is asserted rather than believed, on every
+## variant at every rung.
+##
+## AND THE LADDER WITH IT. `TreeModels.VOXELS_PER_BLOCK` and the tool's own
+## copy are two numbers that must be one number; if they drift, every tree in
+## the world is the wrong size and nothing else in the project would say so.
+func _test_tree_library():
+	if not TreeModels.available():
+		print("tree library: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	var checked := 0
+	var worst := 0
+	var worst_name := ""
+	var total := 0
+	for variant in TreeModels.variants():
+		var d := TreeModels.info(variant)
+		var lods: Array = d.get("lods", [])
+		if lods.size() != TreeModels.LOD_COUNT:
+			print("  %s has %d rungs, the loader reads %d" % [
+				variant, lods.size(), TreeModels.LOD_COUNT])
+			bad += 1
+			continue
+		# The ladder, restated from the sidecar's own numbers: a model's height
+		# in metres IS its voxel count times the rung's voxel size.
+		var expect_m := float(int((d["size"] as Array)[1])) \
+			* 0.5 / float(TreeModels.VOXELS_PER_BLOCK) \
+			* float(d.get("base_step", 1))
+		if absf(expect_m - TreeModels.height_m(variant)) > 0.001:
+			print("  %s: sidecar says %.4f m, the ladder says %.4f m" % [
+				variant, TreeModels.height_m(variant), expect_m])
+			bad += 1
+		# Every variant must have a palette row, or its whole crown falls back
+		# to BARK_DARK and the tree is drawn in mud.
+		if not TreePalette.has(variant):
+			print("  %s has no row in TreePalette.PACK_FAMILIES" % variant)
+			bad += 1
+		for lod in TreeModels.LOD_COUNT:
+			var want := int((lods[lod] as Dictionary).get("triangles", -1))
+			var got := TreeModels.triangles_for(variant, lod, 0.5)
+			checked += 1
+			if want != got:
+				print("  %s lod %d: the tool baked %d triangles, the loader built %d" % [
+					variant, lod, want, got])
+				bad += 1
+			if lod == 0:
+				total += got
+				if got > worst:
+					worst = got
+					worst_name = String(variant)
+	print("tree library: %d variants x %d rungs checked, %d wrong" % [
+		TreeModels.variants().size(), TreeModels.LOD_COUNT, bad])
+	print("  worst LOD0 %s at %d triangles, %d over the library" % [
+		worst_name, worst, total])
+	if checked == 0:
+		print("  WARNING: a library is mounted but nothing was checked")
+		return 1
+	return bad
