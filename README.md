@@ -41,9 +41,13 @@ what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 > pre-Alpine landscape at 1:4 scale - the first generated region of a world
 > that is by design unbounded - meadow valleys, seven tree species that
 > clump and leave clearings, bare rock, snow peaks, lakes in real basins, 8.7 M
-> pieces of ground cover, fireflies after dark - drawn as an Art Deco travel
-> poster: one three-tone lighting ramp under everything, banded fog, a sky with
-> rays. Four playable races in stocky voxel bodies with a creation screen, seen
+> pieces of ground cover, fireflies after dark - drawn today as an Art Deco
+> travel poster (one three-tone lighting ramp under everything, banded fog, a
+> sky with rays), with the direction re-cut 2026-09-01 to **Art Deco
+> fantasy**: one painted-voxel register at every distance, Deco as the
+> grammar of the built world, nature as sculpted-vox naturalism
+> (`docs/DESIGN.md` § Art direction). Four playable races in stocky voxel
+> bodies with a creation screen, seen
 > by every other player. Nothing lives in the world yet, nothing can be broken
 > or placed, and the director does not exist: the next playtest is the wolf,
 > the marmot and the eagle.

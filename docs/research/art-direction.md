@@ -8,6 +8,18 @@ what the posters, the games and the real place say about its *details*, with
 the contradictions between sources resolved and every rule carrying its
 numbers.
 
+> **How to read this document after 2026-09-01.** The direction was re-cut
+> (`DESIGN.md` § Art direction): the poster is retired as a RENDERING
+> register - one painted-voxel surface language now runs at every distance -
+> and the direction is named **Art Deco fantasy**: Deco as the grammar of
+> the built world, nature as sculpted-vox naturalism. This document remains
+> the COLOUR AND LIGHT authority - the sampled palettes, the time-of-day
+> sets, the fog and sky numbers all stand - but §1's two-register frame,
+> and any line prescribing "flat" or one colour per surface, is superseded
+> where it conflicts. §2.5's form language yields to trees v3's sculpted
+> library when it lands; §6's Deco vocabulary gains standing as the source
+> book for the BUILT world (Sites v1 onward).
+
 Six research lenses ran in parallel, each downloading and looking at its
 references and sampling colours from the pixels with PIL (never from memory):
 
