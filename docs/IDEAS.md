@@ -5,6 +5,31 @@
 Seeded once from the pillars, then re-ordered when terrain v1 was scoped. From
 here on this list is filled by what a playtest taught us.
 
+
+**Trees v3 - the forest becomes models, the whole way out** ran in one night,
+2026-09-01/02, on `feat/trees-v3`, all eleven stages.
+[plans/trees-v3.md](plans/trees-v3.md), [status/trees-v3.md](status/trees-v3.md).
+
+Trees were the last living thing in this game built out of terrain, and they
+stopped being. The purchased pack's **55 MagicaVoxel sources** - not its
+chamfered meshes, which stay rejected - bake into **38 geometries at three LOD
+rungs** through Kubik's own greedy mesher and palette, and `TreeField`
+instances them from the player's boots to the fog. There are no impostor cards
+anywhere: the far register is the SAME GRID downsampled, so the seam a walking
+eye used to find became a resolution boundary rather than a kind boundary.
+
+**The block-tree system is deleted** - 2,851 lines of shape code, both chunk
+writers, and the sky reserve. The whole column job runs **6.2x faster**, and
+`column_job.gd`'s five-week-old claim that tree stamping was half the cost
+turned out to be half of a job that also lost the mesher's worst input.
+
+*Three things it found that nobody was looking for:* `vox_parse.py` had been
+silently dropping MagicaVoxel's ROTATIONS since character v2 (Tree 09 is a
+coconut palm and came out as a stick with a plate on it); `StringName.sort()`
+compares pointers rather than text; and a colourway twin was reading its
+owner's palette indices, which rendered four hero variants as one flat brown
+and was found by a swatch gate reporting "13 of 16 families reachable".
+
 1. ~~**Terrain v1 - the world itself.**~~ **DONE**, merged to `main`
    2026-08-24. Swiss pre-Alpine landscape: meadow valleys, forested slopes,
    bare rock, snow peaks, lakes in real depressions, fog and a day/night cycle.

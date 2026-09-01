@@ -1180,3 +1180,172 @@ All eighteen shots differ, and STATUS item 13a says the tour is not
 bit-reproducible in the near field anyway - flora lands in a different order
 run to run. What the pair is FOR is looking at, and the files are on ganymede.
 
+
+---
+
+## Stage 9 - the numbers, after
+
+### The plan asks for interleaved ABAB and this epic cannot produce one
+
+Distance v5 could interleave because `far_upload_budget_ms` 0 restored
+distance v4 exactly - a knob that turns the change off, on the same commit, in
+the same process. **Trees v3 has no such knob and could not have one.** It is
+not a change to how something is drawn; it is a different system, and the
+"before" side of every comparison in this document lives at a different commit
+with a different `tree_species.gd` in it.
+
+So the discipline here is the next best thing and it is stated rather than
+implied: **three runs of the AFTER side, reported with their spread, against
+Stage 0's single run.** Every row below carries which it is. Two of the three
+were clean; **the third was contended by a screenshot tour running beside it
+and was re-run** - the contended figures are in the git history of this
+document and were 73.9 ms worst frame against 31.8 and 37.6, which is a good
+reminder of what a busy box does to this probe.
+
+### The stream probe, `far_ring_div` 4, library mounted
+
+| | Stage 0 (single) | run 1 | run 2 | run 3 |
+| --- | --- | --- | --- | --- |
+| **chunks at spawn** | 2,369 | **2,222** | **2,222** | |
+| **load wall** | 24,872 ms | 19,522 | 18,199 | |
+| gen per chunk, workers | 9.51 ms | 4.23 | 3.93 | |
+| main-thread upload per chunk | 0.23 ms | 0.15 | 0.15 | |
+| sprint worst frame, out / back | 39.4 / 37.7 ms | 31.8 / 37.0 | 37.6 / 33.2 | |
+| frames over 33 ms | 8 | **2** | **2** | |
+| **holes** | 0 / 0 | **0 / 0** | **0 / 0** | |
+| collidable front min | 56 / 64 m | 64 / 72 | **72 / 72** | |
+| chunks/s | 101.5 / 111.5 | 111.3 / 126.9 | 116.6 / 132.5 | |
+| static memory | 393.1 MB | 394.1 | 395.7 | |
+
+**Static memory is the row that changed its story twice and the honest figure
+is the median.** Stage 7's single run read 511.0 MB and this document said so;
+three runs read 394.1, 395.7 and the third below. Distance v5 recorded exactly
+this lesson about exactly this probe - it samples static memory at the END of a
+run and a handover in flight is a large swing - and trees v3 walked into it
+anyway. **The library resident is real but it is tens of megabytes, not the
+118 the single run suggested.**
+
+### The deterministic numbers
+
+`tree_probe.gd`, same rectangle, same forest. These do not vary between runs.
+
+| | Stage 0 | after |
+| --- | --- | --- |
+| chunks reserved per column | 9.61 | **1.53** |
+| chunks built per column | 3.14 | **1.42** |
+| canopy cover | 0.7871 | **0.7871** |
+| column: generate voxels | 5.882 ms | 6.065 ms |
+| column: the tree scan | 125.381 ms | **3.789 ms** |
+| column: mesh | 111.212 ms | **30.975 ms** |
+| **column: total** | **242.476 ms** | **40.829 ms** |
+
+`worldgen_probe.gd`, seed 42, and this is hard rule 1 for the last time:
+**28,383 trees; spruce 11,861 / beech 5,869 / larch 4,038 / krummholz 1,802 /
+birch 103 / snag 4,652 / hero 58; spawn (-44, -124); heightmap `4782edac`;
+53 lakes.** Identical to Stage 0 in every digit.
+
+### The field, per band
+
+| | Stage 0 (cones) | after |
+| --- | --- | --- |
+| trees drawn at spawn | 580 | **636** |
+| of those, library models | 0 | **636** |
+| draw calls (slots) | 7 | **93-95** |
+| triangles at spawn | 17,700 | **1,277,218** |
+| rebuild wall | 475 ms | ~540-600 ms |
+| standing 60 s, rebuilds | 0 | **0** |
+| standing 60 s, worst frame | 8.6 ms | **9.6 ms** |
+
+**Ninety-odd draw calls against the plan's "high tens", and 72x the
+triangles.** That is what geometry-all-the-way-out costs and what ruling 4
+bought knowingly. In frame it is about +11% primitives on `1-spawn` - the same
+frame already carries 4.58 M triangles of flora.
+
+### The tours
+
+| label | what |
+| --- | --- |
+| `trees-v3-before` | Stage 0, the block trees and the cone ring |
+| `trees-v3-s4` | one species from the library, the rest still blocks - **both systems in one frame** |
+| `trees-v3-s5` | the whole field, every band |
+| `trees-v3-sway` / `trees-v3-still` | `tree_sway` 1.0 against 0.0 |
+| **`trees-v3-after`** | the shipped configuration |
+
+All under `build/tour/` **on ganymede** - `build/` is gitignored, as every
+distance status doc has had to say.
+
+**`17-rim` is the shot ruling 4 was written for.** Standing on the summit
+looking across the region, individual trees are visible on the slopes below,
+at LOD2, as the same geometry you would walk up to. A card ring drew nothing
+there at all, because a billboard seen from above is a line.
+
+
+---
+
+## Stage 10 - the landing
+
+### What shipped
+
+| | |
+| --- | --- |
+| **`trees_convert.py`** | in `Kubik-assets/tools`. Parses the pack's `.vox` scene graphs, dedupes colourway twins on a geometry hash, downsamples to three LOD rungs, greedy-meshes each per palette index, and emits packed quads plus a JSON sidecar. Stdlib only, 88 s for the whole pack, 2.7 MB of output. |
+| **the library** | **38 distinct geometries from 55 files**, at LOD0 / LOD1 / LOD2. Worst LOD0 variant **33,194 triangles** against a 40,000 gate. |
+| **`TreeModels`** | the loader and mesh cache, a sibling of `FloraModels` rather than a tenant. `available() == false` is the public build and is first-class. |
+| **`TreePalette`** | sixteen authored Kubik colour families and a per-VARIANT index -> family table, generated once and checked in as data. No pack RGB is in this repo. |
+| **`TreeTable`** | the mapping table: seven species rows, weights, benched folders with reasons, and a lint that fails on a library variant nobody claimed. **The only place the pack's names appear.** |
+| **`TreeField`** | née `FarTrees`. The only tree renderer in the game, walking the placement lattice from distance zero to the fog at LOD0 / LOD1 / LOD2 / LOD2. |
+| **`Look.tree_material()`** | the far-tree treatment plus a sway spliced into the opaque shader's own `vertex()`, weighted by COLOR alpha squared. |
+| **trunk colliders** | one cylinder per tree inside the sim radius, dimensions measured off the model by the tool, on the `FarUpload` budget. |
+| **`removed_trees`** | threaded through the walk, the draw and the collider ring; unwritten. The fell-as-a-unit seam. |
+| **three knobs** | `tree_sway` (LOCAL, 0.5), `tree_colliders` (LOCAL, true), `tree_season` (**PROPERTIES**, 0.0 - it decides which tree a cell grows). |
+| **six new self-test gates** | `cover determinism`, `registry determinism`, `tree winding`, `tree library`, `tree table`, `tree field`, `tree colliders`, `tree swatches` - and `sky reserve` inverted. Every library gate self-skips on the public build and says so. |
+| **the deletion** | `tree_species.gd` 3,383 -> 532 lines, `FarTreeMeshes`, `loose_check.gd`, the gallery's block-tree modes, the sky reserve. |
+
+### What got worse
+
+1. **Ninety-odd draw calls where there were seven, and 72x the triangles.**
+   1.28 M against 17,700 at spawn. Bought knowingly (ruling 4): it is what
+   buys a forest with no card in it and a summit you can look down from. The
+   recorded next step if the fog moves out is the merged-lump rung - many
+   trees, one mesh per far cell.
+2. **The library is resident.** 38 geometries x 3 rungs assembled at load and
+   held for the life of the world. Tens of megabytes; the single-run 118 MB
+   this document briefly reported was the stream probe's end-of-run sampling,
+   which distance v5 had already written down as a trap.
+3. **The krummholz cushion is gone and is not coming back from a table edit.**
+   The pack has no alpine cushion; Tree 16's six CUT STUMPS stand in at the
+   right size and the wrong thing. This is the one shape the epic loses
+   outright.
+4. **Chopping a tree block by block is gone**, and wood with it, until
+   fell-as-a-unit arrives through the mutation path. Accepted (ruling 2).
+5. **The public build has no trees at all.** Accepted and CI-proven (ruling 6).
+6. **`tree borders` and `species borders` are gone.** Their replacements are
+   better in one respect - they work on both legs - and worse in another: they
+   check the SCAN and there is no longer a volume to check against.
+
+### What is parked
+
+* **The merged-lump rung** - many trees, one mesh per far cell. Designed for,
+  not built. Wanted when the fog line moves past 600 m.
+* **Fell-as-a-unit chopping.** The `removed_trees` set exists and is empty.
+* **Crimson and pink forests.** `t13_4`, `t14_4`, `t15_4` (pink) and `t15_6`
+  at weight exactly 0.0 - loaded, mapped, photographed, one digit from awake.
+  `t05` and `t08` benched entirely: they have no green twin, so they are
+  strangeness rather than a colourway.
+* **Trees 09 and 10** - coconut palms, held for a warm coast rather than
+  deleted.
+* **`params_for()`'s block ids.** Open question 5, answered LATER.
+* **`BARK_DEAD`** - an authored family nothing points at yet, kept so the snag
+  register has somewhere to go that is not invented on the spot.
+
+### The open questions, answered
+
+| | answer |
+| --- | --- |
+| **1. band -> rung, and how near the innermost cut goes** | LOD0 / LOD1 / LOD2 / LOD2 on the four existing bands, and **no nearer cut**: band 0 is stride 1 at LOD0 all the way to the old seam, because that is the band a player stands under. |
+| **2. hollowing threshold; does LOD2 want 4x or 8x for the giants** | **no hollowing pass at all** - culling hidden faces is what a greedy mesher does, and hollowing before meshing would expose the shell's inside. LOD2 stays at 4x: the giants were never the problem. |
+| **3. sway weight channel** | **COLOR alpha**, squared. A tree is the one model family here with no emissive parts. |
+| **4. one cylinder per tree, or a capsule for the leaners** | **one cylinder, always.** The real ring holds 1-11 over a sprint, and the leaners turned out to be palms and are benched. |
+| **5. does `params_for()` slim now** | **later.** `decide()`'s output shape must not change and this night's deletion was already almost all red. |
+| **6. the library binary format** | `KTRE`, version 1, little-endian; 12-byte quads of `u16 x,y,z`, `u8 face`, `u8 palette`, `u16 w,h`; three LOD blocks each prefixed by a `u32` count. Godot's importer ignores it entirely, which was checked. |
+

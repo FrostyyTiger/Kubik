@@ -1,62 +1,71 @@
 # Status
 
-The latest run is **distance v5**, one night, unattended on ganymede, on
-`feat/distance-v5`: `docs/status/distance-v5.md`.
-**The far country gets real data, and stops costing frames.**
+The latest run is **trees v3**, one night, unattended on ganymede, on
+`feat/trees-v3`: `docs/status/trees-v3.md`.
+**The forest becomes models, the whole way out.**
 
-Distance v4 made the far mesh 40x cheaper to build and turned its detail up 4x,
-and that surfaced three things. All three are closed.
+Trees were the last living thing in this game still built out of terrain. They
+stopped being, and they stopped being two different creatures near and far at
+the same time.
 
-**The sprint's worst frame goes 244.4 ms to 39.6 ms and the count of frames
-over 33 ms goes 60 to 4** - interleaved ABAB, three runs each, on the same
-commit, `far_upload_budget_ms` 0 against 4. The far country's handover to the
-renderer is the same 196 ms of work it always was; it is now paid a sector at a
-time. Both meshers emit one set of arrays per frontier sector, `FarUpload` hands
-them over on a budget, and the finished mesh goes on screen in one assignment -
-so a rebuild in progress shows the OLD COMPLETE far country and never a mixed
-one. In the shipped configuration - `far_ring_div` 4, C++ - a 480 m sprint out
-and back now has **zero frames over 33 ms**, against forty before.
+**The purchased pack's 55 MagicaVoxel sources are the tree library** - not its
+chamfered meshes, which stay rejected, because a `.vox` is a build plan rather
+than a surface. `Kubik-assets/tools/trees_convert.py` bakes them into **38
+distinct geometries at three LOD rungs** through greedy meshing, in 88 seconds,
+and the game maps their colours through a table it owns. The worst variant
+costs **33,194 triangles** against a gate of 40,000 - and the plan feared the
+wrong thing: the 1.3 M-voxel giant meshes to 5,642, while Tree 10's
+one-voxel-thick branches are **54% of the library's triangles for 1.5% of its
+voxels.**
 
-**The loudest ring boundary goes 147.00 blocks of fizz to 39.00, and the far
-country got no smoother doing it** (roughness 13.1954 -> 13.2757). STATUS items
-9 and 18 are closed with the fix item 9 itself wrote down: two rings sample a
-cell's height at different world points, so over the last cells before a
-boundary the SAMPLE POSITION slides onto the coarse ring's lattice and both
-rings read the same point. `far_geomorph_cells`, default 4 - which is a
-measurement rather than the plan's guess, and there is more in the knob.
+**`FarTrees` is `TreeField` and it is the only tree renderer in the game.** It
+walks the same placement lattice from the player's boots to the fog - LOD0 to
+154 m, LOD1 to 400, LOD2 beyond - and **there are no impostor cards anywhere.**
+The far register is the same grid downsampled, so the near/far seam stopped
+being a KIND boundary (block tree against cone) and became a RESOLUTION
+boundary, which is why looking down at a forest from a summit now works.
 
-**The height map crosses to C++ and both builders make the same world.**
-16,713 ms to 4,753 ms for the canonical map, built in tiles anchored to the
-origin. This one is not look-only - spawn and lakes are computed from it and
-terrain is never sent over the network - so both legs round every height to
-**1/1024 of a block** as their last step, and the self-test's `canonical world`
-gate asserts on every run that a library-less checkout produces the same
-heightmap hash, the same spawn and the same 53 lakes. That line is the
-cross-box procedure: run it on a second machine and compare it.
+**The block-tree system is deleted**: 2,851 lines of shape code, both chunk
+writers, `FarTreeMeshes`, and the sky reserve - twenty-one metres of empty
+chunks above every column in the world. **The whole column job runs 6.2x
+faster** (242.5 ms -> 39.0), chunks at spawn 2,369 -> 2,222, load wall 24.9 s
+-> 19.3 s, and the streamer got 8 m further ahead of a sprinting player.
+`column_job.gd:11` said tree stamping was half the cost; it was half of a job
+that also lost the mesher's worst input.
 
-**The impostor ring stopped following the player down.** STATUS item 21's
-70-120 rebuilds at a stationary vantage is 615 over an 18-vantage tour, and it
-was the hysteresis being a 3D distance while the ring is a function of x and z
-alone - so altitude could ask for a rebuild whose output was the mesh already on
-screen, and a falling player asks every 24 m of fall. **615 -> 18, one per
-vantage, with every impostor count at every shutter identical.**
+**Three bugs it found that nobody was looking for.** `vox_parse.py` had been
+silently dropping MagicaVoxel's ROTATIONS - Tree 09 is a coconut palm and came
+out as a stick with a plate balanced on it, which is why Trees 09 and 10 are
+benched rather than mapped. `StringName.sort()` compares POINTERS rather than
+text. And a colourway twin was reading its owner's palette indices, rendering
+four hero variants as one flat brown - found by a swatch gate reporting "13 of
+16 families reachable", which is not what a bug usually looks like.
 
-**And one thing was measured and NOT taken.** Decision 5's resolution flip -
-2 m cells to 1 m - genuinely sharpens the far country (roughness 13.2539 ->
-14.3523) and costs a startup gate, 17.5 s of lake finding and a collapse of the
-sprint's collidable front min from 56 m to 8 m. `coarse_step` stays at 4 and
-the world does not change. The next rung of the C++ ladder is `Lakes.compute`,
-`_resolve_zone_thresholds` and `column_surface_range` - not the chunk mesher.
+**The public build ships treeless, and that is the design.** No fallback tree
+system, and CI proves it green on every push by construction.
 
-**The world changed once, on purpose, and only its fingerprint.** Seed 42 is
-`4782edac` where it was `76cccdb6`; spawn is still (-44, -124) and there are
-still 53 lakes. The change is the quantisation and nothing else: a rounding
-that changes no stored bits is a rounding that does nothing.
+Placement never moved: **28,383 trees, the same species mix, spawn (-44, -124),
+heightmap `4782edac`** - reprinted at every stage.
 
-Earlier runs, newest first:
+---
 
-- `docs/status/distance-v4.md` - the far mesher crosses to C++, 2026-09-01,
-  merged to `main`; its Windows addendum is why distance v5 quantises
+## The run before it
+
+**Distance v5** (`docs/status/distance-v5.md`) gave the far country real data
+and a budget for every upload. `FarUpload` pays a rebuild's handover a sector
+at a time, so a sprint's worst frame went 244.4 ms to 39.6 and frames over
+33 ms 60 to 4. The ring-boundary geomorph took the worst boundary's max fizz
+from 147.00 blocks to 39.00 with roughness going UP. The height map crossed to
+C++, tiled, 16.7 s to 4.8 s, quantised so a library-less checkout makes the
+same world. And the impostor ring stopped following a falling player down: 615
+rebuilds over a tour became 18.
+
+**One thing was measured and NOT taken:** the 1 m far cell genuinely sharpens
+the far country and costs a startup gate, 17.5 s of lake finding and the
+sprint's collidable front min. `coarse_step` stays at 4. The next rung of the
+C++ ladder is `Lakes.compute`, `_resolve_zone_thresholds` and
+`column_surface_range` - not the chunk mesher, and trees v3 has now deleted
+that mesher's worst input as well.
 
 ## Open items for Marcel
 

@@ -1,14 +1,22 @@
 # Trees v2 - the last block-resident living thing leaves the grid
 
-> **SUPERSEDED by [`trees-v3.md`](trees-v3.md)** (Marcel's rulings,
-> 2026-09-01 evening). The fates of this plan's decisions: the diagnosis,
-> the placement hard rule and the Stage 0 audit list stand and are carried
-> forward; decision 5 (no purchased pack) is OVERTURNED - the pack's .vox
-> sources, not its chamfered meshes, become the tree library through the
-> game's own mesher; decision 2 and hard rule 3 (trunk stays blocks) are
-> OVERTURNED for whole-tree models; decision 6's impostors are replaced by
-> geometry-all-the-way (no cards); and the public build now ships treeless
-> by design. Author new work against trees-v3, not this file.
+> **SUPERSEDED by [`trees-v3.md`](trees-v3.md)**, which RAN on 2026-09-01/02
+> (`docs/status/trees-v3.md`). This file is history; author nothing against it.
+>
+> How each decision here actually ended, now that the night has run:
+>
+> | this plan said | what happened |
+> | --- | --- |
+> | **the diagnosis** - one unfinished ladder, trees at 1 voxel/block | **stands, and is the epic.** `DESIGN.md` has the ladder table now, with trees at 4. |
+> | **hard rule 1** - placement does not move | **stands, and held every stage.** 28,383 trees, same species mix, spawn (-44, -124). |
+> | **the Stage 0 audit list** | **executed.** Nothing outside `tree_species.gd`, `block.gd`'s own table and one self-test read a leaf or trunk block id anywhere in the game. Open question 4 - "does anything want leaves to stay blocks" - was answered by the grep: no. |
+> | **decision 1** - trees at 4 voxels/block | **shipped**, and it is the library's own rung. |
+> | **decision 2 / hard rule 3** - the trunk stays blocks | **OVERTURNED.** Whole-tree models; the trunk left the grid with the canopy. |
+> | **decision 3** - `params_for()` survives, only the writer changes | **shipped.** `params_for()` is untouched and the writer is deleted. |
+> | **decision 4** - variety from `variant library x rotation x tint` | **shipped**, plus scale jitter, and the colourways made it a season channel as well. |
+> | **decision 5** - no purchased tree pack | **OVERTURNED, and the distinction it drew was right.** Its argument was against the pack's CHAMFERED MESHES as a third surface language, and those are still rejected, untouched. What it missed is that the pack also ships 55 MagicaVoxel `.vox` sources, which are a build plan rather than a surface - pulled through this game's own mesher and palette, the chamfer never exists. |
+> | **decision 6** - the impostors are re-derived | **REPLACED by something better.** There are no impostors: the far register is the same grid downsampled, so the near/far seam is a resolution boundary rather than a kind boundary. `FarTreeMeshes` is deleted. |
+> | **the risk it named** - "canopy triangle budget is a real risk" | **it was, and not where either plan looked.** The 1.3 M-voxel giant meshes to 5,642 triangles; the expensive variants are the SPARSE ones, one voxel thick, which merge with nothing. |
 
 Written 2026-09-01 against `main` at `2e92fef`, from Marcel's ruling of the
 same evening. **NOT SCHEDULED.** This plan collides with distance v4 and the

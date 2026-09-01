@@ -498,6 +498,15 @@ Two honesty notes, so this stays a north star and not a lie:
 - **Huge buildings are the world's, not the players'.** "No base building"
   is untouched: the world builds monuments, players place objects.
 
+**The forests answer to this too, since trees v3 (2026-09-01).** They are one
+library of sculpted voxel trees instanced from the player's boots to the fog -
+no impostor cards anywhere, only the same grid at a coarser rung the further
+out it stands - and they stand at 21 to 28 m rather than 13 to 21. A player
+walking into a wood is under something, and a player looking down at one from a
+summit sees trees rather than a painted texture, which is a thing cards could
+never do. The forest is the first monumental thing in this world that is
+finished, and it is the register everything built has to hold its own against.
+
 Rendering is voxels near the player and a low-poly heightmap mesh far away.
 Terrain generation targets are in `plans/terrain-v2.md`.
 
@@ -537,8 +546,15 @@ object is read against**:
 | Read against | Scale | Examples |
 | --- | --- | --- |
 | The landscape, from across a valley | 1:4 | terrain, lakes |
-| The player, from two metres away | 1:1 | the character, **grass, flowers, ferns, boulders** |
-| **Both** | **1:2** | **trees** |
+| The player, from two metres away | 1:1 | the character, **grass, flowers, ferns, boulders, trees** |
+
+**The third row is retired by trees v3 (2026-09-01), and it was right for as
+long as trees were terrain.** It read `Both | 1:2 | trees`, and the reasoning
+below is kept because it is the reasoning that got the SIZE right. What
+retired it is that a tree is not scaled any more: the library models are
+AUTHORED AT WORLD SIZE, like a character, so there is no read-scale to apply
+and `tree_read_scale` no longer multiplies anything a player sees. A tree
+joins the 1:1 row not because the argument changed but because the object did.
 
 **The third row is world feel v1 (2026-08-26), and it is the one this table
 was missing.** A tree is the one object read against BOTH. From across a valley
@@ -547,14 +563,19 @@ against yourself. At 1:4 it was right against the ridge - three per cent of it,
 which is exactly real - and seven player-heights tall, where a real spruce is
 twenty-five. It read as a shrub you happened to be standing near.
 
-So the trees are drawn at **1:2** and the land is not rescaled. `world_scale`
+So the trees were drawn at **1:2** and the land was not rescaled. `world_scale`
 stays 4 and was not relitigated: rescaling the land would move every lake,
 every zone threshold and every slope in the world to fix an object that is one
-row of this table. `WorldgenConfig.tree_read_scale` (2.0) composes with
-`tree_size_scale` per species in `TreeSpecies.table()`, and each species takes
-the share its `read` field allows - spruce, beech, larch and the hero all of
-it, birch half, krummholz and snags none. A knee-high alpine shrub at twice the
-size is not a bigger shrub; it is a tree.
+row of this table.
+
+**Trees v3 finished the job by removing the scaling instead.** The trees are a
+library of sculpted voxel models now, drawn at the size the artist drew them -
+**21 to 28 m** for the forest proper, against the block trees' 13 to 21 - and
+`tree_read_scale` still scales the placement table's height and crown numbers,
+which is what the SCAN margin and the probe read, but nothing a player looks at.
+That register shift is deliberate and is the monumental north star: it was
+chosen with the numbers on the table, and per-species height is a column in
+`scripts/world/flora/tree_table.gd` that Marcel retunes by editing data.
 
 **Old growth is a second tier on top.** About a third of groves are old growth
 (`old_growth_share`), their trees a further 1.5x - so 1:1.33 against the
@@ -579,6 +600,35 @@ The two exceptions are the same exception. Anything read against the PLAYER is
 the only consistency the eye can actually check. A player wading through
 knee-high grass is the picture; a player wading through ankle-high mountains
 would not be.
+
+### The resolution ladder
+
+Every object in this world sits on a rung of model voxels per world block, and
+the rung is chosen by what the object is read against rather than by how much
+detail it could carry. A block is 0.5 m.
+
+| | voxels/block | voxel | what |
+| --- | --- | --- | --- |
+| Characters | 24 | 2.08 cm | the four races and everything they wear |
+| Plants | 8 | 6.25 cm | grass, flowers, ferns, mushrooms, reeds |
+| **Trees** | **4** | **12.5 cm** | the whole tree - trunk and canopy together |
+| Shrubs | 4 | 12.5 cm | `SHRUB_A`, `SHRUB_B` |
+| Boulders | 2 | 25 cm | `BOULDER_S/M/L`, scree |
+| Terrain | 1 | 50 cm | the world itself |
+
+**The tree row is trees v3 (2026-09-01) and it closes the ladder.** Until then
+trees were at 1 voxel per block - they *were* the ground, stamped as
+`Block.LEAVES` and `Block.TRUNK` into the chunk volume - which is the one row
+that was off the bottom of its own table. A character was 24x finer than its
+neighbours, a grass tuft 8x, a boulder 2x, and a tree 1x.
+
+**And the whole tree moved, not just the canopy.** Trees v2 planned to leave
+the trunk on the block grid and lift only the crown; trees v3 overturned that,
+because a 0.5 m block pillar under a 12.5 cm canopy is the same ladder mismatch
+one level down. The consequences are owned rather than avoided: a tree has an
+explicit trunk collider inside the sim radius, "is there a tree here" asks
+placement rather than the volume, and chopping - when it arrives - is
+fell-as-a-unit rather than block-by-block.
 
 **Ground plants are built at 8 model voxels per block - 6.25 cm each** - not
 the world block scale. Characters were the same size through character v1;
