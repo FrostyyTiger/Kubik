@@ -206,30 +206,37 @@ Stream probe, seed 42, `far_ring_div` 4, single run each.
 | chunks/s | 93.0 / 98.9 | **104.6 / 117.6** | better |
 | far rebuilds over the probe | 133 | 174 | |
 | far rebuild median wall | 703 ms | 554 ms | |
-| static memory | 379.4 MB | **518.3 MB** | worse, see below |
+| static memory | 379.4 MB | 518.3 MB | **not a real delta - see below and Stage 7** |
 
 The front-min and chunks/s improvements are the same mechanism distance v4
 found and did not predict, one step further along: the far country stopped
 monopolising something the chunk streamer needed. Here it is the MAIN THREAD
 rather than the worker pool.
 
-### And the thing that got worse: 139 MB
+### And the thing that got worse: memory, by about 11 MB - see Stage 7
 
-**Static memory goes 379.4 MB to 518.3 MB**, and it is decision 1's second rule
-being paid for rather than a leak. An atomic swap means the new far mesh exists
-before the old one stops being drawn, so at `far_ring_div` 4 there are two
-120 MB far meshes alive for the ~250 ms a handover takes. The lever is to drop
-the rule and let the far country be half one vantage and half another for a
-quarter of a second per rebuild, which is a worse artefact than the hitch this
-stage removed and an intermittent one.
+The first reading of this was **379.4 MB -> 518.3 MB** and it is in the git
+history of this document as such. **Stage 7's interleaved ABAB says the real
+figure is +11.3 MB**, and the difference between the two is a lesson about the
+instrument rather than about the code: the stream probe samples static memory
+at the END of a run, a far mesh at `far_ring_div` 4 is about 120 MB, and
+whether zero, one or two handovers are in flight at that instant is exactly a
+120 MB swing. Single runs across two commits measured 379 / 617 / 518 / 494 /
+393 MB on code whose steady-state cost differs by a tenth of that.
 
-**It was 237 MB before two lines were added**, and they are worth recording
-because the first measurement was 616.9 MB and looked like a reason to stop:
-a queued slice is a closure holding a sixteenth of a far mesh, so holding every
-slice to the end of the job kept a THIRD far mesh alive - the queue's own copy
-of the arrays it had already uploaded. `FarUpload` now drops each slice the
-moment it lands, and `FarField` drops the mesher's own reference as soon as the
-job is queued.
+What is real: **an atomic swap means the new far mesh exists before the old one
+stops being drawn**, so there are two of them for the ~250 ms a handover takes.
+That is decision 1's second rule being paid for, and the lever is to drop the
+rule and let the far country be half one vantage and half another for a quarter
+of a second per rebuild - a worse artefact than the hitch this stage removed,
+and an intermittent one.
+
+**Two lines stop it being three far meshes**, and they are worth recording
+because the first measurement looked like a reason to stop: a queued slice is a
+closure holding a sixteenth of a far mesh, so holding every slice to the end of
+the job kept the queue's own copy of the arrays it had already uploaded alive
+as well. `FarUpload` now drops each slice the moment it lands, and `FarField`
+drops the mesher's own reference as soon as the job is queued.
 
 ### The gate
 
@@ -846,3 +853,235 @@ Half a luma level of mean difference over the far band is the register this was
 aimed at: a grain, not a new landscape. Marcel skipped the poster judging this
 cycle, so the pair is evidence rather than a gate - `far_detail` 0 on F4
 redraws it in place, standing still.
+
+---
+
+## Stage 7 - the numbers and the probes, after
+
+### The headline, interleaved ABAB, three runs each, on the same commit
+
+`far_upload_budget_ms` **0 against 4**, alternating, seed 42, `far_ring_div` 4,
+C++ mesher. **0 is distance v4's behaviour exactly** - everything queued goes up
+on the frame it arrives - so this is a like-for-like A/B of the night's headline
+change with no second commit, no second build and no drift between them.
+
+| | budget 0 (distance v4) | **budget 4 (shipped)** |
+| --- | --- | --- |
+| worst frame, out | 244.4 / 246.4 / 241.5 ms | **39.7 / 39.3 / 39.6 ms** |
+| worst frame, back | 231.9 / 232.6 / 235.2 ms | **36.4 / 39.1 / 35.9 ms** |
+| **frames over 33 ms** | 61 / 60 / 60 | **3 / 7 / 4** |
+| collidable front min, out | 48 / 48 / 56 m | 56 / 56 / 56 m |
+| collidable front min, back | 48 / 56 / 56 m | **64 / 64 / 64 m** |
+| static memory | 380.9 / 381.9 / 382.5 MB | 393.8 / 391.2 / 394.4 MB |
+| holes | **0** on all six | **0** on all six |
+
+**Medians: the worst frame of a sprint goes 244.4 ms to 39.6 ms, and the count
+of frames over 33 ms goes 60 to 4.** Every run of each leg is inside a few per
+cent of its siblings, which is why three runs each is enough to read this as a
+delta rather than as drift.
+
+**The memory cost of the budget is +11.3 MB**, and it is the queue holding
+slices across frames. The atomic swap's own cost - a second far mesh alive for
+the ~250 ms a handover takes - is present in BOTH legs, so this A/B does not
+isolate it; at div 4 that peak is about 120 MB and it is what makes a
+single-run memory reading swing by more than the thing it is measuring.
+
+### Hard rule 3: holes 0, both divisors, both legs
+
+| run | front min | worst frame | > 33 ms | chunks/s | static | **holes** |
+| --- | --- | --- | --- | --- | --- | --- |
+| div 4, c++ | 56 / 64 m | **27.6 / 30.6 ms** | **0** | 101.0 / 111.3 | 393.2 MB | **0** |
+| div 4, gdscript | 40 / 48 m | 47.9 / 27.9 ms | 1 | 82.3 / 89.5 | 534.6 MB | **0** |
+| div 2, c++ | 56 / 64 m | 30.9 / 35.0 ms | 2 | 95.6 / 106.3 | 355.2 MB | **0** |
+| div 2, gdscript | 40 / 48 m | 33.5 / 35.9 ms | 3 | 75.9 / 82.8 | 352.7 MB | **0** |
+
+**Hard rule 3 is met on all four.** And the shipped configuration - div 4, C++ -
+is the best row in the table on every column: **zero frames over 33 ms in a
+480 m sprint out and back**, against forty at Stage 0.
+
+### The before-and-after table
+
+Ganymede, editor target, headless, seed 42, `far_ring_div` 4, C++ both ends.
+
+| | Stage 0 | after | provenance |
+| --- | --- | --- | --- |
+| sprint worst frame, out / back | 286.3 / 268.0 ms | **27.6 / 30.6 ms** | single run each; the ABAB above is the evidence |
+| sprint frames over 33 ms | 40 | **0** | as above |
+| sprint holes | 0 / 0 | **0 / 0** | single run |
+| collidable front min | 48 / 56 m | **56 / 64 m** | single run |
+| chunks/s | 93.0 / 98.9 | **101.0 / 111.3** | single run |
+| **startup coarse heightmap** | **16,192 ms** | **4,740 ms** | single run, and 16,771 ms with no library |
+| heightmap tiles | (not tiled) | 12 x 12, median **10 ms**, worst 12 | single run |
+| far field first build | 3,376,844 v, 694 ms wall | 3,514,404 v, 681 ms wall | single run |
+| far rebuild, median wall over a sprint | 703 ms | **594 ms** | 170 rebuilds |
+| `arrays_to_mesh`, whole, div 4 | 197.24 ms | 230.27 ms | median of 3; the mesh is 4.5% bigger |
+| **worst single upload slice, div 4** | - | **15.90 ms** | median of 3 |
+| **worst single upload slice, div 2** | - | **4.38 ms** | median of 3 |
+| standing still 60 s, far rebuilds | 0 | **0** | single run |
+| **standing still 60 s, impostor rebuilds** | **0** (and 615 over a tour) | **0** (and **18** over a tour) | single run |
+| standing still 60 s, worst frame | 8.6 ms | 9.2 ms | single run |
+| far probe ALL fizz rms / max | 1.513 / 147.00 | **0.982 / 61.00** | deterministic |
+| far probe ring boundary max, 2400 m | **147.00** | **39.00** | deterministic |
+| far probe roughness | 13.1954 | **13.2757** | deterministic |
+| heightmap hash | `76cccdb6` | `4782edac` | deterministic; the quantisation, and only it |
+| spawn | (-44, -124) | **(-44, -124)** | deterministic |
+| lakes | 53 | **53** | deterministic |
+
+### Hard rule 1: the whole suite with no compiled library
+
+`libkubik.linux.editor.x86_64.so` moved aside, the full self-test run, the
+library put back:
+
+```
+far parity: c++ mesher absent/stub, 0 checks
+far pyramid parity: c++ mesher absent, 0 checks
+far zone parity: c++ mesher absent, 0 checks
+far slice parity: 4 checks, c++ ABSENT (gdscript only)
+far layer parity: the geomorph CHANGES the mesh, the detail layer CHANGES the mesh, c++ ABSENT
+height tile parity: c++ tile builder absent, 0 checks
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, gdscript builder, 16771 ms
+  (no compiled tile builder - both legs are gdscript)
+SELFTEST: all passed
+```
+
+**The library-less build makes the same world** - `4782edac`, (-44, -124), 53
+lakes - which is the whole point of quantising both legs rather than only the
+crossing, and it is now asserted on every run rather than argued.
+
+Every parity gate self-skips and says it skipped; the two gates that do NOT
+need C++ - the slice partition and the two mesh layers - still run and still
+pass, which is more than distance v4's set managed.
+
+### Full self-test, both ways
+
+| | result | time |
+| --- | --- | --- |
+| library present | **green** | 3 m 44 s |
+| library moved aside | **green**, six gates correctly self-skipping | ~9 m |
+| **CI, `selftest.yml`, on this branch** | **green** | 9 m 22 s, run 33518361830 |
+
+### The far probe's geometry rows, C++ against GDScript
+
+| | gdscript | c++ |
+| --- | --- | --- |
+| meshes built | 98 | 98 |
+| vertices each | 950,929 | 950,929 |
+| ms each | 6,031 | **146** |
+| whole table | 316,272 ms | **27,207 ms** |
+| both tables self-deterministic | IDENTICAL | IDENTICAL |
+| **geometry rows** | **62 rows, identical character for character** | |
+
+**Run at `far_ring_div` 2 rather than the shipped 4, and that is a deliberate
+trade.** The GDScript mesher is 24 s a mesh at div 4, so the table it produces
+takes about 40 minutes and the pair takes 80. At div 2 the same 62 rows - fizz
+rms, fizz max, per-100 m band, roughness, per-ring-boundary fizz, terrace
+compliance on every ring's step grid, seam agreement against the voxel surface,
+shelf stability over a 200 m walk, peak loss and valley gain at three vantages -
+compare in a quarter of the time, and they exercise the same code with a
+different base step in every derived radius. **The div 4 configuration's own
+identity is established by the self-test's exact array gates and by the eight
+far-band tour shots at zero differing pixels.**
+
+This is a stronger statement than an array diff, and it is worth saying why the
+night ran both: these rows are read off the TRIANGLES the mesher emitted,
+through the probe's own quad index and barycentric lookup. A mesh can match
+array-for-array and still be READ wrong.
+
+---
+
+## Stage 8 - the landing
+
+### What shipped
+
+| | |
+| --- | --- |
+| **`FarUpload`** | one budgeted, main-thread uploader; every far-system mesh handover goes through it. `far_upload_budget_ms`, default 4.0. |
+| **sector slicing** | both meshers emit one set of arrays per frontier sector; the union is the same quads, gated as an exact multiset match. |
+| **the geomorph** | `far_geomorph_cells`, default 4. The cell-height sample slides onto the coarse ring's lattice before a boundary. Both meshers. |
+| **`KubikHeightTiles`** | the height map's tile builder in C++, quantised to 1/1024 block on both legs. |
+| **height-map tiles** | anchored to the origin, `heightmap_tile_blocks` default 512, 12 x 12 over today's region. |
+| **the impostor debounce** | `far_tree_step_m`, default 24.0, measured HORIZONTALLY. |
+| **the detail layer** | `far_detail`, default 1.0 blocks, far rings only, world space, both meshers. |
+| **five new self-test gates** | `far slice parity`, `far layer parity`, `height tile parity`, `canonical world`, and the canonical world run on BOTH height-map builders. |
+| **CI on branches** | `selftest.yml` now runs on `feat/**`, which is what makes "green on the branch" a checkable merge condition. |
+
+### What did NOT ship, and why
+
+* **`coarse_step` stays at 4** - Stage 5, measured, and the numbers are there.
+* **The height map's tiles share one region array** - Stage 4, and the note is
+  in `heightmap.gd`.
+* **No apron on the pyramid** - unnecessary while the tiles share an array.
+* **No frontier-change trigger on the impostor ring** - Stage 2: it would make
+  the ring rebuild MORE, including while the player stands still.
+
+### What got worse
+
+1. **Static memory at div 4 peaks about 120 MB higher during a handover**,
+   because an atomic swap means two far meshes exist at once for the ~250 ms it
+   takes. The interleaved ABAB puts the budget's own share at **+11.3 MB**. The
+   lever is to drop decision 1's second rule and let the far country be half one
+   vantage and half another, which is a worse artefact and an intermittent one.
+2. **The far mesh is 2.9% bigger** with the detail layer on - more risers,
+   which is what a block of grain on a block lattice is made of.
+3. **The 150 m and 300 m ring boundaries' rms fizz went up slightly** with the
+   geomorph (0.257 -> 0.283, 0.674 -> 0.701 at 2 cells) before coming back down
+   at 4. Their max fizz went down at every width. Recorded because a table that
+   only reports the rows that improved is not a table.
+
+### The rung decision 3 landed on
+
+**The top one.** World truth reads the C++ tiles. Quantisation at 1/1024 of a
+block makes ganymede's C++ builder byte-equal to ganymede's GDScript builder -
+same heightmap hash, same spawn, same lakes - so the ladder's fallback (world
+truth reads GDScript tiles, C++ feeds only the far-field pyramid) is not taken.
+
+### WHAT THE MORNING MUST RUN ON GEMINI, VERBATIM
+
+The cross-box half of hard rule zero cannot run from ganymede. **Until it has
+run, no co-op session mixes this build with an MSVC one.**
+
+```
+cd path\to\Kubik
+git checkout main && git pull
+cd gdext
+scons platform=windows target=editor custom_api_file=..\..\godot-cpp\extension_api.json
+cd ..
+godot --headless --path . --import
+godot --headless --path . scenes/selftest.tscn
+```
+
+**Read the two `canonical world:` lines.** They must say, both of them:
+
+```
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, c++ builder,      <n> ms
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, gdscript builder, <n> ms
+```
+
+**`4782edac`, `(-44, -124)` and `53` are the whole test.** Anything else and
+the two boxes are building different worlds - and the useful thing about the
+two lines is which one moved: a gdscript line that differs from ganymede's is
+the ENGINE rounding differently and quantisation cannot help; a c++ line that
+differs from the gdscript line beside it is MSVC, and the answer is a coarser
+quantum in `TerrainGenerator.HEIGHT_QUANTUM` (`scripts/tools/quantum_probe.gd`
+measures what a coarser one costs the world - at every quantum from 1/1024 to
+1/16,777,216 spawn and the lake count do not move).
+
+Expect **`SELFTEST: 7 FAILED`** on Windows anyway, and it is distance v4's known
+number, not a new one: the far mesher's exact-zero COLOUR gates at one to two
+float ULPs, geometry exact everywhere. `docs/status/distance-v4.md`'s Windows
+addendum has the detail and item 5 of its "For Marcel to rule on" is still the
+open question. **The `canonical world` lines are independent of those seven** -
+read them regardless of the count.
+
+### Acceptance
+
+| merge condition (plan, decision 7) | result |
+| --- | --- |
+| full self-test WITH both C++ classes | **green**, 3 m 44 s |
+| full self-test WITHOUT them (library moved aside) | **green**, six gates correctly self-skipping, and the same world |
+| exact parity, far mesher | **5 whole-mesh cases + a boundary world at zero**, 62 far-probe geometry rows identical, 8 far-band tour shots at zero differing pixels |
+| exact parity, height map | **10,000 samples 0 differing**, a whole tile 0 cells differing, both builders' hash / spawn / lakes equal |
+| stream probe holes 0 at `far_ring_div` 2 | **0**, both legs |
+| stream probe holes 0 at `far_ring_div` 4 | **0**, both legs |
+| no far-system frame over 33 ms in a sprint | **0 frames over 33 ms**, div 4, C++ |
+| CI `selftest.yml` green on the branch | **green** |

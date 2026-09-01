@@ -199,16 +199,26 @@ a `class_name` - the editor keeps the global class cache in `.godot/`, and a
 game started without it fails to parse the first script that names a new
 class.
 
-### The far mesher is C++, and you do not need it
+### Two things are C++, and you do not need either
 
 Since distance v4 the far-field mesh is built by a GDExtension
 (`gdext/`, class `KubikFarMesher`). It is **37-43x** faster than the GDScript
 job it replaces, which is what lets `far_ring_div` default to 4.
 
+Since distance v5 the height map's tiles are built by a second class in the
+same extension, `KubikHeightTiles` - **16.7 s to 4.8 s** for the canonical
+world. That one is not look-only: spawn and lakes are computed from the height
+map, and terrain is never sent over the network, so both builders round every
+height to **1/1024 of a block** as their last step and the self-test's
+`canonical world` gate asserts that the two produce the same heightmap hash,
+the same spawn and the same 53 lakes. Run the self-test on a second machine and
+compare that one line - that is the whole cross-platform procedure.
+
 **You can ignore all of this and the game works.** `scripts/world/far_field.gd`
-checks for the class and falls back to `FarFieldJob` - the GDScript
-implementation, which stays in the tree as the reference the self-test compares
-against - so a checkout with no compiler plays fine. The only traces are some
+and `scripts/world/terrain_generator.gd` each check for their class and fall
+back to the GDScript implementation - which stays in the tree as the reference
+the self-test compares against - so a checkout with no compiler plays fine, and
+gets the same world. The only traces are some
 `ERROR` lines from Godot's extension loader at startup and an F3 line reading
 `far mesher: gdscript (no c++ library)`. The far country then rebuilds in
 seconds rather than milliseconds; if that bothers you, put `far_ring_div` back
@@ -237,9 +247,11 @@ godot --headless --path . -s gdext/check.gd     # "class exists: true"
 **The API file must come from the pinned binary.** godot-cpp built against a
 different 4.x dumps no error and produces a library that loads and misbehaves.
 
-`gdext/bin/` is gitignored and CI does not build it yet, so the Windows
-artifact under **Builds** below ships without the library and uses the GDScript
-fallback.
+`gdext/bin/` is gitignored, so the Windows artifact under **Builds** below
+ships without the library and uses the GDScript fallback. CI does build it -
+`.github/workflows/selftest.yml`, on `main` and on every `feat/**` branch - and
+runs the whole self-test against it, so the port cannot rot silently; it is the
+EXPORT that does not have it.
 
 ### Both renderers
 
