@@ -532,3 +532,109 @@ which is 55 variants counting twins, against the tool's 246,334 over 38
 distinct geometries. Two denominators, both correct: the tool bakes
 geometries and the loader assembles variants.
 
+
+---
+
+## Stage 3 - the mapping table
+
+`scripts/world/flora/tree_table.gd`, in the PUBLIC repo. **The one place the
+pack's names appear**: `t11_4` means nothing anywhere else in this codebase,
+and every other file talks about spruce and beech exactly as it did when a
+spruce was made of blocks.
+
+### What the pack turned out to actually contain
+
+The plan's decision 12 maps by "shape and colour statistics", and Stage 2's
+parser fix moved two of those readings a long way. This is what is in there:
+
+| folder | what it is | slot |
+| --- | --- | --- |
+| `t05` | a dense crimson column, 25.8 m | **benched** |
+| `t07` | a broad branching broadleaf - the only crown here with real branch structure | **birch** |
+| `t08` | a thin crimson spire | **benched** |
+| `t09` | **coconut palms** - five trunk segments, twenty-four radiating fronds | **benched** |
+| `t10` | coconut palms, shorter, six variants | **benched** |
+| `t11` | the classic stepped conifer, 24-28 m - **and two bare dead spires** | **spruce**, and the spires are **snag** |
+| `t12` | a tiered conifer, ten variants: three greens, one snow-dusted, six autumn | **larch** |
+| `t13`, `t14` | rounded broadleaves on straight trunks, five colourways each | **beech** |
+| `t15` | the largest crowns in the pack, six colourways including pink | **hero** |
+| `t16` | six cut stumps, 2 m | **krummholz** and **snag** |
+
+### The two rows worth arguing about
+
+**Tree 09 and Tree 10 are benched, and the plan expected them used.** Decision
+12 reads them as "sprawling bare 09/10 = the krummholz/snag register", off
+statistics that said 163 voxels wide, 13,000 voxels, no dense slice anywhere.
+Those statistics came from geometry that was arriving wrong - Stage 2's
+dropped rotations. With the rotations in they are unmistakably **coconut
+palms**, and there is no reading of this world in which a coconut palm stands
+on an alpine slope. Benched rather than deleted: the Second Age's coast is a
+compass direction the land descends toward, and a palm is a thing that grows
+where a coast is warm.
+
+**Krummholz is the weakest row in the table and it is flagged rather than
+hidden.** Krummholz is a wind-flagged alpine cushion - knee-to-shoulder high,
+spreading, alive. **The pack has nothing like it.** What it has at that height
+is Tree 16, which is six CUT STUMPS: dead wood, sawn flat, 2 m tall. The right
+SIZE and the wrong THING.
+
+They are used anyway, because the alternative is an alpine zone with no trees
+in it at all and a weathered woody stub above the treeline is not a lie - but
+**the krummholz cushion trees v1 Stage 3 authored is the one shape this epic
+loses outright**, and getting it back means new art rather than a table edit.
+The row's own comment tells Marcel that setting its six weights to 0 gives a
+treeless alpine zone, which is a defensible picture and a one-line change.
+
+### The parking space is a number, not a comment
+
+Decision 12 asks for crimson and pink to "ENTER the table with spawn weight 0
+near spawn, parked as distance-strangeness candidates - present, inert". They
+are in as weights of exactly **0.0**: `t13_4` and `t14_4` (crimson beeches),
+`t15_4` (**the pink hero**) and `t15_6` (the crimson one). The geometry loads,
+the palette maps, the gallery photographs them, and no cell in the world picks
+one until somebody edits a digit. **A single pink hero standing in a far
+meadow is the cheapest strangeness this game will ever be able to buy.**
+
+The roll is over the row's own weight total, so raising a parked colourway
+reshuffles that species and nothing else - it cannot renumber the variants
+beside it into different trees.
+
+`t05` and `t08` are benched instead of parked, and the distinction is
+deliberate: they have **no green twin anywhere in the pack**. They are crimson
+or they are nothing, which makes them pure strangeness rather than a colourway
+of something familiar - a different decision, and Marcel's.
+
+### The lint
+
+`TreeTable.lint()`, run by the `tree table` self-test gate. Three rules, and
+the third is the one that stops the table rotting:
+
+1. every variant a row names exists in the library and has a palette row;
+2. no variant is named twice inside one row, and no row is entirely parked;
+3. **every variant in the library is either used or explicitly benched with a
+   reason.** A pack that gains a species folder FAILS here rather than quietly
+   not appearing in the world.
+
+Plus: every one of `TreeSpecies`' seven species must find a row, or the forest
+would simply be missing its larches with no error anywhere.
+
+### The gate
+
+| Stage 3 gate (plan) | result |
+| --- | --- |
+| one data file, in the public repo | `tree_table.gd`; the pack's names appear nowhere else |
+| species slots / heights / colourway sets / spawn weights | all present; `height_m` 0 means the artist's own size (ruling 3) |
+| collider dims read from sidecars | `TreeModels.trunk_of()` - the table does not restate them |
+| crimson/pink at weight 0 | `t13_4`, `t14_4`, `t15_4`, `t15_6` at exactly 0.0 |
+| `FOREST_WEIGHTS`' species names wired to table rows | `TreeTable.slot_of()` reads `TreeSpecies.SPECIES[id]["name"]` rather than restating it |
+| **table lints against the mounted library** | **0 complaints**; 7 species covered |
+| every vox-backed species referenced or explicitly benched | 4 folders benched with reasons, and the lint enforces it |
+| **placement baseline unchanged** | **28,383 trees, same mix, spawn (-44, -124), heightmap `4782edac`** - nothing consumes the table yet |
+| self-test both ways | **green**; the absent leg prints "no library mounted, 0 checks (public build)" |
+
+Variant distribution over 300 cells per species, as a sanity read: spruce
+draws all 7 of its variants, larch all 10 (the snow-dusted `t12_4` at weight
+0.4 taking 12 of 300), beech 8 of 10 with the two crimson never appearing,
+hero 4 of 6 with the pink and crimson never appearing. The parked rows are
+inert, measured rather than assumed.
+

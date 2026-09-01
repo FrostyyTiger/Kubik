@@ -78,6 +78,8 @@ func _ready() -> void:
 		# TREES V3 STAGE 2, appended at the end of the list.
 		"tree winding": _test_tree_winding,
 		"tree library": _test_tree_library,
+		# TREES V3 STAGE 3.
+		"tree table": _test_tree_table,
 	}
 	var failures := 0
 	for name in tests:
@@ -3149,5 +3151,53 @@ func _test_tree_library():
 		worst_name, worst, total])
 	if checked == 0:
 		print("  WARNING: a library is mounted but nothing was checked")
+		return 1
+	return bad
+
+
+## THE MAPPING TABLE MUST AGREE WITH THE LIBRARY, AND COVER IT.
+##
+## `TreeTable.lint()` carries the rules; this runs it and prints what it says.
+## The rule that matters most is the third one: every variant in the library
+## must be either used by a row or explicitly benched with a reason. A pack
+## that gains a species folder then FAILS here rather than quietly not
+## appearing in the world, which is the failure mode a mapping table has.
+##
+## AND EVERY GAME SPECIES MUST FIND A ROW. `TreeSpecies` names seven species
+## and placement can return any of them; a slot with no row draws nothing, so
+## the forest would simply be missing its larches with no error anywhere.
+func _test_tree_table():
+	if not TreeModels.available():
+		print("tree table: no library mounted, 0 checks (public build)")
+		return 0
+	var bad := 0
+	for complaint in TreeTable.lint():
+		print("  " + complaint)
+		bad += 1
+	var cfg := WorldgenConfig.new()
+	var covered := 0
+	for species in TreeSpecies.table(cfg).size():
+		var slot := TreeTable.slot_of(species, cfg)
+		if TreeTable.row_for(slot).is_empty():
+			print("  species %s has no row in TreeTable" % slot)
+			bad += 1
+		else:
+			covered += 1
+	# DETERMINISM, on the spot rather than as a separate gate: the same cell
+	# must pick the same variant twice, and two cells must not all pick one.
+	var picks := {}
+	for i in 400:
+		var slot := TreeTable.slot_of(TreeSpecies.SPRUCE, cfg)
+		var a := TreeTable.variant_at(slot, i, i * 7, 42)
+		var b := TreeTable.variant_at(slot, i, i * 7, 42)
+		if a != b:
+			print("  variant_at is not deterministic at cell (%d, %d)" % [i, i * 7])
+			bad += 1
+			break
+		picks[a] = int(picks.get(a, 0)) + 1
+	print("tree table: %d species covered, %d live variants over 400 spruce cells, %d complaints" % [
+		covered, picks.size(), bad])
+	if picks.size() < 2:
+		print("  WARNING: 400 cells drew %d distinct variants - the hash or the weights are wrong" % picks.size())
 		return 1
 	return bad
