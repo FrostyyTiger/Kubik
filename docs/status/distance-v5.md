@@ -1121,6 +1121,10 @@ read them regardless of the count.
 
 4. **`build.yml` is still red and the exe still does not ship.** Distance v4's
    addendum promoted this from silent to loud and nothing tonight touched it.
+   Confirmed again on this epic's own merge commit - run **33526395493**, exit 1
+   after `savepack` completes, same missing
+   `libkubik.linux.editor.x86_64.so`, 50 seconds in. `selftest.yml` on the same
+   push is **green** (run 33526395625).
    `selftest.yml` now covers `feat/**` as well as `main`, so the LIBRARY cannot
    rot silently; the EXPORT is a separate decision that needs either a
    cross-compiled `windows.template_release` library in CI or an export that
