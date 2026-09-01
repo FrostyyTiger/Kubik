@@ -1,7 +1,68 @@
 # Status
 
-The latest run is **distance v3**, one night, unattended on ganymede, on
-`feat/distance-v3` and merged to `main`: `docs/status/distance-v3.md`.
+The latest run is **distance v4**, one night, unattended on ganymede, on
+`feat/distance-v4` and merged to `main`: `docs/status/distance-v4.md`.
+**The far mesher crosses to C++, and it is the same mesh.**
+
+Distance v2 made the far country block-SHAPED and v3 made it block-SURFACED
+and visible to the rim. Neither could be afforded: on the block-lattice ruling
+the far mesh cost **6.4 s a rebuild at `far_ring_div` 2 and 24.7 s at 4**,
+which was the whole game's worst number. It is now **158 ms and 661 ms** - a
+measured **37-43x**, interleaved ABAB on this box - so `far_ring_div` **now
+defaults to 4** and the 1 m far cell stops being a screenshot mode.
+
+**The number to read first is not the speedup.** The C++ mesher and the
+GDScript one emit **byte-identical arrays** - same vertex count, zero max
+component difference on positions, normals and colours, zero index differences
+- across five configurations including a non-empty frontier and the vote and
+jitter paths the shipped config never takes; they produce **72 identical
+far-probe geometry rows** over 98 meshes; and every far-band tour shot diffs to
+**zero pixels**. The port is a transcription, not a rewrite.
+
+**The GDScript mesher is the reference and the fallback, and it did not
+change.** `far_field_job.gd` is not in the diff at all. With no compiled
+library the game runs, plays, streams without a hole and passes the whole
+self-test; `far_cpp` on F4 forces that path in a running game for the A/B.
+
+Five things worth reading:
+
+- **The port made the CHUNK streamer faster without being asked.** The
+  collidable ground reaches **40 m -> 56 m** ahead at a sprint's worst and
+  chunks/s go **79.2 -> 99.8**. The far mesher had been monopolising a worker
+  pool that runs one GDScript task at a time; it stopped.
+- **Long frames went 4 -> 118, and it is arithmetic.** 15 far rebuilds became
+  **297**, and every completed rebuild pays `arrays_to_mesh` on the main
+  thread. GDScript did not have this problem because at 11.3 s a rebuild it
+  barely ever finished one. The far country now keeps up, and keeping up costs
+  an upload.
+- **The upload is the new binding cost: 224 ms at div 4, on the main thread,
+  3,266,076 vertices.** Items 11 and 17 are no longer a footnote. `far_ring_div`
+  2 puts it back; the real fix is an upload off the frame thread.
+- **Stage 8's gate was red and the fault was the instrument.** The far band
+  measured 12.59 between meshers - and two tours of the SAME code measured
+  0.0000 on that shot. `screenshot_tour.gd` waited for chunks and never for the
+  far field, so an eight-frame settle photographed a settled far mesh against
+  one built two vantages ago. The tour now waits; `6-postcard` went to zero.
+- **Decision 4's ladder landed on rung (a), plus a rung the plan did not
+  name.** Every zone and colour rule is a pure function and was ported. The two
+  that are not - `zone_jitter_at` and `detail_at` - are `FastNoiseLite`
+  samples, and the mesher holds the very same **engine** object the generator
+  built and calls it natively: no GDScript frame entered, no grid precomputed,
+  and bit-identical by construction.
+
+**Nothing about the world moved.** Worldgen probe identical to the previous
+`main` line for line, heightmap `76cccdb6`, config `3d45b8fc`, spawn
+`(-44, -124)`, 53 lakes, 28,383 trees. `far_field_job.gd`, `world.gd`,
+`chunk_mesher.gd`, `terrain_generator.gd`, `lakes.gd`, `look.gd` and `block.gd`
+do not appear in the diff; `game.gd` needed nothing.
+
+The run before it is **distance v3**, one night, on `feat/distance-v3`:
+`docs/status/distance-v3.md`, below.
+
+---
+
+# Previous: distance v3
+
 **The far country stops being mush, and the whole region is visible.**
 
 Distance v2 made the far country block-SHAPED. This one makes it
@@ -296,6 +357,41 @@ The run before that is **world feel v1**, finished 2026-08-27 on
 `feat/world-feel-v1`: `docs/status/world-feel-v1.md`.
 
 ## Open items for Marcel
+
+**20. `far_ring_div` now defaults to 4, and the 224 ms upload is why to look at
+it first.** Distance v4 Stage 10 flipped it on decision 5's gate - the C++
+rebuild at div 4 measures **661 ms** against the plan's 1.5 s line. What the
+flip costs is not the rebuild: div 4 is **3,266,076 vertices** against div 2's
+941,724, `ChunkMesher.arrays_to_mesh` runs on the **main thread** at
+**224.16 ms** per rebuild against 56.17, static memory goes 326.2 MB to
+449.9 MB, and the stream probe's worst sprint frame goes 79.9/84.5 ms to
+**247.8/258.8 ms**. Holes are **0** at both divisors, both legs. `far_ring_div`
+2 on F4 puts every one of those back and costs the 1 m cell. This is items 11
+and 17 grown from a footnote into the far country's binding cost.
+
+**21. The impostor ring rebuilds 70-120 times while the player stands still.**
+Found by distance v4's Stage 8 harness rather than looked for: over a single
+stationary tour vantage, `FarTrees` logs between seventy and a hundred and
+twenty rebuilds, its count drifting (1,096 -> 1,016 -> 939) before it settles.
+It is the one finding in that epic that is a straightforward bug rather than a
+trade, it is outside that epic's files, and it is cheap to see - `grep FarTrees`
+on any tour log.
+
+**22. Item 16 says `_is_ridge` is "now strictly `>`". It is not.** Both
+`_is_ridge` and `terrace_offset` use `>=` on `main` today. Distance v4's C++
+port transcribes what the code does rather than what this document says, so
+parity is unaffected either way - but one of the two is wrong, and item 16's
+own argument ("harmless under a round-up, ruinous under a finer grid") says
+which one would matter.
+
+**23. The GDExtension is not built by CI, and after the `far_ring_div` flip
+that matters more.** `gdext/bin/` is gitignored and nothing on GitHub Actions
+builds it, so the Windows artifact ships without the library and falls back to
+the GDScript mesher at div 4 - a **45 s** rebuild, measured. It still runs,
+plays and streams with **holes 0** (hard rule 1, checked), but the far country
+is effectively frozen. Also: the engine prints three `ERROR` lines when
+`kubik.gdextension` names a library that is not there, which it already did on
+linux before distance v4, and Godot has no "optional library" flag.
 
 **1. The traversal probe cannot cross this world, and it is not the trees —
 and since Stage 9 it is not the physics either.** `--traverse` goes STUCK about

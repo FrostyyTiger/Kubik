@@ -1208,8 +1208,20 @@ const FOG_START_RATIO := 0.4
 ## vertices and 2x the rebuild - 4 is a standing-still preview until the far
 ## mesher is C++.
 ##
+## FLIPPED TO 4 IN DISTANCE V4 STAGE 10, and decision 5's gate is what did it:
+## the flip ships only if the measured C++ rebuild at div 4 on ganymede is
+## under 1.5 s of wall. It measures **661 ms** (interleaved ABAB, three runs,
+## editor target, view high). So 1 m far cells stop being a screenshot mode.
+##
+## WHAT THE FLIP COSTS, and it is not the rebuild. div 4 is 3,266,076 vertices
+## against div 2's 941,724, and uploading them through
+## ChunkMesher.arrays_to_mesh costs **224 ms on the main thread**, every
+## rebuild - plus about 124 MB of static memory. That is STATUS items 11 and
+## 17, this epic did not touch it, and it is now the far country's binding
+## cost. Putting it back is this one number.
+##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
-@export var far_ring_div := 2.0
+@export var far_ring_div := 4.0
 
 ## WHICH MESHER DRAWS THE FAR COUNTRY. Distance v4 Stage 5. 1 is the C++
 ## GDExtension, 0 forces the GDScript one.

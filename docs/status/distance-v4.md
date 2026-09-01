@@ -516,3 +516,120 @@ probe's `--cpp` mode makes measuring the fix 11x cheaper than it was this
 morning, which is the practical thing this night did for it.
 
 ---
+
+## Stage 10 - the landing
+
+### The default flip, and what it costs
+
+`far_ring_div` **2.0 -> 4.0**. Decision 5's gate is the measured C++ rebuild at
+div 4 under 1.5 s of wall; it measures **661 ms**. So the 1 m far cell stops
+being a screenshot mode, and it is the fresh checkout and the co-op partner
+that get it - Marcel's own machine reads his saved `user://worldgen.tres` and
+his morning knob is his own.
+
+**What the flip costs is not the rebuild:**
+
+| | div 2 | div 4 |
+| --- | --- | --- |
+| vertices | 941,724 | **3,266,076** |
+| C++ rebuild, wall | 158 ms | 661 ms |
+| **`arrays_to_mesh`, main thread** | 56.17 ms | **224.16 ms** |
+| static memory (stream probe) | 326.2 MB | **449.9 MB** |
+| worst frame in a sprint | 79.9 / 84.5 ms | **247.8 / 258.8 ms** |
+| holes | 0 | 0 |
+
+Putting it back is one number on F4, or `--set far_ring_div=2`.
+
+### Acceptance
+
+| merge condition (plan, decision 7) | result |
+| --- | --- |
+| full self-test WITH the C++ mesher | **green** |
+| full self-test WITHOUT it (library moved aside) | **green**, parity tests correctly self-skipping |
+| exact parity | **5 whole-mesh cases at zero**, 12 micro-gated functions at zero, 72 far-probe geometry rows identical |
+| stream probe holes 0 at `far_ring_div` 2 | **0**, both legs |
+| stream probe holes 0 at `far_ring_div` 4 | **0**, both legs |
+| far-band pixel diff at zero | **0 differing pixels on every far-band shot**; see Stage 8 for the three forest-interior shots that are foreground and why |
+
+**Merged to `main`.**
+
+---
+
+## For Marcel to rule on
+
+1. **`far_ring_div` 4 ships, and the 224 ms upload is the reason to look at it
+   before anything else.** The flip met the gate the plan set. It did not have
+   to meet a gate on the upload, because that number did not exist until
+   tonight. A quarter-second main-thread hitch per far rebuild is visible, and
+   at div 4 during a sprint the probe caught two frames of 247.8 and 258.8 ms.
+   **`far_ring_div` 2 puts it back and costs you the 1 m cell.** My own
+   recommendation is to keep 4 for a night of looking at it and rule after -
+   the cells are what the last three epics have been for, and the hitch has a
+   real fix that a knob does not.
+
+2. **The upload is now the far country's binding cost, and it is the next
+   rung's real subject.** The plan's ladder puts the chunk mesher next. On
+   tonight's numbers the bigger win may be moving `arrays_to_mesh` off the
+   frame thread or making it incremental: the far mesher went 6,430 ms to 158,
+   and 56 of those 158 are the upload. At div 4 it is 224 of 661. The chunk
+   mesher is a larger blast radius for a smaller number.
+
+3. **The impostor ring rebuilds 70-120 times while the player stands still.**
+   Found by Stage 8's harness rather than looked for. It is the one thing in
+   this document that is a straightforward bug rather than a trade, it is not
+   this epic's file to touch, and it is cheap to see: `grep FarTrees` on any
+   tour log.
+
+4. **`kubik.gdextension` prints three engine `ERROR` lines on a machine with no
+   compiled library.** Hard rule 1 asks for "one load warning". These come from
+   Godot's extension loader and there is no "optional library" flag to set.
+   `origin/main` already prints them on linux for the same reason. Either it is
+   accepted and documented in the README's *Running it*, or the file stops
+   naming platforms nobody has built for - which would break Marcel's Mac.
+
+---
+
+## Carried forward
+
+**Closed tonight:** nothing that was open. This epic added a capability and
+took nothing off the list, which is worth saying plainly.
+
+**Open, and unchanged by tonight:**
+
+* **STATUS items 9 and 18 - the loud ring boundaries.** Max fizz 80.00 blocks
+  at 400 m, 128.00 at 960 m, 256.00 at 1,920 m, measured again tonight and
+  identical to `main`. The fix is known and written down: blend the SAMPLE
+  POSITION from the fine ring's cell centre to the coarse ring's over the last
+  two cells before a boundary. Stage 9 did not take it and says why. **It is
+  now 11x cheaper to measure** - `--far-probe --cpp` runs the whole table in
+  27 s where the GDScript table takes 313 s - and it must land in **both**
+  meshers in one commit or the parity gate is the thing that breaks.
+* **STATUS items 11 and 17 - the main-thread upload.** Promoted from a
+  footnote to the binding cost; see "For Marcel to rule on" 1 and 2, and
+  Stage 6 for the numbers.
+* **STATUS item 16 - `_is_ridge` uses `>=`.** Item 16 says it is "now strictly
+  `>`". It is not: both `_is_ridge` and `terrace_offset` use `>=` on `main`
+  tonight. The C++ port transcribes what the code does, not what the status
+  doc says, so parity is unaffected either way - but one of the two is wrong
+  and it is worth five minutes to find out which.
+
+**New, from tonight:**
+
+* **The impostor ring thrashes** - see "For Marcel to rule on" 3.
+* **`screenshot_tour.gd` now waits for the far field.** Every tour shot from
+  here on is taken with the far country the vantage actually asked for, which
+  it was not before. Labelled sets taken before tonight are not comparable to
+  ones taken after on the far band, and the GDScript leg of a far A/B is now
+  four times slower to shoot because it waits for what it asked for.
+* **There is no `TODO.md` entry for distance v3.** Noticed while adding v4's.
+  Left alone rather than invented.
+* **The build is not in CI.** `gdext/bin/` is gitignored and nothing on GitHub
+  Actions builds it, so the Windows artifact ships without the library and
+  falls back to GDScript at `far_ring_div` 4 - which is a 45 s rebuild. That is
+  the first thing the next rung has to fix, and it is a bigger deal after the
+  flip than it was before it.
+
+**Where the pictures are.** `build/` is gitignored, so every
+`build/tour/<label>/...` path here is a file **on ganymede**. The sets this
+document rests on are `s8-cpp` / `s8-gd` / `s8-cpp2` (the broken instrument)
+and `s8b-cpp` / `s8b-gd` / `s8b-cpp2` (the fixed one).
