@@ -1085,3 +1085,82 @@ read them regardless of the count.
 | stream probe holes 0 at `far_ring_div` 4 | **0**, both legs |
 | no far-system frame over 33 ms in a sprint | **0 frames over 33 ms**, div 4, C++ |
 | CI `selftest.yml` green on the branch | **green** |
+
+---
+
+## For Marcel to rule on
+
+1. **`far_geomorph_cells` ships at 4 and the table says 6 is better.** Max fizz
+   at the two loudest boundaries: 47/40 at 4, **36/26 at 6**, with roughness
+   flat (13.2539 against 13.2457). The reason it is not 6 is that the far probe
+   cannot see the thing that eventually goes wrong - a cell inside the band is
+   drawn on the COARSE ring's lattice, so a wide enough band is distance v2
+   Stage 9's third experiment, which it measured at "16.00, gone" and refused to
+   ship because the far country becomes 16 m blocks at every range. **This wants
+   eyes, not a number**: turn it to 6 on F4 and walk past the 1200 m boundary.
+   My recommendation is to keep 4 for a night of looking and rule after.
+
+2. **`far_detail` ships at 1.0 and it is a quiet layer.** Half a luma level of
+   mean difference over the far band on `6-postcard` and about a fifth of that
+   on the dawn and night meadows. It is the grain the resolution flip would have
+   given from real data, and one block is the smallest amount the block lattice
+   can express - under half a block it is rounded away entirely. **2.0 is the
+   obvious next thing to try** and it was not tried, because a louder far
+   country than the ground you walk on (`detail_amp` 3.0, damped by slope and
+   shore) is a trade rather than a fix. `build/tour/v5-s6-cpp` against
+   `build/tour/v5-s6-d0` on ganymede.
+
+3. **The next rung of the C++ ladder is not the chunk mesher.** Distance v4
+   said it was. Stage 5 measured what actually stands between this project and
+   1 m base cells, and it is `Lakes.compute` (17.5 s), `_resolve_zone_thresholds`
+   (~13 s) and `column_surface_range` - all GDScript, all world truth, all the
+   same shape as the problem Stage 4 just solved. **With those three across, the
+   resolution flip costs about 5 s of startup and gives the sprint its 56 m
+   back**, and the far country gets +8.3% roughness from real data instead of
+   from an analytic layer.
+
+4. **`build.yml` is still red and the exe still does not ship.** Distance v4's
+   addendum promoted this from silent to loud and nothing tonight touched it.
+   `selftest.yml` now covers `feat/**` as well as `main`, so the LIBRARY cannot
+   rot silently; the EXPORT is a separate decision that needs either a
+   cross-compiled `windows.template_release` library in CI or an export that
+   tolerates a `.gdextension` naming platforms nobody built.
+
+5. **STATUS item 22 is still open and is still five minutes.** `_is_ridge` and
+   `terrace_offset` both use `>=` where item 16 says "now strictly `>`". Both
+   meshers transcribe what the code does, so parity is unaffected either way -
+   but one of the two is wrong, and the geomorph makes the ridge test matter at
+   a boundary where it did not before.
+
+---
+
+## Carried forward
+
+**Closed tonight:** STATUS items **9**, **11**, **17**, **18**, **20** and
+**21**. That is every distance item on the list except 12, 13, 13a, 15, 16, 19
+and 22.
+
+**Opened tonight**, all in STATUS.md in full:
+
+* **24** - the next C++ rung: `Lakes.compute`, `_resolve_zone_thresholds`,
+  `column_surface_range`, with the numbers that say so.
+* **25** - the height map is tiled in the builder and not in the store, and
+  what it would take to finish.
+* **26** - `screenshot_tour.gd` freezes the player and `game.gd` unfreezes it,
+  so a tour photographs a world with a falling player in it. The symptom this
+  had is gone; the cause is not.
+* **27** - the morning's cross-box command, and the rule that until it has run,
+  no co-op session mixes a gcc build and an MSVC one.
+
+**Unchanged by tonight and still open:** items 12 (one hole sample in seven
+terraced runs), 13 (the far probe is blind to the frontier - **and tonight
+found the same blindness twice more**, in the parity harness's world having no
+ring boundary and in nothing measuring the impostor ring), 13a (the tour is not
+bit-reproducible in the near field), 15 (the far summits read as a skyline),
+16, 19 (the far grain aliases at dusk under MSAA 4x), 22, and 23's export half.
+
+**Where the pictures are.** `build/` is gitignored, so every
+`build/tour/<label>/...` path in this document is a file **on ganymede**:
+`v5-s1` and `v5-s2` (the impostor debounce), `v5-s3-cpp` and `v5-s3-gd` (the
+geomorph's mesher A/B), `v5-s6-cpp`, `v5-s6-d0` and `v5-s6-gd` (the detail
+layer's pair and its mesher A/B). Every probe log is under `build/v5/`.
