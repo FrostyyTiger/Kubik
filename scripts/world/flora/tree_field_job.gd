@@ -328,8 +328,15 @@ func run() -> void:
 				# field draws nothing there and the world is treeless in that
 				# spot, which is ruling 6 - the public build ships treeless and
 				# that is the design, not a fallback.
-				var variant := TreeTable.variant_for(species, found["cell"],
-					generator.world_seed, config) if any_models else &""
+				# THE SNOW BIAS, and it is ALTITUDE rather than a knob: how far
+				# this tree stands up its own zone's band toward the treeline.
+				# 0 in the valley, 1 at the top, so a snow-dusted crown is a
+				# thing you climb to. Read off the same `zone_band` the far
+				# field's colour convergence uses, so the white on a distant
+				# ridge and the white on the tree standing on it agree about
+				# where the treeline is.
+				var variant := variant_of(generator, config, found) \
+					if any_models else &""
 				if variant == &"":
 					continue
 				var key := "m%s|%d" % [variant, lod_of_band]
@@ -391,6 +398,38 @@ func run() -> void:
 		if String(key).begins_with("m"):
 			model_count += by_species[key].size()
 	elapsed_usec = Time.get_ticks_usec() - started
+
+
+## WHICH VARIANT STANDS AT A DECIDED TREE. ONE FUNCTION, ASKED BY EVERYTHING.
+##
+## The walk asks it, the collider ring asks it through the walk, and the
+## self-test's `tree field` and `registry determinism` gates ask it directly -
+## and the first version was a snippet inside the walk that the gates
+## reimplemented. They diverged inside one stage: Stage 8 gave the roll a SNOW
+## BIAS from altitude, the walk computed it and the gates passed 0, and
+## thirteen of two hundred and thirteen trees came out as different variants.
+## The gate caught it, which is what it is for, and the fix is not to teach the
+## gate the same arithmetic - it is to have one place that knows it.
+##
+## `TreePlacement.decide()`'s own note makes the same argument for the same
+## reason: three restatements of a placement rule would have drifted apart by
+## the second stage.
+##
+## THE SNOW BIAS IS ALTITUDE, NOT A KNOB: how far up its own zone's band this
+## tree stands, 0 in the valley and 1 at the treeline. Read off the same
+## `zone_band` the far field's colour convergence uses, so the white on a
+## distant ridge and the white on the tree standing on it agree about where the
+## treeline is.
+static func variant_of(generator: TerrainGenerator, config: WorldgenConfig,
+		found: Dictionary) -> StringName:
+	var snow := 0.0
+	var zb := generator.zone_band(generator.surface_zone_at(
+		found["bx"], found["bz"], found["surface"]))
+	if zb.y > zb.x:
+		snow = clampf((float(found["surface"]) - zb.x) / (zb.y - zb.x),
+			0.0, 1.0)
+	return TreeTable.variant_for(found["species"], found["cell"],
+		generator.world_seed, config, snow)
 
 
 ## The variant and rung a model key names, or ["", 0].

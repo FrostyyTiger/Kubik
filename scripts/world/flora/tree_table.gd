@@ -283,30 +283,104 @@ static func slots() -> Array:
 ## `SALT_CLUMP` series `217 + key * 7919` as hard rule 2 requires.
 const SALT_VARIANT := 232
 
+## WHAT SEASON A VARIANT IS, read off the palette table rather than declared.
+##
+## A variant whose dominant canopy index maps into the AUTUMN ramp is an autumn
+## tree; one that maps to SNOW is snow-dusted; everything else is green. That
+## makes the season a FACT ABOUT THE COLOUR TABLE - so retuning `t13_2` from
+## autumn to green by editing one cell also stops it being an autumn tree, and
+## there is no second list to keep in step.
+const TAG_GREEN := 0
+const TAG_AUTUMN := 1
+const TAG_SNOW := 2
+
+static var _tags := {}
+
+static func tag_of(variant: StringName) -> int:
+	if _tags.has(variant):
+		return int(_tags[variant])
+	var d := TreeModels.info(variant)
+	var tag := TAG_GREEN
+	if not d.is_empty():
+		var fam := TreePalette.family_of(variant,
+			int(d.get("canopy_palette", 0)))
+		if fam == &"SNOW":
+			tag = TAG_SNOW
+		elif String(fam).begins_with("AUTUMN"):
+			tag = TAG_AUTUMN
+	_tags[variant] = tag
+	return tag
+
+
+## THE SEASON AND ALTITUDE CHANNELS, decision 9's second half - and they are
+## WEIGHTS, not tints.
+##
+## The plan asks for "seasonal/altitude tint hooks: instance colour multiplier
+## driven from the mapping table's colourways", and the colourways turned out
+## to be better than a multiplier. This pack ships each tree five times over in
+## green, autumn, crimson, pink and snow - as SEPARATE PALETTES OVER ONE SHARED
+## GEOMETRY - so autumn is not a tint applied to a green tree, it is the autumn
+## tree, and it costs no new mesh because the twin already shares the binary.
+##
+## So a season is a bias on the ROLL rather than a colour on the instance: turn
+## `tree_season` up and autumn-tagged variants win more of the table's weight;
+## stand above the treeline and snow-tagged ones do. Zero new meshes, zero new
+## draw calls, and the result is a real autumn tree rather than a green one
+## painted orange - which is what a multiplier would have given, and what the
+## per-instance channel is already spending itself on (the far grain and the
+## backdrop convergence, both of which still apply on top).
+##
+## `snow` runs 0 to 1 and is how far above the treeline this tree stands;
+## `season` is `WorldgenConfig.tree_season`, 0 for summer and 1 for autumn.
 static func variant_at(slot: StringName, cell_x: int, cell_z: int,
-		world_seed: int) -> StringName:
+		world_seed: int, snow := 0.0, season := 0.0) -> StringName:
 	_build()
 	var row: Dictionary = _by_slot.get(slot, {})
 	if row.is_empty():
 		return &""
-	var total: float = _totals.get(slot, 0.0)
+	var variants: Array = row["variants"]
+	var weights: Array = row["weights"]
+
+	# THE BIASED WEIGHTS, computed per call rather than cached, because they
+	# depend on where the tree stands. It is a loop over at most ten floats
+	# against a placement decision that costs several noise samples.
+	var live := PackedFloat32Array()
+	live.resize(variants.size())
+	var total := 0.0
+	for i in variants.size():
+		var w := maxf(float(weights[i]), 0.0)
+		if w > 0.0:
+			match tag_of(StringName(variants[i])):
+				TAG_SNOW:
+					# UP TO FOUR TIMES at the treeline and down to nothing well
+					# below it, so a snow-dusted tree is a thing you climb to
+					# rather than something scattered through the valley.
+					w *= lerpf(0.15, 4.0, clampf(snow, 0.0, 1.0))
+				TAG_AUTUMN:
+					w *= lerpf(0.25, 4.0, clampf(season, 0.0, 1.0))
+				_:
+					# The greens give way rather than being deleted: a forest
+					# that is entirely autumn is a texture, and one turning
+					# tree in three is a season.
+					w *= lerpf(1.0, 0.35, clampf(season, 0.0, 1.0))
+		live[i] = w
+		total += w
 	if total <= 0.0:
 		return &""
-	# THE ROLL IS OVER THE TABLE'S OWN TOTAL, so changing one variant's weight
+
+	# THE ROLL IS OVER THE LIVE TOTAL, so changing one variant's weight
 	# reshuffles that species and nothing else - and setting a parked colourway
 	# to a non-zero number does not renumber the variants beside it into
 	# different trees.
 	var roll := WorldHash.hash01(cell_x, cell_z, world_seed, SALT_VARIANT) * total
-	var variants: Array = row["variants"]
-	var weights: Array = row["weights"]
 	var acc := 0.0
 	for i in variants.size():
-		acc += maxf(float(weights[i]), 0.0)
+		acc += live[i]
 		if roll < acc:
 			return StringName(variants[i])
 	# Floating-point tail: the last variant with a live weight.
 	for i in range(variants.size() - 1, -1, -1):
-		if float(weights[i]) > 0.0:
+		if live[i] > 0.0:
 			return StringName(variants[i])
 	return &""
 
@@ -333,8 +407,9 @@ static func slot_of(species: int, config: WorldgenConfig) -> StringName:
 ## The variant for a placed tree, straight from what `decide()` returned.
 ## `&""` when there is nothing to draw - the public build, or a parked row.
 static func variant_for(species: int, cell: Vector2i, world_seed: int,
-		config: WorldgenConfig) -> StringName:
-	return variant_at(slot_of(species, config), cell.x, cell.y, world_seed)
+		config: WorldgenConfig, snow := 0.0) -> StringName:
+	return variant_at(slot_of(species, config), cell.x, cell.y, world_seed,
+		snow, config.tree_season)
 
 
 # --- The lint ---------------------------------------------------------------

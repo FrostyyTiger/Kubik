@@ -1056,3 +1056,127 @@ repo rather than of the mount.
 | **grep proves no live reference to deleted symbols** | one match, and it is the parked constant the inverted gate reads |
 | placement does not move | **28,383 / same mix / (-44, -124) / `4782edac`** |
 
+
+---
+
+## Stage 8 - sway and the tint channels
+
+### The sway
+
+Shipped at Stage 2 and turned on here, which is the ordering the material note
+argues for: the thing Stage 8 turns on is a UNIFORM rather than a new material,
+so the sway arrives without every tree's colour moving on the same night.
+
+`tree_sway`, LOCAL, unhashed, **default 0.5**. `COLOR.a` carries each vertex's
+height as a fraction of its own model's - 0 at the roots, 1 at the top - and
+the shader SQUARES it, so the bottom third of a trunk is effectively still. A
+linear weight shears a spruce's lowest branches sideways, which reads as the
+tree sliding rather than bending. Phase comes from the INSTANCE's world
+position, so a stand moves in one wave; the period is about half grass's and
+the amplitude a third of it relative to height, because a 25 m tree that moves
+like a tuft is a tree made of rubber.
+
+**Open question 3 is answered in the mesh rather than in the shader:** COLOR's
+alpha, because a tree is the one model family in this game with no emissive
+parts and the channel the mushrooms use for their glow is free. It costs no
+attribute, no second stream and no branch.
+
+**The splice had to go INSIDE `OPAQUE_SHADER`'s own `vertex()`**, which turned
+out to be required rather than a consolation - the displacement must happen
+before `world_pos` is taken, or the grain and the banded fog are sampled where
+the vertex would have been in still air and a moving crown shimmers through
+them.
+
+### The season and altitude channels are WEIGHTS, not tints
+
+The plan asks for "instance colour multiplier driven from the mapping table's
+colourways". **The colourways turned out to be better than a multiplier.**
+
+This pack ships each tree five times over in green, autumn, crimson, pink and
+snow - as separate palettes over ONE SHARED GEOMETRY. So autumn is not a tint
+applied to a green tree, it IS the autumn tree, and it costs no new mesh
+because the twin already shares the binary. A multiplier would have given a
+green tree painted orange; a weight bias gives the tree the artist drew.
+
+| | |
+| --- | --- |
+| **the tag** | read off `TreePalette` - a variant whose dominant canopy index maps into the AUTUMN ramp is an autumn tree, one that maps to SNOW is snow-dusted. **A fact about the colour table**, so retuning `t13_2` from autumn to green also stops it being an autumn tree, with no second list to keep in step. |
+| **`tree_season`** | 0 summer, 1 autumn. **PROPERTIES, hashed, in the join handshake** - it changes WHICH TREE a cell grows, and two machines disagreeing about it would draw different forests while the handshake reported a match (hard rule 5). |
+| **snow** | **no knob and wants none** - it is altitude, how far up its own zone's band a tree stands, off the same `zone_band` the far field's colour convergence reads. So the white on a distant ridge and the white on the tree standing on it agree about where the treeline is. |
+
+Measured over 400 larch cells:
+
+| | green | autumn | snow |
+| --- | --- | --- | --- |
+| summer, valley | 286 | 107 | 7 |
+| **autumn, valley** | 23 | **377** | 0 |
+| **summer, treeline** | 199 | 76 | **125** |
+
+The greens give way rather than being deleted - a forest that is entirely
+autumn is a texture, and one turning tree in three is a season.
+
+### The swatch gate found a real bug, which is what a swatch gate is for
+
+`tree swatches`, a self-test rather than a sheet. The plan offers a choice of
+extending the character gallery's swatch strip or adding a tree one; this takes
+a third option and **asserts the thing the sheet was looking for instead of
+photographing it** - every vertex colour in every assembled mesh must be an
+authored `TreePalette` family converted exactly once.
+
+It reported **"13 of 16 families reachable, unused: PINK_A, PINK_B,
+BARK_DEAD"** - and that was not a spare-colour note. **It was four hero
+variants rendering as one flat brown.**
+
+**A colourway twin ships no geometry and reads its OWNER's `.ktree`, whose
+quads carry the OWNER's palette indices.** Tree 15's owner paints with indices
+31, 32, 84, 85, 86 and its pink and crimson twins with 1 to 5, so the twin's
+palette row matched nothing and every quad fell back to `BARK_DARK`. Tree 13
+and Tree 14 were unaffected **only because their twins happen to use the same
+numbers as their owners** - luck, not design, and exactly the kind of luck that
+makes a bug look like it is not there.
+
+Fixed in the tool: a twin's sidecar is re-keyed into the owner's index space at
+bake time. Index j in the twin is index i in the owner exactly when they fill
+the same voxels, which is EXACT because identical occupancy is what made them
+twins in the first place. Everything downstream reads one index space and the
+game needs no remapping step. `Kubik-assets` `490ce13`.
+
+**15 of 16 families are reachable now.** The one that is not is `BARK_DEAD`,
+deliberately - it is where a variant goes when somebody benches one into the
+snag register, and a family invented at that moment is a family invented
+differently.
+
+### And the gate's own tolerance took three attempts
+
+Worth recording because two of them failed on all 638,164 vertex colours at
+once, which looks like a catastrophe and is a comparison bug.
+
+1. **Compare floats exactly.** An `ArrayMesh` stores a vertex colour in eight
+   bits per channel and hands back the quantised value, not the float pushed.
+2. **Quantise both sides by rounding.** Godot **truncates** - `c * 255` cast to
+   a byte - so an authored `0.2195` goes in as 55.97 and comes back as 55.
+3. **Within one unit per channel.** Truncating both sides is right in principle
+   and lands on a knife edge: `0.2823 * 255` is 71.99 authored and 70.99 read
+   back, so one float ulp moves the answer by a whole unit.
+
+One unit is the smallest tolerance eight bits admits, and far tighter than the
+6 the plan offers - that number is the character gallery's and it is about a
+PHOTOGRAPH, with light and a renderer in the way.
+
+### The gate
+
+| Stage 8 gate (plan) | result |
+| --- | --- |
+| sway weighted by the chosen channel | COLOR alpha, squared; `tree_sway` default 0.5 |
+| seasonal / altitude tint hooks from the mapping table's colourways | **weights rather than tints** - see above; zero new meshes, zero new draw calls |
+| snow-dust above the treeline band | altitude-driven, no knob, off the far field's own `zone_band` |
+| autumn as a table row Marcel can flip | `tree_season`, PROPERTIES |
+| a sway-on/off tour pair | `build/tour/trees-v3-sway` (`tree_sway` 1.0) against `build/tour/trees-v3-still` (0.0), 18 shots each, **all 18 differ** |
+| swatch-gate discipline | `tree swatches`: **638,164 vertex colours over 55 variants, 0 wrong**; sway weight 0.0000-1.0000; 15 of 16 families reachable |
+| self-test both ways | **green** |
+
+**The sway pair is an eye judgement and the pixel counts are not evidence.**
+All eighteen shots differ, and STATUS item 13a says the tour is not
+bit-reproducible in the near field anyway - flora lands in a different order
+run to run. What the pair is FOR is looking at, and the files are on ganymede.
+

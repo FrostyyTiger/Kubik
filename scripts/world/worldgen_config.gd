@@ -1315,6 +1315,25 @@ const FOG_START_RATIO := 0.4
 ## number you can turn to 0 is how that gets measured.
 @export var tree_colliders := true
 
+## THE SEASON, 0 FOR SUMMER AND 1 FOR AUTUMN. Trees v3 Stage 8.
+##
+## A bias on which VARIANT a cell picks, not a tint: the pack ships each tree
+## in green and autumn as separate palettes over one shared geometry, so an
+## autumn forest is the autumn trees rather than the green ones painted orange,
+## and it costs no new mesh. At 1 the autumn twins take four times their table
+## weight and the greens fall to a third of theirs - which leaves turning trees
+## among green ones rather than a uniformly orange wood.
+##
+## A SHAPE KNOB, NOT A LOOK KNOB, so it is on PROPERTIES and travels in the
+## join handshake (hard rule 5). It changes WHICH TREE a cell grows, and two
+## machines that disagreed about it would draw different forests while the
+## handshake reported a match. That is exactly the failure the two lists exist
+## to prevent.
+##
+## Snow-dust has no knob and wants none: it is driven by ALTITUDE, out of the
+## same treeline band the far field's colour convergence reads.
+@export var tree_season := 0.0
+
 ## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
 ##
 ## The world is unbounded by design, so the height map is built in tiles
@@ -1611,6 +1630,9 @@ const FOG_START_RATIO := 0.4
 ## different terrain with the handshake reporting a match. Found by auditing
 ## the list against the @export block; see STATUS.md.
 const PROPERTIES: PackedStringArray = [
+	# TREES V3 STAGE 8. The season decides which VARIANT a cell grows, so it is
+	# world truth and travels in the join handshake (hard rule 5).
+	"tree_season",
 	"block_size", "world_scale",
 	"world_blocks_xz", "world_height_blocks", "coarse_step",
 	"voxel_depth_chunks",

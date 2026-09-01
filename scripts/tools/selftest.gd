@@ -84,6 +84,8 @@ func _ready() -> void:
 		"tree field": _test_tree_field,
 		# TREES V3 STAGE 6.
 		"tree colliders": _test_tree_colliders,
+		# TREES V3 STAGE 8.
+		"tree swatches": _test_tree_swatches,
 	}
 	var failures := 0
 	for name in tests:
@@ -647,8 +649,7 @@ func _test_registry_determinism():
 					continue
 				if run == 0:
 					trees += 1
-				var v := TreeTable.variant_for(f["species"], f["cell"],
-					gen.world_seed, cfg)
+				var v := TreeFieldJob.variant_of(gen, cfg, f)
 				if run == 0 and v != &"":
 					variants[v] = int(variants.get(v, 0)) + 1
 				var p: Dictionary = f["params"]
@@ -3235,8 +3236,10 @@ func _test_tree_field():
 				continue
 			if not TreeTable.drawn_as_model(found["species"], cfg):
 				continue
-			var v := TreeTable.variant_for(found["species"], found["cell"],
-				gen.world_seed, cfg)
+			# THROUGH THE JOB'S OWN FUNCTION, not a reimplementation of it -
+			# see its note. A gate that restates the rule it is checking will
+			# eventually check a different rule.
+			var v := TreeFieldJob.variant_of(gen, cfg, found)
 			if v == &"":
 				continue
 			want[v] = int(want.get(v, 0)) + 1
@@ -3319,8 +3322,7 @@ func _test_tree_colliders():
 				continue
 			if not TreeTable.drawn_as_model(found["species"], cfg):
 				continue
-			var v := TreeTable.variant_for(found["species"], found["cell"],
-				gen.world_seed, cfg)
+			var v := TreeFieldJob.variant_of(gen, cfg, found)
 			if v == &"":
 				continue
 			# A variant whose sidecar reports no trunk gets no cylinder, and
@@ -3409,4 +3411,119 @@ func _test_tree_colliders():
 	print("tree colliders: %d cylinders, placement says %d; radius %.2f-%.2f m, height %.2f-%.2f m; ray hit %s" % [
 		job.colliders.size(), expect, radii.x, radii.y, heights.x, heights.y,
 		"yes" if stopped else "NO"])
+	return bad
+
+
+## One vertex colour as the three bytes the renderer will actually read.
+static func _swatch_bytes(c: Color) -> Vector3i:
+	return Vector3i(
+		int(clampf(c.r, 0.0, 1.0) * 255.0),
+		int(clampf(c.g, 0.0, 1.0) * 255.0),
+		int(clampf(c.b, 0.0, 1.0) * 255.0))
+
+
+## WHAT IS AUTHORED IN `TreePalette` MUST BE WHAT LANDS IN THE MESH.
+##
+## THE SWATCH GATE, AND IT IS A TEST RATHER THAN A SHEET. The plan offers a
+## choice - extend the character gallery's swatch sheet or add a tree strip -
+## and this takes a third option, which is to assert the thing the sheet was
+## looking for instead of photographing it.
+##
+## What the sheet catches is the colour path going wrong: a linear value pushed
+## into a vertex colour without `Look.to_wire()` draws far brighter and far less
+## saturated than intended, which is a mistake this project has made and paid a
+## whole screenshot tour to find (`FloraModels.COLORS`' note, and look v2 Stage
+## 0's). It is a ROUND TRIP, and a round trip is exactly checkable.
+##
+## So: for every variant, assemble the real mesh, read the vertex colours the
+## loader actually pushed, and require every one of them to be a family from
+## `TreePalette` converted exactly once. A colour converted twice, not at all,
+## or looked up from the wrong table fails.
+##
+## The 6-unit tolerance the plan names is the character gallery's, and it is
+## about a PHOTOGRAPH - light, shade and a renderer stand between an authored
+## hex and a pixel. Nothing stands between an authored hex and a vertex colour,
+## so this is exact to a float epsilon instead, which is a stronger claim than
+## the one being asked for.
+func _test_tree_swatches():
+	if not TreeModels.available():
+		print("tree swatches: no library mounted, 0 checks (public build)")
+		return 0
+	# EVERY AUTHORED FAMILY, CONVERTED THE ONE WAY THE LOADER CONVERTS, AS THE
+	# BYTES THE RENDERER WILL READ - and matched to WITHIN ONE UNIT, which is
+	# the whole of what this gate's tolerance had to be worked out from.
+	#
+	# An ArrayMesh stores a vertex colour in eight bits per channel and hands
+	# back the quantised value rather than the float that was pushed. The first
+	# version of this gate compared floats exactly and failed on all 638,164
+	# vertex colours in the library, which is what a tolerance bug looks like
+	# when the tolerance is zero. The second quantised both sides by ROUNDING
+	# and failed on all of them too - Godot TRUNCATES (`c * 255` cast to a
+	# byte), so an authored `0.2195` goes in as 55.97 and comes back as 55.
+	#
+	# Truncating both sides is right in principle and lands on a knife edge in
+	# practice: `0.2823 * 255` is 71.99 authored and 70.99 read back, so a
+	# single float ulp moves the answer by a whole unit. So: within one unit
+	# per channel, which is the SMALLEST tolerance eight bits admits and far
+	# tighter than the 6 units the plan offers - that number is the character
+	# gallery's, and it is about a PHOTOGRAPH, with light and a renderer in the
+	# way. Nothing stands between an authored hex and these bytes but one
+	# documented conversion and one quantisation.
+	var wire := []
+	for family in TreePalette.FAMILIES:
+		wire.append([_swatch_bytes(Look.to_wire(TreePalette.FAMILIES[family])),
+			family])
+	var bad := 0
+	var checked := 0
+	var seen := {}
+	var sway_lo := 2.0
+	var sway_hi := -1.0
+	for variant in TreeModels.variants():
+		var mesh := TreeModels.mesh_for(variant, 0, 0.5)
+		if mesh == null:
+			continue
+		var cols: PackedColorArray = mesh.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+		var wrong := 0
+		for c in cols:
+			checked += 1
+			var got := _swatch_bytes(c)
+			var hit := &""
+			for entry in wire:
+				var want: Vector3i = entry[0]
+				if absi(want.x - got.x) <= 1 and absi(want.y - got.y) <= 1 \
+						and absi(want.z - got.z) <= 1:
+					hit = entry[1]
+					break
+			if hit == &"":
+				wrong += 1
+			else:
+				seen[hit] = true
+			# THE SWAY WEIGHT RIDES IN ALPHA and must stay inside 0..1, or the
+			# shader squares a number bigger than one and a crown leaves the
+			# frame. Checked here because this is the only place that reads
+			# every vertex the loader wrote.
+			sway_lo = minf(sway_lo, c.a)
+			sway_hi = maxf(sway_hi, c.a)
+		if wrong > 0:
+			print("  %s: %d of %d vertex colours are not an authored family" % [
+				variant, wrong, cols.size()])
+			bad += 1
+	if sway_lo < 0.0 or sway_hi > 1.0:
+		print("  the sway weight leaves 0..1: %.4f to %.4f" % [sway_lo, sway_hi])
+		bad += 1
+	# AND EVERY AUTHORED FAMILY SHOULD BE REACHABLE. A family nothing points at
+	# is a colour nobody can see, which is worth knowing about rather than
+	# failing on - `BARK_DEAD` is deliberately one of them.
+	var unused := PackedStringArray()
+	for family in TreePalette.FAMILIES:
+		if not seen.has(family):
+			unused.append(String(family))
+	print("tree swatches: %d vertex colours over %d variants, %d variants wrong" % [
+		checked, TreeModels.variants().size(), bad])
+	print("  sway weight %.4f to %.4f; %d of %d families reachable%s" % [
+		sway_lo, sway_hi, seen.size(), TreePalette.FAMILIES.size(),
+		"" if unused.is_empty() else " (unused: %s)" % ", ".join(unused)])
+	if checked == 0:
+		print("  WARNING: no vertex colours in the sample - this proved nothing")
+		return 1
 	return bad

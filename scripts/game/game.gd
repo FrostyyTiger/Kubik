@@ -166,6 +166,11 @@ func _ready() -> void:
 	# they are pushed once here and again whenever the F4 panel moves.
 	FloraModels.apply_local_knobs(config)
 	Look.apply_local_knobs(config)
+	# TREES V3 STAGE 8. Its own call rather than a line inside
+	# apply_local_knobs(), because the tree material is not one of the four
+	# that function pushes to and folding it in would make a knob that moves
+	# the WIND look like a knob that moves the terrain's grain.
+	Look.apply_tree_knobs(config)
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -1395,6 +1400,11 @@ func _on_config_changed() -> void:
 	# into rather than immediately.
 	FloraModels.apply_local_knobs(config)
 	Look.apply_local_knobs(config)
+	# TREES V3 STAGE 8. Its own call rather than a line inside
+	# apply_local_knobs(), because the tree material is not one of the four
+	# that function pushes to and folding it in would make a knob that moves
+	# the WIND look like a knob that moves the terrain's grain.
+	Look.apply_tree_knobs(config)
 	_status.text = "config changed - press F7 to rebuild terrain"
 	# DISTANCE V2 STAGE 0, AND THIS IS THE ONE LINE THIS EPIC SPENDS HERE.
 	# far_terrace, far_riser_shade and distance v1's four geometry knobs change

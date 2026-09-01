@@ -136,31 +136,31 @@ const PACK_FAMILIES := {
 	&"t12_3": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"CANOPY_B", 85: &"CANOPY_B", 86: &"CANOPY_C"},
 	&"t12_4": {13: &"SNOW", 31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"CANOPY_B", 85: &"CANOPY_B", 86: &"CANOPY_C"},
 	&"t12_5": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t12_6": {1: &"AUTUMN_C", 2: &"AUTUMN_A", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t12_6": {1: &"AUTUMN_C", 2: &"AUTUMN_B", 3: &"AUTUMN_A", 4: &"BARK_DARK", 5: &"BARK_DARK"},
 	&"t12_7": {1: &"AUTUMN_C", 2: &"AUTUMN_A", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t12_8": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t12_9": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t12_8": {1: &"AUTUMN_C", 2: &"AUTUMN_B", 3: &"AUTUMN_C", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t12_9": {1: &"AUTUMN_C", 2: &"AUTUMN_B", 3: &"AUTUMN_C", 4: &"BARK_DARK", 5: &"BARK_DARK"},
 	&"t13_1": {1: &"CANOPY_C", 2: &"CANOPY_B", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"CANOPY_B"},
-	&"t13_2": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t13_3": {1: &"AUTUMN_C", 2: &"AUTUMN_A", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t13_4": {1: &"CRIMSON_B", 2: &"CRIMSON_A", 3: &"CRIMSON_A", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t13_2": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"AUTUMN_B"},
+	&"t13_3": {1: &"AUTUMN_C", 2: &"AUTUMN_B", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"AUTUMN_A"},
+	&"t13_4": {1: &"CRIMSON_B", 2: &"CRIMSON_A", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"CRIMSON_A"},
 	&"t13_5": {1: &"SNOW", 2: &"CANOPY_C", 3: &"CANOPY_B", 4: &"BARK_DARK", 5: &"BARK_DARK", 6: &"CANOPY_B"},
 	&"t14_1": {1: &"CANOPY_C", 2: &"CANOPY_B", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"CANOPY_B"},
-	&"t14_2": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t14_3": {1: &"AUTUMN_C", 2: &"AUTUMN_A", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t14_4": {1: &"CRIMSON_B", 2: &"CRIMSON_A", 3: &"CRIMSON_A", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t14_2": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"AUTUMN_B"},
+	&"t14_3": {1: &"AUTUMN_C", 2: &"AUTUMN_B", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"AUTUMN_A"},
+	&"t14_4": {1: &"CRIMSON_B", 2: &"CRIMSON_A", 3: &"BARK_DARK", 4: &"BARK_DARK", 5: &"CRIMSON_A"},
 	&"t14_5": {1: &"SNOW", 2: &"CANOPY_C", 3: &"CANOPY_B", 4: &"BARK_DARK", 5: &"BARK_DARK", 6: &"CANOPY_B"},
 	&"t15_1": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"CANOPY_B", 85: &"CANOPY_B", 86: &"CANOPY_C"},
-	&"t15_2": {1: &"AUTUMN_C", 2: &"AUTUMN_C", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t15_3": {1: &"AUTUMN_C", 2: &"AUTUMN_A", 3: &"AUTUMN_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
-	&"t15_4": {1: &"PINK_A", 2: &"PINK_A", 3: &"PINK_B", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t15_2": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"AUTUMN_B", 85: &"AUTUMN_C", 86: &"AUTUMN_C"},
+	&"t15_3": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"AUTUMN_A", 85: &"AUTUMN_B", 86: &"AUTUMN_C"},
+	&"t15_4": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"PINK_A", 85: &"PINK_A", 86: &"PINK_B"},
 	&"t15_5": {1: &"SNOW", 2: &"CANOPY_C", 3: &"CANOPY_B", 4: &"BARK_DARK", 5: &"BARK_DARK", 6: &"CANOPY_B"},
-	&"t15_6": {1: &"CRIMSON_B", 2: &"CRIMSON_A", 3: &"CRIMSON_A", 4: &"BARK_DARK", 5: &"BARK_DARK"},
+	&"t15_6": {31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"CRIMSON_A", 85: &"CRIMSON_A", 86: &"CRIMSON_B"},
 	&"t16_1": {30: &"BARK", 31: &"BARK_DARK", 32: &"BARK_DARK"},
 	&"t16_2": {31: &"BARK_DARK", 32: &"BARK_DARK"},
 	&"t16_3": {29: &"BARK", 30: &"BARK", 31: &"BARK_DARK"},
 	&"t16_4": {1: &"BARK_DARK", 13: &"SNOW", 121: &"BARK", 123: &"BARK_LIGHT"},
-	&"t16_5": {31: &"BARK_DARK", 32: &"BARK_DARK"},
+	&"t16_5": {13: &"BARK_DARK", 121: &"BARK_DARK"},
 	&"t16_6": {1: &"BARK_DARK", 13: &"BARK_LIGHT", 219: &"BARK_LIGHT", 221: &"BARK_LIGHT"},
 	&"t5_5": {13: &"SNOW", 31: &"BARK_DARK", 32: &"BARK_DARK", 84: &"CANOPY_B", 85: &"CANOPY_B", 86: &"CANOPY_C"},
 }
@@ -189,6 +189,15 @@ static func table_for(variant: StringName) -> PackedColorArray:
 	for index in row:
 		out[int(index) & 0xFF] = FAMILIES.get(row[index], fallback)
 	return out
+
+
+## WHICH FAMILY ONE INDEX BELONGS TO, by name. Trees v3 Stage 8 reads it to
+## decide what SEASON a variant is: a canopy in the AUTUMN ramp is an autumn
+## tree and one in SNOW is a snow-dusted one, and both are facts about the
+## table rather than about a flag somebody has to keep in step with it.
+static func family_of(variant: StringName, index: int) -> StringName:
+	var row: Dictionary = PACK_FAMILIES.get(variant, {})
+	return row.get(index, FALLBACK)
 
 
 ## Does this variant have a mapping at all? The gallery's lint, and the
