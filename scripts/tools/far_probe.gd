@@ -210,6 +210,16 @@ func _go() -> void:
 		_config.far_terrace, _config.far_riser_shade,
 		_config.far_band_m, _config.far_band_step])
 
+	# DISTANCE V4 STAGE 7. Take every mesh below through the C++ mesher.
+	if "--cpp" in OS.get_cmdline_user_args():
+		var m := FarMesher.new()
+		if not FarMesher.available() or not m.setup(_heightmap, _generator, _config):
+			print("[FarProbe] --cpp asked for, and there is no C++ mesher to ask")
+			get_tree().quit(1)
+			return
+		_cpp_mesher = m
+	print("[FarProbe] mesher: %s" % ["c++" if _cpp_mesher != null else "gdscript"])
+
 	# THE COST TABLE, distance v3 Stage 0. See _cost_table().
 	if "--cost" in OS.get_cmdline_user_args():
 		await _cost_table()
@@ -835,18 +845,38 @@ func _terrace_row(s: Surface) -> String:
 ## cannot print progress and cannot be interrupted.
 func _surface(centre: Vector2i) -> Surface:
 	await get_tree().process_frame
-	var job := FarFieldJob.new()
-	job.heightmap = _heightmap
-	job.generator = _generator
-	job.config = _config
-	job.center = centre
-	job.run()
+	# DISTANCE V4 STAGE 7. `--cpp` takes the WHOLE table through the C++ mesher
+	# instead, and the gate is that the two tables are identical character for
+	# character - which is a stronger statement than the self-test's array
+	# comparison, because these rows are fizz, roughness, peak loss, terrace
+	# compliance and seam agreement, computed off the triangles rather than off
+	# the arrays. A mesh can match array-for-array and still be read wrong.
+	var job: RefCounted = _cpp_mesher
+	if job != null:
+		_cpp_mesher.config = _config
+		_cpp_mesher.center = centre
+		_cpp_mesher.frontier = PackedInt32Array()
+		_cpp_mesher.run()
+	else:
+		var gd := FarFieldJob.new()
+		gd.heightmap = _heightmap
+		gd.generator = _generator
+		gd.config = _config
+		gd.center = centre
+		gd.run()
+		job = gd
 	_builds += 1
 	_build_ms += job.elapsed_ms
 	_build_verts += job.vertex_count
 	var s := Surface.new()
 	s.build(job, _config)
 	return s
+
+
+## Set by _go() when --cpp is passed, and null otherwise. One instance for the
+## whole run: setup() marshals the world and doing it per mesh would measure
+## the marshal rather than the mesher.
+var _cpp_mesher: FarMesher = null
 
 
 ## A built far mesh, with a point query over the triangles it actually emitted.
@@ -875,7 +905,11 @@ class Surface extends RefCounted:
 	var g_min_bz := 0
 	var g_cols := 0
 
-	func build(job: FarFieldJob, config: WorldgenConfig) -> void:
+	## `job` is a FarFieldJob or a FarMesher - both present `center` and
+	## `arrays`, which is all this reads, and distance v4 Stage 7 needs the
+	## whole table taken through either mesher. Untyped for that reason and no
+	## other; every assertion below is unchanged.
+	func build(job: RefCounted, config: WorldgenConfig) -> void:
 		var bs: float = config.block_size
 		var inv := 1.0 / bs
 		centre = job.center

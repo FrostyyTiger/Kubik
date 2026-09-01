@@ -1549,6 +1549,11 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
 	"far_overdraw", "far_dither_m", "far_tree_grain",
+	# DISTANCE V4. LOCAL and unhashed like every far knob before it - and it
+	# has to be on THIS list rather than only in the @export block, or
+	# World.setup()'s clone drops it and the panel's value never reaches the
+	# world. Same failure the flora and AO knobs are guarded against above.
+	"far_cpp",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
