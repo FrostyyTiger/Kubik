@@ -677,8 +677,18 @@ ruling.
 
 **And the carried CI item moved, halfway.** "The build is not in CI" (above):
 `selftest.yml` now builds the Linux editor library and runs every gate on each
-push to main, so the port can no longer rot silently. The half that stands:
-`build.yml`'s exported `Kubik.exe` still ships without a
-`windows.template_release` library and falls back to GDScript at
-`far_ring_div` 4. That needs a cross-compiled or Windows-runner template
-build and its own parity look, and it stays carried.
+push to main, so the port can no longer rot silently. First run green -
+33488522757, godot-cpp cold build included, ~11 minutes; cached runs are the
+compile minus four of those.
+
+**The half that stands is worse than carried: `build.yml` is RED, and has
+been since the doorway.** Every push since `0ef02a0` added `kubik.gdextension`
+fails at "Export Kubik.exe" - exit 1 after `savepack` completes, the log
+naming the missing `libkubik.linux.editor.x86_64.so`. So the exe does not
+ship WITHOUT the library; it does not ship AT ALL, and nobody was told,
+because a red badge on a repo nobody watches is not a telling. Ruling item 4
+(the three ERROR lines on library-less machines) and this are the same
+decision now: the export needs either a cross-compiled
+`windows.template_release` library in CI - with its own parity look - or an
+export that tolerates a `.gdextension` naming platforms nobody built. It
+stays carried, upgraded from silent to loud.
