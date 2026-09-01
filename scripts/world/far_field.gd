@@ -12,6 +12,26 @@ extends MeshInstance3D
 signal rebuilt(vertex_count: int)
 
 var _job: FarFieldJob = null
+
+## THE C++ MESHER, ONE INSTANCE PER WORLD, OWNED HERE. Distance v4 Stage 5,
+## hard rule 5: no new global state - it is a RefCounted this node holds and
+## drops with itself, and setup() hands it the world exactly once because
+## marshalling a pyramid per rebuild would spend the speedup on the seam.
+##
+## Null on a checkout with no compiled library, which is hard rule 1: the game
+## must run, play and pass every self-test with the far mesh built in GDScript
+## and one load warning as the only trace.
+var _mesher: FarMesher = null
+
+## Whichever of the two built the mesh currently being waited on. Both present
+## `arrays`, `vertex_count`, `elapsed_ms` and `frontier`, so _process reads one
+## variable and does not care which.
+var _active: RefCounted = null
+
+## What built the LAST finished mesh, for the F3 readout. "gdscript" until one
+## has been built, which is honest: before the first build nothing has.
+var _last_mesher := "gdscript"
+
 var _task := -1
 var _pending_center := Vector2i.ZERO
 var _pending_frontier := PackedInt32Array()
@@ -64,6 +84,20 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	# DISTANCE V3 STAGE 7. Before any job exists, and on the main thread - see
 	# apply_overdraw().
 	apply_overdraw(config)
+	# DISTANCE V4 STAGE 5, THE DISPATCH. The world crosses the seam once, here,
+	# on the main thread, before any job exists. A failure to marshal is not an
+	# error: _mesher stays null and every rebuild goes through FarFieldJob,
+	# which is the path this game shipped on.
+	_mesher = null
+	if FarMesher.available():
+		var m := FarMesher.new()
+		if m.setup(_heightmap, generator, config):
+			_mesher = m
+		else:
+			push_warning("[FarField] the C++ far mesher would not take this world - building in GDScript")
+	else:
+		# ONE LOAD WARNING AND NOTHING ELSE. Hard rule 1's "the only trace".
+		print("[FarField] no compiled far mesher - building in GDScript")
 	# DISTANCE V2 STAGE 0. Remember what the far-only knobs are worth NOW, so
 	# the first turn of a spinbox after the world loads is seen as a change
 	# rather than as the value the snapshot happened to be seeded with.
@@ -88,9 +122,9 @@ func _process(_delta: float) -> void:
 	WorkerThreadPool.wait_for_task_completion(_task)
 	_task = -1
 
-	_last_ms = _job.elapsed_ms
+	_last_ms = _active.elapsed_ms
 	_last_wall_ms = int((Time.get_ticks_usec() - _started_us) / 1000)
-	_last_verts = _job.vertex_count
+	_last_verts = _active.vertex_count
 	_rebuilds += 1
 	# THE FIRST BUILD, PRINTED. Distance v3 Stage 0, and it closes distance v2's
 	# carried item 13: the far probe is structurally blind to the frontier, so a
@@ -104,8 +138,8 @@ func _process(_delta: float) -> void:
 	# Once, on the first build of a session: this is a baseline line for a
 	# headless run, not a per-frame log.
 	if _rebuilds == 1:
-		print("[FarField] first build: %d vertices, %d ms job, %d ms wall" % [
-			_last_verts, _last_ms, _last_wall_ms])
+		print("[FarField] first build: %d vertices, %d ms job, %d ms wall, %s mesher" % [
+			_last_verts, _last_ms, _last_wall_ms, _last_mesher])
 	# AND EVERY REBUILD'S WALL TIME, KEPT FOR THE SUMMARY AT EXIT. Distance v3
 	# Stage 4, because the first build is the WORST one and the acceptance
 	# criterion is about a rebuild.
@@ -117,15 +151,16 @@ func _process(_delta: float) -> void:
 	# against a nearly idle pool, and THAT is what "the far country redraws in
 	# under N seconds" has always meant. One number cannot be both.
 	_walls.append(_last_wall_ms)
-	mesh = ChunkMesher.arrays_to_mesh(_job.arrays)
+	mesh = ChunkMesher.arrays_to_mesh(_active.arrays)
 	# The frontier THIS MESH was cut to. Not the same as the world's current
 	# one: a rebuild takes a frame or two on a worker, and during that window
 	# what is on screen is the old hole. Anything asking "is this covered right
 	# now" - the stream probe above all - has to ask about the mesh that
 	# exists, not the one being built.
-	_built_frontier = _job.frontier
-	rebuilt.emit(_job.vertex_count)
+	_built_frontier = _active.frontier
+	rebuilt.emit(_active.vertex_count)
 	_job = null
+	_active = null
 	_start_if_idle()
 
 
@@ -133,14 +168,40 @@ func _start_if_idle() -> void:
 	if _task != -1 or not _has_pending or _generator == null:
 		return
 	_has_pending = false
-	_job = FarFieldJob.new()
-	_job.heightmap = _heightmap
-	_job.generator = _generator
-	_job.config = _config
-	_job.center = _pending_center
-	_job.frontier = _pending_frontier
+	# THE DISPATCH. The C++ mesher when there is one and the knob has not turned
+	# it off; GDScript otherwise, on exactly the same three lines - both objects
+	# present the same five members, so nothing below this branch knows which
+	# built the mesh.
+	if _use_cpp():
+		_mesher.config = _config
+		_mesher.center = _pending_center
+		_mesher.frontier = _pending_frontier
+		_active = _mesher
+		_last_mesher = "c++"
+	else:
+		_job = FarFieldJob.new()
+		_job.heightmap = _heightmap
+		_job.generator = _generator
+		_job.config = _config
+		_job.center = _pending_center
+		_job.frontier = _pending_frontier
+		_active = _job
+		_last_mesher = "gdscript"
 	_started_us = Time.get_ticks_usec()
-	_task = WorkerThreadPool.add_task(_job.run, false, "kubik far field")
+	_task = WorkerThreadPool.add_task(_active.run, false, "kubik far field")
+
+
+## THE A/B, IN A RUNNING GAME. `far_cpp` is a local knob on F4, default 1, and
+## it is on FAR_ONLY_PROPERTIES - so turning it to 0 rebuilds the far country in
+## place, standing still, in GDScript, and turning it back rebuilds it in C++.
+## Every gate in this epic is run both ways because of this line.
+##
+## The knob cannot conjure a mesher that is not there: with no compiled library
+## _mesher is null and this is false at every value.
+func _use_cpp() -> bool:
+	if _mesher == null or _config == null:
+		return false
+	return _config.far_cpp > 0.5
 
 
 ## The frontier the mesh CURRENTLY ON SCREEN was cut to. Empty before the first
@@ -197,6 +258,10 @@ func stats() -> Dictionary:
 		"build_ms": _last_ms,
 		"wall_ms": _last_wall_ms,
 		"rebuilds": _rebuilds,
+		# DISTANCE V4 STAGE 5. Which of the two drew what is on screen - the F3
+		# line the plan asks for, and the one thing a screenshot cannot say.
+		"mesher": _last_mesher,
+		"cpp_available": _mesher != null,
 	}
 
 
@@ -206,6 +271,7 @@ func drain() -> void:
 		WorkerThreadPool.wait_for_task_completion(_task)
 		_task = -1
 	_job = null
+	_active = null
 	_has_pending = false
 
 
@@ -288,6 +354,11 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	"far_step_y_blocks",
 	# 2026-09-01, the horizontal ladder. Redraws the far mesh and the ring.
 	"far_ring_div",
+	# DISTANCE V4 STAGE 5. Which mesher draws the far country. On this list so
+	# the A/B is one spinbox and a redraw in place rather than a relaunch -
+	# which is the only way "the C++ mesh is the same mesh" can be judged by
+	# eye rather than only by the parity gate.
+	"far_cpp",
 ]
 
 static var _knobs := {}

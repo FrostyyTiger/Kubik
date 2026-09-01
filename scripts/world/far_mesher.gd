@@ -178,6 +178,27 @@ const CONFIG_KEYS: PackedStringArray = [
 ]
 
 
+# --- The job face ------------------------------------------------------------
+#
+# FarFieldJob's members, by the same names, so `far_field.gd` submits either one
+# to the worker pool through the same three lines. `heightmap` and `generator`
+# are here for the shape of it and are read only by setup(); the mesher itself
+# never holds them past that call - decision 2.
+
+var heightmap: Heightmap = null
+var generator: TerrainGenerator = null
+var config: WorldgenConfig = null
+var center := Vector2i.ZERO
+var frontier := PackedInt32Array()
+
+
+## What FarField submits to the worker pool. The whole build is one call into
+## C++, so this GDScript frame exists for the length of that call and no cell
+## is ever meshed from it.
+func run() -> void:
+	build(config, center, frontier)
+
+
 ## Build one far mesh. The same three arguments FarFieldJob takes as members,
 ## plus the knobs that can move between builds.
 ##

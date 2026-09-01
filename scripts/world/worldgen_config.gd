@@ -1211,6 +1211,23 @@ const FOG_START_RATIO := 0.4
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
 @export var far_ring_div := 2.0
 
+## WHICH MESHER DRAWS THE FAR COUNTRY. Distance v4 Stage 5. 1 is the C++
+## GDExtension, 0 forces the GDScript one.
+##
+## NOT A QUALITY KNOB - the two meshers emit IDENTICAL arrays and the self-test
+## asserts it every stage, so moving this changes the rebuild TIME and nothing
+## a picture can see. It exists because "identical" is a claim, and a claim you
+## can turn off standing still is one Marcel can check with his own eyes
+## instead of taking from a gate.
+##
+## It cannot conjure a mesher that is not there: on a checkout with no compiled
+## library the far field builds in GDScript at every value of this, which is
+## hard rule 1.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, and on FAR_ONLY_PROPERTIES so it
+## redraws in place rather than asking for F7.
+@export var far_cpp := 1.0
+
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
 ##

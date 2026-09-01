@@ -67,6 +67,7 @@ func _ready() -> void:
 		"far parity": _test_far_parity,
 		"far pyramid parity": _test_far_pyramid_parity,
 		"far zone parity": _test_far_zone_parity,
+		"far dispatch": _test_far_dispatch,
 	}
 	var failures := 0
 	for name in tests:
@@ -2294,3 +2295,111 @@ func _test_far_zone_parity():
 func _color_diff(a: Color, b: Color) -> float:
 	return maxf(absf(a.r - b.r), maxf(absf(a.g - b.g),
 		maxf(absf(a.b - b.b), absf(a.a - b.a))))
+
+
+## THE DISPATCH, BOTH WAYS, THROUGH THE REAL FarField. Distance v4 Stage 5.
+##
+## The parity test compares two meshers built side by side from the same
+## inputs. This one asks the different question: does the NODE that the game
+## actually uses pick the right one, hand it the right world, and put the same
+## mesh on screen either way? Those are separable, and the second is where a
+## dispatch goes wrong - a mesher handed a stale config, a frontier that did
+## not cross, a knob that reaches the snapshot but not the job.
+##
+## So it drives `far_cpp` from 1 to 0 and back through `apply_far_knobs` -
+## which is the F4 panel's own path, not a private one - and compares the mesh
+## Godot ends up holding, vertex for vertex.
+##
+## WITH NO COMPILED LIBRARY this still runs and still means something: both
+## legs report `gdscript`, the meshes still have to match, and the knob still
+## must not break a rebuild. That is hard rule 1 checked rather than assumed.
+func _test_far_dispatch():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var far_field: Node = world.get_node_or_null("FarField")
+	if far_field == null:
+		print("  far dispatch: World has no FarField child")
+		world.free()
+		return 1
+	_pump_far_field(far_field)
+
+	var legs := []
+	for value in [1.0, 0.0, 1.0]:
+		cfg.far_cpp = value
+		# The F4 panel's own path. Returning the fallback means nothing moved,
+		# which on the first leg is correct - setup() already snapshotted 1.0.
+		FarField.apply_far_knobs(world, null, cfg, "FALLBACK")
+		_pump_far_field(far_field)
+		var stats: Dictionary = far_field.stats()
+		legs.append({
+			"knob": value,
+			"mesher": stats.get("mesher", "?"),
+			"verts": int(stats.get("vertices", 0)),
+			"build_ms": int(stats.get("build_ms", 0)),
+			"arrays": _far_mesh_arrays(far_field),
+		})
+
+	var available: bool = bool(far_field.stats().get("cpp_available", false))
+	for leg in legs:
+		print("  far_cpp %.0f -> %-8s %d verts, %d ms build" % [
+			leg["knob"], leg["mesher"], leg["verts"], leg["build_ms"]])
+
+	# 1. The knob picks the mesher it says it picks.
+	var want_on := "c++" if available else "gdscript"
+	if legs[0]["mesher"] != want_on or legs[2]["mesher"] != want_on:
+		print("  far_cpp 1 built through %s / %s, not %s" % [
+			legs[0]["mesher"], legs[2]["mesher"], want_on])
+		bad += 1
+	if legs[1]["mesher"] != "gdscript":
+		print("  far_cpp 0 built through %s, not gdscript" % legs[1]["mesher"])
+		bad += 1
+
+	# 2. And it is the SAME MESH either way, vertex for vertex. This is the
+	# parity gate again, through the node rather than beside it.
+	for k in [1, 2]:
+		if legs[k]["verts"] != legs[0]["verts"]:
+			print("  leg %d emitted %d vertices against leg 0's %d" % [
+				k, legs[k]["verts"], legs[0]["verts"]])
+			bad += 1
+		var d := _far_arrays_diff(legs[0]["arrays"], legs[k]["arrays"])
+		if d != 0.0:
+			print("  leg %d differs from leg 0 by %.9f" % [k, d])
+			bad += 1
+
+	print("far dispatch: %s, three legs, meshes identical" % [
+		"c++ present" if available else "no c++ library, gdscript both ways"])
+	world.free()
+	return bad
+
+
+## The arrays of the mesh FarField is actually holding, read back off the
+## Mesh rather than off the job - the job is gone by the time _process has
+## applied it, and what is on screen is the thing being compared.
+func _far_mesh_arrays(far_field: Node) -> Array:
+	var m: Mesh = far_field.mesh
+	if m == null or m.get_surface_count() == 0:
+		return []
+	return m.surface_get_arrays(0)
+
+
+func _far_arrays_diff(a: Array, b: Array) -> float:
+	if a.is_empty() or b.is_empty():
+		return 0.0 if a.is_empty() and b.is_empty() else 1.0
+	var va: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var vb: PackedVector3Array = b[Mesh.ARRAY_VERTEX]
+	if va.size() != vb.size():
+		return 1.0
+	var worst := 0.0
+	for k in va.size():
+		var p := va[k]
+		var q := vb[k]
+		worst = maxf(worst, maxf(absf(p.x - q.x),
+			maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	return worst

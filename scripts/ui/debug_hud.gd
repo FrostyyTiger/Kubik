@@ -129,6 +129,11 @@ const LOCAL_TUNING_ROWS := [
 	["far_overdraw", "distance: far starts at (x r)", 0.0, 0.9, 0.05],
 	["far_dither_m", "distance: seam dither (m)", 0.0, 90.0, 5.0],
 	["far_tree_grain", "distance: far tree grain", 0.0, 0.3, 0.01],
+	# DISTANCE V4, appended after distance v3's block. Not a look knob: the two
+	# meshers emit identical arrays, so this moves the rebuild TIME and nothing
+	# a picture can see. It is here so "identical" is something Marcel can turn
+	# off standing still rather than take from a gate.
+	["far_cpp", "distance: c++ mesher (0/1)", 0.0, 1.0, 1.0],
 ]
 
 var config: WorldgenConfig = null
@@ -335,6 +340,12 @@ func _compose_readout() -> String:
 		lines.append("far mesh  %d verts, %d ms build, %d ms wall, %d rebuilds" % [
 			ff.get("vertices", 0), ff.get("build_ms", 0),
 			ff.get("wall_ms", 0), ff.get("rebuilds", 0)])
+		# DISTANCE V4 STAGE 5. WHICH mesher drew it, and whether there is a
+		# choice at all - the one thing a screenshot cannot say, and the first
+		# question to ask when a rebuild time looks wrong.
+		lines.append("far mesher: %s%s" % [
+			ff.get("mesher", "gdscript"),
+			"" if ff.get("cpp_available", false) else " (no c++ library)"])
 
 	# UI V1. The Status crib's permanent line moved here (Decision 5) - it
 	# was a dev convenience from before there was a HUD, and the HUD replacing
