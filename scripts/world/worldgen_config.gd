@@ -1291,6 +1291,21 @@ const FOG_START_RATIO := 0.4
 ## 0 is a still forest, and it is what every stage before 8 shipped.
 @export var tree_sway := 0.5
 
+## DO TREES HAVE TRUNK COLLIDERS? Trees v3 Stage 6, decision 8.
+##
+## LOCAL and unhashed, and that classification takes a moment to justify
+## because a collider sounds like world truth. It is not: the world truth is
+## WHERE THE TREE IS, which is `TreePlacement.decide()` and is hashed. Whether
+## this machine has built a cylinder there is a rendering-side fact of the same
+## kind as whether it has built the ground's own collider, and the host is
+## authoritative for movement either way (world feel v1's host-authoritative
+## input). Two machines at different values still agree about the forest.
+##
+## The lever exists because a ring of six hundred cylinders is the one thing in
+## this epic that costs the PHYSICS server rather than the renderer, and a
+## number you can turn to 0 is how that gets measured.
+@export var tree_colliders := true
+
 ## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
 ##
 ## The world is unbounded by design, so the height map is built in tiles
@@ -1736,6 +1751,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# TREES V3 STAGE 2. The wind in the crowns - a look knob, so LOCAL: two
 	# machines at different values grow the same forest.
 	"tree_sway",
+	# TREES V3 STAGE 6. The trunk collider ring.
+	"tree_colliders",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

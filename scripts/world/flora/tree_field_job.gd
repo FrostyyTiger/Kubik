@@ -145,6 +145,29 @@ var heightmap: Heightmap = null
 ## or its draw-call count moves while both systems are alive.
 var buffers := {}
 
+## WITHIN THIS RADIUS, IN BLOCKS, A TREE GETS A TRUNK COLLIDER. 0 disables.
+##
+## The sim radius rather than the voxel radius, because a collider is a
+## GAMEPLAY fact and the sim radius is where gameplay happens - it is the ring
+## World already streams collidable ground into for every simulated peer.
+var collider_blocks := 0.0
+
+## HOST-OWNED SET OF FELLED TREES, keyed by placement cell, snapshotted at
+## submit time. Trees v3 decision 8's seam, and NOTHING WRITES TO IT TONIGHT.
+##
+## It is threaded through anyway, and that is deliberate rather than
+## speculative: chopping is fell-as-a-unit now (ruling 2), the one mutation
+## path will be its only writer, and a removed-set added later would have to be
+## threaded through this walk, `cover_column()` and the collider ring in one
+## go. Threading it while both are being written costs three lines and proves
+## the shape of the seam - the `_flora_removed` pattern, which flora already
+## carries for exactly this reason.
+var removed := {}
+
+## Trunk colliders for the trees inside `collider_blocks`, for the main thread.
+## Each is [Vector3 centre in metres, radius m, height m].
+var colliders: Array = []
+
 ## Instances that are library models rather than cones, for the log line and
 ## for Stage 4's gate - which is "the instance count for this species equals
 ## its placement count".
@@ -285,6 +308,11 @@ func run() -> void:
 				var found := TreePlacement.decide(generator, cx, cz, masks)
 				if found.is_empty():
 					continue
+				# THE FELLED SET, checked once, here. A tree that has been cut
+				# down is not drawn and does not collide, and both follow from
+				# this one line rather than from two that could disagree.
+				if not removed.is_empty() and removed.has(found["cell"]):
+					continue
 
 				var species: int = found["species"]
 				var variant := &""
@@ -317,6 +345,22 @@ func run() -> void:
 				if _terrace_on():
 					lift = FarFieldJob.terrace_offset(heightmap, config,
 						found["bx"], found["bz"], d * config.block_size)
+				# THE TRUNK COLLIDER, decided here because this is where the
+				# variant is known and the sidecar's trunk dimensions hang off
+				# it. Inside the sim radius only: a cylinder per tree over a
+				# 600 m field would be sixty thousand shapes for a world nobody
+				# is standing in.
+				if variant != &"" and collider_blocks > 0.0 \
+						and d_sq <= collider_blocks * collider_blocks:
+					var trunk := TreeModels.trunk_of(variant)
+					if trunk.x > 0.0 and trunk.y > 0.0:
+						var foot := (float(found["ground"] + 1) + lift) \
+							* config.block_size
+						colliders.append([
+							Vector3(float(found["bx"]) * config.block_size,
+								foot + trunk.y * 0.5,
+								float(found["bz"]) * config.block_size),
+							trunk.x, trunk.y])
 				by_species[key].append({
 					"variant": variant,
 					"spread": spread,

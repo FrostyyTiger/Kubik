@@ -822,3 +822,118 @@ with the canopy-aware siblings the plan names.
 frame**, which is what geometry-all-the-way-out costs and what ruling 4 bought
 knowingly. It buys a forest with no card in it anywhere.
 
+
+---
+
+## Stage 6 - the body: colliders, occupancy, the removed-set seam
+
+**A trunk stops you, the ring holds exactly one cylinder per placed tree, and
+a ray twenty metres to the side hits nothing.**
+
+### Where the collider ring lives, and why not where the plan said
+
+Decision 8 asks for the colliders to come "through the same worker->main
+promotion path `FloraJob` uses for boulders". `FloraJob` is flora's own system
+and hard rule 6 makes it read-only to this epic - so the ring takes that
+path's SHAPE rather than its code: **`TreeFieldJob` computes the list on the
+worker and `TreeField` promotes it on the main thread**, which is the same
+split for the same reason, in a file this lane owns.
+
+`TreeFieldJob` already walks the placement lattice at stride 1 near the player
+and already knows each tree's variant, so the cylinder's dimensions come
+straight off the sidecar at the point the variant is chosen. Nothing is asked
+twice.
+
+| | |
+| --- | --- |
+| radius and height | `TreeModels.trunk_of()` - measured off the model by the tool, never typed |
+| where | inside `sim_radius_chunks * Chunk.SIZE` - **the sim radius, not the voxel radius**, because a collider is a GAMEPLAY fact and the sim radius is the ring World already streams collidable ground into for every peer |
+| the shapes | one `StaticBody3D` holding a POOL of `CollisionShape3D`, reused across rebuilds and disabled rather than freed |
+| the canopy | **does not collide, and never meaningfully did** - leaf blocks were written `only_air`, which made them decoration you could stand inside |
+| the budget | the collider batch is a slice on `FarUpload` like any other (decision 10, v5 hard rule 6 verbatim) |
+| the knob | `tree_colliders`, LOCAL, default true |
+
+**`tree_colliders` is LOCAL and that classification wants a sentence.** A
+collider sounds like world truth and is not: the world truth is WHERE THE TREE
+IS, which is `decide()` and is hashed. Whether this machine has built a
+cylinder there is the same kind of fact as whether it has built the ground's
+own collider, and the host is authoritative for movement either way. Two
+machines at different values still agree about the forest.
+
+### The removed-set seam, threaded and unwritten
+
+`TreeField.removed_trees` and `TreeFieldJob.removed`, keyed by placement cell,
+checked in **one place** - immediately after `decide()` - so a felled tree is
+neither drawn nor collidable and the two cannot disagree.
+
+**Nothing in this epic writes to it.** It is threaded while all three
+consumers are being written because adding it afterwards would mean touching
+all three again, and because a seam nobody has tried to thread is a seam
+nobody knows the shape of. Chopping is fell-as-a-unit now (ruling 2) and the
+one mutation path will be its only writer - a client proposes, the host
+validates against the allowed list and applies, exactly as a block edit is
+treated.
+
+### Open question 4, answered on cost
+
+*"Collider granularity: one cylinder per tree always, or a capsule for the
+leaners - body-probe cost decides."*
+
+**One cylinder, always.** The widest ring this test could build holds **213
+cylinders**; the ring the game actually builds at `sim_radius_chunks` 4 holds
+**1 to 11** over a 960 m sprint. That is not a budget a capsule special case
+could improve on, and Tree 09 and Tree 10 - the "leaners" the question was
+about - turned out to be coconut palms and are benched.
+
+### The gate
+
+| Stage 6 gate (plan) | result |
+| --- | --- |
+| trunk cylinders within the sim radius via the promotion path | worker computes, main thread promotes, pooled shapes |
+| `removed_trees` threaded, unwritten | one check, immediately after `decide()` |
+| the audit's kill-or-keep executed for gameplay queries | `_ground_allows` / `_trees_near` already asked placement and are untouched; nothing else asked at all (Stage 0's grep) |
+| **a new test: walk into a trunk, be stopped** | **ray hit yes**, and a ray 20 m clear hits nothing |
+| **body-probe count matches placed trees in radius** | **213 cylinders, placement says 213** |
+| physics cost of the collider ring measured and recorded | **1-11 cylinders** over a 960 m sprint at the shipped `sim_radius_chunks` |
+| self-test both ways | **green** |
+
+Collider dimensions across the sample: **radius 0.44-0.95 m, height
+2.00-27.00 m**. The 27 m heights are the bare spires and the 2 m ones the
+stumps, both from the tool's `solid` trunk rule - a spire IS a post and a
+stump IS a trunk, so a cylinder the height of the model is the right answer
+for both.
+
+### A finding: the collider ring's guaranteed margin is 8 m
+
+The ring is rebuilt on the field's own debounce - `far_tree_step_m`, 24 m,
+horizontal - and reaches `sim_radius_chunks * Chunk.SIZE` = **32 m**. So a
+tree is guaranteed to have a collider from at least **32 - 24 = 8 m** before
+the player reaches it, and usually much further.
+
+Eight metres is enough - a sprinting player crosses it in well under a second
+and the cylinder is there before they arrive - but it is thinner than it
+looks, and it is the number to watch if either knob moves. **Raising
+`far_tree_step_m` without raising `sim_radius_chunks` would eventually let a
+player walk through a trunk**, and the symptom would be intermittent and
+position-dependent, which is the worst kind. Recorded here rather than
+guarded in code, because both knobs are Marcel's and the relationship is the
+thing to know.
+
+### And the self-test harness would not run an awaiting test
+
+Worth writing down, because the first version of the body test was correct and
+the harness refused it. The obvious way to test a collider is to add a
+`StaticBody3D` to the scene and fire a ray - and a body is not in its space
+until a physics frame has passed, so the test has to `await` one.
+
+**An awaiting test breaks this harness's entire crash-detection method.** It
+reports a crash by returning something that is not an int (see the note at the
+top of `selftest.gd`), and a coroutine is not an int either. `_ready` refused
+to call it at all: `Trying to call an async function without "await"`.
+
+The fix is not to make the harness await - that would mask the crash detection
+for all thirty tests. It is to give the test **its own physics space through
+`PhysicsServer3D`**, which is live the moment it is created and needs no
+frame. Same Jolt server, same cylinder shape, same query; the only thing given
+up is the scene tree, which was never part of the claim.
+

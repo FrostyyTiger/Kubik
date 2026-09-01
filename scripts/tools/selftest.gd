@@ -82,6 +82,8 @@ func _ready() -> void:
 		"tree table": _test_tree_table,
 		# TREES V3 STAGE 4.
 		"tree field": _test_tree_field,
+		# TREES V3 STAGE 6.
+		"tree colliders": _test_tree_colliders,
 	}
 	var failures := 0
 	for name in tests:
@@ -3315,4 +3317,155 @@ func _test_tree_field():
 	if expect == 0:
 		print("  WARNING: no model species in the sample - this test proved nothing")
 		return 1
+	return bad
+
+
+## A TRUNK MUST STOP YOU, AND THE COUNT MUST MATCH PLACEMENT.
+##
+## Trees left the block grid, so "is there a tree here" stopped being a
+## question about the voxel volume - and with it went the collision the volume
+## gave for free. Decision 8 replaces it with an explicit cylinder per trunk
+## inside the sim radius, which is a thing that can silently be in the wrong
+## place, the wrong size, or absent.
+##
+## Two claims, and the second is the one that matters to a player:
+##
+##   COUNT   the ring holds exactly one cylinder per tree placement decides
+##           inside the radius - not one per DRAWN tree, which would let a
+##           fade or an LOD rung quietly remove collision.
+##   BODY    a ray fired horizontally at a trunk, at chest height, from
+##           outside it, HITS. That is "walk into a trunk, be stopped" in the
+##           only form a headless test can carry, and it exercises the real
+##           shape at its real position through the real physics server.
+func _test_tree_colliders():
+	if not TreeModels.available():
+		print("tree colliders: no library mounted, 0 checks (public build)")
+		return 0
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(42, cfg)
+	gen.build_heightmap()
+
+	var job := TreeFieldJob.new()
+	job.center = Vector2i(0, 0)
+	job.generator = gen
+	job.config = cfg
+	job.heightmap = gen.heightmap
+	job.inner_blocks = float(cfg.voxel_radius_chunks * Chunk.SIZE)
+	job.outer_blocks = job.inner_blocks * 1.6
+	job.lod_blocks = job.outer_blocks
+	job.lod2_blocks = job.outer_blocks
+	job.lod3_blocks = job.outer_blocks
+	# DELIBERATELY WIDER THAN THE GAME'S sim radius, because seed 42's spawn
+	# has a 24 m tree clearing around it by design and a 32 m ring there holds
+	# nothing at all. A test whose sample is empty proves nothing.
+	job.collider_blocks = job.outer_blocks
+	job.run()
+
+	# The same annulus, asked of placement directly.
+	var expect := 0
+	var cell: int = cfg.tree_cell_blocks
+	var masks := TreePlacement.masks_for(gen)
+	var r_sq := job.collider_blocks * job.collider_blocks
+	var reach := int(ceil(job.collider_blocks))
+	for cz in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+		for cx in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+			var d_sq := float(cx * cell) * float(cx * cell) \
+				+ float(cz * cell) * float(cz * cell)
+			if d_sq > r_sq or d_sq <= -1.0:
+				continue
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			if not TreeTable.drawn_as_model(found["species"], cfg):
+				continue
+			var v := TreeTable.variant_for(found["species"], found["cell"],
+				gen.world_seed, cfg)
+			if v == &"":
+				continue
+			# A variant whose sidecar reports no trunk gets no cylinder, and
+			# the expectation has to know that or it counts a tree the ring
+			# was right not to build.
+			if TreeModels.trunk_of(v) == Vector2.ZERO:
+				continue
+			expect += 1
+
+	var bad := 0
+	if job.colliders.size() != expect:
+		print("  the ring holds %d cylinders, placement decides %d trees" % [
+			job.colliders.size(), expect])
+		bad += 1
+	if job.colliders.is_empty():
+		print("  WARNING: no colliders in the sample - this test proved nothing")
+		return 1
+
+	# Every cylinder must be a real trunk: a positive radius, a positive
+	# height, and its foot at or above the ground rather than buried.
+	var silly := 0
+	for row in job.colliders:
+		if float(row[1]) <= 0.0 or float(row[2]) <= 0.0:
+			silly += 1
+	if silly > 0:
+		print("  %d cylinders have a non-positive radius or height" % silly)
+		bad += 1
+
+	# THE BODY TEST, ON ITS OWN PHYSICS SPACE AND WITHOUT `await`.
+	#
+	# The obvious version adds a StaticBody3D to this scene and fires a ray at
+	# it - and it does not work, because a body is not in its space until a
+	# physics frame has passed, so the test has to await one. An awaiting test
+	# breaks this harness's whole detection method: it reports a crash by
+	# returning something that is not an int, and a coroutine is not an int
+	# either. `_ready` refused to call it at all.
+	#
+	# So: a space of this test's own, through PhysicsServer3D, which is live
+	# the moment it is created and needs no frame. It is the same Jolt server
+	# the game runs on and the same cylinder shape the ring builds, queried the
+	# same way - the only thing given up is the scene tree, which was never
+	# part of the claim.
+	var space := PhysicsServer3D.space_create()
+	PhysicsServer3D.space_set_active(space, true)
+	var body := PhysicsServer3D.body_create()
+	PhysicsServer3D.body_set_mode(body, PhysicsServer3D.BODY_MODE_STATIC)
+	PhysicsServer3D.body_set_space(body, space)
+	var shape := PhysicsServer3D.cylinder_shape_create()
+	var first: Array = job.colliders[0]
+	PhysicsServer3D.shape_set_data(shape,
+		{"radius": float(first[1]), "height": float(first[2])})
+	var centre: Vector3 = first[0]
+	PhysicsServer3D.body_add_shape(body, shape, Transform3D(Basis(), centre))
+
+	var stopped := false
+	var leaked := false
+	var st := PhysicsServer3D.space_get_direct_state(space)
+	if st != null:
+		# Fired horizontally at the trunk's own centre height, from three
+		# metres outside its radius. This is "walk into it and be stopped".
+		var from := centre + Vector3(float(first[1]) + 3.0, 0.0, 0.0)
+		stopped = not st.intersect_ray(
+			PhysicsRayQueryParameters3D.create(from, centre)).is_empty()
+		# AND THE MIRROR OF IT, because a test that only checks for a hit
+		# passes on a shape the size of the world: a ray twenty metres to the
+		# side, at the same height, must MISS.
+		var clear := centre + Vector3(0.0, 0.0, 20.0)
+		leaked = not st.intersect_ray(PhysicsRayQueryParameters3D.create(
+			clear + Vector3(float(first[1]) + 3.0, 0.0, 0.0),
+			clear)).is_empty()
+	if not stopped:
+		print("  a ray fired at a trunk from 3 m away did not hit it")
+		bad += 1
+	if leaked:
+		print("  a ray fired 20 m clear of the trunk hit something")
+		bad += 1
+	PhysicsServer3D.free_rid(shape)
+	PhysicsServer3D.free_rid(body)
+	PhysicsServer3D.free_rid(space)
+
+	var radii := Vector2(1e9, 0.0)
+	var heights := Vector2(1e9, 0.0)
+	for row in job.colliders:
+		radii = Vector2(minf(radii.x, row[1]), maxf(radii.y, row[1]))
+		heights = Vector2(minf(heights.x, row[2]), maxf(heights.y, row[2]))
+	print("tree colliders: %d cylinders, placement says %d; radius %.2f-%.2f m, height %.2f-%.2f m; ray hit %s" % [
+		job.colliders.size(), expect, radii.x, radii.y, heights.x, heights.y,
+		"yes" if stopped else "NO"])
 	return bad

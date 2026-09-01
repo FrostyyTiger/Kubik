@@ -98,6 +98,19 @@ var _has_pending := false
 ## Per-sector radius in chunks out to which the real trees have landed. Set by
 ## Game from World.loaded_frontier() when the frontier moves.
 var frontier := PackedInt32Array()
+
+## FELLED TREES, KEYED BY PLACEMENT CELL. Decision 8's seam.
+##
+## EMPTY, AND NOTHING IN THIS EPIC WRITES TO IT. Chopping is fell-as-a-unit now
+## (ruling 2) and the ONE MUTATION PATH will be its only writer - a client
+## proposes, the host validates against the allowed list and applies, exactly
+## as a block edit is treated (CLAUDE.md habit 3). It is threaded through the
+## job, the draw and the collider ring while all three are being written
+## because adding it afterwards would mean touching all three again, and
+## because a seam nobody has tried to thread is a seam nobody knows the shape
+## of. Flora carries `_flora_removed` for the same reason and got it right the
+## same way.
+var removed_trees := {}
 var _last_center_m := Vector3(INF, INF, INF)
 
 var _generator: TerrainGenerator = null
@@ -107,6 +120,9 @@ var _config: WorldgenConfig = null
 ## seven variants at three rungs is up to twenty-one slots and one draw call
 ## each. See the note on TreeFieldJob.buffers.
 var _slots := {}
+var _trunks: StaticBody3D = null
+var _shapes: Array = []
+var _collider_count := 0
 var _count := 0
 var _models := 0
 var _triangles := 0
@@ -211,6 +227,16 @@ func _start_if_idle() -> void:
 	# INSIDE the first, which would silently drop the 1-in-4 band entirely.
 	job.lod2_blocks = maxf(LOD_COARSE_M / _config.block_size, job.lod_blocks)
 	job.lod3_blocks = maxf(LOD_COARSEST_M / _config.block_size, job.lod2_blocks)
+	# THE COLLIDER RING, trees v3 Stage 6. The sim radius, because a collider is
+	# a GAMEPLAY fact and the sim radius is the ring World already streams
+	# collidable ground into for every simulated peer - so a tree you can walk
+	# into is a tree standing on ground you can walk on, by construction rather
+	# than by two radii that happen to agree.
+	job.collider_blocks = float(_config.sim_radius_chunks * Chunk.SIZE) \
+		if _config.tree_colliders else 0.0
+	# The felled set. Nothing writes to it tonight - see the note on the job's
+	# own field, and on `removed_trees` below.
+	job.removed = removed_trees
 	_job = job
 	_task = WorkerThreadPool.add_task(job.run, false, "kubik far trees")
 
@@ -234,11 +260,18 @@ func _apply(job: TreeFieldJob) -> void:
 	if up == null:
 		for key in job.buffers:
 			_apply_species(job, key)
+		_apply_colliders(job)
 		_apply_tail(job)
 		return
 	var work: Array[Callable] = []
 	for key in job.buffers:
 		work.append(_apply_species.bind(job, key))
+	# THE COLLIDER BATCH IS A SLICE LIKE ANY OTHER (decision 10, and v5 hard
+	# rule 6 adopted verbatim). It is a few hundred shape writes and has never
+	# measured above a millisecond - it is on the budget because "every
+	# handover" is a rule, and a rule with an exception is a thing somebody has
+	# to remember.
+	work.append(_apply_colliders.bind(job))
 	up.submit(&"tree_field", work, _apply_tail.bind(job))
 
 
@@ -287,6 +320,46 @@ func _mesh_for_key(key: String) -> Mesh:
 	return TreeModels.mesh_for(StringName(m[0]), int(m[1]), _config.block_size)
 
 
+## THE TRUNK COLLIDERS, decision 8.
+##
+## One StaticBody3D holding every trunk in the sim radius, with the shapes
+## POOLED across rebuilds - a CollisionShape3D is a node and a shape is a
+## server resource, and building six hundred of each every twenty-four metres
+## of walking is the kind of allocation churn that shows up as a stutter rather
+## than as a number.
+##
+## THE CANOPY DOES NOT COLLIDE, and never meaningfully did: leaf blocks were
+## written with `only_air`, which made them decoration you could stand inside.
+## A trunk is what a player bumps into, and a cylinder is what a trunk is.
+func _apply_colliders(job: TreeFieldJob) -> void:
+	if _trunks == null:
+		_trunks = StaticBody3D.new()
+		_trunks.name = "Trunks"
+		add_child(_trunks)
+	var want := job.colliders.size()
+	# Grow the pool. Shrinking it is deliberately not done: the ring is a
+	# roughly constant size and freeing nodes to rebuild them next rebuild is
+	# the churn this pool exists to avoid.
+	while _shapes.size() < want:
+		var cs := CollisionShape3D.new()
+		var cyl := CylinderShape3D.new()
+		cs.shape = cyl
+		_trunks.add_child(cs)
+		_shapes.append(cs)
+	for i in _shapes.size():
+		var cs: CollisionShape3D = _shapes[i]
+		if i >= want:
+			cs.disabled = true
+			continue
+		var row: Array = job.colliders[i]
+		var cyl: CylinderShape3D = cs.shape
+		cyl.radius = float(row[1])
+		cyl.height = float(row[2])
+		cs.position = row[0]
+		cs.disabled = false
+	_collider_count = want
+
+
 func _apply_tail(job: TreeFieldJob) -> void:
 	for key in _slots:
 		if not job.buffers.has(key):
@@ -298,8 +371,8 @@ func _apply_tail(job: TreeFieldJob) -> void:
 	# "[TreeField] N impostors in N ms" line: game.gd is append-only in this
 	# epic and has already spent its one line. Stage 5's gate is a ratio and
 	# nothing in the project reported the numerator.
-	print("[TreeField] %d triangles over %d slots (%d model instances of %d)" % [
-		_triangles, _slots.size(), _models, _count])
+	print("[TreeField] %d triangles over %d slots (%d model instances of %d), %d trunk colliders" % [
+		_triangles, _slots.size(), _models, _count, _collider_count])
 	rebuilt.emit(job.count, _last_ms)
 
 
@@ -338,7 +411,7 @@ func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 ## for STATUS.md.
 func stats() -> Dictionary:
 	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles,
-		"models": _models}
+		"models": _models, "colliders": _collider_count}
 
 
 ## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even
