@@ -121,6 +121,7 @@ struct Config {
 	double far_riser_shade = 1.0;
 	double far_riser_lift = 1.6;
 	double far_riser_axis = 0.08;
+	double far_geomorph_cells = 4.0;
 	// The detail layer, for the seam band.
 	double detail_amp = 3.0;
 	double detail_freq = 0.08333;

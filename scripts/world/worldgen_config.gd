@@ -1240,6 +1240,48 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## HOW MANY CELLS BEFORE A RING BOUNDARY THE CELL-HEIGHT SAMPLE SLIDES ONTO
+## THE COARSE RING'S LATTICE. Distance v5 Stage 3. 0 turns the geomorph off and
+## restores the ring boundaries STATUS items 9 and 18 describe.
+##
+## Ring boundaries are loud because two rings sample a cell's height at
+## DIFFERENT WORLD POINTS - the fine ring at its own cell centre, the coarse
+## one at the centre of the coarser cell containing it. Distance v2 Stage 9
+## measured the three candidate fixes and only one worked: share the sample
+## POINT, keep the step. Sharing it everywhere means 16 m blocks at every
+## range; sharing it over the last two cells of each ring costs those cells
+## their independence and nothing else.
+##
+## 4.0, AND IT IS A MEASUREMENT RATHER THAN THE PLAN'S GUESS. Distance v2
+## Stage 9 recommended "the last cell or two"; the far probe's ring-boundary
+## table on ganymede, seed 42, `far_ring_div` 4, says wider is better and
+## nothing it can see gets worse:
+##
+##     cells       150 m  300 m  600 m  1200 m  2400 m   ALL rms   roughness
+##     0 (off)      4.00  10.00  44.00   88.00  147.00     1.513     13.1954
+##     2            4.00  10.00  44.00   73.00   73.00     1.278     13.2349
+##     4            3.00   7.00  32.00   47.00   40.00     0.981     13.2539
+##     6            3.00   7.00  26.00   36.00   26.00     0.829     13.2457
+##
+## The reason wider helps is what a geomorph IS: it does not remove the height
+## difference between two rings, it spreads it over a band, and fizz is the
+## change a 32-block step of the player produces. Twice the band is half the
+## change per step.
+##
+## SO WHY NOT 6, OR THE WHOLE RING. Because the far probe cannot see the thing
+## that eventually goes wrong. A cell inside the band is drawn on the COARSE
+## ring's lattice, so a band as wide as the ring means the fine ring is not
+## fine any more - which is distance v2 Stage 9's third experiment, the one it
+## measured at "16.00, gone" and deliberately did not ship, because the far
+## country would be 16 m blocks at every range. Roughness has not moved at 6,
+## so the limit is further out than that; 4 is where the measured gain is
+## already 3.7x on the worst boundary and there is still obvious headroom in
+## the knob. Turning it up is one number on F4.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob, and on
+## FAR_ONLY_PROPERTIES so it is judgeable standing still.
+@export var far_geomorph_cells := 4.0
+
 ## HOW FAR THE PLAYER MUST MOVE HORIZONTALLY BEFORE THE IMPOSTOR RING IS
 ## REBUILT, in metres. Distance v5 Stage 2. 0 falls back to
 ## FarTrees.REBUILD_STEP_M.
@@ -1612,6 +1654,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_upload_budget_ms",
 	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
 	"far_tree_step_m",
+	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.
+	"far_geomorph_cells",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

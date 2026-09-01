@@ -410,3 +410,117 @@ Stages 1 and 2 are one run each and this box moves about 9% between them; the
 honest reading of that table is that Stage 2 changed nothing a sprint can see,
 which is what it should do - a sprint is horizontal and the fix is about
 altitude.
+
+---
+
+## Stage 3 - the geomorph, both meshers
+
+**The loudest ring boundary goes 147.00 blocks of max fizz to 40.00, the whole
+table's rms goes 1.513 to 0.981, and the far country got no smoother while it
+happened.** STATUS items 9 and 18, carried since distance v2, closed with the
+fix those items themselves wrote down.
+
+### What it is, in one paragraph
+
+Distance v2 Stage 9 measured why a ring boundary is loud and it is not the step
+ladder: two rings sample a cell's height at DIFFERENT WORLD POINTS - the fine
+ring at the centre of its own cell, the coarse one at the centre of the coarser
+cell containing it, up to half a coarse cell apart. On a flank that is tens of
+blocks of height before anything is quantised. Its third experiment - every ring
+at the same sample POINT, each at its own step - measured "16.00, gone", and was
+not shipped because sharing a point everywhere means 16 m blocks at every range.
+
+So: share it **only where two rings meet**. Over the last `far_geomorph_cells`
+cells before a ring's outer boundary the cell-height sample slides from this
+ring's cell centre onto the coarse ring's lattice, and at the boundary both
+rings read the same point. It touches the sample position and nothing else - not
+the quantisation step, not the ridge test, not the corner heights, not the
+terrace fade, not the seam band. `far_field_job.gd` and `far_build.cpp`, same
+commit, decision 2.
+
+### The ladder, and why the default is 4 rather than the plan's 2
+
+`--far-probe --cpp`, ganymede, seed 42, `far_ring_div` 4, deterministic. Max
+fizz in blocks at each ring boundary, +/- 25 m:
+
+| `far_geomorph_cells` | 150 m | 300 m | 600 m | 1200 m | 2400 m | ALL rms | ALL max | roughness |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **0 (Stage 0)** | 4.00 | 10.00 | 44.00 | 88.00 | **147.00** | 1.513 | 147.00 | 13.1954 |
+| 2 (the plan's) | 4.00 | 10.00 | 44.00 | 73.00 | 73.00 | 1.278 | 73.00 | 13.2349 |
+| **4 (shipped)** | 3.00 | 7.00 | 32.00 | 47.00 | **40.00** | **0.981** | 61.00 | 13.2539 |
+| 6 | 3.00 | 7.00 | 26.00 | 36.00 | 26.00 | 0.829 | 41.00 | 13.2457 |
+
+**Wider is better because of what a geomorph IS.** It does not remove the
+height difference between two rings; it spreads it over a band. Fizz is the
+change a 32-block step of the player produces, so twice the band is half the
+change per step - which is exactly the ratio the 2-cell row shows (147 -> 73).
+
+**Roughness does not fall**, at any width measured. That is the number that
+would say the far country was being smoothed to buy the fizz, and it goes
+slightly UP: 13.1954 -> 13.2539.
+
+**So why not 6, or the whole ring.** Because the far probe cannot see the thing
+that eventually goes wrong: a cell inside the band is drawn on the COARSE
+ring's lattice, so a band as wide as the ring is distance v2's third experiment
+again and the far country becomes 16 m blocks at every range. Roughness says
+the limit is further out than 6; **4 is where the measured gain is already
+3.7x on the worst boundary and there is obvious headroom left in a knob Marcel
+can turn on F4.** The plan's 2 was written before this table existed.
+
+`far_geomorph_cells` is LOCAL, unhashed, on `FAR_ONLY_PROPERTIES`, and 0
+restores the ring boundaries exactly as items 9 and 18 describe them.
+
+### These are not items 9 and 18's own numbers, and here is why
+
+Items 9 and 18 read 24.00 / 80.00 / 128.00 / 256.00 at 200/400/960/1920 m.
+Those were measured at `far_ring_div` **2**. Distance v4 Stage 10 flipped the
+default to 4, which halves every ring's cell and moves every boundary, so the
+shipped configuration's boundaries are at 150/300/600/1200/2400 m and its
+before-picture is Stage 0's table above. Comparing tonight's 40.00 against
+item 18's 256.00 would be comparing two different worlds' geometry.
+
+### The gate
+
+| Stage 3 gate (plan) | result |
+| --- | --- |
+| parity exact, both meshers, same commit | **4 whole-mesh cases + a fifth on a world that HAS a boundary: pos, normal and colour differences all 0.000000000, 0 indices differ** |
+| the fizz table printed next to Stage 0's | above |
+| max fizz down proportionately | **147.00 -> 40.00** on the worst boundary, rms 14.712 -> 4.613 there, ALL rms 1.513 -> 0.981 |
+| far-band A/B tour pixel-diff zero between meshers | **0.0000 on nine shots**, see below |
+| full self-test | **green** |
+
+### The parity gate was blind, and the third test is why it is not now
+
+`far parity` and `far slice parity` build a 400-block world at `fog_end_m` 90,
+where the far radius is 216 blocks and ring 0's nominal outer edge is 300 - so
+ring 0 is clamped to the fog, it is the ONLY ring drawn, there is no boundary,
+and the geomorph's band is zero in every case. **Both gates came back exact on
+the night the geomorph landed and neither had executed one line of it.**
+
+That is STATUS item 13's lesson at a different address, and the answer is a
+third test - `far geomorph parity` - on a world with a ring boundary inside its
+fog. It asks three things: the two meshers agree exactly with the geomorph on;
+the slices are still the reference build's own quads with it on; and
+**`far_geomorph_cells` 0 against 4 produces a DIFFERENT mesh**, because two
+gates measuring a knob that reaches no code is exactly how distance v2's
+`far_terrace` test passed while the knob reached nothing.
+
+### The far band, C++ against GDScript
+
+Two full tours at `far_ring_div` 4, one per mesher, rows 0-300:
+
+**0.0000 differing pixels on `2-summit`, `6-postcard`, `7-forest-interior`,
+`11-forest-dusk`, `12-meadow-night`, `13-meadow-dawn`, `14-postcard-dusk`,
+`15-under-canopy` and `17-rim`** - nine shots, which is every one whose rows
+0-300 are actually the far country and four more than distance v4 managed.
+
+The residuals are foreground read through the far band's rows and they are the
+same set, at the same magnitudes, that distance v4 measured against its own
+same-code control: `8-meadow-closeup` 5.18, `10-shore` 1.36, `15-boulder` 0.50,
+`4-valley-floor` 0.18, `1-spawn` 0.13. STATUS item 13a says what those are -
+which flora columns have landed when the shutter opens - and the GDScript leg
+is a 45-second far rebuild at div 4, so the two tours stream very differently
+on the way to the same vantage. **The mesh identity this gate exists to show is
+established three independent ways: five whole-mesh array comparisons at zero,
+the geomorph world's own comparison at zero, and nine far-band shots at zero
+differing pixels.**

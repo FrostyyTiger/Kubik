@@ -504,6 +504,45 @@ var _t_step_y := 0.0
 ## construction. That is the subset property, exactly as written.
 var _t_level := 0.0
 
+# --- THE GEOMORPH, distance v5 Stage 3 ---------------------------------------
+#
+# STATUS ITEMS 9 AND 18, AND THE FIX THEY THEMSELVES WROTE DOWN. Distance v2
+# Stage 9 measured why a ring boundary is loud, and it is not the step ladder:
+#
+#     f23c3f0, smooth                                        21.57 blocks
+#     shipped: each ring quantises at its own step            80.00
+#     every ring at the SAME STEP, its own sample point       96.00 - worse
+#     every ring at the SAME SAMPLE POINT, its own step       16.00 - gone
+#
+# Two rings sample a cell's height at DIFFERENT WORLD POINTS - the fine ring at
+# the centre of its own cell, the coarse ring at the centre of the coarser cell
+# containing it, up to half a coarse cell apart. On a flank that is tens of
+# blocks of height before anything is quantised, and the player walking past the
+# boundary sees the ground jump by exactly that.
+#
+# So the fix has a smaller job than "blend two surfaces": blend the SAMPLE
+# POSITION. Over the last `far_geomorph_cells` cells before a ring's outer
+# boundary, the cell-height sample slides from this ring's cell centre to the
+# centre of the coarse ring's cell that contains it, and at the boundary the two
+# rings are reading the same point - which is the third row of that table, made
+# local instead of global. The third row was never shipped because sharing a
+# sample point EVERYWHERE means 16 m blocks at every range, which is the
+# opposite of the whole idea; sharing it only where two rings meet costs the
+# last two cells of each ring their independence and nothing else.
+#
+# WHAT IT DOES NOT TOUCH: the quantisation step, the ridge test, the corner
+# heights, the terrace fade, the seam band. One position, blended.
+
+## The ring's outer radius in blocks, and the width of the blend in blocks.
+## `_t_geo` is 0 when this ring has no coarser neighbour to hand over to - the
+## outermost ring, or a ring whose outer edge is the fog rather than a boundary.
+var _t_outer := 0.0
+var _t_geo := 0.0
+
+## The fog radius, in blocks. Read in _build_ring to decide whether a ring's
+## outer edge is a handover or the end of the world.
+var _far_radius := 0.0
+
 ## THE CELL CACHE, one entry per cell of the ring currently being built.
 ##
 ## A cell needs its own quantised height and its four neighbours', so the naive
@@ -558,6 +597,7 @@ func run() -> void:
 	# forest zone in BLOCKS; _band_color works in metres.
 	_band_treeline = treeline_band(generator, config)
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
+	_far_radius = far_radius
 	# DISTANCE V2 STAGE 0. Read once per job rather than per quad: it is a knob
 	# on a shared config that the main thread can write while this worker runs,
 	# and a value that changed half way through a build would terrace half a
@@ -728,6 +768,14 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	# entirely at far_terrace 0 - hard rule 1 is also a cost rule.
 	_t_step = step
 	_t_band = band
+	# THE GEOMORPH'S BAND FOR THIS RING - see the note by _t_geo. Only where
+	# there is a coarser ring on the other side of this boundary: the outermost
+	# ring hands over to nothing, and a ring whose outer edge is the fog rather
+	# than a ring boundary has nothing to agree with either.
+	_t_outer = outer
+	_t_geo = 0.0
+	if ring < RING_STEP_MULTIPLE.size() - 1 and outer < _far_radius:
+		_t_geo = clampf(config.far_geomorph_cells, 0.0, 8.0) * float(step)
 	# Per ring, because the cell grid is per ring and a key from the last ring
 	# could collide with a cell of this one.
 	_vote_memo.clear()
@@ -1436,6 +1484,28 @@ func _cell_h(i: int, j: int) -> float:
 	var half := _t_step / 2
 	var bx := float(_ring_cx + i * _t_step + half)
 	var bz := float(_ring_cz + j * _t_step + half)
+	# THE GEOMORPH. Over the last _t_geo blocks before this ring's outer
+	# boundary the sample slides onto the coarse ring's own lattice, so at the
+	# boundary both rings read the same point and the shelf stops moving. See
+	# the note by _t_geo.
+	if _t_geo > 0.0:
+		var gdx := bx - float(center.x)
+		var gdz := bz - float(center.y)
+		var w := clampf(
+			(sqrt(gdx * gdx + gdz * gdz) - (_t_outer - _t_geo)) / _t_geo, 0.0, 1.0)
+		if w > 0.0:
+			# The coarse ring's grid, derived exactly as _build_ring derives
+			# this one's: its step is twice ours, snapped to the same centre.
+			var coarse := _t_step * 2
+			var ccx := int(floor(float(center.x) / float(coarse))) * coarse
+			var ccz := int(floor(float(center.y) / float(coarse))) * coarse
+			var chalf := coarse / 2
+			var cbx := float(ccx
+				+ Chunk.floor_div(int(bx) - ccx, coarse) * coarse + chalf)
+			var cbz := float(ccz
+				+ Chunk.floor_div(int(bz) - ccz, coarse) * coarse + chalf)
+			bx = lerpf(bx, cbx, w)
+			bz = lerpf(bz, cbz, w)
 	v = heightmap.height_filtered(bx, bz, _t_level)
 	var gain: float = config.far_peak_gain
 	if gain > 0.0:

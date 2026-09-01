@@ -40,6 +40,7 @@ void Config::read(const Dictionary &d) {
 	far_riser_shade = cfg_f(d, "far_riser_shade", far_riser_shade);
 	far_riser_lift = cfg_f(d, "far_riser_lift", far_riser_lift);
 	far_riser_axis = cfg_f(d, "far_riser_axis", far_riser_axis);
+	far_geomorph_cells = cfg_f(d, "far_geomorph_cells", far_geomorph_cells);
 
 	detail_amp = cfg_f(d, "detail_amp", detail_amp);
 	detail_freq = cfg_f(d, "detail_freq", detail_freq);

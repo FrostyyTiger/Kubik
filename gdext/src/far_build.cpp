@@ -184,6 +184,12 @@ struct Mesher {
 	double t_amount = 0.0;
 	double t_step_y = 0.0;
 	double t_level = 0.0;
+	// THE GEOMORPH, distance v5 Stage 3. far_field_job.gd carries the argument
+	// and the measurement; this is the transcription. `t_geo` is 0 when the
+	// ring has no coarser neighbour to hand over to.
+	double t_outer = 0.0;
+	double t_geo = 0.0;
+	double far_radius = 0.0;
 	int t_step = 0;
 	double t_band = 0.0;
 	bool t_full = false;
@@ -337,6 +343,26 @@ struct Mesher {
 		int64_t half = t_step / 2;
 		double bx = (double)(ring_cx + i * (int64_t)t_step + half);
 		double bz = (double)(ring_cz + j * (int64_t)t_step + half);
+		// THE GEOMORPH - see far_field_job.gd's own note.
+		if (t_geo > 0.0) {
+			double gdx = bx - (double)center_x;
+			double gdz = bz - (double)center_z;
+			double gw = Math::clamp(
+					(Math::sqrt(gdx * gdx + gdz * gdz) - (t_outer - t_geo)) / t_geo,
+					0.0, 1.0);
+			if (gw > 0.0) {
+				int64_t coarse = (int64_t)t_step * 2;
+				int64_t ccx = (int64_t)Math::floor((double)center_x / (double)coarse) * coarse;
+				int64_t ccz = (int64_t)Math::floor((double)center_z / (double)coarse) * coarse;
+				int64_t chalf = coarse / 2;
+				double cbx = (double)(ccx
+						+ floor_div((int64_t)bx - ccx, coarse) * coarse + chalf);
+				double cbz = (double)(ccz
+						+ floor_div((int64_t)bz - ccz, coarse) * coarse + chalf);
+				bx = Math::lerp(bx, cbx, gw);
+				bz = Math::lerp(bz, cbz, gw);
+			}
+		}
 		double v = w.height_filtered(bx, bz, t_level);
 		double gain = c.far_peak_gain;
 		if (gain > 0.0) {
@@ -551,6 +577,11 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 
 	t_step = step;
 	t_band = band;
+	t_outer = outer;
+	t_geo = 0.0;
+	if (ring < RING_COUNT - 1 && outer < far_radius) {
+		t_geo = Math::clamp(c.far_geomorph_cells, 0.0, 8.0) * (double)step;
+	}
 	// Per ring, because the cell grid is per ring and a key from the last ring
 	// could collide with a cell of this one.
 	vote_memo.clear();
@@ -768,7 +799,8 @@ void Mesher::run(const Dictionary &args) {
 
 	bs = c.block_size;
 	int base_step = base_step_blocks(c);
-	double far_radius = c.fog_end_m / bs * FOG_MARGIN;
+	double far_radius_local = c.fog_end_m / bs * FOG_MARGIN;
+	far_radius = far_radius_local;
 	t_amount = Math::clamp(c.far_terrace, 0.0, 1.0);
 	t_step_y = Math::max(c.far_step_y_blocks, 0.0);
 	voting = c.far_vote > 0.0;
@@ -804,9 +836,9 @@ void Mesher::run(const Dictionary &args) {
 	double inner = exclude;
 	for (int ring = 0; ring < RING_COUNT; ring++) {
 		int step = base_step * RING_STEP_MULTIPLE[ring];
-		double outer = far_radius;
+		double outer = far_radius_local;
 		if (ring < 5) {
-			outer = Math::min(RING_OUTER_M[ring] / bs, far_radius);
+			outer = Math::min(RING_OUTER_M[ring] / bs, far_radius_local);
 		}
 		if (outer <= inner) {
 			inner = Math::max(inner, outer);

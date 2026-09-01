@@ -70,6 +70,8 @@ func _ready() -> void:
 		"far dispatch": _test_far_dispatch,
 		# DISTANCE V5 STAGE 1, appended at the end of the list.
 		"far slice parity": _test_far_slice_parity,
+		# DISTANCE V5 STAGE 3, appended after it.
+		"far geomorph parity": _test_far_geomorph_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -2714,3 +2716,119 @@ func _slice_quad_equal(va: PackedVector3Array, na: PackedVector3Array,
 		if ca[r * 4 + k] != c[q * 4 + k]:
 			return false
 	return true
+
+
+## THE GEOMORPH, ON A WORLD BIG ENOUGH TO HAVE A RING BOUNDARY IN IT. Distance
+## v5 Stage 3.
+##
+## THIS TEST EXISTS BECAUSE THE OTHER TWO CANNOT SEE THE THING IT TESTS, and
+## that was found by writing it rather than by reasoning about it. `far parity`
+## and `far slice parity` build a 400-block world at `fog_end_m` 90, where the
+## far radius is 216 blocks and ring 0's nominal outer edge is 300 - so ring 0
+## is clamped to the fog, it is the only ring drawn, there is no boundary, and
+## `_t_geo` is zero in every case. Both gates came back exact on the night the
+## geomorph landed and **neither had executed one line of it**. That is STATUS
+## item 13's lesson at a different address: a gate that is structurally blind
+## to a mechanism passes it forever.
+##
+## So: a world with a ring boundary inside the fog, and three questions.
+##
+##   1. The two meshers agree, exactly, WITH the geomorph on. Decision 2 - a
+##      mesh-output change lands in both meshers in the same commit or in
+##      neither, and this is what says it did.
+##   2. The slices are still the reference build's own quads, with it on.
+##   3. **It actually does something.** `far_geomorph_cells` 0 against 2 must
+##      produce a DIFFERENT mesh, or the two gates above are measuring a knob
+##      that is not wired to anything - which is exactly how distance v2's
+##      far_terrace test passed while the knob reached nothing.
+func _test_far_geomorph_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	# BIG ENOUGH TO HAVE A BOUNDARY IN IT, and no bigger. far_radius is
+	# fog_end_m / block_size * FOG_MARGIN = 480 blocks, so ring 0's outer edge
+	# at 300 blocks is a real handover to ring 1 and gets the geomorph, while
+	# ring 1's own outer edge is the fog and does not. The world is wide enough
+	# that the whole of ring 0's band is in bounds.
+	cfg.world_blocks_xz = 1400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 200.0
+	cfg.far_terrace = 1.0
+	cfg.far_ring_div = 2.0
+
+	var world := World.new()
+	world.setup(4242, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+	FarField.apply_overdraw(wcfg)
+	var centre := Vector2i(0, 0)
+
+	var mesher := FarMesher.new()
+	var have_cpp := FarMesher.available() and mesher.setup(heightmap, generator, wcfg)
+
+	var meshes := {}
+	for cells in [0.0, 4.0]:
+		wcfg.far_geomorph_cells = cells
+		var job := FarFieldJob.new()
+		job.heightmap = heightmap
+		job.generator = generator
+		job.config = wcfg
+		job.center = centre
+		job.run()
+		meshes[cells] = job.arrays
+		print("  far_geomorph_cells %.0f: %d verts" % [cells, job.vertex_count])
+		if not have_cpp:
+			continue
+		if not mesher.build(wcfg, centre, PackedInt32Array()):
+			print("  the c++ mesher refused to build at far_geomorph_cells %.0f" % cells)
+			bad += 1
+			continue
+		var d := _far_parity_diff(job, mesher, FarMesher.colors_ready())
+		print("    gd %6d / cpp %6d, %s" % [
+			job.vertex_count, mesher.vertex_count, d["text"]])
+		if not d["ok"]:
+			bad += 1
+		# And the slices, with the geomorph on, on a world that has a boundary.
+		if not mesher.build(wcfg, centre, PackedInt32Array(), true):
+			print("  the c++ mesher refused to build sliced")
+			bad += 1
+			continue
+		var m := _slice_match(job.arrays, _slice_index(job.arrays), mesher.slices)
+		print("    slices: %s" % m["text"])
+		if not m["ok"]:
+			bad += 1
+
+	# 3. THE KNOB IS WIRED TO SOMETHING.
+	#
+	# THE COMPARISON IS OF SETS, NOT OF INDEX k AGAINST INDEX k. Turning the
+	# geomorph on changes the height of the cells near a boundary, which changes
+	# which of them are higher than their neighbours, which changes how many
+	# risers are emitted - so the two builds do not have the same vertex count
+	# and walking them in step compares quads that are not the same quad. The
+	# first version of this line reported a "worst" of 342 m, which is the
+	# distance between two unrelated pieces of ground.
+	#
+	# What it asserts is the honest thing: the mesh MOVED. A count and a
+	# footprint, both of which change only if the knob reaches code.
+	var off: Array = meshes[0.0]
+	var on: Array = meshes[4.0]
+	if off.is_empty() or on.is_empty():
+		print("  one of the two builds emitted nothing at all")
+		bad += 1
+		world.free()
+		return bad + 1
+	var same_verts: bool = (off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() \
+		== (on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+	var same_quads: Dictionary = _slice_match(off, _slice_index(off), [on])
+	var moved: bool = not bool(same_quads["ok"])
+	if same_verts and not moved:
+		print("  far_geomorph_cells 0 -> 2 changed NOTHING - the knob reaches no code")
+		bad += 1
+	print("far geomorph parity: %d -> %d vertices with the geomorph on, mesh %s, c++ %s" % [
+		(off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size(),
+		(on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size(),
+		"CHANGED" if (not same_verts or moved) else "unchanged",
+		"compared" if have_cpp else "ABSENT"])
+	world.free()
+	return bad
