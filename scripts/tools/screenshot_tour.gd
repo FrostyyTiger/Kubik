@@ -1130,6 +1130,43 @@ func _wait_for_world() -> void:
 		frames += 1
 	if frames >= MAX_WAIT_FRAMES:
 		push_warning("[Tour] gave up waiting for chunks after %d frames" % frames)
+	await _wait_for_far_field()
+
+
+## AND FOR THE FAR COUNTRY, distance v4 Stage 8.
+##
+## `_world.is_idle()` is about CHUNKS. The far mesh is built on a worker and
+## applied in FarField._process, and until distance v4 nothing here waited for
+## it - the tour moved the player, waited for the voxels, counted eight settle
+## frames and opened the shutter. Eight frames is about 130 ms.
+##
+## THAT WAS ALWAYS WRONG AND IT ONLY BECAME VISIBLE TONIGHT. A far rebuild is
+## 169 ms in C++ and 10,894 ms in GDScript on this box, so Stage 8's A/B - one
+## tour per mesher, the far band diffed exactly - was comparing a settled far
+## mesh against one built for a vantage two stops ago. The far band came back
+## at mean |dL| 12.59 on `6-postcard`, and NONE of it was the meshers
+## disagreeing: the self-test's five whole-mesh cases and the far probe's 72
+## geometry rows are identical, and a second C++ tour diffed against the first
+## measures 0.0000 on exactly the shots this one measured 12.59 on.
+##
+## So the instrument gets the wait it always needed. It makes every future far
+## comparison honest and it cannot make a shot worse - waiting only ever means
+## photographing the far country the vantage actually asked for.
+##
+## Bounded, and it says so if it gives up: a machine with no compiled library
+## at far_ring_div 4 rebuilds in 45 s, and a tour that hung there would be
+## worse than one that photographed a stale mesh and admitted it.
+func _wait_for_far_field() -> void:
+	var far_field: Node = _world.get_node_or_null("FarField")
+	if far_field == null:
+		return
+	var frames := 0
+	while frames < MAX_WAIT_FRAMES:
+		if far_field._task == -1 and not far_field._has_pending:
+			return
+		await get_tree().process_frame
+		frames += 1
+	push_warning("[Tour] gave up waiting for the far field after %d frames" % frames)
 
 
 func _cell_to_metres(hm: Heightmap, cell: Vector2i, cfg: WorldgenConfig) -> Vector3:

@@ -252,6 +252,28 @@ func _span(i: int, level: int) -> int:
 	return mini((i + 1) * width, cols) - i * width
 
 
+## THE PYRAMID, FOR MARSHALLING ACROSS THE GDEXTENSION SEAM. Distance v4.
+##
+## Three accessors and no logic: the C++ far mesher is handed the levels as
+## plain arrays once per world (decision 2, data in and arrays out), and
+## reaching into `_levels` from another file would make the underscore a lie.
+## Level 0 is `cells` and is deliberately NOT in here - it is never copied, and
+## the caller already has it.
+##
+## Call build_pyramid() first; these return what exists, which before that is
+## nothing.
+func pyramid_levels() -> Array[PackedFloat32Array]:
+	return _levels
+
+
+func pyramid_max_levels() -> Array[PackedFloat32Array]:
+	return _max_levels
+
+
+func pyramid_level_cols() -> PackedInt32Array:
+	return _level_cols
+
+
 ## Cells per side at one level.
 func level_cols(level: int) -> int:
 	if level <= 0:

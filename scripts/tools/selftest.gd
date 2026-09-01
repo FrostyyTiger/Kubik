@@ -63,6 +63,11 @@ func _ready() -> void:
 		# UI V1 STAGE 2, appended at the end of the list.
 		"ui mouse owners": _test_ui_mouse_owners,
 		"stats table": _test_stats_table,
+		# DISTANCE V4 STAGE 1, appended at the end of the list.
+		"far parity": _test_far_parity,
+		"far pyramid parity": _test_far_pyramid_parity,
+		"far zone parity": _test_far_zone_parity,
+		"far dispatch": _test_far_dispatch,
 	}
 	var failures := 0
 	for name in tests:
@@ -1897,3 +1902,504 @@ func _test_stats_table():
 
 	print("stats table: seam, clamp and journal, %d checks failed" % bad)
 	return 1 if bad > 0 else 0
+
+
+# --- DISTANCE V4 -------------------------------------------------------------
+#
+# Appended at the end of the file, and nothing above it is touched.
+#
+# THE HARNESS EXISTS BEFORE THE PORT, which is the whole of Stage 1 and is the
+# lesson ui v1's shot harness paid for: the class of bug a rewrite introduces
+# is not the class the numbers catch. A 30x speedup that draws a slightly
+# different mountain is not a speedup, it is a regression nobody measured, and
+# by the time the pictures show it there are eight stages of C++ to bisect.
+#
+# So the comparison is wired in first and runs from Stage 1 onward, skipping
+# itself while the C++ side is a stub and printing that it skipped - because a
+# gate that silently passes when its subject is missing is the other way this
+# goes wrong.
+
+
+## THE TWO MESHERS AGREE, ARRAY FOR ARRAY. Distance v4 Stage 1, decision 3.
+##
+## Builds the same far mesh twice - once through `FarFieldJob` (GDScript, the
+## reference) and once through `FarMesher` (the GDExtension) - and compares the
+## four arrays. The default gate is IDENTICAL: same vertex count, same index
+## buffer, zero max component difference. Both meshers compute in doubles and
+## store into 32-bit packed arrays, and on one machine's libm the same
+## expression rounds the same way, so "close enough" is not the bar and a stage
+## that cannot hold exactness records WHICH expression and the measured worst
+## diff rather than lowering it quietly.
+##
+## FOUR CASES, and each one is a thing the far probe cannot see:
+##
+##   * far_terrace 0.0 - the smooth mesh, hard rule 1's way back, no cell cache
+##     and no riser in the whole build.
+##   * far_terrace 1.0 - the terrace, the ridge test, the risers, and the
+##     _t_full fast path the shipped config actually takes.
+##   * far_ring_div 4 - the 1 m cell the whole night is for, at four times the
+##     quads and a different base step in every derived radius.
+##   * A NON-EMPTY FRONTIER. `_sector_exclude` is filled only when a frontier
+##     is passed, and the far probe builds with an empty one - which is exactly
+##     how distance v2 shipped a moved inner edge past seven stages of
+##     "identical on every geometry row" (STATUS item 12). This harness is not
+##     allowed to be blind in the same place.
+func _test_far_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	# The far terrace knob test's world, and for its reason: small enough that
+	# a far mesh is a few thousand vertices rather than a hundred thousand.
+	# This test is about AGREEMENT, and the cost of a real rebuild is Stage 6's.
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	if not FarMesher.available() or not mesher.setup(heightmap, generator, wcfg):
+		print("far parity: c++ mesher absent/stub, 0 checks")
+		world.free()
+		return 0
+
+	var with_colors := FarMesher.colors_ready()
+	# A frontier the voxels have only partly reached: three sectors short, the
+	# rest at the full radius. Sixteen entries, in CHUNKS.
+	var partial := PackedInt32Array()
+	partial.resize(16)
+	for s in 16:
+		partial[s] = wcfg.voxel_radius_chunks
+	partial[0] = 1
+	partial[1] = 1
+	partial[7] = 2
+
+	var cases := [
+		{"name": "terrace 0.0", "terrace": 0.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "terrace 1.0", "terrace": 1.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "ring_div 4", "terrace": 1.0, "div": 4.0,
+			"frontier": PackedInt32Array()},
+		{"name": "frontier", "terrace": 1.0, "div": 2.0,
+			"frontier": partial},
+		# THE PATHS THE SHIPPED CONFIG NEVER TAKES. far_vote is 0.0 and both
+		# colour-jitter knobs are 0.0 by default, so the mode vote, its memo
+		# and Block.jitter's whole hash path are dead code in every mesh this
+		# project has built - and a gate that only ever ran the early return
+		# would be testing nothing. Turned on here, and only here.
+		{"name": "vote+jitter", "terrace": 1.0, "div": 2.0,
+			"frontier": partial, "vote": 1.0, "jitter": true},
+	]
+	var checks := 0
+	for c in cases:
+		wcfg.far_terrace = c["terrace"]
+		wcfg.far_ring_div = c["div"]
+		wcfg.far_vote = float(c.get("vote", 0.0))
+		wcfg.color_jitter_value = 0.06 if c.get("jitter", false) else 0.0
+		wcfg.color_jitter_hue = 0.03 if c.get("jitter", false) else 0.0
+		# THE OVERLAP IS A STATIC BOTH MESHERS READ, and it is derived from
+		# far_ring_div through base_step_blocks() - so it has to be pushed
+		# again whenever the divisor moves, on the main thread, exactly as
+		# FarField does it.
+		FarField.apply_overdraw(wcfg)
+		var centre := Vector2i(0, 0)
+
+		var job := FarFieldJob.new()
+		job.heightmap = heightmap
+		job.generator = generator
+		job.config = wcfg
+		job.center = centre
+		job.frontier = c["frontier"]
+		job.run()
+
+		if not mesher.build(wcfg, centre, c["frontier"]):
+			print("  %s: the c++ mesher refused to build" % c["name"])
+			bad += 1
+			continue
+		checks += 1
+		var d := _far_parity_diff(job, mesher, with_colors)
+		print("  %-12s gd %6d verts / cpp %6d, %s" % [
+			c["name"], job.vertex_count, mesher.vertex_count, d["text"]])
+		if not d["ok"]:
+			bad += 1
+
+	print("far parity: %d checks, colours %s" % [
+		checks, "compared" if with_colors else "SKIPPED (c++ emits white)"])
+	world.free()
+	return bad
+
+
+## The four arrays, compared. Returns whether it passed and a line to print.
+##
+## Vertices, normals and colours are float32 in the packed arrays, so the
+## comparison is a max ABSOLUTE component difference and the gate is that it
+## is exactly zero. Indices are integers and are compared for equality, which
+## is a stronger statement than any tolerance: a mesh with the same vertices in
+## a different order is a different mesh.
+func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
+		with_colors: bool) -> Dictionary:
+	var a: Array = job.arrays
+	var b: Array = mesher.arrays
+	if a.is_empty() or b.is_empty():
+		return {"ok": a.is_empty() and b.is_empty(),
+			"text": "one side emitted no arrays at all (gd %d, cpp %d)" % [
+				a.size(), b.size()]}
+	if job.vertex_count != mesher.vertex_count:
+		return {"ok": false, "text": "VERTEX COUNTS DIFFER"}
+
+	var va: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var vb: PackedVector3Array = b[Mesh.ARRAY_VERTEX]
+	var na: PackedVector3Array = a[Mesh.ARRAY_NORMAL]
+	var nb: PackedVector3Array = b[Mesh.ARRAY_NORMAL]
+	var ia: PackedInt32Array = a[Mesh.ARRAY_INDEX]
+	var ib: PackedInt32Array = b[Mesh.ARRAY_INDEX]
+	if va.size() != vb.size() or na.size() != nb.size() or ia.size() != ib.size():
+		return {"ok": false, "text": "ARRAY SIZES DIFFER: v %d/%d n %d/%d i %d/%d" % [
+			va.size(), vb.size(), na.size(), nb.size(), ia.size(), ib.size()]}
+
+	var dv := 0.0
+	for k in va.size():
+		var p := va[k]
+		var q := vb[k]
+		dv = maxf(dv, maxf(absf(p.x - q.x), maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	var dn := 0.0
+	for k in na.size():
+		var p := na[k]
+		var q := nb[k]
+		dn = maxf(dn, maxf(absf(p.x - q.x), maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	var bad_i := 0
+	for k in ia.size():
+		if ia[k] != ib[k]:
+			bad_i += 1
+	var dc := 0.0
+	if with_colors:
+		var ca: PackedColorArray = a[Mesh.ARRAY_COLOR]
+		var cb: PackedColorArray = b[Mesh.ARRAY_COLOR]
+		if ca.size() != cb.size():
+			return {"ok": false, "text": "COLOUR ARRAY SIZES DIFFER: %d/%d" % [
+				ca.size(), cb.size()]}
+		for k in ca.size():
+			var p := ca[k]
+			var q := cb[k]
+			dc = maxf(dc, maxf(absf(p.r - q.r),
+				maxf(absf(p.g - q.g), maxf(absf(p.b - q.b), absf(p.a - q.a)))))
+
+	var ok := dv == 0.0 and dn == 0.0 and bad_i == 0 and dc == 0.0
+	var text := "max diff pos %.9f normal %.9f colour %s, %d indices differ" % [
+		dv, dn, ("%.9f" % dc) if with_colors else "-", bad_i]
+	return {"ok": ok, "text": text}
+
+
+## THE PYRAMID CROSSES, EXPRESSION BY EXPRESSION. Distance v4 Stage 2.
+##
+## Ten thousand random (x, z, level) triples through five functions, C++ against
+## GDScript, and the gate is EXACT - not "close", not a tolerance. Both sides
+## compute in doubles off the same float32 arrays, and on one machine's libm the
+## same expression rounds the same way, so a difference here is a difference in
+## the expression and nothing else.
+##
+## THE SAMPLES DELIBERATELY GO OUTSIDE THE WORLD. Both implementations clamp,
+## and a clamp is exactly the kind of edge a transcription gets subtly wrong -
+## `mini(i0 + 1, cols - 1)` against `i0 + 1 < cols - 1 ? ... : ...` are the same
+## function and only one of them is obviously so. A quarter of the range is off
+## the map on each axis.
+##
+## LEVELS ARE CONTINUOUS, and half of them land within 0.0001 of an integer on
+## purpose: that is `_trilinear`'s early-out, and the branch either side of it
+## is where a level would silently become a different level.
+func _test_far_pyramid_parity():
+	var bad := 0
+	if not FarMesher.class_present():
+		print("far pyramid parity: c++ mesher absent, 0 checks")
+		return 0
+
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	if not mesher.setup(heightmap, world.generator, wcfg):
+		print("  the c++ mesher would not take the world")
+		world.free()
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 424242
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var worst := {"height": 0.0, "filtered": 0.0, "max": 0.0, "peak": 0.0,
+		"slope": 0.0}
+	var n := 10000
+	for k in n:
+		# Half again outside the map on each axis, so the clamps are exercised.
+		var bx := rng.randf_range(-half * 1.5, half * 1.5)
+		var bz := rng.randf_range(-half * 1.5, half * 1.5)
+		var level := rng.randf_range(0.0, float(Heightmap.MAX_LEVEL))
+		if k % 2 == 0:
+			# Land on an integer level, which is _trilinear's early-out.
+			level = float(rng.randi_range(0, Heightmap.MAX_LEVEL))
+		worst["height"] = maxf(worst["height"],
+			absf(heightmap.height_at(bx, bz) - mesher.h_at(bx, bz)))
+		worst["filtered"] = maxf(worst["filtered"],
+			absf(heightmap.height_filtered(bx, bz, level)
+				- mesher.h_filtered(bx, bz, level)))
+		worst["max"] = maxf(worst["max"],
+			absf(heightmap.height_max_filtered(bx, bz, level)
+				- mesher.h_max_filtered(bx, bz, level)))
+		worst["peak"] = maxf(worst["peak"],
+			absf(FarFieldJob.filtered_height(heightmap, wcfg, bx, bz, level)
+				- mesher.h_peak(bx, bz, level)))
+		worst["slope"] = maxf(worst["slope"],
+			absf(heightmap.slope_deg_at(bx, bz) - mesher.h_slope_deg(bx, bz)))
+
+	for key in worst:
+		if worst[key] != 0.0:
+			print("  %s differs: max %.17f over %d samples" % [key, worst[key], n])
+			bad += 1
+	print("far pyramid parity: %d samples x 5 functions, max diff %.17f" % [
+		n, maxf(maxf(worst["height"], worst["filtered"]),
+			maxf(worst["max"], maxf(worst["peak"], worst["slope"])))])
+	world.free()
+	return bad
+
+
+## ZONE AND COLOUR CROSS, EXPRESSION BY EXPRESSION. Distance v4 Stage 4,
+## decision 4's micro-gate.
+##
+## Ten thousand random samples per function, C++ against GDScript, exact.
+##
+## THE LADDER LANDED ON RUNG (a), and the plan's own wording is worth holding it
+## to. `backdrop_zone`, `zone_at`, `_slope_zone`, `wildness_at`, `band_color`,
+## `band_m_at`, `treeline_band`, `Block.color_of`, `Block.aspect_shade`,
+## `Block.jitter` and `Look.to_wire` are pure functions of altitude, a slope
+## read off level 0, a hash and config scalars, and they are ported.
+##
+## ONE FUNCTION IS NOT PURE and it is `zone_jitter_at`, which ring 0's
+## `surface_zone_at` needs: a FastNoiseLite sample. It is neither rung (a) as
+## written nor rung (b) - no grid is precomputed - because FastNoiseLite is an
+## ENGINE class and the mesher holds the very same object the generator built,
+## calling get_noise_2d on it natively. Decision 2's "never calls back into
+## GDScript during a build" holds exactly, and the noise is bit-identical by
+## construction rather than by a reimplementation. `detail_at` crossed the same
+## way in Stage 3. It is recorded here and in the status doc because it is a
+## third rung the plan did not name, not because it is a compromise.
+##
+## THE JITTER KNOBS ARE TURNED UP FOR THIS TEST, and that is deliberate:
+## color_jitter_value and color_jitter_hue both ship at 0.0, so Block.jitter's
+## whole hash path returns early in every mesh this project has ever built. A
+## gate that only ever exercised the early return would be testing nothing.
+func _test_far_zone_parity():
+	var bad := 0
+	if not FarMesher.class_present():
+		print("far zone parity: c++ mesher absent, 0 checks")
+		return 0
+
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	var world := World.new()
+	world.setup(1234, cfg)
+	var generator: TerrainGenerator = world.generator
+	var heightmap: Heightmap = generator.heightmap
+	var wcfg: WorldgenConfig = world.config
+	# See the note above: the shipped defaults are 0.0 and would test the early
+	# return and nothing else.
+	wcfg.color_jitter_value = 0.06
+	wcfg.color_jitter_hue = 0.03
+
+	var mesher := FarMesher.new()
+	if not mesher.setup(heightmap, generator, wcfg):
+		print("  the c++ mesher would not take the world")
+		world.free()
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 987654
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var n := 10000
+	var diff := {
+		"backdrop_zone": 0, "surface_zone_at": 0, "treeline_band": 0,
+		"band_m_at": 0.0, "band_color": 0.0, "aspect_shade": 0.0, "vertex": 0.0,
+	}
+	for k in n:
+		var bx := rng.randi_range(int(-half * 1.2), int(half * 1.2))
+		var bz := rng.randi_range(int(-half * 1.2), int(half * 1.2))
+		var alt := rng.randf_range(cfg.min_altitude - 20.0, cfg.max_altitude + 20.0)
+		if FarFieldJob.backdrop_zone(generator, bx, bz, alt) \
+				!= mesher.z_backdrop(bx, bz, alt):
+			diff["backdrop_zone"] += 1
+		if generator.surface_zone_at(bx, bz, alt) != mesher.z_surface(bx, bz, alt):
+			diff["surface_zone_at"] += 1
+
+		var band_m := rng.randf_range(1.0, 90.0)
+		if FarFieldJob.treeline_band(generator, wcfg, band_m) \
+				!= mesher.c_treeline_band(band_m):
+			diff["treeline_band"] += 1
+		var step_blocks := rng.randi_range(1, 256)
+		var terrace := rng.randf_range(-0.2, 1.2)
+		diff["band_m_at"] = maxf(diff["band_m_at"],
+			absf(FarFieldJob.band_m_at(wcfg, step_blocks, terrace)
+				- mesher.c_band_m_at(step_blocks, terrace)))
+
+		var zone := rng.randi_range(0, TerrainGenerator.ZONE_COUNT - 1)
+		var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
+		var y_m := rng.randf_range(-50.0, 500.0)
+		var tl := rng.randi_range(0, 12)
+		diff["band_color"] = maxf(diff["band_color"], _color_diff(
+			FarFieldJob.band_color(color, y_m, wcfg, tl, band_m),
+			mesher.c_band_color(color, y_m, tl, band_m)))
+
+		var normal := Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0),
+			rng.randf_range(-1.0, 1.0))
+		if normal.length_squared() > 0.0:
+			normal = normal.normalized()
+		else:
+			normal = Vector3.UP
+		diff["aspect_shade"] = maxf(diff["aspect_shade"], _color_diff(
+			Block.aspect_shade(color, normal, wcfg.slope_tint, wcfg.aspect_tint),
+			mesher.c_aspect_shade(color, normal)))
+
+		var point := Vector3(rng.randf_range(-500.0, 500.0),
+			rng.randf_range(-50.0, 400.0), rng.randf_range(-500.0, 500.0))
+		var inv_bs := 1.0 / wcfg.block_size
+		var gd := Look.to_wire(Block.jitter(
+			Block.aspect_shade(color, normal, wcfg.slope_tint, wcfg.aspect_tint),
+			int(round(point.x * inv_bs)), int(round(point.z * inv_bs)),
+			generator.world_seed, wcfg.color_jitter_blocks,
+			wcfg.color_jitter_value, wcfg.color_jitter_hue))
+		diff["vertex"] = maxf(diff["vertex"], _color_diff(gd,
+			mesher.c_vertex(color, normal, point)))
+
+	for key in diff:
+		if diff[key] != 0 and diff[key] != 0.0:
+			print("  %s differs: %s over %d samples" % [key, diff[key], n])
+			bad += 1
+	print("far zone parity: %d samples x 7 functions, %s" % [
+		n, "all identical" if bad == 0 else "%d FUNCTIONS DIFFER" % bad])
+	world.free()
+	return bad
+
+
+func _color_diff(a: Color, b: Color) -> float:
+	return maxf(absf(a.r - b.r), maxf(absf(a.g - b.g),
+		maxf(absf(a.b - b.b), absf(a.a - b.a))))
+
+
+## THE DISPATCH, BOTH WAYS, THROUGH THE REAL FarField. Distance v4 Stage 5.
+##
+## The parity test compares two meshers built side by side from the same
+## inputs. This one asks the different question: does the NODE that the game
+## actually uses pick the right one, hand it the right world, and put the same
+## mesh on screen either way? Those are separable, and the second is where a
+## dispatch goes wrong - a mesher handed a stale config, a frontier that did
+## not cross, a knob that reaches the snapshot but not the job.
+##
+## So it drives `far_cpp` from 1 to 0 and back through `apply_far_knobs` -
+## which is the F4 panel's own path, not a private one - and compares the mesh
+## Godot ends up holding, vertex for vertex.
+##
+## WITH NO COMPILED LIBRARY this still runs and still means something: both
+## legs report `gdscript`, the meshes still have to match, and the knob still
+## must not break a rebuild. That is hard rule 1 checked rather than assumed.
+func _test_far_dispatch():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var far_field: Node = world.get_node_or_null("FarField")
+	if far_field == null:
+		print("  far dispatch: World has no FarField child")
+		world.free()
+		return 1
+	_pump_far_field(far_field)
+
+	var legs := []
+	for value in [1.0, 0.0, 1.0]:
+		cfg.far_cpp = value
+		# The F4 panel's own path. Returning the fallback means nothing moved,
+		# which on the first leg is correct - setup() already snapshotted 1.0.
+		FarField.apply_far_knobs(world, null, cfg, "FALLBACK")
+		_pump_far_field(far_field)
+		var stats: Dictionary = far_field.stats()
+		legs.append({
+			"knob": value,
+			"mesher": stats.get("mesher", "?"),
+			"verts": int(stats.get("vertices", 0)),
+			"build_ms": int(stats.get("build_ms", 0)),
+			"arrays": _far_mesh_arrays(far_field),
+		})
+
+	var available: bool = bool(far_field.stats().get("cpp_available", false))
+	for leg in legs:
+		print("  far_cpp %.0f -> %-8s %d verts, %d ms build" % [
+			leg["knob"], leg["mesher"], leg["verts"], leg["build_ms"]])
+
+	# 1. The knob picks the mesher it says it picks.
+	var want_on := "c++" if available else "gdscript"
+	if legs[0]["mesher"] != want_on or legs[2]["mesher"] != want_on:
+		print("  far_cpp 1 built through %s / %s, not %s" % [
+			legs[0]["mesher"], legs[2]["mesher"], want_on])
+		bad += 1
+	if legs[1]["mesher"] != "gdscript":
+		print("  far_cpp 0 built through %s, not gdscript" % legs[1]["mesher"])
+		bad += 1
+
+	# 2. And it is the SAME MESH either way, vertex for vertex. This is the
+	# parity gate again, through the node rather than beside it.
+	for k in [1, 2]:
+		if legs[k]["verts"] != legs[0]["verts"]:
+			print("  leg %d emitted %d vertices against leg 0's %d" % [
+				k, legs[k]["verts"], legs[0]["verts"]])
+			bad += 1
+		var d := _far_arrays_diff(legs[0]["arrays"], legs[k]["arrays"])
+		if d != 0.0:
+			print("  leg %d differs from leg 0 by %.9f" % [k, d])
+			bad += 1
+
+	print("far dispatch: %s, three legs, meshes identical" % [
+		"c++ present" if available else "no c++ library, gdscript both ways"])
+	world.free()
+	return bad
+
+
+## The arrays of the mesh FarField is actually holding, read back off the
+## Mesh rather than off the job - the job is gone by the time _process has
+## applied it, and what is on screen is the thing being compared.
+func _far_mesh_arrays(far_field: Node) -> Array:
+	var m: Mesh = far_field.mesh
+	if m == null or m.get_surface_count() == 0:
+		return []
+	return m.surface_get_arrays(0)
+
+
+func _far_arrays_diff(a: Array, b: Array) -> float:
+	if a.is_empty() or b.is_empty():
+		return 0.0 if a.is_empty() and b.is_empty() else 1.0
+	var va: PackedVector3Array = a[Mesh.ARRAY_VERTEX]
+	var vb: PackedVector3Array = b[Mesh.ARRAY_VERTEX]
+	if va.size() != vb.size():
+		return 1.0
+	var worst := 0.0
+	for k in va.size():
+		var p := va[k]
+		var q := vb[k]
+		worst = maxf(worst, maxf(absf(p.x - q.x),
+			maxf(absf(p.y - q.y), absf(p.z - q.z))))
+	return worst

@@ -1208,8 +1208,37 @@ const FOG_START_RATIO := 0.4
 ## vertices and 2x the rebuild - 4 is a standing-still preview until the far
 ## mesher is C++.
 ##
+## FLIPPED TO 4 IN DISTANCE V4 STAGE 10, and decision 5's gate is what did it:
+## the flip ships only if the measured C++ rebuild at div 4 on ganymede is
+## under 1.5 s of wall. It measures **661 ms** (interleaved ABAB, three runs,
+## editor target, view high). So 1 m far cells stop being a screenshot mode.
+##
+## WHAT THE FLIP COSTS, and it is not the rebuild. div 4 is 3,266,076 vertices
+## against div 2's 941,724, and uploading them through
+## ChunkMesher.arrays_to_mesh costs **224 ms on the main thread**, every
+## rebuild - plus about 124 MB of static memory. That is STATUS items 11 and
+## 17, this epic did not touch it, and it is now the far country's binding
+## cost. Putting it back is this one number.
+##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
-@export var far_ring_div := 2.0
+@export var far_ring_div := 4.0
+
+## WHICH MESHER DRAWS THE FAR COUNTRY. Distance v4 Stage 5. 1 is the C++
+## GDExtension, 0 forces the GDScript one.
+##
+## NOT A QUALITY KNOB - the two meshers emit IDENTICAL arrays and the self-test
+## asserts it every stage, so moving this changes the rebuild TIME and nothing
+## a picture can see. It exists because "identical" is a claim, and a claim you
+## can turn off standing still is one Marcel can check with his own eyes
+## instead of taking from a gate.
+##
+## It cannot conjure a mesher that is not there: on a checkout with no compiled
+## library the far field builds in GDScript at every value of this, which is
+## hard rule 1.
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, and on FAR_ONLY_PROPERTIES so it
+## redraws in place rather than asking for F7.
+@export var far_cpp := 1.0
 
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
@@ -1532,6 +1561,11 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
 	"far_overdraw", "far_dither_m", "far_tree_grain",
+	# DISTANCE V4. LOCAL and unhashed like every far knob before it - and it
+	# has to be on THIS list rather than only in the @export block, or
+	# World.setup()'s clone drops it and the panel's value never reaches the
+	# world. Same failure the flora and AO knobs are guarded against above.
+	"far_cpp",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

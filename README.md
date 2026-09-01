@@ -199,6 +199,48 @@ a `class_name` - the editor keeps the global class cache in `.godot/`, and a
 game started without it fails to parse the first script that names a new
 class.
 
+### The far mesher is C++, and you do not need it
+
+Since distance v4 the far-field mesh is built by a GDExtension
+(`gdext/`, class `KubikFarMesher`). It is **37-43x** faster than the GDScript
+job it replaces, which is what lets `far_ring_div` default to 4.
+
+**You can ignore all of this and the game works.** `scripts/world/far_field.gd`
+checks for the class and falls back to `FarFieldJob` - the GDScript
+implementation, which stays in the tree as the reference the self-test compares
+against - so a checkout with no compiler plays fine. The only traces are some
+`ERROR` lines from Godot's extension loader at startup and an F3 line reading
+`far mesher: gdscript (no c++ library)`. The far country then rebuilds in
+seconds rather than milliseconds; if that bothers you, put `far_ring_div` back
+to 2 on F4.
+
+To build it you need a compiler and `scons`, plus a sibling checkout of
+godot-cpp built against **this exact engine version**:
+
+```
+cd .. && git clone --depth 1 https://github.com/godotengine/godot-cpp.git
+cd godot-cpp
+godot --headless --dump-extension-api          # writes extension_api.json
+scons platform=linux target=editor custom_api_file=extension_api.json -j$(nproc)
+cd ../Kubik/gdext
+GODOT_CPP=../../godot-cpp scons platform=linux target=editor \
+    custom_api_file=../../godot-cpp/extension_api.json -j$(nproc)
+```
+
+`platform=macos` / `platform=windows` for the others; `GODOT_CPP` overrides
+where godot-cpp is looked for. Check it loaded:
+
+```
+godot --headless --path . -s gdext/check.gd     # "class exists: true"
+```
+
+**The API file must come from the pinned binary.** godot-cpp built against a
+different 4.x dumps no error and produces a library that loads and misbehaves.
+
+`gdext/bin/` is gitignored and CI does not build it yet, so the Windows
+artifact under **Builds** below ships without the library and uses the GDScript
+fallback.
+
 ### Both renderers
 
 The game is played on **Forward+** and shot on **Compatibility**, and the two
