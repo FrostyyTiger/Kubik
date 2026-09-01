@@ -1144,6 +1144,36 @@ read them regardless of the count.
 **21**. That is every distance item on the list except 12, 13, 13a, 15, 16, 19
 and 22.
 
+---
+
+## Addendum - the morning ran on gemini (2026-09-01, gemini, not ganymede)
+
+Stage 8's verbatim commands, run as written: the DLL rebuilt with
+`KubikHeightTiles` in it, `--import`, the full suite.
+
+**Hard rule zero's cross-box half is PROVEN.** Both lines, verbatim:
+
+```
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, c++ builder,      3087 ms
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, gdscript builder, 10775 ms
+```
+
+MSVC's tiles and gcc's build the same world to the byte - the 1/1024
+quantisation is doing exactly what decision 3 bought it for, and
+`height tile parity` on this box reads 10,000 samples 0 differing, worst
+diff 0.00000000000000000. **Co-op between the two boxes is safe on this
+build.**
+
+**The suite reads `SELFTEST: 15 FAILED` here, up from v4's 7, and every one
+is still the same last-bit colour story.** The new slice and layer parity
+gates match quads EXACTLY, so a quad whose colour lands a bit off finds no
+partner: every miss line on this box reads
+`pos 0.000000000 normal 0.000000000 colour 0.000000030-0.000000119` -
+geometry bit-exact, colours off by their last bit, and out of ~90,000 quads
+a mesh the miss counts are 1, 6 and 15. v4's ruling item 5 (the Windows
+colour epsilon) now covers fifteen checks instead of seven and is still the
+open question; nothing was relaxed without the ruling.
+
 **Opened tonight**, all in STATUS.md in full:
 
 * **24** - the next C++ rung: `Lakes.compute`, `_resolve_zone_thresholds`,
