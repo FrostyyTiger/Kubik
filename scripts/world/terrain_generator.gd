@@ -1261,7 +1261,13 @@ func max_tree_height() -> int:
 
 
 func _place_trees(chunk: Chunk) -> void:
-	TreePlacement.stamp_chunk(chunk, self)
+	# TREES V3 STAGE 7: NOTHING STAMPS A TREE INTO A CHUNK ANY MORE.
+	#
+	# `TreePlacement.stamp_chunk()` used to run here, drawing every candidate
+	# whose crown reached this chunk. Trees are a model library instanced by
+	# `TreeField` now (ruling 5), so a generated chunk is terrain and nothing
+	# else - which is what this function's own name always claimed.
+	pass
 
 
 ## The three depth bands block_for() answers in. Named so generate_into() can

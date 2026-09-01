@@ -8,25 +8,29 @@ extends RefCounted
 ## world already reasons about is a column: `wanted`, freeing, flora, the cache.
 ## Only the jobs were chunks, and that cost two things.
 ##
-## THE TREE SCAN, WHICH IS THE BIG ONE. TreePlacement.stamp_chunk() scans
-## `(16 + 2 * max_reach)^2 / cell^2` candidate cells and calls decide() for
-## each, and the six or seven chunks of a column each did it again - the same
-## cells, the same answers, six or seven times over. Tree stamping is half the
-## generation cost (7.46 -> 15.45 ms per chunk when trees landed in foliage v1)
-## and it grows with crown radius, so bigger trees on the per-chunk pipeline
-## would have made streaming slower. Stamping once per column is what makes
-## Stage 5's x2 trees affordable.
+## THE TREE SCAN, WHICH WAS THE BIG ONE AND IS NOW THE ONLY ONE.
+## TreePlacement's candidate scan walks `(16 + 2 * max_reach)^2 / cell^2` cells
+## and calls decide() for each, and the six or seven chunks of a column each
+## did it again - the same cells, the same answers, six or seven times over.
+## Doing it once per column is what made bigger trees affordable.
 ##
-## THE SKY RESERVE BECOMES A CEILING, NOT A BUILD LIST. World queues a column
-## from its lowest possible ground to its highest possible tree top, because a
-## crown must not be cut off by a chunk nobody built. But the reserve is a
-## bound, not a fact: after the trees are stamped the column KNOWS the highest
-## solid block it actually contains. Chunks above that are air in every voxel -
-## no node, no mesh, no collider, no entry in _chunks. The mesher's neighbour
-## fallback already answers "air" for a chunk that is not there and the
-## generator's is_solid_at agrees, so nothing downstream can tell the
-## difference. Without this a 42 m hero tree on a meadow would cost five sky
-## chunks on every column within its crown radius.
+## TREES V3 STAGE 7 DELETED THE OTHER HALF OF IT. The scan used to stamp
+## `Block.LEAVES` and `Block.TRUNK` as it went, and that stamping was HALF THE
+## WHOLE COLUMN JOB - measured at 125.4 ms against 5.9 ms of voxel generation
+## in real forest, which is 95.5% of generation and 51.7% of everything. It is
+## gone: `TreeField` draws every tree in the game from a model library, and
+## what this scan returns now is `canopy_cover` alone.
+##
+## THE SKY RESERVE WENT WITH IT. World used to queue a column from its lowest
+## possible ground to its highest possible TREE TOP, because a crown must not
+## be cut off by a chunk nobody built - twenty-one metres of empty chunks per
+## column, reserved for canopies that no longer land in the volume. Nothing
+## writes above the terrain any more, so the column ends at the terrain.
+##
+## What that reserve cost was never the generation - Chunk.new() is already all
+## air and the ceiling below skipped it - but every one of those chunks was an
+## ENTRY in cy_range, a Chunk allocated, and a column World queued. See
+## `worldgen_config.gd`'s note where the reserve used to be.
 ##
 ## WHAT MAKES IT SAFE is what made the old GenJob and MeshJob safe: everything is
 ## captured at submit time, the job writes only into ITS OWN chunks, and it
@@ -120,11 +124,13 @@ func run() -> void:
 	gen_usec = t1 - t0
 
 	# ONCE FOR THE WHOLE COLUMN. See the note at the top.
-	var writer := TreeSpecies.ColumnWriter.new()
-	writer.bind(_chunks)
-	# The cover comes back from the same scan that stamped the trees, so the
-	# understorey costs nothing beyond a sum. See TreePlacement.stamp_column().
-	canopy_cover = TreePlacement.stamp_column(writer, generator, chunk_x, chunk_z)
+	#
+	# TREES V3 STAGE 7: THE SCAN SURVIVES AND THE WRITER IS GONE. There is no
+	# ColumnWriter and no tree block to bind it to - `TreeField` draws every
+	# tree in the game - but the column still has to know how much of its sky
+	# its own trees cover, and that has always come from this scan rather than
+	# from the voxels.
+	canopy_cover = TreePlacement.cover_column(generator, chunk_x, chunk_z)
 	var t2 := Time.get_ticks_usec()
 	tree_usec = t2 - t1
 

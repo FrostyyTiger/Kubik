@@ -291,31 +291,24 @@ func _apply_species(job: TreeFieldJob, key: String) -> void:
 	if slot == null:
 		slot = _make_slot(key, mesh)
 		_slots[key] = slot
-	# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
-	# chooses between the cone and the stepped pyramid (hard rule 1: at 0
-	# the ring is the one f23c3f0 drew), and a slot built once at the old
-	# value would keep drawing cones on terraced ground until the species
-	# happened to disappear and come back. Both FarTreeMeshes and TreeModels
-	# cache, so this is a dictionary lookup and not a rebuild.
+	# THE MESH IS RE-READ EVERY REBUILD, and the reason has changed with the
+	# meshes. Distance v2 re-read it so `far_terrace` could swap a cone for a
+	# stepped pyramid without an F7; now it is so a library reloaded or a
+	# palette retuned at runtime lands without one. TreeModels caches, so this
+	# is a dictionary lookup and not a rebuild.
 	slot.multimesh.mesh = mesh
 	slot.multimesh.instance_count = n
 	slot.multimesh.buffer = buf
 	slot.visible = true
-	# Triangles the field actually draws. A cone mesh is unindexed and a
-	# library mesh is indexed, so the count has to come from whichever array
-	# the mesh actually has - reading array_len on an indexed mesh gives its
-	# VERTEX count, which on a greedy quad mesh is two thirds of the answer.
+	# Triangles the field actually draws, off the INDEX array - a library mesh
+	# is indexed and `surface_get_array_len` would give its vertex count, which
+	# on a greedy quad mesh is two thirds of the answer.
 	var idx: int = mesh.surface_get_array_index_len(0)
-	var verts: int = mesh.surface_get_array_len(0)
-	_triangles += n * ((idx if idx > 0 else verts) / 3)
+	_triangles += n * (idx / 3)
 
 
-## The mesh one slot key names: a cone for `c<species>`, a library rung for
-## `m<variant>|<lod>`.
+## The mesh one slot key names: a library rung, `m<variant>|<lod>`.
 func _mesh_for_key(key: String) -> Mesh:
-	var species := TreeFieldJob.species_of_key(key)
-	if species >= 0:
-		return FarTreeMeshes.for_species(species, _config)
 	var m := TreeFieldJob.model_of_key(key)
 	return TreeModels.mesh_for(StringName(m[0]), int(m[1]), _config.block_size)
 

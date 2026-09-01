@@ -83,6 +83,15 @@ const REAL_PLAYER_HEIGHT_M := 1.75
 ## into it makes the two mutually dependent for the sake of two integers. The
 ## self-test asserts the two agree instead, which is the same guarantee without
 ## the cycle - see "sky reserve" in selftest.gd.
+## RETIRED BY TREES V3 STAGE 7, AND THE NUMBERS ARE KEPT AS A RECORD.
+##
+## `REF_MAX_TREE_BLOCKS` was the tallest tree the table could grow, and
+## `world_height_blocks` reserved that much empty sky above every column so a
+## canopy had somewhere to land. Trees are models now and nothing is written
+## above the terrain, so the reserve is gone and these describe a world that no
+## longer exists. They are left because the self-test's `sky reserve` gate is
+## rewritten against them - it now asserts the reserve is ABSENT rather than
+## sufficient - and because a constant deleted is a number somebody re-derives.
 const REF_TREE_MAX_BLOCKS := 21.0
 const REF_MAX_TREE_BLOCKS := 42.0
 
@@ -1891,10 +1900,20 @@ func apply_world_scale() -> void:
 	# Free safety is worth taking - the alternative is a reserve that is
 	# correct today and silently short the moment someone raises a knob, with
 	# a flat-topped tree in some columns as the only symptom.
-	var needed := max_altitude \
-		+ REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale \
-			* maxf(old_growth_scale, 1.0) \
-		+ TREE_RESERVE_MARGIN + 16.0
+	# TREES V3 STAGE 7: THE SKY RESERVE IS GONE, AND THE COLUMN ENDS AT THE
+	# TERRAIN.
+	#
+	# This used to add REF_MAX_TREE_BLOCKS * tree_size_scale * tree_read_scale
+	# * old_growth_scale + a margin - about 21 metres of empty chunks above
+	# every column in the world - because a crown stamped into the volume must
+	# not be cut off by a chunk nobody built. Nothing writes above the terrain
+	# any more: `TreeField` instances a model library and never touches a
+	# voxel, so the tallest thing a column can contain is its own ground.
+	#
+	# THE 16 STAYS and it is not the trees'. It is one chunk of headroom over
+	# the highest ground, which the mesher's neighbour lookups and the
+	# streamer's own rounding both want, and it predates the reserve.
+	var needed := max_altitude + 16.0
 	world_height_blocks = int(ceil(needed / 16.0)) * 16
 
 	# Lakes. A basin smaller than the real minimum, drawn at this scale, is a

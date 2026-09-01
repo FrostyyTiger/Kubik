@@ -138,11 +138,11 @@ var heightmap: Heightmap = null
 ## the key has to name both. Two forms, and they are told apart by their
 ## prefix rather than by a flag:
 ##
-##     "c<species>"          a cone, the impostor this ring drew until tonight
 ##     "m<variant>|<lod>"    a library mesh at one rung
 ##
-## A cone key is still one per species, so nothing about the old ring's cost
-## or its draw-call count moves while both systems are alive.
+## THE `c<species>` FORM IS GONE (Stage 7). It named a cone, and there are no
+## cones - the prefix is kept on the surviving form so a stored key from an
+## older build cannot be mistaken for a variant name.
 var buffers := {}
 
 ## WITHIN THIS RADIUS, IN BLOCKS, A TREE GETS A TRUNK COLLIDER. 0 disables.
@@ -300,9 +300,15 @@ func run() -> void:
 				# frontier that used to be rejected on two multiplies. At a 96 m
 				# voxel radius against a 600 m ring that is about 2.5% more
 				# area, and Stage 5's numbers are read with it in.
-				var inside := d_sq < inner_here_sq
-				if inside and not any_models:
-					continue
+				# THE INNER TEST IS DEAD AND ITS RADIUS IS NOT.
+				#
+				# `inner_here_sq` was where the real voxel trees began, and a
+				# cone must not stand where one had landed. There are no voxel
+				# trees: the field draws every tree in the game, from distance
+				# zero outward, and there is nothing for it to collide with.
+				# The frontier is still READ, because `TreeField` still hands
+				# it over and a future rung (the merged lump the plan records)
+				# will want it.
 				scanned += 1
 
 				var found := TreePlacement.decide(generator, cx, cz, masks)
@@ -315,16 +321,18 @@ func run() -> void:
 					continue
 
 				var species: int = found["species"]
-				var variant := &""
-				if any_models and TreeTable.drawn_as_model(species, config):
-					variant = TreeTable.variant_for(species, found["cell"],
-						generator.world_seed, config)
+				# NO VARIANT, NO TREE. That is three different situations with
+				# one answer: the public build has no library mounted, a
+				# species could have every weight in its row parked at 0, and
+				# a species could be missing a row altogether. In all three the
+				# field draws nothing there and the world is treeless in that
+				# spot, which is ruling 6 - the public build ships treeless and
+				# that is the design, not a fallback.
+				var variant := TreeTable.variant_for(species, found["cell"],
+					generator.world_seed, config) if any_models else &""
 				if variant == &"":
-					# A cone, and the old rules apply to it in full.
-					if inside:
-						continue
-				var key := "c%d" % species if variant == &"" \
-					else "m%s|%d" % [variant, lod_of_band]
+					continue
+				var key := "m%s|%d" % [variant, lod_of_band]
 				if not by_species.has(key):
 					by_species[key] = []
 				var d := sqrt(d_sq)
@@ -383,11 +391,6 @@ func run() -> void:
 		if String(key).begins_with("m"):
 			model_count += by_species[key].size()
 	elapsed_usec = Time.get_ticks_usec() - started
-
-
-## The species id a cone key names, or -1 for a model key.
-static func species_of_key(key: String) -> int:
-	return int(key.substr(1)) if key.begins_with("c") else -1
 
 
 ## The variant and rung a model key names, or ["", 0].
@@ -568,15 +571,15 @@ const MODEL_SCALE_JITTER := 0.15
 func _pack(instances: Array, key: String) -> PackedFloat32Array:
 	var buf := PackedFloat32Array()
 	buf.resize(instances.size() * FLOATS_PER_INSTANCE)
-	var species := species_of_key(key)
-	# THE MESH'S OWN COLOUR, once per slot. For a cone that is shade A of its
-	# species out of Block.COLORS; for a library mesh it is the variant's
-	# dominant canopy colour through the palette table, which is decision 7's
-	# new pin. Both are "what colour is this mesh already", which is what
-	# _instance_color() has to divide by.
-	var base_lin := FarTreeMeshes.color_of_species(species, config) \
-		if species >= 0 else TreeModels.canopy_color(StringName(
-			model_of_key(key)[0]))
+	# THE MESH'S OWN COLOUR, once per slot - the variant's dominant canopy
+	# colour through the palette table, which is decision 7's pin. It is what
+	# _instance_color() divides by to turn "mix this tree half way to its
+	# hillside" into "what do you multiply its colour by to land there".
+	#
+	# TREES V3 STAGE 7: THE CONE BRANCH IS GONE WITH THE CONES. It read
+	# `FarTreeMeshes.color_of_species()`, which read `Block.color_of(leaves)`,
+	# which is dead the night leaf blocks die.
+	var base_lin := TreeModels.canopy_color(StringName(model_of_key(key)[0]))
 	var base_wire := Look.to_wire(base_lin)
 	var i := 0
 	for inst in instances:

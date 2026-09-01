@@ -42,14 +42,14 @@ func _ready() -> void:
 	var tests := {
 		"winding": _test_winding,
 		"ao cost": _measure_ao_cost,
-		"tree borders": _test_tree_borders,
+		"cover determinism": _test_cover_determinism,
 		"chunk determinism": _test_chunk_determinism,
 		"edit during generation": _test_edit_during_generation,
 		"facing": _test_facing,
 		"day cycle": _test_day_cycle,
 		"config contract": _test_config_contract,
 		"sky reserve": _test_sky_reserve,
-		"species borders": _test_species_borders,
+		"registry determinism": _test_registry_determinism,
 		"flora determinism": _test_flora_determinism,
 		"flora removal": _test_flora_removal,
 		"flora winding": _test_flora_winding,
@@ -218,71 +218,6 @@ func _test_winding():
 ## region into a second copy. Stamping is idempotent - trunk over trunk changes
 ## nothing, leaves are only drawn over air - so if the normal margin is wide
 ## enough the two chunks are identical byte for byte. If it is too narrow, the
-## wide pass finds blocks the normal one missed.
-func _test_tree_borders():
-	var cfg := WorldgenConfig.new()
-	var gen := TerrainGenerator.new(4242, cfg)
-	gen.build_heightmap()
-
-	var bad := 0
-	var tested := 0
-	var tree_blocks := 0
-
-	for cx in range(-6, 7, 3):
-		for cz in range(-6, 7, 3):
-			for cy in range(4, 14):
-				var narrow := Chunk.new(Vector3i(cx, cy, cz))
-				gen.generate_into(narrow)
-
-				var wide := Chunk.new(Vector3i(cx, cy, cz))
-				gen.generate_into(wide)
-				# SIX TIMES the margin the world actually uses, so a tree the
-				# real scan missed lands in `wide` and shows up as a differing
-				# voxel. Derived from the species table, not from a config
-				# knob, for the same reason the real margin is: the widest
-				# crown is a property of the table and grows when it does.
-				var span := 6 * TreeSpecies.max_reach(cfg) + Chunk.SIZE
-				var c0x := Chunk.floor_div(cx * Chunk.SIZE - span, cfg.tree_cell_blocks)
-				var c1x := Chunk.floor_div(cx * Chunk.SIZE + span, cfg.tree_cell_blocks)
-				var c0z := Chunk.floor_div(cz * Chunk.SIZE - span, cfg.tree_cell_blocks)
-				var c1z := Chunk.floor_div(cz * Chunk.SIZE + span, cfg.tree_cell_blocks)
-				var writer := TreeSpecies.ChunkWriter.new()
-				writer.bind(wide)
-				for tz in range(c0z, c1z + 1):
-					for tx in range(c0x, c1x + 1):
-						TreePlacement.stamp_cell(writer, gen, tx, tz)
-
-				tested += 1
-				for i in Chunk.VOLUME:
-					if narrow.voxels[i] != wide.voxels[i]:
-						bad += 1
-						break
-				for i in Chunk.VOLUME:
-					if TreeSpecies.is_tree_block(narrow.voxels[i]):
-						tree_blocks += 1
-
-	print("tree borders: %d chunks, %d tree blocks, %d differed under a 6x margin" % [
-		tested, tree_blocks, bad])
-	if tree_blocks == 0:
-		# TREES V3 STAGE 5: EVERY SPECIES IS DRAWN FROM THE LIBRARY NOW, so a
-		# mounted build has no tree blocks anywhere and this test is vacuous
-		# rather than failing. It is NOT deleted, and that is the point - on
-		# the ASSETLESS leg the block stamper still runs for everything, and
-		# that leg is the public build and the one CI runs. So the gate keeps
-		# its full assertion exactly where blocks still exist.
-		#
-		# Stage 7 replaces it with `cover determinism` and `registry
-		# determinism`, which ask the same question of the scan rather than of
-		# the volume.
-		if TreeModels.available():
-			print("  no tree blocks: the library owns every species (trees v3 Stage 5)")
-			print("  the block-stamp margin is asserted on the assetless leg")
-			return 0
-		print("  WARNING: no tree blocks in the sample - this test proved nothing")
-		return 1
-	return 1 if bad > 0 else 0
-
-
 ## EVERY FLORA TRIANGLE MUST FACE OUTWARDS.
 ##
 ## The terrain has had a winding self-test since v1 and it earned its keep
@@ -571,164 +506,170 @@ func _flora_buffers(gen: TerrainGenerator, cfg: WorldgenConfig,
 	return job.buffers
 
 
-## EVERY SPECIES MUST SURVIVE BEING CUT UP BY CHUNK BOUNDARIES.
+## THE SKY RESERVE MUST BE GONE, AND THE COLUMN MUST END AT THE TERRAIN.
 ##
-## _test_tree_borders proves the world's candidate scan is wide enough, but it
-## can only prove it for the species the world actually grows - which until
-## Stage 4 is spruce and nothing else. Six shapes would therefore reach Stage 4
-## having never been drawn across a boundary at all, and the ones most likely
-## to break are exactly the ones that write furthest from their root: a hero
-## with a 2 x 2 trunk and a crown of 8, a krummholz whose lean moves its whole
-## body one block sideways.
+## THIS GATE IS INVERTED BY TREES V3 STAGE 7 AND KEPT RATHER THAN DELETED.
 ##
-## THE TEST IS THE DEFINITION OF CORRECT, stated directly. Draw the tree once
-## into an unbounded buffer - the whole tree, clipped by nothing. Then draw it
-## again into each of the chunks around it, through the writer the world uses.
-## The union of the clipped copies must equal the unbounded one, block for
-## block, with nothing missing and nothing extra. That is precisely what "every
-## chunk draws its own share" means, so there is no gap between what is checked
-## and what is required.
-func _test_species_borders():
-	var cfg := WorldgenConfig.new()
-	var bad := 0
-	var checked := 0
-
-	for species in TreeSpecies.table(cfg).size():
-		# Rooted deliberately AWKWARDLY: one block inside a chunk corner, so
-		# the tree straddles boundaries on both axes at once and the biggest
-		# crowns reach three chunks out.
-		var root := Vector3i(15, 40, 15)
-		var params := TreeSpecies.params_for(species, 3, 5, 777, cfg)
-
-		var whole := {}   # Vector3i -> block id
-		var loose := LooseWriter.new()
-		loose.blocks = whole
-		TreeSpecies.draw(loose, species, root.x, root.y, root.z, params, cfg)
-		if whole.is_empty():
-			print("  %s drew nothing" % TreeSpecies.table(cfg)[species]["name"])
-			bad += 1
-			continue
-
-		# Every chunk the tree could possibly have reached, and two beyond.
-		var pieces := {}
-		var reach := TreeSpecies.max_reach(cfg) + 2
-		var lo := Chunk.world_to_chunk(root - Vector3i(reach, 2, reach))
-		var hi := Chunk.world_to_chunk(
-			root + Vector3i(reach, TreeSpecies.max_height(cfg) + 2, reach))
-		for cy in range(lo.y, hi.y + 1):
-			for cz in range(lo.z, hi.z + 1):
-				for cx in range(lo.x, hi.x + 1):
-					var chunk := Chunk.new(Vector3i(cx, cy, cz))
-					var writer := TreeSpecies.ChunkWriter.new()
-					writer.bind(chunk)
-					TreeSpecies.draw(writer, species, root.x, root.y, root.z,
-						params, cfg)
-					var origin := chunk.origin()
-					for i in Chunk.VOLUME:
-						if chunk.voxels[i] == Block.AIR:
-							continue
-						var ly := i / Chunk.SIZE_SQ
-						var rem := i % Chunk.SIZE_SQ
-						pieces[origin + Vector3i(
-							rem % Chunk.SIZE, ly, rem / Chunk.SIZE)] = chunk.voxels[i]
-
-		var missing := 0
-		var extra := 0
-		for pos in whole:
-			if not pieces.has(pos):
-				missing += 1
-		for pos in pieces:
-			if not whole.has(pos):
-				extra += 1
-		checked += 1
-		if missing > 0 or extra > 0:
-			print("  %s: %d blocks missing, %d extra, of %d" % [
-				TreeSpecies.table(cfg)[species]["name"], missing, extra,
-				whole.size()])
-			bad += 1
-
-	print("species borders: %d species stamped across chunk boundaries, %d wrong" % [
-		checked, bad])
-	return bad
-
-
-## A writer that clips to nothing, for the reference copy above.
-class LooseWriter extends RefCounted:
-	var blocks := {}
-
-	func set_block(bx: int, by: int, bz: int, id: int, only_air: bool) -> void:
-		var pos := Vector3i(bx, by, bz)
-		if only_air and blocks.has(pos):
-			return
-		blocks[pos] = id
-
-
-## THE SKY RESERVE MUST COVER THE TALLEST TREE THE TABLE CAN GROW.
+## It used to assert that `WorldgenConfig` reserved ENOUGH empty sky above
+## every column for the tallest tree `TreeSpecies` could grow - because a
+## species taller than the reserve would have its crown cut off by a chunk
+## nobody queued, and the symptom was not an error but a flat-topped tree in
+## some columns, sometimes. The two numbers lived apart on purpose and this
+## test was the coupling.
 ##
-## World builds only the chunks a column's terrain passes through, plus
-## max_tree_height() of empty sky above it. If a species is ever added that is
-## taller than WorldgenConfig's REF_MAX_TREE_BLOCKS, the world stops queueing
-## the chunk that species' crown needs - and the symptom is not an error. It is
-## a tree with a flat top, sometimes, in some columns, depending on where the
-## terrain happened to sit relative to a chunk ceiling.
+## Nothing writes above the terrain any more. `TreeField` instances a model
+## library and never touches a voxel, so the reserve is dead weight - about
+## twenty-one metres of empty chunks per column, on every column in the world.
+## The gate now asserts the OPPOSITE: that `world_height_blocks` does NOT
+## carry a tree's height in it, at every scale a knob can reach.
 ##
-## The two numbers live apart on purpose: WorldgenConfig sizing itself from
-## TreeSpecies, which takes a WorldgenConfig in every signature, would make the
-## two mutually dependent for the sake of an integer. This is the cheaper half
-## of that trade - the coupling is a test rather than an import, and the test
-## says exactly what breaks.
-## THE COMPOSED MAXIMUM SINCE WORLD FEEL V1 STAGE 5. There are two scales now -
-## what the land asks for and what the player asks for - and the reserve has to
-## clear their product, because the tallest species takes the full read scale.
+## Why keep it at all. Because `REF_MAX_TREE_BLOCKS` and `tree_read_scale` are
+## still in the file, and the expression that used them is the kind of thing
+## somebody restores while fixing something else. This says, in a runnable
+## form, that putting it back is a regression.
 func _test_sky_reserve():
 	var bad := 0
 	var checked := 0
 	for scale in [0.5, 1.0, 1.7, 2.5]:
 		for read in [1.0, 2.0, 3.0]:
-			var cfg := WorldgenConfig.new()
-			cfg.tree_size_scale = scale
-			cfg.tree_read_scale = read
-			var needed := TreeSpecies.max_height(cfg)
-			# The same expression apply_world_scale() reserves with, including
-			# old growth - max_height() takes it, so this must too.
-			var reserved := int(ceil(
-				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * read
-					* maxf(cfg.old_growth_scale, 1.0)
-				+ WorldgenConfig.TREE_RESERVE_MARGIN))
-			checked += 1
-			if needed > reserved:
-				print("  scale %.2f read %.1f: table needs %d blocks, config reserves %d" % [
-					scale, read, needed, reserved])
-				bad += 1
-	# OLD GROWTH IS A THIRD SCALE (world feel v1 Stage 6) and the reserve has to
-	# cover it too. It happens to be safe today because the hero takes the full
-	# read scale and nothing else is old growth AND a hero - a spruce at
-	# 21 x 2 x 1.5 = 63 blocks against the hero's 42 x 2 = 84 - but "happens to
-	# be" is exactly the kind of thing that stops being true when someone
-	# raises old_growth_scale, and the symptom is a flat-topped tree in some
-	# columns rather than an error.
-	for scale in [1.0, 2.0]:
-		for og in [1.5, 2.0, 3.0]:
-			var cfg2 := WorldgenConfig.new()
-			cfg2.tree_read_scale = scale
-			cfg2.old_growth_scale = og
-			var tallest := 0
-			for row in TreeSpecies.table(cfg2):
-				var h: int = int(row["height"].y)
-				if int(row["name"] == "hero") == 0:
-					h = int(round(float(h) * (1.0 + (og - 1.0) * float(row.get("read", 0.0)))))
-				tallest = maxi(tallest, h)
-			var reserved2 := int(ceil(
-				WorldgenConfig.REF_MAX_TREE_BLOCKS * scale * maxf(og, 1.0)
-				+ WorldgenConfig.TREE_RESERVE_MARGIN))
-			checked += 1
-			if tallest > reserved2:
-				print("  read %.1f old growth %.1f: tallest %d blocks, config reserves %d" % [
-					scale, og, tallest, reserved2])
-				bad += 1
-	print("sky reserve: %d scale/read pairs checked, %d short" % [checked, bad])
+			for og in [1.0, 2.0, 3.0]:
+				var cfg := WorldgenConfig.new()
+				cfg.tree_size_scale = scale
+				cfg.tree_read_scale = read
+				cfg.old_growth_scale = og
+				cfg.apply_world_scale()
+				var a := cfg.world_height_blocks
+				# The same config with every tree knob at its smallest. If the
+				# reserve were still in there, these two would differ.
+				var flat := WorldgenConfig.new()
+				flat.tree_size_scale = 0.5
+				flat.tree_read_scale = 1.0
+				flat.old_growth_scale = 1.0
+				flat.apply_world_scale()
+				checked += 1
+				if a != flat.world_height_blocks:
+					print("  scale %.2f read %.1f old growth %.1f: height %d, tree-free height %d" % [
+						scale, read, og, a, flat.world_height_blocks])
+					bad += 1
+	print("sky reserve: %d knob combinations, %d still reserve sky for trees" % [
+		checked, bad])
 	return bad
 
+
+## THE FOREST FLOOR'S SHADE MUST NOT DEPEND ON WHO ASKED.
+##
+## `cover_column()` is what is left of the tree stamper: the same candidate
+## walk over the same `max_reach` margin, returning the share of a column's sky
+## its trees cover. `ChunkMesher._under_canopy()` darkens the ground with it,
+## so if two calls disagreed - or if a column and its neighbour disagreed about
+## a tree that straddles them - the forest floor would be shaded differently
+## depending on which column was built first, which is exactly the class of bug
+## the old `tree borders` test existed to catch on the block stamp.
+##
+## THIS IS THAT TEST, ASKED OF THE SCAN INSTEAD OF THE VOLUME, and it is
+## strictly stronger in one way: it works on BOTH LEGS. `tree borders` could
+## only prove anything where tree blocks existed, and after tonight they exist
+## nowhere.
+##
+## Two claims:
+##   REPEATABLE   the same column twice is the same number, bit for bit.
+##   SHARED       a tree whose crown spans a column boundary is counted by
+##                BOTH columns - so the sum over a rectangle does not change
+##                when the rectangle is walked in a different order.
+func _test_cover_determinism():
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg)
+	gen.build_heightmap()
+	var bad := 0
+	var columns := 0
+	var covered := 0
+	var total := 0.0
+	var seen := {}
+	for cz in range(-6, 7, 2):
+		for cx in range(-6, 7, 2):
+			var a := TreePlacement.cover_column(gen, cx, cz)
+			var b := TreePlacement.cover_column(gen, cx, cz)
+			columns += 1
+			total += a
+			if a > 0.0:
+				covered += 1
+			if a != b:
+				print("  column (%d, %d): %.9f then %.9f" % [cx, cz, a, b])
+				bad += 1
+			seen[Vector2i(cx, cz)] = a
+
+	# WALKED BACKWARDS, which is the order test. Nothing in the scan should
+	# care, and a scan that cached anything across columns would fail here.
+	for cz in range(6, -7, -2):
+		for cx in range(6, -7, -2):
+			var a: float = seen[Vector2i(cx, cz)]
+			var b := TreePlacement.cover_column(gen, cx, cz)
+			if a != b:
+				print("  column (%d, %d) differed when walked backwards" % [cx, cz])
+				bad += 1
+
+	print("cover determinism: %d columns, %d with cover, mean %.4f, %d differed" % [
+		columns, covered, total / float(maxi(columns, 1)), bad])
+	if covered == 0:
+		print("  WARNING: no canopy cover in the sample - this test proved nothing")
+		return 1
+	return bad
+
+
+## `decide()` OVER A FIXED RECTANGLE MUST HASH EQUAL ON REPEAT.
+##
+## The registry of what stands where is the whole determinism contract now.
+## Until tonight it was checked indirectly - two machines stamping the same
+## leaf blocks into the same chunk - and the blocks are gone, so it is checked
+## directly: walk a rectangle of candidates, hash everything `decide()` said,
+## and do it again.
+##
+## EVERYTHING, NOT JUST THE POSITIONS. Species, old growth, the jittered trunk
+## position, the ground it stands on, its height and crown, AND THE VARIANT the
+## library table picks for it - because the variant is hashed on a new salt
+## (232) that no earlier test has ever exercised, and a variant that differed
+## between two machines would be two players looking at different trees in the
+## same place.
+func _test_registry_determinism():
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(4242, cfg)
+	gen.build_heightmap()
+	var trees := 0
+	var variants := {}
+	var hashes := []
+	for run in 2:
+		var h := 0
+		var masks := TreePlacement.masks_for(gen)
+		for cz in range(-24, 25):
+			for cx in range(-24, 25):
+				var f := TreePlacement.decide(gen, cx, cz, masks)
+				if f.is_empty():
+					continue
+				if run == 0:
+					trees += 1
+				var v := TreeTable.variant_for(f["species"], f["cell"],
+					gen.world_seed, cfg)
+				if run == 0 and v != &"":
+					variants[v] = int(variants.get(v, 0)) + 1
+				var p: Dictionary = f["params"]
+				# A string, then hashed: every field in one place, and a field
+				# added later that nobody hashes is a field this test would
+				# silently stop covering.
+				h = hash("%d|%s|%d|%d|%d|%d|%d|%d|%s|%d" % [
+					h, f["cell"], f["species"], int(f["old_growth"]),
+					f["bx"], f["bz"], f["ground"],
+					p["height"], v, p["crown"]])
+		hashes.append(h)
+	var bad := 0 if hashes[0] == hashes[1] else 1
+	if bad > 0:
+		print("  the registry hashed %d then %d over the same rectangle" % [
+			hashes[0], hashes[1]])
+	print("registry determinism: %d trees, %d distinct variants, hash %d, %d differed" % [
+		trees, variants.size(), hashes[0], bad])
+	if trees == 0:
+		print("  WARNING: no trees in the sample - this test proved nothing")
+		return 1
+	return bad
 
 ## Same seed, same config, same chunks - byte for byte. This is the guarantee
 ## the whole terrain-is-never-sent contract rests on.

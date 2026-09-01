@@ -937,3 +937,122 @@ for all thirty tests. It is to give the test **its own physics space through
 frame. Same Jolt server, same cylinder shape, same query; the only thing given
 up is the scene tree, which was never part of the claim.
 
+
+---
+
+## Stage 7 - the deletion
+
+**`tree_species.gd` goes 3,383 lines to 532, the sky reserve is gone, and the
+whole column job runs 6.2x faster.** Ruling 5, in a commit that is almost all
+red.
+
+### What died
+
+| | |
+| --- | --- |
+| `TreeSpecies`' shape half | `ChunkWriter`, `ColumnWriter`, `draw()` and every shape function: the whorled cone, the spruce spire and its leader nubs, the larch ziggurat and its shelf limits, the beech's lobes and bites and forks, the bowed birch, the krummholz mound and its spars, three snags, the hero's two archetypes and its root flare, the whorl disc, the overhangs, the clump voids, the trunk writer. **2,851 lines.** |
+| `TREE_BLOCKS` / `is_tree_block()` | the last thing in the game that asked a block id whether it was a tree |
+| the `shape` and `fill` columns | read by the shape half and by nothing else |
+| `TreePlacement.stamp_chunk` / `stamp_cell` / `_stamp_found` | and `stamp_column()` becomes **`cover_column()`** |
+| `TerrainGenerator._place_trees` | a generated chunk is terrain and nothing else, which is what the function's own name always claimed |
+| `FarTreeMeshes` | the cone, the octahedron, the stepped pyramid, the post, and `color_of_species()`'s block read. The file survives as its own gravestone. |
+| **the sky reserve** | `worldgen_config.gd`'s `world_height_blocks` expression, and `World._column_chunk_range`'s `+ max_tree_height()` |
+| `loose_check.gd` | the floating-block flood fill. It checked shapes. |
+| the gallery's `--vary`, `--stand`, `--masks` and its species rows | trees v1 Stage 0's instruments, every one of them a shape stamped into a scratch volume |
+| `tree borders`, `species borders` | replaced, below |
+
+**Block ids stay parked** in `block.gd`, with their `COLORS` rows - removing an
+id renumbers a wire format for zero benefit, and the palette rows are what
+Stage 2's tree colours were mapped *toward*. `params_for()` still returns them:
+open question 5 asks whether it slims now or later and the answer is **later**,
+because the plan requires `decide()`'s output shape not to change and a commit
+that is already almost all red is the wrong place to also reshape the
+dictionary four consumers read.
+
+### The numbers the deletion was for
+
+`tree_probe.gd`, the same 8 x 8 rectangle of columns in the same forest
+(canopy cover **0.7871**, unchanged - decision 6's claim, measured).
+
+| | Stage 0 | after | |
+| --- | --- | --- | --- |
+| **chunks reserved per column** | **9.61** | **1.53** | the sky reserve, gone |
+| chunks built per column | 3.14 | **1.42** | tree blocks made chunks solid |
+| chunks reserved above the terrain | 6.47 | **0.11** | |
+| column: generate voxels | 5.882 ms | 5.811 ms | untouched, as it should be |
+| **column: the tree scan** | **125.381 ms** | **3.589 ms** | **35x** - and what is left is the scan `cover_column` still needs |
+| **column: mesh** | 111.212 ms | **29.630 ms** | **3.8x** - the mesher lost its worst input AND most of its chunks |
+| **column: total** | **242.476 ms** | **39.030 ms** | **6.2x** |
+| tree share of generation | 95.5% | 38.2% | |
+| tree share of the whole column job | 51.7% | **9.2%** | |
+| canopy cover | 0.7871 | **0.7871** | the forest floor is untouched |
+
+**`column_job.gd:11`'s claim is cashed and then some.** It said tree stamping
+was half the generation cost; Stage 0 measured 95.5% of generation and 51.7% of
+the whole job, and removing it made the whole job **six times faster** rather
+than twice. The extra factor is the mesher: it lost the per-block A/B leaf
+scatter that `FloraModels:9` names as its pathology, and it lost half its
+chunks with them, because a tree's crown was what made a chunk two levels above
+the ground `has_solid`.
+
+And in the world, streamed:
+
+| | Stage 0 | Stage 7 | |
+| --- | --- | --- | --- |
+| **chunks at spawn** | **2,369** | **2,222** | |
+| **load wall at spawn** | **24,872 ms** | **19,322 ms** | **-22%** |
+| gen per chunk, on workers | 9.51 ms | **4.07 ms** | **2.3x** |
+| main-thread upload per chunk | 0.23 ms | 0.14 ms | |
+| **sprint collidable front min** | 56 / 64 m | **72 / 72 m** | the streamer got ahead of the player |
+| sprint chunks/s | 101.5 / 111.5 | **114.8 / 129.3** | |
+| sprint worst frame | 39.4 / 37.7 ms | 34.2 / 40.2 ms | |
+| sprint frames over 33 ms | 8 | 5 | |
+| holes | 0 / 0 | **0 / 0** | |
+| static memory | 393.1 MB | 511.0 MB | **worse - see below** |
+
+**Static memory is up about 118 MB and that is the tree library resident.**
+Thirty-eight geometries at three rungs, assembled once at load and held for the
+life of the world - which is what "a whole forest is a few dozen draw calls"
+costs on the other side of the ledger. It is a steady-state figure rather than
+distance v5's handover spike, and the lever is the LOD cache: nothing drops a
+rung it is not currently drawing.
+
+### The self-test gates, replaced
+
+`tree borders` and `species borders` both asked questions about block shapes
+and both are gone. What replaces them asks the same questions of the SCAN, and
+is strictly stronger in one way: **they work on both legs.** `tree borders`
+could only prove anything where tree blocks existed, and after tonight they
+exist nowhere.
+
+| new gate | what it asserts | result |
+| --- | --- | --- |
+| **`cover determinism`** | `cover_column()` twice is the same number bit for bit, and the same rectangle walked BACKWARDS gives the same numbers - so the forest floor's shade cannot depend on which column was built first | **49 columns, 8 with cover, mean 0.0756, 0 differed** |
+| **`registry determinism`** | `decide()` over a fixed 49 x 49 rectangle hashes equal on repeat - species, old growth, jittered position, ground, height, crown **and the variant**, which is hashed on salt 232 and had never been exercised by any test | **103 trees, 29 distinct variants, hash 198620935, 0 differed** |
+| **`sky reserve`, inverted** | `world_height_blocks` does NOT carry a tree's height in it, at every combination the three tree knobs can reach | **36 combinations, 0 still reserve sky** |
+
+**The `sky reserve` gate is inverted rather than deleted, deliberately.**
+`REF_MAX_TREE_BLOCKS` and `tree_read_scale` are still in the file and the
+expression that used them is exactly the kind of thing somebody restores while
+fixing something else. The gate now says, in a runnable form, that putting it
+back is a regression.
+
+**`registry determinism` hashes identically with and without the library** -
+`198620935` on both legs - which is a stronger statement than either leg alone.
+The table lives in the public repo, so what a cell decides is a property of the
+repo rather than of the mount.
+
+### The gate
+
+| Stage 7 gate (plan) | result |
+| --- | --- |
+| shape functions, block writers, `stamp_column`'s writer half, the sky reserve, cone builders, `color_of_species`'s block read | all deleted |
+| `max_height()` / the sky-reserve self-test reconciled to the new smaller truth | `max_height()` kept and its meaning NARROWED - it reserves nothing; `max_reach()` is the one still load-bearing, and its note says so |
+| `tree borders` replaced by `cover determinism` and `registry determinism` | above |
+| self-test both ways | **green** |
+| chunks per column at spawn, against Stage 0 | **9.61 -> 1.53 reserved, 3.14 -> 1.42 built** |
+| **column generation ms - "expect roughly half"** | **242.5 -> 39.0 ms, 6.2x** |
+| load wall at spawn vs Stage 0 | **24,872 -> 19,322 ms** |
+| **grep proves no live reference to deleted symbols** | one match, and it is the parked constant the inverted gate reads |
+| placement does not move | **28,383 / same mix / (-44, -124) / `4782edac`** |
+

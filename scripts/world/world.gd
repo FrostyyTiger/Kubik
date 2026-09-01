@@ -1509,11 +1509,19 @@ func flora_stats() -> Dictionary:
 ## Which chunks of one column terrain actually passes through.
 func _column_chunk_range(cx: int, cz: int) -> Array:
 	var span := generator.column_surface_range(cx, cz)
-	# Trees stand ABOVE the terrain, so the empty sky a canopy can reach into
-	# still has to be built. Without this a tree on a column near the top of a
-	# chunk loses its crown to a chunk that was never queued.
-	var top := Chunk.floor_div(
-		int(floor(span.y)) + generator.max_tree_height(), Chunk.SIZE)
+	# TREES V3 STAGE 7: THE COLUMN ENDS AT THE TERRAIN.
+	#
+	# This used to add `generator.max_tree_height()` - about twenty-one metres,
+	# forty-two blocks at the shipped scales - because a canopy stamped into
+	# the volume must not be cut off by a chunk nobody queued. Trees are
+	# instanced models now and nothing is written above the ground, so the
+	# highest chunk a column needs is the one its own terrain reaches into.
+	#
+	# It is not free to have carried: every one of those chunks was an entry in
+	# this range, a Chunk allocated by ColumnJob, and a column World queued and
+	# tracked. The generation was already skipped (the ceiling in ColumnJob) -
+	# the bookkeeping was not.
+	var top := Chunk.floor_div(int(floor(span.y)), Chunk.SIZE)
 	var bottom := Chunk.floor_div(
 		int(floor(span.x)) - config.voxel_depth_chunks * Chunk.SIZE, Chunk.SIZE)
 	var max_cy := int(config.world_height_blocks / Chunk.SIZE) - 1

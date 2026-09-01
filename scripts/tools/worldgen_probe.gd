@@ -681,43 +681,29 @@ func _canopy_mean(gen: TerrainGenerator, config: WorldgenConfig,
 	return mean
 
 
-## Stamp the columns around this point into a scratch chunk set, then look up.
-func _closure_at(gen: TerrainGenerator, config: WorldgenConfig, at: Vector2i) -> float:
-	var cx := Chunk.floor_div(at.x, Chunk.SIZE)
-	var cz := Chunk.floor_div(at.y, Chunk.SIZE)
-	var chunks := {}
-	for dz in range(-CANOPY_RADIUS_CHUNKS, CANOPY_RADIUS_CHUNKS + 1):
-		for dx in range(-CANOPY_RADIUS_CHUNKS, CANOPY_RADIUS_CHUNKS + 1):
-			var col_x := cx + dx
-			var col_z := cz + dz
-			var span := gen.column_surface_range(col_x, col_z)
-			var lo := Chunk.floor_div(int(floor(span.x)) - 8, Chunk.SIZE)
-			var hi := Chunk.floor_div(
-				int(floor(span.y)) + gen.max_tree_height(), Chunk.SIZE)
-			var col_chunks := {}
-			for cy in range(lo, hi + 1):
-				var chunk := Chunk.new(Vector3i(col_x, cy, col_z))
-				gen.generate_ground_into(chunk)
-				col_chunks[cy] = chunk
-				chunks[Vector3i(col_x, cy, col_z)] = chunk
-			var writer := TreeSpecies.ColumnWriter.new()
-			writer.bind(col_chunks)
-			TreePlacement.stamp_column(writer, gen, col_x, col_z)
-
-	var surface := gen.surface_at(float(at.x), float(at.y))
-	var eye := Vector3(float(at.x), floor(surface) + CANOPY_EYE_BLOCKS, float(at.y))
-	var hits := 0
-	for i in CANOPY_RAYS:
-		# A spiral over the cone rather than a random scatter, so two runs of
-		# the same world give the same number.
-		var t := (float(i) + 0.5) / float(CANOPY_RAYS)
-		var theta := deg_to_rad(CANOPY_CONE_DEG) * sqrt(t)
-		var phi := t * TAU * 7.0
-		var dir := Vector3(sin(theta) * cos(phi), cos(theta), sin(theta) * sin(phi))
-		if _ray_hits_leaves(chunks, eye, dir):
-			hits += 1
-	return float(hits) / float(CANOPY_RAYS)
-
+## HOW MUCH OF THE SKY THE TREES OVER THIS POINT COVER, 0 to 1.
+##
+## TREES V3 STAGE 7 REPLACED THE MEASUREMENT, NOT THE QUESTION. This used to
+## stamp every column within three chunks into a scratch volume and fire two
+## hundred rays up through the leaf blocks, because closure was a property of
+## the voxels. There are no leaf blocks: `TreeField` draws every tree from a
+## model library and the volume is terrain alone.
+##
+## So it asks the scan instead - `TreePlacement.cover_column()`, which is the
+## same crown-area sum the world itself shades its forest floor with
+## (`ChunkMesher._under_canopy`). That is a better instrument as well as the
+## only one left: it is what the GAME believes, rather than a second opinion
+## that could drift from it.
+##
+## THE NUMBERS ARE NOT COMPARABLE WITH TREES V1's, and the targets below are
+## trees v1's. A ray count through a lattice of leaf blocks and a clamped sum
+## of crown discs are two different quantities that both run 0 to 1. Read the
+## three lines against EACH OTHER - old growth should be closed, ordinary
+## groves less so, open ground least - and not against the old thresholds.
+func _closure_at(gen: TerrainGenerator, _config: WorldgenConfig,
+		at: Vector2i) -> float:
+	return TreePlacement.cover_column(gen,
+		Chunk.floor_div(at.x, Chunk.SIZE), Chunk.floor_div(at.y, Chunk.SIZE))
 
 func _ray_hits_leaves(chunks: Dictionary, from: Vector3, dir: Vector3) -> bool:
 	var t := 0.0

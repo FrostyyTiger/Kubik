@@ -62,13 +62,13 @@ func _init() -> void:
 	print("sample at     column (%d, %d) = block (%d, %d)" % [
 		c0.x, c0.y, c0.x * Chunk.SIZE, c0.y * Chunk.SIZE])
 
-	# The same extent World reserves: the terrain's own span, plus the sky the
-	# tallest tree could need. Restated from worldgen_config's own numbers so
-	# this probe reports what the world does rather than what it wishes.
-	var reserve := int(ceil(
-		WorldgenConfig.REF_MAX_TREE_BLOCKS * config.tree_size_scale
-			* config.tree_read_scale * maxf(config.old_growth_scale, 1.0)
-		+ WorldgenConfig.TREE_RESERVE_MARGIN))
+	# THE SAME EXTENT WORLD QUEUES, and after trees v3 Stage 7 that is the
+	# terrain and nothing above it. Before the deletion this added the sky
+	# reserve - `REF_MAX_TREE_BLOCKS` scaled by the tree knobs - so the
+	# `reserved` column below measured what a canopy needed somewhere to land
+	# in. It measures the terrain's own span now, and the two numbers this
+	# probe printed at Stage 0 are what the removal was worth.
+	var reserve := 0
 
 	var gen_us := 0
 	var tree_us := 0
