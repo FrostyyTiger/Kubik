@@ -1240,6 +1240,30 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## HOW MUCH OF A FRAME THE FAR SYSTEMS MAY SPEND HANDING MESHES TO THE
+## RENDERER, in milliseconds. Distance v5 Stage 1, decision 1.
+##
+## `ArrayMesh.add_surface_from_arrays` and `MultiMesh.buffer` are
+## RenderingServer calls and want the main thread, so the far country's
+## handover cannot be moved off the frame the player is looking at - it can
+## only be SPLIT. The far mesher emits one set of arrays per frontier sector
+## and FarUpload hands them over a few at a time.
+##
+## WHAT THE NUMBER MEANS. It is a line the pump stops AT, not one it never
+## crosses: a slice is atomic, so a frame that starts a sector 0.1 ms before
+## the budget runs out still pays for the whole sector. At `far_ring_div` 4 one
+## sector of sixteen is about 12 ms, so 4.0 buys "one sector a frame, sixteen
+## frames a rebuild" - a quarter of a second of handover, none of which is a
+## quarter-second frame.
+##
+## 0 RESTORES DISTANCE V4: everything queued goes up on the frame it arrives,
+## which is one `add_surface_from_arrays` per sector back to back, and is the
+## A/B for judging whether the budget bought anything.
+##
+## LOOK, NOT SHAPE - it changes WHEN a mesh reaches the screen and never what
+## is in it. LOCAL and unhashed, like every far knob.
+@export var far_upload_budget_ms := 4.0
+
 ## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
 ## v2 Stage 3.
 ##
@@ -1566,6 +1590,9 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# World.setup()'s clone drops it and the panel's value never reaches the
 	# world. Same failure the flora and AO knobs are guarded against above.
 	"far_cpp",
+	# DISTANCE V5 STAGE 1. LOCAL and unhashed for the same reason far_cpp is:
+	# it changes when a mesh reaches the screen and never what is in it.
+	"far_upload_budget_ms",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

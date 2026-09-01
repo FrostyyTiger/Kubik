@@ -68,6 +68,8 @@ func _ready() -> void:
 		"far pyramid parity": _test_far_pyramid_parity,
 		"far zone parity": _test_far_zone_parity,
 		"far dispatch": _test_far_dispatch,
+		# DISTANCE V5 STAGE 1, appended at the end of the list.
+		"far slice parity": _test_far_slice_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -1724,10 +1726,16 @@ func _test_far_terrace_knob():
 ## for a node in the scene tree. The Worlds these tests build are not, so
 ## without this the task completes on the worker and the mesh is never picked
 ## up - and the test would read the vertex count of the build before it.
+## DISTANCE V5 STAGE 1: AND UNTIL THE UPLOAD HAS LANDED. Since the handover is
+## budgeted, a build finishing is no longer the moment the mesh is on screen -
+## it is sixteen frames earlier - and a test that stopped at the old moment
+## would read the vertex count of the build before it, which is precisely the
+## bug this function was written for.
 func _pump_far_field(far_field: Node) -> void:
 	for i in 4000:
 		far_field._process(0.0)
-		if far_field._task == -1 and not far_field._has_pending:
+		if far_field._task == -1 and not far_field._has_pending \
+				and int(far_field.stats()["upload_pending"]) == 0:
 			return
 		OS.delay_msec(2)
 	print("  far field never went idle - a rebuild is stuck")
@@ -2382,11 +2390,33 @@ func _test_far_dispatch():
 ## The arrays of the mesh FarField is actually holding, read back off the
 ## Mesh rather than off the job - the job is gone by the time _process has
 ## applied it, and what is on screen is the thing being compared.
+## DISTANCE V5 STAGE 1: EVERY SURFACE, CONCATENATED. The far mesh is one
+## surface per frontier sector now, so surface 0 alone is a sixteenth of the
+## far country and comparing it would have quietly stopped checking the rest.
 func _far_mesh_arrays(far_field: Node) -> Array:
 	var m: Mesh = far_field.mesh
 	if m == null or m.get_surface_count() == 0:
 		return []
-	return m.surface_get_arrays(0)
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	for k in m.get_surface_count():
+		var a := m.surface_get_arrays(k)
+		var base := verts.size()
+		verts.append_array(a[Mesh.ARRAY_VERTEX])
+		normals.append_array(a[Mesh.ARRAY_NORMAL])
+		if a[Mesh.ARRAY_COLOR] != null:
+			colors.append_array(a[Mesh.ARRAY_COLOR])
+		for i in (a[Mesh.ARRAY_INDEX] as PackedInt32Array):
+			indices.append(i + base)
+	var out := []
+	out.resize(Mesh.ARRAY_MAX)
+	out[Mesh.ARRAY_VERTEX] = verts
+	out[Mesh.ARRAY_NORMAL] = normals
+	out[Mesh.ARRAY_COLOR] = colors
+	out[Mesh.ARRAY_INDEX] = indices
+	return out
 
 
 func _far_arrays_diff(a: Array, b: Array) -> float:
@@ -2403,3 +2433,284 @@ func _far_arrays_diff(a: Array, b: Array) -> float:
 		worst = maxf(worst, maxf(absf(p.x - q.x),
 			maxf(absf(p.y - q.y), absf(p.z - q.z))))
 	return worst
+
+
+# --- DISTANCE V5 -------------------------------------------------------------
+#
+# Appended at the end of the file, and nothing above it is touched.
+
+
+## THE SLICES ARE THE SAME MESH. Distance v5 Stage 1, decision 2.
+##
+## The upload is split along the frontier sector so it can be paid for a frame
+## at a time, and the whole risk of that is that the far country quietly stops
+## being the same far country. So: build the mesh both ways at the same centre
+## with the same config, and check that the slices between them hold EXACTLY
+## the reference build's quads - every one, once each, every position, normal
+## and colour bit-identical, and every slice's index buffer the quad pattern
+## over its own vertices.
+##
+## WHY IT IS A MULTISET MATCH AND NOT A DIFF OF TWO ARRAYS, which is what the
+## plan's decision 2 asks for in as many words.
+##
+## Grouping the quads by sector REORDERS them - that is what grouping is - so
+## the reference has to be put in the same order before a byte-for-byte diff
+## means anything, and putting it in that order means knowing which sector each
+## reference quad went to. That is recoverable for a ground quad, whose four
+## corners span its cell, and it is NOT recoverable for a RISER: a riser's four
+## corners span a cell EDGE, and the two cells either side of that edge can be
+## in different sectors. Written the naive way this test failed at
+## far_terrace 1.0 with a max position difference of exactly 100 blocks - both
+## meshers agreeing with each other and neither with the harness.
+##
+## So the comparison is: index the reference's quads by a hash of their twelve
+## position components, then consume one for every quad the slices emit,
+## checking the whole record - positions, normals and colours - on the way. A
+## quad the slices emit that the reference does not have, or emits twice, or
+## leaves behind, is a failure. That is exactly the claim decision 2 is
+## protecting ("the slicing must not change the union"), stated in the only
+## form the output can carry, and it is exact rather than a tolerance.
+##
+## Both meshers, because a slice mode that is right in C++ and wrong in
+## GDScript is a fallback that draws a different world.
+func _test_far_slice_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+
+	var world := World.new()
+	world.setup(1234, cfg)
+	var heightmap: Heightmap = world.generator.heightmap
+	var generator: TerrainGenerator = world.generator
+	var wcfg: WorldgenConfig = world.config
+
+	var mesher := FarMesher.new()
+	var have_cpp := FarMesher.available() and mesher.setup(heightmap, generator, wcfg)
+
+	# The same partial frontier the parity test uses: three sectors short, the
+	# rest at the full radius. A slice test with an empty frontier would never
+	# exercise the per-sector hole, which is the one thing that can make two
+	# sectors legitimately different sizes.
+	var partial := PackedInt32Array()
+	partial.resize(16)
+	for k in 16:
+		partial[k] = wcfg.voxel_radius_chunks
+	partial[0] = 1
+	partial[1] = 1
+	partial[7] = 2
+
+	var cases := [
+		{"name": "terrace 0.0", "terrace": 0.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "terrace 1.0", "terrace": 1.0, "div": 2.0,
+			"frontier": PackedInt32Array()},
+		{"name": "ring_div 4", "terrace": 1.0, "div": 4.0,
+			"frontier": PackedInt32Array()},
+		{"name": "frontier", "terrace": 1.0, "div": 2.0, "frontier": partial},
+	]
+	var centre := Vector2i(0, 0)
+	var checks := 0
+	for c in cases:
+		wcfg.far_terrace = c["terrace"]
+		wcfg.far_ring_div = c["div"]
+		FarField.apply_overdraw(wcfg)
+
+		# The reference: the whole mesh, exactly as this project has emitted it
+		# since terrain v1.
+		var ref := FarFieldJob.new()
+		ref.heightmap = heightmap
+		ref.generator = generator
+		ref.config = wcfg
+		ref.center = centre
+		ref.frontier = c["frontier"]
+		ref.run()
+		var want := _slice_index(ref.arrays)
+
+		var sliced := FarFieldJob.new()
+		sliced.heightmap = heightmap
+		sliced.generator = generator
+		sliced.config = wcfg
+		sliced.center = centre
+		sliced.frontier = c["frontier"]
+		sliced.slice = true
+		sliced.run()
+		checks += 1
+		var d := _slice_match(ref.arrays, want, sliced.slices)
+		print("  %-12s gdscript %6d verts in %2d slices, %s" % [
+			c["name"], sliced.vertex_count, sliced.slices.size(), d["text"]])
+		if not d["ok"] or sliced.vertex_count != ref.vertex_count:
+			bad += 1
+
+		if not have_cpp:
+			continue
+		if not mesher.build(wcfg, centre, c["frontier"], true):
+			print("  %s: the c++ mesher refused to build sliced" % c["name"])
+			bad += 1
+			continue
+		var dc := _slice_match(ref.arrays, want, mesher.slices)
+		print("  %-12s c++      %6d verts in %2d slices, %s" % [
+			c["name"], mesher.vertex_count, mesher.slices.size(), dc["text"]])
+		if not dc["ok"] or mesher.vertex_count != ref.vertex_count:
+			bad += 1
+
+	print("far slice parity: %d checks, c++ %s" % [
+		checks, "compared" if have_cpp else "ABSENT (gdscript only)"])
+	world.free()
+	return bad
+
+
+## The reference build's quads, indexed by a hash of their twelve position
+## components. One entry per distinct footprint, holding every quad that has
+## it - the two windings of a two-sided riser share a footprint, and so do a
+## riser and the skirt over it.
+func _slice_index(arrays: Array) -> Dictionary:
+	var out := {}
+	if arrays.is_empty():
+		return out
+	var va: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	for q in va.size() / 4:
+		var key := _slice_key(va, q)
+		# READ, APPEND, WRITE BACK - and the write back is the point.
+		# `(out[key] as PackedInt32Array).append(q)` appends to a COPY: a
+		# packed array read out of a Dictionary through a cast is a value, not
+		# the container's own. Written that way this index silently kept only
+		# the FIRST quad of every repeated footprint - a two-sided riser and
+		# the skirt over it share one - and the test reported sixteen unmatched
+		# quads and sixteen left over, symmetric and repeatable, with both
+		# meshers agreeing and every component difference at zero.
+		var list: PackedInt32Array = out.get(key, PackedInt32Array())
+		list.append(q)
+		out[key] = list
+	return out
+
+
+func _slice_key(va: PackedVector3Array, q: int) -> int:
+	var f := PackedFloat32Array()
+	f.resize(12)
+	for k in 4:
+		var p := va[q * 4 + k]
+		f[k * 3] = p.x
+		f[k * 3 + 1] = p.y
+		f[k * 3 + 2] = p.z
+	return hash(f)
+
+
+## Every quad the slices emit, matched against the reference exactly once.
+func _slice_match(arrays: Array, index: Dictionary, slices: Array) -> Dictionary:
+	if arrays.is_empty():
+		var empty := true
+		for a in slices:
+			if not (a as Array).is_empty():
+				empty = false
+		return {"ok": empty, "text": "the reference emitted nothing"}
+	var va: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var na: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	var ca: PackedColorArray = arrays[Mesh.ARRAY_COLOR]
+	# One tick per reference quad. A quad matched twice is as much a failure as
+	# one never matched, and without this a slicer that emitted the same sector
+	# sixteen times would pass on count alone.
+	#
+	# FILLED, NOT MERELY RESIZED. `PackedByteArray.resize()` does not zero the
+	# new bytes, and the first run of this test reported sixteen unmatched
+	# quads and sixteen left over - a perfectly symmetric, perfectly repeatable
+	# failure that both meshers agreed on - because sixteen reference quads
+	# started out already ticked. The mesh was right the whole time.
+	var used := PackedByteArray()
+	used.resize(va.size() / 4)
+	used.fill(0)
+
+	var seen := 0
+	var unmatched := 0
+	var bad_indices := 0
+	for a in slices:
+		var arr: Array = a
+		if arr.is_empty():
+			continue
+		var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var n: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var c: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+		var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		if idx.size() != v.size() / 4 * 6:
+			bad_indices += 1
+		for q in v.size() / 4:
+			seen += 1
+			if idx.size() == v.size() / 4 * 6 \
+					and (idx[q * 6] != q * 4 or idx[q * 6 + 1] != q * 4 + 1
+						or idx[q * 6 + 2] != q * 4 + 2 or idx[q * 6 + 3] != q * 4
+						or idx[q * 6 + 4] != q * 4 + 2 or idx[q * 6 + 5] != q * 4 + 3):
+				bad_indices += 1
+			var key := _slice_key(v, q)
+			if not index.has(key):
+				unmatched += 1
+				continue
+			var found := false
+			var candidates: PackedInt32Array = index[key]
+			for r in candidates:
+				if used[r] != 0:
+					continue
+				if not _slice_quad_equal(va, na, ca, r, v, n, c, q):
+					continue
+				used[r] = 1
+				found = true
+				break
+			if not found:
+				unmatched += 1
+				if unmatched <= 3:
+					_slice_report_miss(va, na, ca, index, key, v, n, c, q)
+
+	var left := 0
+	for u in used:
+		if u == 0:
+			left += 1
+	var ok := unmatched == 0 and left == 0 and bad_indices == 0 \
+		and seen == va.size() / 4
+	return {"ok": ok,
+		"text": "%d quads, %d unmatched, %d reference quads left over, %d bad index buffers%s" % [
+			seen, unmatched, left, bad_indices, "" if ok else "  FAILED"]}
+
+
+## WHAT A MISS ACTUALLY LOOKS LIKE. A count of unmatched quads says the
+## slicing changed something and never what, and "what" is the only thing a
+## failing gate is for. Prints the slice quad and the reference quad with the
+## same footprint beside it, field by field.
+func _slice_report_miss(va: PackedVector3Array, na: PackedVector3Array,
+		ca: PackedColorArray, index: Dictionary, key: int,
+		v: PackedVector3Array, n: PackedVector3Array, c: PackedColorArray,
+		q: int) -> void:
+	if not index.has(key):
+		print("    miss: p0 %v - no reference quad has this footprint at all" % [
+			v[q * 4]])
+		return
+	var candidates: PackedInt32Array = index[key]
+	for r in candidates:
+		var dp := 0.0
+		var dn := 0.0
+		var dc := 0.0
+		for k in 4:
+			dp = maxf(dp, (va[r * 4 + k] - v[q * 4 + k]).length())
+			dn = maxf(dn, (na[r * 4 + k] - n[q * 4 + k]).length())
+			var e := ca[r * 4 + k]
+			var f := c[q * 4 + k]
+			dc = maxf(dc, maxf(absf(e.r - f.r), maxf(absf(e.g - f.g),
+				absf(e.b - f.b))))
+		print("    miss: p0 %v vs ref %d: pos %.9f normal %.9f colour %.9f" % [
+			v[q * 4], r, dp, dn, dc])
+
+
+## One quad, component for component. Exact: both sides are float32 in packed
+## arrays and both came out of the same expression, so anything but equality is
+## the slicing having changed a number.
+func _slice_quad_equal(va: PackedVector3Array, na: PackedVector3Array,
+		ca: PackedColorArray, r: int, v: PackedVector3Array,
+		n: PackedVector3Array, c: PackedColorArray, q: int) -> bool:
+	for k in 4:
+		if va[r * 4 + k] != v[q * 4 + k]:
+			return false
+		if na[r * 4 + k] != n[q * 4 + k]:
+			return false
+		if ca[r * 4 + k] != c[q * 4 + k]:
+			return false
+	return true

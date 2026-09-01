@@ -281,6 +281,35 @@ var config: WorldgenConfig = null
 ## Block position the disc is centred on.
 var center := Vector2i.ZERO
 
+## SLICED OUTPUT, distance v5 Stage 1, decision 1.
+##
+## THE UPLOAD IS THE FAR COUNTRY'S BINDING COST (STATUS items 11, 17 and 20):
+## `ChunkMesher.arrays_to_mesh` runs on the MAIN THREAD and costs 197 ms at
+## `far_ring_div` 4, every rebuild. It cannot be moved off the frame thread -
+## RenderingServer wants the main thread - so it is SPLIT instead, and the
+## thing it is split along is the frontier sector, which is the one partition
+## of the far disc this project already has a name and a function for.
+##
+## `slice` off is the mesh this file has emitted since terrain v1, in one set
+## of four arrays, byte for byte: the far probe, the parity harness and the
+## self-test all build that way and their numbers stay comparable across this
+## night. `slice` on fills `slices` instead - one set of four arrays per
+## sector, in sector order - and leaves `arrays` empty, because the runtime
+## path never wants the concatenation and assembling three million vertices to
+## throw them away is the cost this stage exists to remove.
+##
+## NOTHING NUMERIC MOVES. The walk is the same walk in the same order, every
+## expression is the same expression, and the only thing that changes is WHICH
+## four arrays a quad is appended to and what its index base is. That is what
+## lets decision 2's gate be exact rather than approximate: the concatenation
+## of the slices is the reference build's own quads, stably partitioned by
+## sector.
+var slice := false
+
+## One `[verts, normals, colors, indices]` per frontier sector, in sector
+## order. Empty unless `slice` is on.
+var slices: Array = []
+
 var arrays: Array = []
 var vertex_count := 0
 
@@ -589,6 +618,17 @@ func run() -> void:
 	var colors := PackedColorArray()
 	var indices := PackedInt32Array()
 
+	# THE SINKS, one per sector - see `slice`. Allocated here rather than in
+	# _build_ring because a sector spans every ring, which is the whole point:
+	# a slice is a wedge of the whole disc, so uploading one lands a complete
+	# piece of far country from the seam to the fog rather than a complete
+	# inner ring and nothing beyond it.
+	slices = []
+	if slice:
+		for s in World.FRONTIER_SECTORS:
+			slices.append([PackedVector3Array(), PackedVector3Array(),
+				PackedColorArray(), PackedInt32Array()])
+
 	var inner := exclude
 	for ring in RING_STEP_MULTIPLE.size():
 		var step: int = base_step * RING_STEP_MULTIPLE[ring]
@@ -603,6 +643,34 @@ func run() -> void:
 			continue
 		_build_ring(ring, step, inner, outer, y_offset, verts, normals, colors, indices)
 		inner = outer
+
+	# THE SLICED PATH ENDS HERE. `arrays` stays empty and `vertex_count` is the
+	# sum over the sectors - the same number the whole-mesh path reports,
+	# because it is the same quads.
+	if slice:
+		vertex_count = 0
+		var out := []
+		for sink in slices:
+			vertex_count += sink[0].size()
+			# EACH SLICE AS MESH ARRAYS, the same shape the C++ mesher hands
+			# back and the shape `add_surface_from_arrays` takes. No copy: the
+			# four packed arrays are moved into the ARRAY_MAX-sized Array the
+			# renderer wants, and an empty sector emits an empty Array rather
+			# than a surface with nothing in it.
+			if sink[0].is_empty():
+				out.append([])
+				continue
+			var a := []
+			a.resize(Mesh.ARRAY_MAX)
+			a[Mesh.ARRAY_VERTEX] = sink[0]
+			a[Mesh.ARRAY_NORMAL] = sink[1]
+			a[Mesh.ARRAY_COLOR] = sink[2]
+			a[Mesh.ARRAY_INDEX] = sink[3]
+			out.append(a)
+		slices = out
+		arrays = []
+		elapsed_ms = Time.get_ticks_msec() - _t0
+		return
 
 	vertex_count = verts.size()
 	if verts.is_empty():
@@ -692,6 +760,23 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
+
+			# WHICH SLICE THIS CELL'S QUADS GO IN. The cell's own sector, taken
+			# from its CENTRE by the same function _in_ring cuts the per-sector
+			# hole with - so a cell, its risers and its skirts land together and
+			# a slice is a wedge with no seams of its own inside it. One atan2
+			# per cell, and only when slicing.
+			var w_verts := verts
+			var w_normals := normals
+			var w_colors := colors
+			var w_indices := indices
+			if slice:
+				var sink: Array = slices[World.frontier_sector_of(
+					bx0 + step / 2 - center.x, bz0 + step / 2 - center.y)]
+				w_verts = sink[0]
+				w_normals = sink[1]
+				w_colors = sink[2]
+				w_indices = sink[3]
 
 			# THE TERRACE, Stage 2. One height for the whole cell, quantised to
 			# the ring's step, blended in from the true bilinear corners by
@@ -840,7 +925,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			color = _band_color(color, mid_h * bs, band_m, band_tl)
 			var flank := _flank_normal(bx0 + step / 2, bz0 + step / 2)
 
-			_push_quad(p0, p1, p2, p3, color, verts, normals, colors, indices, flank)
+			_push_quad(p0, p1, p2, p3, color, w_verts, w_normals, w_colors, w_indices, flank)
 
 			# One skirt per edge whose neighbour is not in this ring, and one
 			# RISER per edge whose neighbour is in this ring and lower. The four
@@ -889,7 +974,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				var nbz: int = bz0 + e[3]
 				if not _in_ring(nbx, nbz, step, inner, outer):
 					_push_skirt(e[0], e[1], skirt_drop, shaded,
-						verts, normals, colors, indices)
+						w_verts, w_normals, w_colors, w_indices)
 					continue
 				if _t_amount <= 0.0:
 					continue
@@ -961,7 +1046,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				if da <= 0.0 and db <= 0.0:
 					continue
 				_push_riser(e[0], e[1], maxf(da, 0.0) * bs, maxf(db, 0.0) * bs,
-					riser, verts, normals, colors, indices)
+					riser, w_verts, w_normals, w_colors, w_indices)
 
 
 ## The zone of one far-field quad.

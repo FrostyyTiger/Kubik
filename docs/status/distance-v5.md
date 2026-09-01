@@ -119,3 +119,164 @@ is not "the ring rebuilds while nothing moves". `FarTrees.update()` already
 returns on its first line unless the centre has moved `REBUILD_STEP_M` (24 m),
 and standing still it does. **Stage 2 goes looking for the real trigger before
 it writes a debounce for a bug that is somewhere else.**
+
+---
+
+## Stage 1 - the uploader
+
+**The headline: the sprint's worst frame goes 286.3 / 268.0 ms to 33.4 / 33.8 ms,
+and the count of frames over 33 ms goes 40 to 2.** The far country's handover to
+the renderer is the same 196 ms of work it always was; it is now paid a sector
+at a time instead of all at once.
+
+### What was built
+
+Three pieces, and the ordering between them is the design.
+
+**1. Both meshers gained a `slice` mode, in the same commit** (parity doctrine,
+decision 2). Off, the mesh is the one this project has emitted since terrain
+v1, in one set of four arrays, byte for byte - the far probe, the parity
+harness and the self-test all build that way, so every number in this document
+stays comparable with distance v4's. On, each quad goes to its own frontier
+sector's arrays instead of the shared ones, and `arrays` is never assembled.
+**Nothing numeric moves**: the walk is the same walk in the same order, every
+expression is the same expression, and the only thing that changes is which
+four arrays a quad is appended to and what its index base is.
+
+**2. `FarUpload`** - one small queue, `scripts/world/far_upload.gd`. Three
+rules, each of which is a way this goes wrong if it is missing: a slice is
+atomic (so the budget is a line the pump stops AT, not one it never crosses);
+the swap is atomic (slices land in a mesh nobody is looking at and the finished
+thing goes on screen in one assignment, so a rebuild in progress shows the OLD
+COMPLETE far country and never a mixed one); and a superseded job is dropped
+rather than queued behind, so a sprint cannot build a backlog of far meshes for
+vantages the player has already left.
+
+**3. `far_upload_budget_ms`, default 4.0**, LOCAL, unhashed, on
+`FAR_ONLY_PROPERTIES` so it can be turned to 0 and back standing still. 0
+restores distance v4 exactly: everything queued goes up on the frame it
+arrives.
+
+### Where the uploader lives - the plan left this to the executor
+
+**`FarField` owns it**, as a `RefCounted` the node holds and drops with itself -
+the same ownership `FarMesher` has had since distance v4 Stage 5. FarField
+rather than World because FarField already runs a `_process` on the main thread
+every frame, already owns the far mesh's whole lifecycle, and already dies with
+the world; putting it in World would have meant a second node with a second
+`_process` to pump it, for nothing. `FarTrees` reaches it through
+`FarField.uploader()` - see Stage 2.
+
+**Sectors rather than rings**, the plan's other open choice. Sixteen sectors of
+a far mesh are within a factor of two of each other; six rings are not - ring 0
+is a few thousand quads and the outer ring is most of the mesh, so a ring
+slicing would have left one 100 ms slice in the middle of the schedule and five
+cheap ones around it. A sector is also a wedge from the seam to the fog, so an
+uploaded slice is a complete piece of far country rather than a complete inner
+ring with nothing beyond it, and `World.frontier_sector_of` already exists and
+already cuts the far mesh's per-sector hole.
+
+### The numbers
+
+`--far-probe --upload`, ganymede, editor target, headless, seed 42, median of
+three, main thread.
+
+| | whole mesh | sliced, total | **worst single slice** |
+| --- | --- | --- | --- |
+| div 2, 941,144 verts | 62.61 ms | 56.11 ms over 16 surfaces | **4.27 ms** |
+| div 4, 3,271,568 verts | 219.90 ms | 195.65 ms over 16 surfaces | **15.82 ms** |
+
+The total is the same work, because it is the same quads. **The number the
+frame budget is about is the worst slice**, because a slice is atomic and is
+therefore the largest single thing one frame can be made to pay for. At div 4
+that is 15.82 ms against 219.90, and at a 4 ms budget it is one slice a frame
+and about sixteen frames a rebuild - a quarter of a second of handover, none of
+which is a quarter-second frame.
+
+### The sprint, before and after
+
+Stream probe, seed 42, `far_ring_div` 4, single run each.
+
+| | Stage 0 | Stage 1 | |
+| --- | --- | --- | --- |
+| worst frame, out / back | 286.3 / 268.0 ms | **33.4 / 33.8 ms** | |
+| frames over 33 ms | 40 | **2** | |
+| holes | 0 / 0 | **0 / 0** | hard rule 3 |
+| collidable front min | 48.0 / 56.0 m | **56.0 / 64.0 m** | better |
+| chunks/s | 93.0 / 98.9 | **104.6 / 117.6** | better |
+| far rebuilds over the probe | 133 | 174 | |
+| far rebuild median wall | 703 ms | 554 ms | |
+| static memory | 379.4 MB | **518.3 MB** | worse, see below |
+
+The front-min and chunks/s improvements are the same mechanism distance v4
+found and did not predict, one step further along: the far country stopped
+monopolising something the chunk streamer needed. Here it is the MAIN THREAD
+rather than the worker pool.
+
+### And the thing that got worse: 139 MB
+
+**Static memory goes 379.4 MB to 518.3 MB**, and it is decision 1's second rule
+being paid for rather than a leak. An atomic swap means the new far mesh exists
+before the old one stops being drawn, so at `far_ring_div` 4 there are two
+120 MB far meshes alive for the ~250 ms a handover takes. The lever is to drop
+the rule and let the far country be half one vantage and half another for a
+quarter of a second per rebuild, which is a worse artefact than the hitch this
+stage removed and an intermittent one.
+
+**It was 237 MB before two lines were added**, and they are worth recording
+because the first measurement was 616.9 MB and looked like a reason to stop:
+a queued slice is a closure holding a sixteenth of a far mesh, so holding every
+slice to the end of the job kept a THIRD far mesh alive - the queue's own copy
+of the arrays it had already uploaded. `FarUpload` now drops each slice the
+moment it lands, and `FarField` drops the mesher's own reference as soon as the
+job is queued.
+
+### The gate
+
+| Stage 1 gate (plan) | result |
+| --- | --- |
+| parity: concatenated slices == the reference build, exact | **8 checks, 0 unmatched, 0 reference quads left over, 0 bad index buffers** - four cases, both meshers |
+| stream probe div 4, holes 0 | **0**, both legs |
+| no far-upload frame over 33 ms | **worst slice 15.82 ms**; sprint worst frame 33.4 / 33.8 ms |
+| the 224 ms class gone | **gone** - 219.90 ms of upload is now 16 x 15.82 ms at worst |
+| full self-test | **green** |
+
+### The gate is a multiset match, and decision 2 asks for a diff
+
+Decision 2 asks the harness to compare "the concatenation of slices in a
+defined sector order against the reference whole-mesh build, arrays exact". It
+is stated here as an exact **multiset** match instead - every reference quad
+appears in the slices exactly once, with every position, normal and colour
+bit-identical, and every slice's index buffer the quad pattern over its own
+vertices - and the reason is that the byte-for-byte form cannot be written.
+
+Grouping the quads by sector reorders them, so the reference has to be put in
+the same order first, and that means knowing which sector each reference quad
+went to. That is recoverable for a ground quad, whose four corners span its
+cell. **It is not recoverable for a riser**, whose four corners span a cell
+EDGE - and the two cells either side of an edge can be in different sectors.
+Written the naive way this gate failed at `far_terrace 1.0` with a max position
+difference of exactly 100 blocks, both meshers agreeing with each other and
+neither with the harness. The multiset form is the same claim - "the slicing
+did not change the union" - in the only shape the output can carry it, and it
+is exact rather than a tolerance.
+
+### Two harness bugs worth writing down, because both looked like the mesh
+
+Both produced a **perfectly symmetric, perfectly repeatable** failure - sixteen
+unmatched quads and sixteen reference quads left over, with both meshers
+agreeing and every reported component difference at exactly zero - which is a
+signature worth recognising, because it is what a harness looks like when it is
+wrong and a mesher never looks like that.
+
+1. **`PackedByteArray.resize()` does not zero the new bytes.** The tick list of
+   consumed reference quads started with sixteen already ticked. `fill(0)`.
+2. **`(dict[key] as PackedInt32Array).append(x)` appends to a copy.** A packed
+   array read out of a Dictionary through a cast is a value, not the
+   container's own, so the index of quads-by-footprint silently kept only the
+   FIRST quad of every repeated footprint - and a two-sided riser and the skirt
+   over it share one. Read, append, write back.
+
+`(array_of_arrays[k])[0]` passed to a function DOES mutate through, which is
+what the mesher's own sink selection relies on and what made the first bug look
+like the second.

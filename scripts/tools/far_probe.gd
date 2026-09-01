@@ -1206,8 +1206,40 @@ func _upload_table() -> void:
 			ms.append(float(Time.get_ticks_usec() - t) / 1000.0)
 			m = null
 		var u := _bench_median(ms)
-		print("[FarUpload] div %.0f  arrays_to_mesh median %7.2f ms (%.2f-%.2f) at %d vertices" % [
+		print("[FarUpload] div %.0f  whole  arrays_to_mesh median %7.2f ms (%.2f-%.2f) at %d vertices" % [
 			div, u[0], u[1], u[2], mesher.vertex_count])
+
+		# DISTANCE V5 STAGE 1: THE SAME MESH, A SECTOR AT A TIME. The total is
+		# the same work - it has to be, it is the same quads - and the number
+		# the frame budget is about is the WORST SLICE, because a slice is
+		# atomic and is therefore the largest single thing a frame can be made
+		# to pay for.
+		mesher.build(_config, centre, PackedInt32Array(), true)
+		var totals := PackedFloat32Array()
+		var worsts := PackedFloat32Array()
+		var surfaces := 0
+		for k in BENCH_REPEATS:
+			await get_tree().process_frame
+			var m := ArrayMesh.new()
+			var total := 0.0
+			var worst := 0.0
+			surfaces = 0
+			for arrays in mesher.slices:
+				if (arrays as Array).is_empty():
+					continue
+				var t := Time.get_ticks_usec()
+				m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var one := float(Time.get_ticks_usec() - t) / 1000.0
+				total += one
+				worst = maxf(worst, one)
+				surfaces += 1
+			totals.append(total)
+			worsts.append(worst)
+			m = null
+		var ts := _bench_median(totals)
+		var ws := _bench_median(worsts)
+		print("[FarUpload] div %.0f  sliced total  median %7.2f ms (%.2f-%.2f) over %d surfaces, WORST SLICE median %6.2f ms (%.2f-%.2f)" % [
+			div, ts[0], ts[1], ts[2], surfaces, ws[0], ws[1], ws[2]])
 	_config.far_ring_div = div_was
 	FarField.apply_overdraw(_config)
 

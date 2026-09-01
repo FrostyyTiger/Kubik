@@ -198,11 +198,18 @@ struct Mesher {
 	int band_treeline = 0;
 	std::unordered_map<int64_t, int> vote_memo;
 
-	// The output.
-	std::vector<Vector3> verts;
-	std::vector<Vector3> normals;
-	std::vector<Color> colors;
-	std::vector<int32_t> indices;
+	// The output. `sinks[0]` is the whole mesh when not slicing, and one
+	// sector each when slicing - see `slicing` and far_field_job.gd's `slice`.
+	struct Sink {
+		std::vector<Vector3> verts;
+		std::vector<Vector3> normals;
+		std::vector<Color> colors;
+		std::vector<int32_t> indices;
+	};
+	std::vector<Sink> sinks;
+	// Where push_quad writes. Set once per cell in build_ring.
+	Sink *out = nullptr;
+	bool slicing = false;
 
 	explicit Mesher(World &p_w) :
 			w(p_w), c(p_w.config), bs(p_w.config.block_size) {}
@@ -485,19 +492,20 @@ struct Mesher {
 		// ONCE PER QUAD, not once per vertex - the jitter is what varies
 		// across the four corners and the aspect shade is not.
 		Color shaded = aspect_shade(color, normal, c.slope_tint, c.aspect_tint);
-		int32_t first = (int32_t)verts.size();
+		Sink &o = *out;
+		int32_t first = (int32_t)o.verts.size();
 		const Vector3 quad[4] = { p0, p1, p2, p3 };
 		for (int k = 0; k < 4; k++) {
-			verts.push_back(quad[k]);
-			normals.push_back(normal);
-			colors.push_back(shade_vertex(shaded, quad[k]));
+			o.verts.push_back(quad[k]);
+			o.normals.push_back(normal);
+			o.colors.push_back(shade_vertex(shaded, quad[k]));
 		}
-		indices.push_back(first);
-		indices.push_back(first + 1);
-		indices.push_back(first + 2);
-		indices.push_back(first);
-		indices.push_back(first + 2);
-		indices.push_back(first + 3);
+		o.indices.push_back(first);
+		o.indices.push_back(first + 1);
+		o.indices.push_back(first + 2);
+		o.indices.push_back(first);
+		o.indices.push_back(first + 2);
+		o.indices.push_back(first + 3);
 	}
 
 	// The last three things that happen to a vertex colour: the aspect and
@@ -573,6 +581,15 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			}
 			int64_t bx1 = bx0 + step;
 			int64_t bz1 = bz0 + step;
+
+			// WHICH SLICE THIS CELL'S QUADS GO IN - far_field_job.gd's own
+			// note. The cell's sector, from its centre, by the same function
+			// in_ring cuts the per-sector hole with, so a cell, its risers and
+			// its skirts land together.
+			out = &sinks[slicing
+							? (size_t)frontier_sector_of(bx0 + step / 2 - center_x,
+									  bz0 + step / 2 - center_z)
+							: (size_t)0];
 
 			double h00, h10, h11, h01;
 			double r00 = 0.0, r10 = 0.0, r11 = 0.0, r01 = 0.0;
@@ -744,6 +761,11 @@ void Mesher::run(const Dictionary &args) {
 	int64_t overlap_cells = (int64_t)args.get("overlap_cells", 8);
 	PackedInt32Array frontier = args.get("frontier", PackedInt32Array());
 
+	slicing = (bool)args.get("slice", false);
+	sinks.clear();
+	sinks.resize(slicing ? (size_t)FRONTIER_SECTORS : (size_t)1);
+	out = &sinks[0];
+
 	bs = c.block_size;
 	int base_step = base_step_blocks(c);
 	double far_radius = c.fog_end_m / bs * FOG_MARGIN;
@@ -795,6 +817,43 @@ void Mesher::run(const Dictionary &args) {
 	}
 }
 
+// One sink's four vectors as the mesh arrays Godot takes. Empty in, empty
+// Array out - a sector with no quads in it emits no surface at all.
+static Array sink_arrays(const Mesher::Sink &s) {
+	Array arrays;
+	if (s.verts.empty()) {
+		return arrays;
+	}
+	PackedVector3Array v;
+	PackedVector3Array n;
+	PackedColorArray col;
+	PackedInt32Array idx;
+	v.resize((int64_t)s.verts.size());
+	n.resize((int64_t)s.normals.size());
+	col.resize((int64_t)s.colors.size());
+	idx.resize((int64_t)s.indices.size());
+	{
+		Vector3 *vp = v.ptrw();
+		Vector3 *np = n.ptrw();
+		Color *cp = col.ptrw();
+		int32_t *ip = idx.ptrw();
+		for (size_t k = 0; k < s.verts.size(); k++) {
+			vp[k] = s.verts[k];
+			np[k] = s.normals[k];
+			cp[k] = s.colors[k];
+		}
+		for (size_t k = 0; k < s.indices.size(); k++) {
+			ip[k] = s.indices[k];
+		}
+	}
+	arrays.resize(Mesh::ARRAY_MAX);
+	arrays[Mesh::ARRAY_VERTEX] = v;
+	arrays[Mesh::ARRAY_NORMAL] = n;
+	arrays[Mesh::ARRAY_COLOR] = col;
+	arrays[Mesh::ARRAY_INDEX] = idx;
+	return arrays;
+}
+
 Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 	Dictionary out;
 	uint64_t t0 = Time::get_singleton()->get_ticks_msec();
@@ -810,39 +869,25 @@ Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 	Mesher m(p_world);
 	m.run(p_args);
 
-	Array arrays;
-	if (!m.verts.empty()) {
-		PackedVector3Array v;
-		PackedVector3Array n;
-		PackedColorArray col;
-		PackedInt32Array idx;
-		v.resize((int64_t)m.verts.size());
-		n.resize((int64_t)m.normals.size());
-		col.resize((int64_t)m.colors.size());
-		idx.resize((int64_t)m.indices.size());
-		{
-			Vector3 *vp = v.ptrw();
-			Vector3 *np = n.ptrw();
-			Color *cp = col.ptrw();
-			int32_t *ip = idx.ptrw();
-			for (size_t k = 0; k < m.verts.size(); k++) {
-				vp[k] = m.verts[k];
-				np[k] = m.normals[k];
-				cp[k] = m.colors[k];
-			}
-			for (size_t k = 0; k < m.indices.size(); k++) {
-				ip[k] = m.indices[k];
-			}
-		}
-		arrays.resize(Mesh::ARRAY_MAX);
-		arrays[Mesh::ARRAY_VERTEX] = v;
-		arrays[Mesh::ARRAY_NORMAL] = n;
-		arrays[Mesh::ARRAY_COLOR] = col;
-		arrays[Mesh::ARRAY_INDEX] = idx;
+	int64_t total = 0;
+	for (const Mesher::Sink &s : m.sinks) {
+		total += (int64_t)s.verts.size();
 	}
 
-	out["arrays"] = arrays;
-	out["vertex_count"] = (int64_t)m.verts.size();
+	if (m.slicing) {
+		// ONE SET OF ARRAYS PER SECTOR, in sector order, and no concatenation:
+		// the runtime path never wants one and building it is the main-thread
+		// cost this stage exists to remove.
+		Array slices;
+		for (const Mesher::Sink &s : m.sinks) {
+			slices.push_back(sink_arrays(s));
+		}
+		out["slices"] = slices;
+	} else {
+		out["arrays"] = sink_arrays(m.sinks[0]);
+	}
+
+	out["vertex_count"] = total;
 	out["elapsed_ms"] = (int64_t)(Time::get_singleton()->get_ticks_msec() - t0);
 	return out;
 }

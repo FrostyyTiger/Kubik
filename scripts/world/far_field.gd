@@ -13,6 +13,28 @@ signal rebuilt(vertex_count: int)
 
 var _job: FarFieldJob = null
 
+## THE BUDGETED UPLOADER, ONE PER WORLD, OWNED HERE. Distance v5 Stage 1,
+## decision 1 - and the choice of owner is recorded because the plan left it
+## open. FarField rather than World, because it is FarField that already has a
+## _process running on the main thread every frame, already owns the far mesh's
+## whole lifecycle, and already dies with the world. Putting it in World would
+## have meant a second node with a second _process to pump it, for nothing.
+##
+## The impostor ring is Game's child rather than World's, so it reaches this
+## one through the tree - see uploader().
+var _upload := FarUpload.new()
+
+## THE NEW MESH, BEING FILLED, THAT NOBODY IS LOOKING AT. Rule 2 of FarUpload:
+## slices land here and `mesh` is assigned once, when the last one has.
+var _next_mesh: ArrayMesh = null
+var _next_frontier := PackedInt32Array()
+var _next_verts := 0
+
+## What the last completed handover cost on the frame thread, and over how many
+## frames. For the F3 readout.
+var _last_upload_ms := 0.0
+var _last_upload_frames := 0
+
 ## THE C++ MESHER, ONE INSTANCE PER WORLD, OWNED HERE. Distance v4 Stage 5,
 ## hard rule 5: no new global state - it is a RefCounted this node holds and
 ## drops with itself, and setup() hands it the world exactly once because
@@ -115,6 +137,11 @@ func request_rebuild(center_block: Vector2i, p_frontier := PackedInt32Array()) -
 
 
 func _process(_delta: float) -> void:
+	# THE UPLOADER GETS ITS BUDGET FIRST, and it gets it whether or not a build
+	# finished this frame - a handover takes about sixteen frames and a rebuild
+	# arrives every seven hundred milliseconds, so most frames that have
+	# uploading to do have no job to collect.
+	_upload.pump(_config.far_upload_budget_ms if _config != null else 4.0)
 	if _task == -1:
 		return
 	if not WorkerThreadPool.is_task_completed(_task):
@@ -124,8 +151,6 @@ func _process(_delta: float) -> void:
 
 	_last_ms = _active.elapsed_ms
 	_last_wall_ms = int((Time.get_ticks_usec() - _started_us) / 1000)
-	_last_verts = _active.vertex_count
-	_rebuilds += 1
 	# THE FIRST BUILD, PRINTED. Distance v3 Stage 0, and it closes distance v2's
 	# carried item 13: the far probe is structurally blind to the frontier, so a
 	# change to the exclusion machinery passed seven stages of "identical on
@@ -137,9 +162,9 @@ func _process(_delta: float) -> void:
 	#
 	# Once, on the first build of a session: this is a baseline line for a
 	# headless run, not a per-frame log.
-	if _rebuilds == 1:
+	if _rebuilds == 0:
 		print("[FarField] first build: %d vertices, %d ms job, %d ms wall, %s mesher" % [
-			_last_verts, _last_ms, _last_wall_ms, _last_mesher])
+			_active.vertex_count, _last_ms, _last_wall_ms, _last_mesher])
 	# AND EVERY REBUILD'S WALL TIME, KEPT FOR THE SUMMARY AT EXIT. Distance v3
 	# Stage 4, because the first build is the WORST one and the acceptance
 	# criterion is about a rebuild.
@@ -151,17 +176,65 @@ func _process(_delta: float) -> void:
 	# against a nearly idle pool, and THAT is what "the far country redraws in
 	# under N seconds" has always meant. One number cannot be both.
 	_walls.append(_last_wall_ms)
-	mesh = ChunkMesher.arrays_to_mesh(_active.arrays)
-	# The frontier THIS MESH was cut to. Not the same as the world's current
-	# one: a rebuild takes a frame or two on a worker, and during that window
-	# what is on screen is the old hole. Anything asking "is this covered right
-	# now" - the stream probe above all - has to ask about the mesh that
-	# exists, not the one being built.
-	_built_frontier = _active.frontier
-	rebuilt.emit(_active.vertex_count)
+	# THE HANDOVER, ON A BUDGET. Distance v5 Stage 1: what used to be one
+	# `ChunkMesher.arrays_to_mesh` on this frame - 197 ms at far_ring_div 4 -
+	# is now one queued job of sixteen sector slices, and `mesh` does not move
+	# until the last of them has landed.
+	_queue_upload(_active.slices, _active.frontier, _active.vertex_count)
+	# AND THE MESHER LETS GO OF THEM. The queue holds every slice it still has
+	# to upload; the mesher holding a second reference to the same arrays until
+	# its next build would keep a whole extra far mesh alive for the whole
+	# handover, which at far_ring_div 4 is about 120 MB.
+	_active.slices = []
 	_job = null
 	_active = null
 	_start_if_idle()
+
+
+## Turn a finished build into a queued handover. See FarUpload's three rules.
+##
+## The new mesh is built beside the old one and swapped in whole, so a rebuild
+## in progress shows the OLD COMPLETE far country and never a mixed one - and
+## `_built_frontier`, `rebuilt` and the vertex count all move on the SWAP
+## rather than on the build. Anything asking "is this column covered right now"
+## - the stream probe above all - would otherwise be told yes about ground that
+## is still sixteen frames from being on screen.
+func _queue_upload(slices: Array, frontier: PackedInt32Array, verts: int) -> void:
+	var next := ArrayMesh.new()
+	_next_mesh = next
+	_next_frontier = frontier
+	_next_verts = verts
+	var work: Array[Callable] = []
+	for arrays in slices:
+		if (arrays as Array).is_empty():
+			# A sector with no quads in it. Some always are: the far disc has a
+			# hole in the middle and the world has an edge.
+			continue
+		work.append(func() -> void:
+			next.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			next.surface_set_material(next.get_surface_count() - 1,
+				ChunkMesher.get_material()))
+	_upload.submit(&"far_field", work, _commit_upload)
+
+
+func _commit_upload() -> void:
+	mesh = _next_mesh if _next_mesh != null \
+		and _next_mesh.get_surface_count() > 0 else null
+	# The frontier THIS MESH was cut to. Not the same as the world's current
+	# one: a rebuild takes a frame or two on a worker plus a handover on the
+	# frame thread, and during that window what is on screen is the old hole.
+	_built_frontier = _next_frontier
+	_last_verts = _next_verts
+	# REBUILDS COUNTS WHAT IS ON SCREEN, not what has been built. Every waiter
+	# in the project - the self-test's pump, the far probe's idle rebuild, the
+	# bench - spins on this number to mean "the new mesh is up", and after this
+	# stage the build finishing is no longer that moment.
+	_rebuilds += 1
+	var last: Dictionary = _upload.stats()["last"]
+	if last.has(&"far_field"):
+		_last_upload_ms = float(last[&"far_field"]["ms"])
+		_last_upload_frames = int(last[&"far_field"]["frames"])
+	rebuilt.emit(_next_verts)
 
 
 func _start_if_idle() -> void:
@@ -176,6 +249,11 @@ func _start_if_idle() -> void:
 		_mesher.config = _config
 		_mesher.center = _pending_center
 		_mesher.frontier = _pending_frontier
+		# SLICED, distance v5 Stage 1. The runtime path is the only caller that
+		# asks for this; the probe, the parity harness and the self-test build
+		# the whole mesh, which is byte for byte the one this project has
+		# always emitted.
+		_mesher.slice = true
 		_active = _mesher
 		_last_mesher = "c++"
 	else:
@@ -185,6 +263,7 @@ func _start_if_idle() -> void:
 		_job.config = _config
 		_job.center = _pending_center
 		_job.frontier = _pending_frontier
+		_job.slice = true
 		_active = _job
 		_last_mesher = "gdscript"
 	_started_us = Time.get_ticks_usec()
@@ -262,7 +341,24 @@ func stats() -> Dictionary:
 		# line the plan asks for, and the one thing a screenshot cannot say.
 		"mesher": _last_mesher,
 		"cpp_available": _mesher != null,
+		# DISTANCE V5 STAGE 1. What the handover cost on the frame thread and
+		# how many frames it was spread over - one number without the other is
+		# half the fact.
+		"upload_ms": _last_upload_ms,
+		"upload_frames": _last_upload_frames,
+		"upload_pending": _upload.pending(),
 	}
+
+
+## THE BUDGETED UPLOADER, for anything else with a far-system handover to make.
+##
+## `FarTrees` is Game's child rather than World's, so it asks for this the way
+## `apply_far_knobs` asks for `FarField` - by node name, through the tree. That
+## is not elegant and it is the same trade `debug_hud` and `screenshot_tour`
+## already take: reaching across is cheaper than a wiring line in another
+## lane's file, and there is exactly one of these to reach for.
+func uploader() -> FarUpload:
+	return _upload
 
 
 ## Block until any build finishes, before the world it reads is thrown away.
@@ -273,6 +369,10 @@ func drain() -> void:
 	_job = null
 	_active = null
 	_has_pending = false
+	# AND ANYTHING STILL WAITING TO GO UP. A world being put down with a half
+	# uploaded mesh behind it would leave the slices' captured arrays alive in
+	# a queue nobody pumps.
+	_upload.drain()
 
 
 func _exit_tree() -> void:
@@ -354,6 +454,10 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	"far_step_y_blocks",
 	# 2026-09-01, the horizontal ladder. Redraws the far mesh and the ring.
 	"far_ring_div",
+	# DISTANCE V5 STAGE 1. On this list so the budget can be turned to 0 and
+	# back standing still - which is the A/B for "did the budget buy anything",
+	# and the same argument far_cpp is on it for.
+	"far_upload_budget_ms",
 	# DISTANCE V4 STAGE 5. Which mesher draws the far country. On this list so
 	# the A/B is one spinbox and a redraw in place rather than a relaunch -
 	# which is the only way "the C++ mesh is the same mesh" can be judged by

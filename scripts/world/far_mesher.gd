@@ -191,12 +191,17 @@ var config: WorldgenConfig = null
 var center := Vector2i.ZERO
 var frontier := PackedInt32Array()
 
+## FarFieldJob's two, by the same names. Distance v5 Stage 1, decision 1: see
+## far_field_job.gd's `slice` for what they mean and why the union cannot move.
+var slice := false
+var slices: Array = []
+
 
 ## What FarField submits to the worker pool. The whole build is one call into
 ## C++, so this GDScript frame exists for the length of that call and no cell
 ## is ever meshed from it.
 func run() -> void:
-	build(config, center, frontier)
+	build(config, center, frontier, slice)
 
 
 ## Build one far mesh. The same three arguments FarFieldJob takes as members,
@@ -207,8 +212,9 @@ func run() -> void:
 ## their hole with the SAME number, or the stream probe's hole count is fiction
 ## (world.gd's far_field_exclusion_m says so in as many words).
 func build(config: WorldgenConfig, center: Vector2i,
-		frontier: PackedInt32Array) -> bool:
+		frontier: PackedInt32Array, slice := false) -> bool:
 	arrays = []
+	slices = []
 	vertex_count = 0
 	elapsed_ms = 0
 	if not _ready:
@@ -218,6 +224,11 @@ func build(config: WorldgenConfig, center: Vector2i,
 		"center_z": center.y,
 		"frontier": frontier,
 		"overlap_cells": FarFieldJob.FRONTIER_OVERLAP_CELLS,
+		# ONE SET OF ARRAYS PER SECTOR INSTEAD OF ONE FOR THE WHOLE DISC.
+		# Off for the probe, the parity harness and the self-test, which want
+		# the mesh this project has always emitted; on for the runtime path,
+		# which uploads it a slice at a time.
+		"slice": slice,
 		# Re-read every build for the reason FarFieldJob re-reads them every
 		# run: they are knobs on a shared config the main thread can write
 		# while a worker builds, and a value that changed half way through
@@ -225,6 +236,7 @@ func build(config: WorldgenConfig, center: Vector2i,
 		"config": _config_data(config),
 	})
 	arrays = out.get("arrays", [])
+	slices = out.get("slices", [])
 	vertex_count = int(out.get("vertex_count", 0))
 	elapsed_ms = int(out.get("elapsed_ms", 0))
 	return true
