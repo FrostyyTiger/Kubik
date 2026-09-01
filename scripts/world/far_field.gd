@@ -458,6 +458,8 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# back standing still - which is the A/B for "did the budget buy anything",
 	# and the same argument far_cpp is on it for.
 	"far_upload_budget_ms",
+	# DISTANCE V5 STAGE 2. Redraws the impostor ring and nothing else.
+	"far_tree_step_m",
 	# DISTANCE V4 STAGE 5. Which mesher draws the far country. On this list so
 	# the A/B is one spinbox and a redraw in place rather than a relaunch -
 	# which is the only way "the C++ mesh is the same mesh" can be judged by

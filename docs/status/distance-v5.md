@@ -280,3 +280,133 @@ wrong and a mesher never looks like that.
 `(array_of_arrays[k])[0]` passed to a function DOES mutate through, which is
 what the mesher's own sink selection relies on and what made the first bug look
 like the second.
+
+---
+
+## Stage 2 - the impostors calm down
+
+**615 rebuilds over a screenshot tour become 18 - one per vantage - and every
+impostor count at every shutter is IDENTICAL.** STATUS item 21 is closed, and
+the mechanism turned out not to be the one the plan assumed.
+
+### It is not "every stream tick", and standing still it never happened at all
+
+`FarTrees.update()` has returned on its first line unless the centre moved
+`REBUILD_STEP_M` since distance v1 Stage 7, so the plan's premise - "rebuilds
+on every stream tick" - was not what the code did. Stage 0's new `--idle` probe
+said so: **standing still for 60 seconds at spawn, 0 rebuilds**, 8,696 frames,
+worst frame 8.6 ms.
+
+So the stage went looking for the real trigger before writing a debounce for a
+bug somewhere else, and found it in the place v4 first saw it - a tour.
+
+| | rebuilds over 18 vantages | worst single vantage |
+| --- | --- | --- |
+| before | **615** | **94** (`11-forest-dusk`) |
+| after | **18** | **1** |
+
+Per vantage before: 1, 1, 1, 1, 1, 1, 0, **91, 24, 62, 33, 94, 24, 43, 93, 22,
+63, 59**. The first six are quiet and everything after `6-postcard` is not,
+which is the shape of a thing that starts happening rather than a thing that
+always did.
+
+### The mechanism: the step was a 3D distance and the ring is 2D
+
+The two lines under the guard compute the ring's centre from `position_m.x` and
+`position_m.z` and nothing else, so **two positions at the same x and z produce
+the identical ring**. The guard measured `Vector3.distance_to`. So ALTITUDE
+could ask for a rebuild whose output was, by construction, the mesh already on
+screen.
+
+And something is falling. `screenshot_tour.gd` freezes the player on purpose -
+"or it would spend the tour falling" - and
+`Game._release_player_when_ground_exists()` calls `set_physics_process(true)`
+and unfreezes it again, once, early (`[Game] spawn chunk ready, player released
+at 31.0 m`, line 27 of an 18-vantage log). A player teleported to a vantage
+with no collision under it then falls out of the world for as long as the tour
+stands there, and drags the impostor ring behind it at one rebuild per 24 m of
+fall - which is where 94 comes from, and where v4's "count drifting 1,096 ->
+1,016 -> 939" comes from too: the ring is rebuilt again and again at the same
+place while the frontier fills in underneath it.
+
+**The fix here is the half that belongs to `FarTrees`**: the hysteresis is
+measured in the horizontal plane. **The other half is a finding and is left
+alone** - see "For Marcel to rule on".
+
+### What changed in `FarTrees`, and it is three things
+
+Hard rule 5 limits this file to Stage 2's stated edits, so:
+
+1. **The step is horizontal.** One expression.
+2. **`far_tree_step_m`, default 24.0** - which is `REBUILD_STEP_M`'s own value
+   since distance v1 Stage 7 and the number every measurement in this project
+   was taken at. The knob exists to put the lever in the panel, not to move the
+   number. LOCAL, unhashed, on `FAR_ONLY_PROPERTIES`.
+3. **The multimesh commits join the uploader** (decision 1). One slice per
+   species, the tail as the commit, reached through `FarField.uploader()` -
+   FarTrees is Game's child and FarField is World's, so it is the same reach
+   `apply_far_knobs` makes in the other direction. The ring is a few hundred
+   instances and has never measured above a millisecond; **it is on the budget
+   because "every far-system handover" is a rule, and a rule with an exception
+   is a thing somebody has to remember.**
+
+**What was NOT added: a trigger on the frontier changing its cell set.** The
+plan asks for the debounce to fire on movement "or the loaded frontier actually
+changes its cell set", and today nothing rebuilds the ring when the frontier
+moves - it waits for the next 24 m of walking. Adding that trigger would make
+the ring rebuild MORE, not less; the frontier moves constantly while a world
+streams in, including while the player stands still, so it would have broken
+this stage's own first gate on the same night it was written. The overlap it
+would close is the one world feel v1 Stage 3 already ruled on explicitly: an
+impostor standing where a real tree has just landed is invisible, a gap is not.
+Recorded rather than done.
+
+### The gate
+
+| Stage 2 gate (plan) | result |
+| --- | --- |
+| standing 60 s -> 0 rebuilds | **0**, and it was 0 before the change too |
+| a full sprint -> rebuild count bounded and recorded | **30** over a 960 m sprint, one per 32 m - unchanged by the fix, because a sprint is horizontal |
+| no visual regression in impostor coverage, same counts +/- 2% | **identical on all 18 vantages**, 0.0% |
+| `FarTrees` diff limited to the stated edits | three edits, listed above |
+| full self-test | **green** |
+
+Impostor count at each shutter, before / after: 594/594, 510/510, 295/295,
+377/377, 285/285, 313/313, 707/707, 339/339, 520/520, 311/311, 707/707,
+339/339, 580/580, 707/707, 339/339, 665/665, 468/468.
+
+### The tour shots, and which rows the number came from
+
+Far band, rows 0-300, `v5-s1` against `v5-s2`:
+
+**Zero differing pixels on `6-postcard`, `14-postcard-dusk`, `12-meadow-night`,
+`13-meadow-dawn`, `17-rim` and `7-forest-interior`** - which is every shot whose
+rows 0-300 are actually the far country, and it is v4's own list plus
+`7-forest-interior`, which v4 could not get to zero.
+
+The residuals are foreground measured through the far band's rows and they sit
+at or below distance v4's own SAME-CODE control values: `8-meadow-closeup` 3.21
+(v4's control 3.97), `15-boulder` 1.14 (v4's control 1.28), `10-shore` 0.49,
+`1-spawn` 0.09. That is STATUS item 13a's flora non-determinism, and this stage
+makes it slightly livelier rather than quieter: the worker pool is no longer
+being asked for ninety-one impostor rings per vantage, so more flora columns
+have landed by the time the shutter opens. **A whole-frame diff of this pair is
+8 sheets "over tolerance" and means nothing** - item 13a says so in as many
+words.
+
+### The stream probe after Stage 2
+
+| | Stage 0 | Stage 1 | Stage 2 |
+| --- | --- | --- | --- |
+| worst frame, out / back | 286.3 / 268.0 ms | 33.4 / 33.8 ms | **34.5 / 32.3 ms** |
+| frames over 33 ms | 40 | 2 | **3** |
+| holes | 0 / 0 | 0 / 0 | **0 / 0** |
+| front min | 48.0 / 56.0 m | 56.0 / 64.0 m | **56.0 / 64.0 m** |
+| chunks/s | 93.0 / 98.9 | 104.6 / 117.6 | **103.0 / 116.7** |
+| static memory | 379.4 MB | 518.3 MB | **494.4 MB** |
+| impostor rebuilds | 30 | - | **30** |
+
+Stages 1 and 2 are one run each and this box moves about 9% between them; the
+honest reading of that table is that Stage 2 changed nothing a sprint can see,
+which is what it should do - a sprint is horizontal and the fix is about
+altitude.

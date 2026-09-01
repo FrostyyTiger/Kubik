@@ -45,6 +45,11 @@ signal rebuilt(count: int, elapsed_ms: int)
 ## explicitly: an impostor and a real tree overlapping for a second is
 ## invisible, because it is the same species at the same place at the same
 ## height, and a gap is not. This makes an invisible window 50% longer.
+##
+## DISTANCE V5 STAGE 2: THE DEFAULT, and the knob is `far_tree_step_m`. 24 m
+## is what this constant has been since distance v1 Stage 7 and what every
+## measurement in the project was taken at, so the default is the shipped
+## number and not a new one.
 const REBUILD_STEP_M := 24.0
 
 ## How far in from the inner edge an impostor grows to full size, in metres.
@@ -110,7 +115,24 @@ func update(position_m: Vector3) -> void:
 		visible = false
 		return
 	visible = true
-	if _last_center_m.distance_to(position_m) < REBUILD_STEP_M:
+	# THE HYSTERESIS IS HORIZONTAL, and it was a 3D distance until distance v5
+	# Stage 2. STATUS item 21 - "the impostor ring rebuilds 70-120 times while
+	# the player stands still" - is this line: the ring is a function of the
+	# XZ centre ALONE, which the two lines below say in as many words, so two
+	# positions at the same x and z produce the identical ring. Measuring the
+	# step in three dimensions meant ALTITUDE could ask for it, and a player
+	# falling asks for it every 24 m of fall, forever, for the same ring.
+	#
+	# Measured on a screenshot tour, seed 42: 615 rebuilds over 18 vantages,
+	# up to 94 at a single stationary one. The tour freezes the player and
+	# `Game._release_player_when_ground_exists()` unfreezes it again, so the
+	# player at a vantage with no collision under it falls out of the world
+	# and drags the ring behind it - see the status doc, which carries that
+	# half as a finding rather than fixing it here.
+	var step: float = _config.far_tree_step_m if _config.far_tree_step_m > 0.0 \
+		else REBUILD_STEP_M
+	if Vector2(_last_center_m.x - position_m.x,
+			_last_center_m.z - position_m.z).length() < step:
 		return
 	_last_center_m = position_m
 	_pending = Vector2i(
@@ -128,15 +150,8 @@ func _process(_delta: float) -> void:
 	WorkerThreadPool.wait_for_task_completion(_task)
 	_task = -1
 
-	_apply(_job)
 	_last_ms = _job.elapsed_usec / 1000
-	# THE TRIANGLE COUNT, printed here rather than folded into Game's
-	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
-	# epic and has already spent its one line. Stage 5's gate is a ratio and
-	# nothing in the project reported the numerator.
-	print("[FarTrees] %d triangles over %d species meshes" % [
-		_triangles, _slots.size()])
-	rebuilt.emit(_job.count, _last_ms)
+	_apply(_job)
 	_job = null
 	_start_if_idle()
 
@@ -183,35 +198,85 @@ func _start_if_idle() -> void:
 	_task = WorkerThreadPool.add_task(job.run, false, "kubik far trees")
 
 
+## THE RING'S HANDOVER, THROUGH THE SAME BUDGET THE FAR MESH USES. Distance v5
+## Stage 1's decision 1: every far-system mesh handover flows through one
+## uploader, so the frame thread has ONE budget rather than two systems each
+## individually small enough not to worry about.
+##
+## One slice per species - `MultiMesh.buffer` is a RenderingServer write and is
+## the atom here, exactly as one sector is for the far mesh - and the tail is
+## the commit. The ring is a few hundred instances and this has never been
+## measured above a millisecond; it is on the budget because "every handover"
+## is a rule, and a rule with an exception is a thing somebody has to remember.
+##
+## No uploader means no FarField, which means no world: applied directly, which
+## is what the self-test's small Worlds and any future headless caller get.
 func _apply(job: FarTreesJob) -> void:
-	_count = job.count
 	_triangles = 0
+	var up := _uploader()
+	if up == null:
+		for species in job.buffers:
+			_apply_species(job, species)
+		_apply_tail(job)
+		return
+	var work: Array[Callable] = []
 	for species in job.buffers:
-		var buf: PackedFloat32Array = job.buffers[species]
-		var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
-		if n <= 0:
-			continue
-		var slot: MultiMeshInstance3D = _slots.get(species)
-		if slot == null:
-			slot = _make_slot(species)
-			_slots[species] = slot
-		# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
-		# chooses between the cone and the stepped pyramid (hard rule 1: at 0
-		# the ring is the one f23c3f0 drew), and a slot built once at the old
-		# value would keep drawing cones on terraced ground until the species
-		# happened to disappear and come back. FarTreeMeshes caches both, so
-		# this is a dictionary lookup and not a rebuild.
-		slot.multimesh.mesh = FarTreeMeshes.for_species(species, _config)
-		slot.multimesh.instance_count = n
-		slot.multimesh.buffer = buf
-		slot.visible = true
-		# Triangles the ring actually draws - the gate for Stage 5 is a ratio
-		# against the cone ring and nothing reported one.
-		_triangles += n * (slot.multimesh.mesh.surface_get_array_len(0) / 3)
+		work.append(_apply_species.bind(job, species))
+	up.submit(&"far_trees", work, _apply_tail.bind(job))
+
+
+func _apply_species(job: FarTreesJob, species: int) -> void:
+	var buf: PackedFloat32Array = job.buffers[species]
+	var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
+	if n <= 0:
+		return
+	var slot: MultiMeshInstance3D = _slots.get(species)
+	if slot == null:
+		slot = _make_slot(species)
+		_slots[species] = slot
+	# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
+	# chooses between the cone and the stepped pyramid (hard rule 1: at 0
+	# the ring is the one f23c3f0 drew), and a slot built once at the old
+	# value would keep drawing cones on terraced ground until the species
+	# happened to disappear and come back. FarTreeMeshes caches both, so
+	# this is a dictionary lookup and not a rebuild.
+	slot.multimesh.mesh = FarTreeMeshes.for_species(species, _config)
+	slot.multimesh.instance_count = n
+	slot.multimesh.buffer = buf
+	slot.visible = true
+	# Triangles the ring actually draws - the gate for Stage 5 is a ratio
+	# against the cone ring and nothing reported one.
+	_triangles += n * (slot.multimesh.mesh.surface_get_array_len(0) / 3)
+
+
+func _apply_tail(job: FarTreesJob) -> void:
 	for species in _slots:
 		if not job.buffers.has(species):
 			_slots[species].multimesh.instance_count = 0
 			_slots[species].visible = false
+	_count = job.count
+	# THE TRIANGLE COUNT, printed here rather than folded into Game's
+	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
+	# epic and has already spent its one line. Stage 5's gate is a ratio and
+	# nothing in the project reported the numerator.
+	print("[FarTrees] %d triangles over %d species meshes" % [
+		_triangles, _slots.size()])
+	rebuilt.emit(job.count, _last_ms)
+
+
+## The far mesh's uploader, reached through the tree. FarTrees is Game's child
+## and FarField is World's, so this is the same reach `apply_far_knobs` makes
+## in the other direction - and it is looked up per rebuild rather than cached
+## because a reroll builds a new World under the same parent and a cached node
+## would be the old one.
+func _uploader() -> FarUpload:
+	var parent := get_parent()
+	if parent == null:
+		return null
+	var far_field := parent.get_node_or_null("World/FarField")
+	if far_field == null or not far_field.has_method("uploader"):
+		return null
+	return far_field.uploader()
 
 
 func _make_slot(species: int) -> MultiMeshInstance3D:

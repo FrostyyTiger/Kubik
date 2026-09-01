@@ -1240,6 +1240,23 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## HOW FAR THE PLAYER MUST MOVE HORIZONTALLY BEFORE THE IMPOSTOR RING IS
+## REBUILT, in metres. Distance v5 Stage 2. 0 falls back to
+## FarTrees.REBUILD_STEP_M.
+##
+## The default is 24.0, which is that constant's own value since distance v1
+## Stage 7 and the number every measurement in this project was taken at - the
+## knob exists so the lever is in the panel, not to move the number.
+##
+## HORIZONTAL is the word that matters and it is the whole of STATUS item 21.
+## The ring is a function of the player's x and z alone, so a step measured in
+## three dimensions let ALTITUDE ask for a rebuild that produces the identical
+## ring - and a falling player asks every 24 m of fall, forever. See
+## FarTrees.update().
+##
+## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob.
+@export var far_tree_step_m := 24.0
+
 ## HOW MUCH OF A FRAME THE FAR SYSTEMS MAY SPEND HANDING MESHES TO THE
 ## RENDERER, in milliseconds. Distance v5 Stage 1, decision 1.
 ##
@@ -1593,6 +1610,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# DISTANCE V5 STAGE 1. LOCAL and unhashed for the same reason far_cpp is:
 	# it changes when a mesh reaches the screen and never what is in it.
 	"far_upload_budget_ms",
+	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
+	"far_tree_step_m",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
