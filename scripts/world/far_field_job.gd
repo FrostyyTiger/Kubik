@@ -1727,7 +1727,7 @@ func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color
 # So the four rules that decide it - the level, the filtered height, the zone
 # and the altitude band - are static functions here, and the instance methods
 # above are one-line calls into them. There is exactly one implementation of
-# each, and FarTreesJob calls the same one.
+# each, and TreeFieldJob calls the same one.
 #
 # Pure: no job state, nothing but the generator, the config and a position.
 # Safe from any worker, which is where both callers are.
@@ -1899,7 +1899,7 @@ static func terrace_level(heightmap: Heightmap, config: WorldgenConfig) -> float
 ## rebuild off a cache, and the ring does it a few hundred times with no cache
 ## at all. Change one, change the other.
 ##
-## `d_m` decides the ring and therefore the step. FarTrees centres on the
+## `d_m` decides the ring and therefore the step. TreeField centres on the
 ## player's exact block and FarField on the player's chunk, so a tree within one
 ## cell of a ring boundary can pick the neighbouring ring's step; that is one
 ## cell of disagreement at a boundary the far mesh already has a skirt for.

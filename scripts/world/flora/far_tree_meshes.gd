@@ -51,7 +51,7 @@ static var _mutex := Mutex.new()
 ## of both and exactly the confusion the knob exists to resolve.
 ##
 ## Two entries per species in the cache rather than one, so flipping the knob
-## back and forth does not rebuild anything. FarTrees re-reads this on every
+## back and forth does not rebuild anything. TreeField re-reads this on every
 ## rebuild, which is what makes the swap land without an F7.
 static func for_species(species: int, config: WorldgenConfig) -> ArrayMesh:
 	var key := species * 2 + (1 if config.far_terrace > 0.0 else 0)
@@ -73,7 +73,7 @@ static func for_species(species: int, config: WorldgenConfig) -> ArrayMesh:
 ## instance colour is a MULTIPLIER on the mesh's own vertex colour, so working
 ## out "what multiplier lands this cone on the hillside's colour" needs the
 ## colour the cone already is. Reading it from here rather than re-deriving it
-## in FarTreesJob is what stops the two drifting apart.
+## in TreeFieldJob is what stops the two drifting apart.
 static func color_of_species(species: int, config: WorldgenConfig) -> Color:
 	var row: Dictionary = TreeSpecies.table(config)[species]
 	# Shade A. The far field is not the place for per-tree colour variation -

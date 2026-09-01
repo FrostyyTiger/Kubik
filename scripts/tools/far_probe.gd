@@ -1258,7 +1258,7 @@ func _upload_table() -> void:
 ## in the meantime. Anything above zero is work nobody asked for, and the frame
 ## histogram beside it says what that work costs.
 ##
-## FarTrees is Game's child rather than World's, so it is reached through the
+## TreeField is Game's child rather than World's, so it is reached through the
 ## parent by name - the same way debug_hud and screenshot_tour reach it, and
 ## for the same reason: `scripts/game/game.gd` is another lane's file.
 const IDLE_SECONDS := 60.0
@@ -1266,9 +1266,9 @@ const IDLE_SECONDS := 60.0
 
 func _idle_table() -> void:
 	var far_field: Node = _world.get_node_or_null("FarField")
-	var far_trees: Node = null
+	var tree_field: Node = null
 	if _world.get_parent() != null:
-		far_trees = _world.get_parent().get_node_or_null("FarTrees")
+		tree_field = _world.get_parent().get_node_or_null("TreeField")
 	var seconds := IDLE_SECONDS
 	var argv := OS.get_cmdline_user_args()
 	var at := argv.find("--idle-seconds")
@@ -1278,7 +1278,7 @@ func _idle_table() -> void:
 	var field_before := 0
 	if far_field != null and far_field.has_method("stats"):
 		field_before = int(far_field.stats()["rebuilds"])
-	var trees_before := _idle_tree_count(far_trees)
+	var trees_before := _idle_tree_count(tree_field)
 
 	print("[FarIdle] standing still for %.0f s at %s, far_ring_div %.0f, mesher %s" % [
 		seconds, str(_world.get_parent().get_node("Player").global_position
@@ -1305,21 +1305,21 @@ func _idle_table() -> void:
 		field_after = int(far_field.stats()["rebuilds"])
 	print("[FarIdle] %d frames in %.0f s: far field %d rebuilds, impostor ring %d rebuilds" % [
 		frames, seconds, field_after - field_before,
-		_idle_tree_count(far_trees) - trees_before])
+		_idle_tree_count(tree_field) - trees_before])
 	print("[FarIdle] worst frame %.1f ms, frames over 33 ms %d" % [worst, over_33])
 
 
-## How many rings FarTrees has built. It reports impostors and milliseconds and
+## How many rings TreeField has built. It reports impostors and milliseconds and
 ## not a count of rebuilds, so the count is taken off the signal - connected
 ## here rather than added to that file, which the trees lane owns.
 var _idle_tree_rebuilds := 0
 var _idle_tree_hooked := false
 
 
-func _idle_tree_count(far_trees: Node) -> int:
-	if far_trees != null and not _idle_tree_hooked \
-			and far_trees.has_signal("rebuilt"):
-		far_trees.rebuilt.connect(func(_c: int, _ms: int) -> void:
+func _idle_tree_count(tree_field: Node) -> int:
+	if tree_field != null and not _idle_tree_hooked \
+			and tree_field.has_signal("rebuilt"):
+		tree_field.rebuilt.connect(func(_c: int, _ms: int) -> void:
 			_idle_tree_rebuilds += 1)
 		_idle_tree_hooked = true
 	return _idle_tree_rebuilds

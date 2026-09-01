@@ -1,25 +1,36 @@
-class_name FarTrees
+class_name TreeField
 extends Node3D
 
-## The forest beyond the voxel radius, as impostors.
+## EVERY TREE IN THE GAME. Trees v3 decision 1.
 ##
-## Follows FarField exactly - a worker builds the new ring while the old one
-## stays on screen, and the swap is invisible. Building 2,000 transforms on the
-## frame the player crosses a threshold would be a hitch every sixteen metres
-## of walking, which is every second and a bit at sprint.
+## THIS WAS `FarTrees`, THE IMPOSTOR RING, AND THE RENAME IS THE EPIC. It drew
+## the forest BEYOND the voxel radius as six-triangle cones, because the real
+## trees were blocks in the chunk volume and stopped at the seam. There are no
+## block trees any more and there is no seam: this walks the placement lattice
+## from the player's boots to the fog and draws a library mesh at every
+## candidate, at a coarser LOD rung the further out it stands.
+##
+## The machine is unchanged and that is deliberate - the ring-walk in four
+## stride bands, the per-sector frontier holes, the inner and outer fades, the
+## terrace footing lift, the backdrop convergence, distance v5's horizontal
+## debounce and its budgeted uploader are all INHERITED, not rewritten. What
+## changed is what a candidate draws.
 ##
 ##
-## SIX TO TWELVE TRIANGLES PER TREE, AND THAT IS THE WHOLE DESIGN.
+## GEOMETRY ALL THE WAY OUT. NO CARDS (ruling 4).
 ##
-## A voxel spruce is several hundred triangles. Two thousand of them in a ring
-## is most of a million, which is the entire flora budget spent on trees you
-## cannot walk to. A cone is six, and at 150 m a cone and a spruce are the same
-## handful of pixels - the silhouette carries all the information that survives
-## the distance, and the silhouette is exactly what an impostor is.
+## There are no impostor billboards, no baked octahedral sheets and no painted
+## far ring. The far register is a DOWNSAMPLED VERSION OF THE SAME GRID - the
+## Distant Horizons move applied to a model library - so the near/far seam
+## stops being a KIND boundary (block tree against cone) and becomes only a
+## RESOLUTION boundary. Two things follow, and both were bought deliberately:
+## a walking eye cannot find the handover, and looking down from a peak works,
+## which cards never did.
 ##
 ## What it must NOT do is scatter its own trees. It walks the same candidate
-## lattice the voxel stamper walks, so the tree you see at 200 m is the tree
-## you arrive at.
+## lattice `TreePlacement.decide()` answers for, so the tree you see at 200 m
+## is the tree you arrive at - which was true of the impostor ring and is the
+## one property that had to survive becoming the only renderer.
 
 signal rebuilt(count: int, elapsed_ms: int)
 
@@ -74,12 +85,12 @@ const LOD_COARSE_M := 400.0
 
 ## And the third, which the plan did not ask for and the measurement did. Past
 ## it one cell in sixty-four, drawn eight times as wide. See the band table in
-## FarTreesJob: three bands cost 1.52x the Stage 6 ring against a gate of
+## TreeFieldJob: three bands cost 1.52x the Stage 6 ring against a gate of
 ## 1.25x, and took 9% off the stream probe's chunks/s on the way back - which
 ## is hard rule 6. 600 m is where the fog is already 87% of the frame.
 const LOD_COARSEST_M := 600.0
 
-var _job: FarTreesJob = null
+var _job: TreeFieldJob = null
 var _task := -1
 var _pending := Vector2i.ZERO
 var _has_pending := false
@@ -91,10 +102,10 @@ var _last_center_m := Vector3(INF, INF, INF)
 
 var _generator: TerrainGenerator = null
 var _config: WorldgenConfig = null
-## SLOT KEY -> MultiMeshInstance3D. The key is FarTreesJob's - `c<species>`
+## SLOT KEY -> MultiMeshInstance3D. The key is TreeFieldJob's - `c<species>`
 ## for a cone and `m<variant>|<lod>` for a library mesh - so one species with
 ## seven variants at three rungs is up to twenty-one slots and one draw call
-## each. See the note on FarTreesJob.buffers.
+## each. See the note on TreeFieldJob.buffers.
 var _slots := {}
 var _count := 0
 var _models := 0
@@ -166,12 +177,12 @@ func _start_if_idle() -> void:
 	if _task != -1 or not _has_pending or _generator == null:
 		return
 	_has_pending = false
-	var job := FarTreesJob.new()
+	var job := TreeFieldJob.new()
 	job.center = _pending
 	job.generator = _generator
 	job.config = _config
 	# The heightmap the far mesh draws from, for the colour convergence in
-	# FarTreesJob._tint_at(). The generator owns it and neither of them is
+	# TreeFieldJob._tint_at(). The generator owns it and neither of them is
 	# written after setup.
 	job.heightmap = _generator.heightmap
 	# INNER EDGE AT THE FRONTIER, because the real trees are inside it and
@@ -217,7 +228,7 @@ func _start_if_idle() -> void:
 ##
 ## No uploader means no FarField, which means no world: applied directly, which
 ## is what the self-test's small Worlds and any future headless caller get.
-func _apply(job: FarTreesJob) -> void:
+func _apply(job: TreeFieldJob) -> void:
 	_triangles = 0
 	var up := _uploader()
 	if up == null:
@@ -228,12 +239,12 @@ func _apply(job: FarTreesJob) -> void:
 	var work: Array[Callable] = []
 	for key in job.buffers:
 		work.append(_apply_species.bind(job, key))
-	up.submit(&"far_trees", work, _apply_tail.bind(job))
+	up.submit(&"tree_field", work, _apply_tail.bind(job))
 
 
-func _apply_species(job: FarTreesJob, key: String) -> void:
+func _apply_species(job: TreeFieldJob, key: String) -> void:
 	var buf: PackedFloat32Array = job.buffers[key]
-	var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
+	var n := buf.size() / TreeFieldJob.FLOATS_PER_INSTANCE
 	if n <= 0:
 		return
 	var mesh := _mesh_for_key(key)
@@ -269,14 +280,14 @@ func _apply_species(job: FarTreesJob, key: String) -> void:
 ## The mesh one slot key names: a cone for `c<species>`, a library rung for
 ## `m<variant>|<lod>`.
 func _mesh_for_key(key: String) -> Mesh:
-	var species := FarTreesJob.species_of_key(key)
+	var species := TreeFieldJob.species_of_key(key)
 	if species >= 0:
 		return FarTreeMeshes.for_species(species, _config)
-	var m := FarTreesJob.model_of_key(key)
+	var m := TreeFieldJob.model_of_key(key)
 	return TreeModels.mesh_for(StringName(m[0]), int(m[1]), _config.block_size)
 
 
-func _apply_tail(job: FarTreesJob) -> void:
+func _apply_tail(job: TreeFieldJob) -> void:
 	for key in _slots:
 		if not job.buffers.has(key):
 			_slots[key].multimesh.instance_count = 0
@@ -284,15 +295,15 @@ func _apply_tail(job: FarTreesJob) -> void:
 	_count = job.count
 	_models = job.model_count
 	# THE TRIANGLE COUNT, printed here rather than folded into Game's
-	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
+	# "[TreeField] N impostors in N ms" line: game.gd is append-only in this
 	# epic and has already spent its one line. Stage 5's gate is a ratio and
 	# nothing in the project reported the numerator.
-	print("[FarTrees] %d triangles over %d slots (%d model instances of %d)" % [
+	print("[TreeField] %d triangles over %d slots (%d model instances of %d)" % [
 		_triangles, _slots.size(), _models, _count])
 	rebuilt.emit(job.count, _last_ms)
 
 
-## The far mesh's uploader, reached through the tree. FarTrees is Game's child
+## The far mesh's uploader, reached through the tree. TreeField is Game's child
 ## and FarField is World's, so this is the same reach `apply_far_knobs` makes
 ## in the other direction - and it is looked up per rebuild rather than cached
 ## because a reroll builds a new World under the same parent and a cached node

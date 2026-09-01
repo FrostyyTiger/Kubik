@@ -262,6 +262,20 @@ func _test_tree_borders():
 	print("tree borders: %d chunks, %d tree blocks, %d differed under a 6x margin" % [
 		tested, tree_blocks, bad])
 	if tree_blocks == 0:
+		# TREES V3 STAGE 5: EVERY SPECIES IS DRAWN FROM THE LIBRARY NOW, so a
+		# mounted build has no tree blocks anywhere and this test is vacuous
+		# rather than failing. It is NOT deleted, and that is the point - on
+		# the ASSETLESS leg the block stamper still runs for everything, and
+		# that leg is the public build and the one CI runs. So the gate keeps
+		# its full assertion exactly where blocks still exist.
+		#
+		# Stage 7 replaces it with `cover determinism` and `registry
+		# determinism`, which ask the same question of the scan rather than of
+		# the volume.
+		if TreeModels.available():
+			print("  no tree blocks: the library owns every species (trees v3 Stage 5)")
+			print("  the block-stamp margin is asserted on the assetless leg")
+			return 0
 		print("  WARNING: no tree blocks in the sample - this test proved nothing")
 		return 1
 	return 1 if bad > 0 else 0
@@ -3213,7 +3227,7 @@ func _test_tree_table():
 ## the walk has bands, strides, an annulus test and a per-sector frontier hole
 ## in it, any one of which could quietly drop a tree.
 ##
-## So: run the real `FarTreesJob` over a small ring, count the model instances
+## So: run the real `TreeFieldJob` over a small ring, count the model instances
 ## it emitted per variant, and compare that against `TreePlacement.decide()`
 ## asked directly over the SAME cells. Exact equality, not a tolerance.
 ##
@@ -3231,7 +3245,7 @@ func _test_tree_field():
 	var gen := TerrainGenerator.new(42, cfg)
 	gen.build_heightmap()
 
-	var job := FarTreesJob.new()
+	var job := TreeFieldJob.new()
 	job.center = Vector2i(0, 0)
 	job.generator = gen
 	job.config = cfg
@@ -3252,8 +3266,8 @@ func _test_tree_field():
 	var models := 0
 	for key in job.buffers:
 		var n: int = (job.buffers[key] as PackedFloat32Array).size() \
-			/ FarTreesJob.FLOATS_PER_INSTANCE
-		var m := FarTreesJob.model_of_key(String(key))
+			/ TreeFieldJob.FLOATS_PER_INSTANCE
+		var m := TreeFieldJob.model_of_key(String(key))
 		if String(m[0]).is_empty():
 			continue
 		drawn[StringName(m[0])] = int(drawn.get(StringName(m[0]), 0)) + n

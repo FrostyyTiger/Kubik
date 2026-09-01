@@ -39,7 +39,7 @@ extends RefCounted
 ##
 ## NOT A GLOBAL. One of these per `FarField`, which is one per `World`, and it
 ## dies with the node that holds it - the same ownership `FarMesher` has had
-## since distance v4 Stage 5. `FarTrees` reaches this one through the tree, the
+## since distance v4 Stage 5. `TreeField` reaches this one through the tree, the
 ## way `apply_far_knobs` reaches `FarField`, because the impostor ring is Game's
 ## child and not World's.
 

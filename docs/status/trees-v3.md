@@ -714,3 +714,111 @@ its blocks were ever in the sample. The test is proving the SCAN MARGIN, which
 is unchanged and must be; Stage 7 replaces it with the canopy-aware siblings
 the plan names.
 
+
+---
+
+## Stage 5 - the whole field, every band
+
+**Every species is drawn from the library, the cones are retired, the walk
+runs from the player's boots to the fog, and `FarTrees` is `TreeField`.**
+636 trees at spawn, **636 of them models and none of them cones.**
+
+### The band -> rung assignment, and open question 1
+
+Decided on Stage 4's number rather than on taste: **one species at LOD0 in
+every band cost 606,484 triangles where the whole cone ring had cost 17,700.**
+Seven species that way is not a configuration this game can afford.
+
+| band | radius | stride | rung | voxel |
+| --- | --- | --- | --- | --- |
+| 0 | 0 -> 1.6 x voxel radius (154 m at High) | 1 | **LOD0** | 12.5 cm |
+| 1 | 154 -> 400 m | 2 | **LOD1** | 25 cm |
+| 2 | 400 -> 600 m | 4 | **LOD2** | 50 cm |
+| 3 | 600 m -> fog | 8 | **LOD2** | 50 cm |
+
+**The nearest band is stride 1 and LOD0 all the way to the old seam, and that
+answers open question 1's second half: there is no nearer cut.** That band is
+what a player walks through, stands under and looks at; every tree in it is
+the tree the artist drew at 12.5 cm voxels, and the handover to the rung above
+happens well beyond where anyone can resolve a voxel.
+
+**The outer two bands share LOD2** rather than the tool baking a fourth rung.
+Band 3 is past 600 m, where distance v1 Stage 7's own note says the fog is
+already 87% of the frame - a rung nobody can see is a rung nobody should pay
+to bake. The merged-lump step the plan records as the next move is what band 3
+actually wants if the fog ever moves out.
+
+**The band's spread still applies to a model, and it has to.** The outer bands
+walk one candidate cell in four, sixteen and sixty-four; without widening what
+they do draw, the far forest would be sixty-four times sparser than the near
+one and the treeline would thin into nothing. So a model takes the cone ring's
+own arithmetic unchanged - full width, height by half a step per doubling - and
+the outer band reads as a canopy rather than as a skyline of towers.
+
+### The colour re-pin (decision 7)
+
+`FarTreeMeshes.color_of_species()` reads `Block.color_of(row["leaves"])`, and
+that pin is dead the night leaf blocks die. It is replaced by
+`TreeModels.canopy_color()` - the variant's dominant canopy palette index
+through `TreePalette` - and `_pack`'s instance-colour divisor is pointed at the
+same source. **Near and far cannot drift apart because they are the same mesh
+under the same table: the drift MECHANISM is what got deleted, not the drift.**
+The old function is still called for cone keys, which nothing produces any
+more; Stage 7 removes it.
+
+### The rename
+
+One commit, no behaviour. `far_trees.gd` -> `tree_field.gd`,
+`far_trees_job.gd` -> `tree_field_job.gd`, `FarTrees` -> `TreeField`,
+`FarTreesJob` -> `TreeFieldJob`, the scene node, `[FarTrees]` -> `[TreeField]`
+in the log, `far trees (m)` -> `tree field (m)` on F4, and the HUD line now
+reports models as well as trees. Both class docstrings are rewritten, because
+they described an impostor ring and it is not one.
+
+### The gate
+
+| Stage 5 gate (plan) | result |
+| --- | --- |
+| all species to the library | `MODEL_SLOTS` is all seven; **636 model instances of 636 - zero cones** |
+| the walk extended to distance zero | the inner test applies to cone species only, and there are none |
+| band -> rung chosen on measured totals and recorded | above |
+| cones retired | drawn nowhere; the builders survive until Stage 7's deletion |
+| colour re-pin per decision 7 | `TreeModels.canopy_color()` |
+| instance-colour divisor re-pointed | same source, in `_pack` |
+| fades and frontier holes re-verified | inherited unchanged; `tree field` gate is exact over the near band |
+| **`FarTrees` renamed `TreeField`** | file, class, job, node, log tag, F4 label |
+| **standing 60 s -> 0 rebuilds** | **0 far-field and 0 tree-field rebuilds**, 8,696 frames, worst frame **9.6 ms**, 0 over 33 ms |
+| **draw calls counted** | **97 slots** at spawn, 99-103 over the tour - the plan predicted "high tens" and this is just above it |
+| tour at every rung crossing, and one from the summit | `build/tour/trees-v3-s5`, 18 shots |
+| self-test both ways | **green** |
+
+### `tree borders` had to be handled a stage early
+
+With every species in the library a mounted build has **no tree blocks
+anywhere**, so `tree borders` reported `0 tree blocks` and failed on its own
+"this test proved nothing" guard - which is the correct behaviour and the
+wrong result.
+
+It is **not** deleted, and that is the point: **on the assetless leg the block
+stamper still runs for everything**, and that leg is the public build and the
+one CI runs. So the gate keeps its full assertion exactly where blocks still
+exist, and self-skips with a message where they cannot. Stage 7 replaces it
+with the canopy-aware siblings the plan names.
+
+### The numbers, so far
+
+| | Stage 0 | Stage 4 | Stage 5 |
+| --- | --- | --- | --- |
+| field trees at spawn | 580 | 589 | **636** |
+| of those, models | 0 | 121 | **636** |
+| field slots (draw calls) | 7 | 14 | **97** |
+| field triangles at spawn | 17,700 | 606,484 | **1,267,828** |
+| field rebuild wall | 475 ms | 539 ms | **563 ms** |
+| standing 60 s, rebuilds | 0 | - | **0** |
+| standing 60 s, worst frame | 8.6 ms | - | **9.6 ms** |
+| `1-spawn` primitives in frame | 10.13 M | - | **11.24 M** (+11%) |
+
+**1.27 M triangles is 72x the cone ring and 11% more primitives in the
+frame**, which is what geometry-all-the-way-out costs and what ruling 4 bought
+knowingly. It buys a forest with no card in it anywhere.
+

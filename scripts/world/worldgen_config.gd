@@ -152,7 +152,7 @@ const VIEW_PRESETS := [
 	# half of it, so the far half of every wooded ridge was bald and the far
 	# field painted it forest-green: a mown slope. World feel v1 Stage 7 raised
 	# High from 300 to 400 for this reason and did not close the gap; this
-	# closes it. What pays for it is the LOD ramp in FarTreesJob, which keeps
+	# closes it. What pays for it is the LOD ramp in TreeFieldJob, which keeps
 	# the candidate count growing with the radius rather than with its square.
 	# AND FROM DISTANCE V3 STAGE 4 THE TOP TWO PRESETS SEE THE WHOLE REGION,
 	# which is decision 3 and the monumental north star as a number.
@@ -1357,7 +1357,7 @@ const FOG_START_RATIO := 0.4
 
 ## HOW FAR THE PLAYER MUST MOVE HORIZONTALLY BEFORE THE IMPOSTOR RING IS
 ## REBUILT, in metres. Distance v5 Stage 2. 0 falls back to
-## FarTrees.REBUILD_STEP_M.
+## TreeField.REBUILD_STEP_M.
 ##
 ## The default is 24.0, which is that constant's own value since distance v1
 ## Stage 7 and the number every measurement in this project was taken at - the
@@ -1367,7 +1367,7 @@ const FOG_START_RATIO := 0.4
 ## The ring is a function of the player's x and z alone, so a step measured in
 ## three dimensions let ALTITUDE ask for a rebuild that produces the identical
 ## ring - and a falling player asks every 24 m of fall, forever. See
-## FarTrees.update().
+## TreeField.update().
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob.
 @export var far_tree_step_m := 24.0

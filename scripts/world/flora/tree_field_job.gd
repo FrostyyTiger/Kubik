@@ -1,21 +1,23 @@
-class_name FarTreesJob
+class_name TreeFieldJob
 extends RefCounted
 
-## The impostor ring's contents, computed on a worker thread.
+## The tree field's contents, computed on a worker thread.
 ##
 ## Sibling of FarFieldJob, and the same shape for the same reasons: it captures
 ## what it needs at submit time, calls back into nothing, and returns packed
 ## arrays because MultiMesh belongs to the main thread.
 ##
 ##
-## WHY THIS EXISTS AT ALL.
+## WHY THIS EXISTS AT ALL, AND WHY IT NOW EXISTS FOR EVERYTHING.
 ##
-## Real voxel trees stop at the voxel radius - 96 m at High. Beyond that the
-## far field draws the coarse heightmap coloured by zone, so a forest becomes a
-## flat dark-green slope. Nobody noticed that under thick fog and with 35,000
-## evenly scattered cones; with the forest Stage 4 built it is the first thing
-## you see from a meadow, because the forest visibly STOPS at a circle centred
-## on the player and moves when they do.
+## It began as the impostor ring: real voxel trees stopped at the voxel radius
+## and beyond it a forest became a flat dark-green slope, visibly ENDING at a
+## circle centred on the player and moving when they did.
+##
+## Trees v3 deleted the block trees, so there is no inner edge left to start
+## from and this walk is the only thing that draws a tree anywhere. The band
+## structure survives unchanged - it is what makes a 600 m radius affordable -
+## and its innermost band is now stride 1 at LOD0 from distance zero.
 ##
 ##
 ## THE SAME CANDIDATES, THE SAME HASH.
@@ -95,6 +97,34 @@ var outer_fade_blocks := 0.0
 var lod_blocks := 0.0
 var lod2_blocks := 0.0
 var lod3_blocks := 0.0
+
+## WHICH LOD RUNG EACH BAND DRAWS A LIBRARY MESH AT. Trees v3 Stage 5, and
+## open question 1, decided on the numbers rather than on taste.
+##
+## Stage 4 drew LOD0 in every band, deliberately, so its gate could be read
+## with nothing hidden behind a downsample - and one species cost 606,484
+## triangles where the whole cone ring had cost 17,700. All seven species at
+## LOD0 everywhere is not a configuration this game can afford.
+##
+##     band          radius           stride   rung   voxel
+##     0             0 -> 1.6 x r     1        LOD0   12.5 cm
+##     1             1.6 r -> 400 m   2        LOD1   25 cm
+##     2             400 -> 600 m     4        LOD2   50 cm
+##     3             600 m -> fog     8        LOD2   50 cm
+##
+## THE NEAREST BAND IS STRIDE 1 AND LOD0 ALL THE WAY TO THE OLD SEAM, which
+## answers the second half of open question 1: there is no nearer cut. That
+## band covers 0 to 1.6 times the voxel radius - 154 m at High - and it is the
+## band a player walks through, stands under and looks at. Every tree in it is
+## the tree the artist drew, at 12.5 cm voxels, and the handover to the rung
+## above happens well beyond where anyone can resolve a voxel.
+##
+## THE OUTER TWO BANDS SHARE LOD2 rather than adding a fourth rung. The tool
+## bakes three, and band 3 is past 600 m where the fog is already 87% of the
+## frame (distance v1 Stage 7's own note) - a rung nobody can see is a rung
+## nobody should pay to bake, and the merged-lump step the plan records as the
+## next move is what band 3 actually wants if the fog ever moves out.
+const BAND_LOD := [0, 1, 2, 2]
 
 ## The heightmap the far mesh draws from, for the colour convergence below.
 ## Read-only here, and its pyramid is built on first use under its own mutex.
@@ -176,20 +206,16 @@ func run() -> void:
 	# parity test picked (cx & 1, cx & 3), and the radius tests are the same
 	# comparisons in the same order. This is the same scan, walked in a better
 	# order.
-	# BAND -> LOD RUNG. Stage 4 proves the pattern on the nearest band only and
-	# Stage 5 chooses the whole assignment on measured triangle totals; until
-	# then every band that draws a model draws it at LOD0, so the near field is
-	# what the gate is read against and nothing is hidden behind a downsample.
 	var bands := [
 		# The innermost band's floor is BELOW zero, not at it: the old single
 		# pass tested `d_sq > lod_sq` for the band above, so a cell exactly on
 		# the centre belonged to band 1. It is always inside the frontier and
 		# never survives, but the two scans agreeing on it is what makes "the
 		# same scan, walked in a better order" checkable rather than believed.
-		[1, -1.0, lod_sq, 1.0, 0],
-		[2, lod_sq, lod2_sq, 2.0, 0],
-		[4, lod2_sq, lod3_sq, 4.0, 0],
-		[8, lod3_sq, outer_sq, 8.0, 0],
+		[1, -1.0, lod_sq, 1.0, BAND_LOD[0]],
+		[2, lod_sq, lod2_sq, 2.0, BAND_LOD[1]],
+		[4, lod2_sq, lod3_sq, 4.0, BAND_LOD[2]],
+		[8, lod3_sq, outer_sq, 8.0, BAND_LOD[3]],
 	]
 	# Is anything drawn from the library at all? False in the public build and
 	# false before Stage 4's slot list has anything in it, and when it is false
@@ -528,12 +554,22 @@ func _pack(instances: Array, key: String) -> PackedFloat32Array:
 			# The fade still applies: it is what turns the handover at the
 			# outer edge into an appearance rather than a pop, and a model
 			# shrinking away into the fog needs it exactly as a cone did.
-			var ms := maxf(j * fade, 0.001)
+			var mbase := maxf(j * fade, 0.001)
+			# THE BAND'S SPREAD APPLIES TO A MODEL EXACTLY AS IT DID TO A CONE,
+			# and it has to. The outer bands walk one candidate cell in four,
+			# sixteen and sixty-four; without widening what they DO draw, the
+			# far forest would be sixty-four times sparser than the near one and
+			# the treeline would thin out into nothing. The cone ring solved
+			# this in distance v1 Stage 7 and the arithmetic is unchanged:
+			# full width, and height by half a step per doubling, so the outer
+			# band reads as a canopy rather than as a skyline of towers.
+			var mxz := mbase * spread
+			var msy := mbase * (1.0 + 0.15 * (log(spread) * INV_LN2))
 			var myaw := WorldHash.hash01(cell0.x, cell0.y, 0, 931) * TAU
-			var mc := cos(myaw) * ms
-			var msn := sin(myaw) * ms
+			var mc := cos(myaw) * mxz
+			var msn := sin(myaw) * mxz
 			buf[i] = mc;       buf[i + 1] = 0.0; buf[i + 2] = msn; buf[i + 3] = pos.x
-			buf[i + 4] = 0.0;  buf[i + 5] = ms;  buf[i + 6] = 0.0; buf[i + 7] = pos.y
+			buf[i + 4] = 0.0;  buf[i + 5] = msy; buf[i + 6] = 0.0; buf[i + 7] = pos.y
 			buf[i + 8] = -msn; buf[i + 9] = 0.0; buf[i + 10] = mc; buf[i + 11] = pos.z
 			var mtint: Color = inst["tint"]
 			var mmul := _far_tree_grain(

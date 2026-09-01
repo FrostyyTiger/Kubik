@@ -220,7 +220,10 @@ const BENCHED := {
 ## THE PUBLIC BUILD PUTS NOTHING HERE, by construction rather than by a second
 ## list: `drawn_as_model()` is false whenever the library is not mounted, so
 ## the block stamper runs for everything and the world is exactly what it was.
-const MODEL_SLOTS := [&"beech"]
+## STAGE 5: ALL SEVEN. The block stamper now runs for nothing at all when the
+## library is mounted, and Stage 7 deletes it.
+const MODEL_SLOTS := [&"spruce", &"beech", &"larch", &"krummholz", &"birch",
+	&"snag", &"hero"]
 
 
 ## Is this species drawn from the library tonight?
