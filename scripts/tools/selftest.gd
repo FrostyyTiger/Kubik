@@ -80,6 +80,8 @@ func _ready() -> void:
 		"tree library": _test_tree_library,
 		# TREES V3 STAGE 3.
 		"tree table": _test_tree_table,
+		# TREES V3 STAGE 4.
+		"tree field": _test_tree_field,
 	}
 	var failures := 0
 	for name in tests:
@@ -3199,5 +3201,104 @@ func _test_tree_table():
 		covered, picks.size(), bad])
 	if picks.size() < 2:
 		print("  WARNING: 400 cells drew %d distinct variants - the hash or the weights are wrong" % picks.size())
+		return 1
+	return bad
+
+
+## THE FIELD MUST DRAW EVERY TREE PLACEMENT PUTS THERE, AND NO OTHERS.
+##
+## Trees v3 hard rule 1: placement does not move. The field is now the only
+## thing that draws a library species, so "the forest is complete" stops being
+## a property of the chunk stamper and becomes a property of this walk - and
+## the walk has bands, strides, an annulus test and a per-sector frontier hole
+## in it, any one of which could quietly drop a tree.
+##
+## So: run the real `FarTreesJob` over a small ring, count the model instances
+## it emitted per variant, and compare that against `TreePlacement.decide()`
+## asked directly over the SAME cells. Exact equality, not a tolerance.
+##
+## THE NEAREST BAND IS WHERE THIS IS CHECKABLE, and only there. The outer bands
+## walk one candidate cell in four, sixteen and sixty-four on purpose (distance
+## v1 Stage 7), so the field is DESIGNED to draw fewer trees than placement
+## decides out there. Inside `lod_blocks` the stride is 1 and every candidate
+## is visited, which is the band the handover to the player happens in and the
+## one the gate is about.
+func _test_tree_field():
+	if not TreeModels.available():
+		print("tree field: no library mounted, 0 checks (public build)")
+		return 0
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(42, cfg)
+	gen.build_heightmap()
+
+	var job := FarTreesJob.new()
+	job.center = Vector2i(0, 0)
+	job.generator = gen
+	job.config = cfg
+	job.heightmap = gen.heightmap
+	# NO FRONTIER, so the inner edge is the nominal radius rather than a
+	# per-sector one - and for a model species the inner edge does not apply at
+	# all, which is the thing being checked.
+	job.inner_blocks = float(cfg.voxel_radius_chunks * Chunk.SIZE)
+	job.outer_blocks = job.inner_blocks * 1.6
+	# Every band collapsed onto the first, so the whole scan is stride 1 and
+	# the comparison is against every candidate rather than a lattice.
+	job.lod_blocks = job.outer_blocks
+	job.lod2_blocks = job.outer_blocks
+	job.lod3_blocks = job.outer_blocks
+	job.run()
+
+	var drawn := {}
+	var models := 0
+	for key in job.buffers:
+		var n: int = (job.buffers[key] as PackedFloat32Array).size() \
+			/ FarTreesJob.FLOATS_PER_INSTANCE
+		var m := FarTreesJob.model_of_key(String(key))
+		if String(m[0]).is_empty():
+			continue
+		drawn[StringName(m[0])] = int(drawn.get(StringName(m[0]), 0)) + n
+		models += n
+
+	# The same annulus, asked of placement directly.
+	var want := {}
+	var expect := 0
+	var cell: int = cfg.tree_cell_blocks
+	var masks := TreePlacement.masks_for(gen)
+	var outer_sq := job.outer_blocks * job.outer_blocks
+	var reach := int(ceil(job.outer_blocks))
+	for cz in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+		for cx in range(Chunk.floor_div(-reach, cell), Chunk.floor_div(reach, cell) + 1):
+			var dx := float(cx * cell)
+			var dz := float(cz * cell)
+			var d_sq := dx * dx + dz * dz
+			if d_sq > outer_sq or d_sq <= -1.0:
+				continue
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			if not TreeTable.drawn_as_model(found["species"], cfg):
+				continue
+			var v := TreeTable.variant_for(found["species"], found["cell"],
+				gen.world_seed, cfg)
+			if v == &"":
+				continue
+			want[v] = int(want.get(v, 0)) + 1
+			expect += 1
+
+	var bad := 0
+	for v in want:
+		if int(drawn.get(v, 0)) != int(want[v]):
+			print("  %s: the field drew %d, placement decided %d" % [
+				v, int(drawn.get(v, 0)), int(want[v])])
+			bad += 1
+	for v in drawn:
+		if not want.has(v):
+			print("  %s: the field drew %d that placement did not decide" % [
+				v, int(drawn[v])])
+			bad += 1
+	print("tree field: %d model instances over %d variants, placement says %d, %d disagree" % [
+		models, drawn.size(), expect, bad])
+	if expect == 0:
+		print("  WARNING: no model species in the sample - this test proved nothing")
 		return 1
 	return bad

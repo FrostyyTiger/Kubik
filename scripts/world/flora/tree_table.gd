@@ -205,6 +205,39 @@ const BENCHED := {
 }
 
 
+## WHICH SPECIES ARE DRAWN FROM THE LIBRARY RATHER THAN STAMPED AS BLOCKS.
+##
+## STAGE 4 IS DELIBERATELY ONE SPECIES, AND THE COEXISTENCE IS THE POINT. The
+## plan asks for the valley broadleaf to be drawn from the library while the
+## block stamp still runs for every other species - two systems in one world
+## for one night, so a tour shows old and new side by side in the same frame
+## and the register shift can be judged rather than argued.
+##
+## Stage 5 puts every slot in this list and the block stamper stops running at
+## all; Stage 7 deletes it. Until then, a species not named here is a species
+## `TreeSpecies` still draws out of `Block.LEAVES` and `Block.TRUNK`.
+##
+## THE PUBLIC BUILD PUTS NOTHING HERE, by construction rather than by a second
+## list: `drawn_as_model()` is false whenever the library is not mounted, so
+## the block stamper runs for everything and the world is exactly what it was.
+const MODEL_SLOTS := [&"beech"]
+
+
+## Is this species drawn from the library tonight?
+##
+## False without a mount, false for a slot Stage 4 has not reached, and false
+## for a slot whose whole row is parked at 0 - which are three different
+## reasons for the same answer, and the caller wants the answer.
+static func drawn_as_model(species: int, config: WorldgenConfig) -> bool:
+	if not TreeModels.available():
+		return false
+	var slot := slot_of(species, config)
+	if not MODEL_SLOTS.has(slot):
+		return false
+	_build()
+	return float(_totals.get(slot, 0.0)) > 0.0
+
+
 # --- Reading the table ------------------------------------------------------
 
 static var _by_slot := {}

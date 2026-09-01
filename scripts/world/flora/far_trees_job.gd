@@ -100,8 +100,25 @@ var lod3_blocks := 0.0
 ## Read-only here, and its pyramid is built on first use under its own mutex.
 var heightmap: Heightmap = null
 
-## The result: species id -> PackedFloat32Array, 16 floats per instance.
+## The result: SLOT KEY -> PackedFloat32Array, 16 floats per instance.
+##
+## THE KEY IS A STRING NOW AND IT USED TO BE A SPECIES ID (trees v3 Stage 4).
+## One species draws many library variants at several LOD rungs, and each
+## (variant, rung) pair is its own mesh and therefore its own MultiMesh - so
+## the key has to name both. Two forms, and they are told apart by their
+## prefix rather than by a flag:
+##
+##     "c<species>"          a cone, the impostor this ring drew until tonight
+##     "m<variant>|<lod>"    a library mesh at one rung
+##
+## A cone key is still one per species, so nothing about the old ring's cost
+## or its draw-call count moves while both systems are alive.
 var buffers := {}
+
+## Instances that are library models rather than cones, for the log line and
+## for Stage 4's gate - which is "the instance count for this species equals
+## its placement count".
+var model_count := 0
 var count := 0
 var elapsed_usec := 0
 
@@ -159,22 +176,32 @@ func run() -> void:
 	# parity test picked (cx & 1, cx & 3), and the radius tests are the same
 	# comparisons in the same order. This is the same scan, walked in a better
 	# order.
+	# BAND -> LOD RUNG. Stage 4 proves the pattern on the nearest band only and
+	# Stage 5 chooses the whole assignment on measured triangle totals; until
+	# then every band that draws a model draws it at LOD0, so the near field is
+	# what the gate is read against and nothing is hidden behind a downsample.
 	var bands := [
 		# The innermost band's floor is BELOW zero, not at it: the old single
 		# pass tested `d_sq > lod_sq` for the band above, so a cell exactly on
 		# the centre belonged to band 1. It is always inside the frontier and
 		# never survives, but the two scans agreeing on it is what makes "the
 		# same scan, walked in a better order" checkable rather than believed.
-		[1, -1.0, lod_sq, 1.0],
-		[2, lod_sq, lod2_sq, 2.0],
-		[4, lod2_sq, lod3_sq, 4.0],
-		[8, lod3_sq, outer_sq, 8.0],
+		[1, -1.0, lod_sq, 1.0, 0],
+		[2, lod_sq, lod2_sq, 2.0, 0],
+		[4, lod2_sq, lod3_sq, 4.0, 0],
+		[8, lod3_sq, outer_sq, 8.0, 0],
 	]
+	# Is anything drawn from the library at all? False in the public build and
+	# false before Stage 4's slot list has anything in it, and when it is false
+	# every line below behaves exactly as it did before trees v3.
+	var any_models := TreeModels.available()
+
 	for band in bands:
 		var stride: int = band[0]
 		var lo_sq: float = band[1]
 		var hi_sq: float = minf(band[2], outer_sq)
 		var spread: float = band[3]
+		var lod_of_band: int = band[4]
 		if lo_sq >= outer_sq:
 			continue
 		var reach := int(ceil(minf(sqrt(hi_sq), outer_blocks)))
@@ -211,7 +238,21 @@ func run() -> void:
 						int(cx * cell - center.x), int(cz * cell - center.y))
 					var f := float(frontier[s] * Chunk.SIZE)
 					inner_here_sq = f * f
-				if d_sq < inner_here_sq:
+				# THE INNER TEST MOVED BELOW decide() IN TREES V3 STAGE 4, and
+				# that is the whole of "the walk extends inward to distance
+				# zero". It still applies, unchanged, to every species the
+				# block stamper still owns - a cone must not stand where a real
+				# voxel tree has landed. It does NOT apply to a species drawn
+				# from the library, because for those there is no voxel tree to
+				# collide with: the field is the only thing that draws them, so
+				# it has to draw them from the player's boots outward.
+				#
+				# It costs a placement decision for the candidates inside the
+				# frontier that used to be rejected on two multiplies. At a 96 m
+				# voxel radius against a 600 m ring that is about 2.5% more
+				# area, and Stage 5's numbers are read with it in.
+				var inside := d_sq < inner_here_sq
+				if inside and not any_models:
 					continue
 				scanned += 1
 
@@ -220,8 +261,18 @@ func run() -> void:
 					continue
 
 				var species: int = found["species"]
-				if not by_species.has(species):
-					by_species[species] = []
+				var variant := &""
+				if any_models and TreeTable.drawn_as_model(species, config):
+					variant = TreeTable.variant_for(species, found["cell"],
+						generator.world_seed, config)
+				if variant == &"":
+					# A cone, and the old rules apply to it in full.
+					if inside:
+						continue
+				var key := "c%d" % species if variant == &"" \
+					else "m%s|%d" % [variant, lod_of_band]
+				if not by_species.has(key):
+					by_species[key] = []
 				var d := sqrt(d_sq)
 				# THE FOOTING, distance v2 Stage 5. The hillside this impostor
 				# stands on has shelves now, so its base has to sit on the SHELF
@@ -240,7 +291,8 @@ func run() -> void:
 				if _terrace_on():
 					lift = FarFieldJob.terrace_offset(heightmap, config,
 						found["bx"], found["bz"], d * config.block_size)
-				by_species[species].append({
+				by_species[key].append({
+					"variant": variant,
 					"spread": spread,
 					"pos": Vector3(
 						float(found["bx"]) * config.block_size,
@@ -255,10 +307,25 @@ func run() -> void:
 					"tint": _tint_at(found["bx"], found["bz"], d),
 				})
 
-	for species in by_species:
-		buffers[species] = _pack(by_species[species], species)
-		count += by_species[species].size()
+	for key in by_species:
+		buffers[key] = _pack(by_species[key], key)
+		count += by_species[key].size()
+		if String(key).begins_with("m"):
+			model_count += by_species[key].size()
 	elapsed_usec = Time.get_ticks_usec() - started
+
+
+## The species id a cone key names, or -1 for a model key.
+static func species_of_key(key: String) -> int:
+	return int(key.substr(1)) if key.begins_with("c") else -1
+
+
+## The variant and rung a model key names, or ["", 0].
+static func model_of_key(key: String) -> Array:
+	if not key.begins_with("m"):
+		return ["", 0]
+	var bits := key.substr(1).split("|")
+	return [bits[0], int(bits[1]) if bits.size() > 1 else 0]
 
 
 ## Scale multiplier at this distance from the centre.
@@ -408,21 +475,73 @@ func _far_tree_grain(mul: Color, cell: Vector2i) -> Color:
 		maxf(mul.b * v * (1.0 - h), 0.0), 1.0)
 
 
-func _pack(instances: Array, species: int) -> PackedFloat32Array:
+## THE SCALE JITTER'S SALT. New, in the 232+ range this epic was given, and
+## clear of the SALT_CLUMP series `217 + key * 7919` (hard rule 2).
+##
+## ITS OWN SALT RATHER THAN THE YAW'S, for the reason every salt in this
+## project has its own: a tree that was both turned further and grown taller
+## than its neighbour would put a visible correlation in a stand, and the whole
+## point of hashing two things separately is that they do not agree.
+const SALT_TREE_SCALE := 233
+
+## How much a library tree may differ from its authored size, either way.
+##
+## FIFTEEN PER CENT, which is the most that does not turn into a size RANGE.
+## The block trees had one (`TreeSpecies` rolls height between the table's two
+## numbers) and a model does not - it is exactly as tall as it was drawn - so
+## this is what puts a stand of one variant back into a stand of trees rather
+## than a row of copies. Bigger than this and a spruce and its neighbour read
+## as two different species; smaller and it reads as nothing at all.
+const MODEL_SCALE_JITTER := 0.15
+
+
+func _pack(instances: Array, key: String) -> PackedFloat32Array:
 	var buf := PackedFloat32Array()
 	buf.resize(instances.size() * FLOATS_PER_INSTANCE)
-	# The mesh's own colour, once per species. See _instance_color().
-	var base_lin := FarTreeMeshes.color_of_species(species, config)
+	var species := species_of_key(key)
+	# THE MESH'S OWN COLOUR, once per slot. For a cone that is shade A of its
+	# species out of Block.COLORS; for a library mesh it is the variant's
+	# dominant canopy colour through the palette table, which is decision 7's
+	# new pin. Both are "what colour is this mesh already", which is what
+	# _instance_color() has to divide by.
+	var base_lin := FarTreeMeshes.color_of_species(species, config) \
+		if species >= 0 else TreeModels.canopy_color(StringName(
+			model_of_key(key)[0]))
 	var base_wire := Look.to_wire(base_lin)
 	var i := 0
 	for inst in instances:
 		var pos: Vector3 = inst["pos"]
 		var fade: float = inst["fade"]
-		# The impostor mesh is a UNIT shape - one metre tall, half a metre
-		# across - so the transform carries the tree's real size. That is what
-		# lets one mesh serve every spruce in the world at every height it can
-		# grow to, which is the whole point of a MultiMesh.
 		var spread: float = inst["spread"]
+		var cell0: Vector2i = inst["cell"]
+
+		# A LIBRARY MESH IS ALREADY THE RIGHT SIZE, and that is ruling 3 in one
+		# branch. A cone is a UNIT shape and the transform carries the tree's
+		# height and crown; a model was authored at world size like a character,
+		# so its transform carries only the jitter. Scaling a model by the
+		# placement table's height would be scaling the artist's tree to fit a
+		# number that describes a different tree.
+		if inst["variant"] != &"":
+			var j := 1.0 + (WorldHash.hash01(cell0.x, cell0.y,
+				generator.world_seed, SALT_TREE_SCALE) * 2.0 - 1.0) \
+				* MODEL_SCALE_JITTER
+			# The fade still applies: it is what turns the handover at the
+			# outer edge into an appearance rather than a pop, and a model
+			# shrinking away into the fog needs it exactly as a cone did.
+			var ms := maxf(j * fade, 0.001)
+			var myaw := WorldHash.hash01(cell0.x, cell0.y, 0, 931) * TAU
+			var mc := cos(myaw) * ms
+			var msn := sin(myaw) * ms
+			buf[i] = mc;       buf[i + 1] = 0.0; buf[i + 2] = msn; buf[i + 3] = pos.x
+			buf[i + 4] = 0.0;  buf[i + 5] = ms;  buf[i + 6] = 0.0; buf[i + 7] = pos.y
+			buf[i + 8] = -msn; buf[i + 9] = 0.0; buf[i + 10] = mc; buf[i + 11] = pos.z
+			var mtint: Color = inst["tint"]
+			var mmul := _far_tree_grain(
+				_instance_color(base_lin, base_wire, mtint), cell0)
+			buf[i + 12] = mmul.r; buf[i + 13] = mmul.g
+			buf[i + 14] = mmul.b; buf[i + 15] = 1.0
+			i += FLOATS_PER_INSTANCE
+			continue
 		# Height barely grows with the LOD. A quarter of the trees drawn four
 		# times as tall would be a skyline of towers; drawn twice as wide they
 		# are a canopy with the same coverage, which is what a forest is at

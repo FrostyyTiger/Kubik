@@ -638,3 +638,79 @@ draws all 7 of its variants, larch all 10 (the snow-dusted `t12_4` at weight
 hero 4 of 6 with the pink and crimson never appearing. The parked rows are
 inert, measured rather than assumed.
 
+
+---
+
+## Stage 4 - one species end to end, near
+
+**The valley broadleaf is drawn from the library over the whole voxel radius
+while the block stamp still runs for every other species, and
+`4-valley-floor` has both in one frame.** Two library beeches stand in the
+meadow with two cone impostors between them, and the register shift the epic
+is for is the difference in their size.
+
+### What moved
+
+| | |
+| --- | --- |
+| `TreeTable.MODEL_SLOTS` | `[&"beech"]` - the whole of "two systems for one night", as data |
+| `TreePlacement._stamp_found` | one guard: a species drawn from the library is not stamped as blocks. **The scan is untouched** - the candidate walk, the crown area and `canopy_cover` all still happen for a model tree, and only the WRITE stops (decision 6). |
+| `TreePlacement.stamp_cell` | routed through `_stamp_found` so it and `stamp_column` cannot disagree about which species the stamper still owns |
+| `FarTreesJob.buffers` | keyed by a STRING now: `c<species>` for a cone, `m<variant>\|<lod>` for a library mesh. One species draws many variants at several rungs and each pair is its own MultiMesh. |
+| the walk | the per-sector inner test **moved below `decide()`** and now applies only to cone species - which is the whole of "the walk extends inward to distance zero" |
+| `_pack` | a library mesh is already the right size, so its transform carries only yaw and a +/-15% scale jitter on a new salt (233). A cone is still a unit shape scaled by the placement table's height. |
+| `FarTrees` | slots keyed the same way; the triangle count reads the INDEX array for a library mesh and the vertex array for a cone |
+
+**Ruling 3 lands in one branch of `_pack`.** A model was authored at world size
+like a character, so scaling it by the placement table's height would be
+scaling the artist's tree to fit a number that describes a different tree. The
+jitter exists because a model has no size RANGE - it is exactly as tall as it
+was drawn - and 15% is the most that puts a stand back into a stand of trees
+rather than a row of copies without reading as two species.
+
+### The gate
+
+| Stage 4 gate (plan) | result |
+| --- | --- |
+| `cover_column()` split out for this species | the scan/write split is `_stamp_found`'s guard; `canopy_cover` is **0.7871, unchanged** |
+| **instance count for the species equals its placement count** | **32 model instances over 8 variants, placement says 32, 0 disagree** - the new `tree field` self-test gate, exact rather than a tolerance |
+| the A/B tour pair | `build/tour/trees-v3-before` against `build/tour/trees-v3-s4`, 18 shots each |
+| no upload over budget | every commit still flows through `FarUpload` (decision 10) - and the slices got SMALLER, because 7 species-sized slices became 14 slot-sized ones |
+| self-test both ways | **green**; the absent leg prints "tree field: no library mounted, 0 checks (public build)" |
+| placement does not move | 28,383 / same mix / `(-44, -124)` |
+
+**The `tree field` gate is only checkable on the nearest band and says so.**
+The outer bands walk one candidate cell in four, sixteen and sixty-four on
+purpose (distance v1 Stage 7), so the field is DESIGNED to draw fewer trees
+than placement decides out there. The test collapses every band onto the first
+so the whole scan is stride 1, which is the band the handover to the player
+happens in and the only one where "every tree" is the right claim.
+
+### What one species already bought, and what it already cost
+
+| | Stage 0 | Stage 4 | |
+| --- | --- | --- | --- |
+| column, stamp trees | 125.381 ms | **78.644 ms** | **-37%, from beech alone** |
+| tree share of generation | 95.5% | 93.1% | |
+| tree share of the whole column job | 51.7% | **43.7%** | |
+| chunks built per column | 3.14 | 3.09 | |
+| canopy cover | 0.7871 | **0.7871** | unchanged, as decision 6 requires |
+| **field triangles at spawn** | **17,700** | **606,484** | **34x - and this is the number Stage 5 exists to answer** |
+| field slots at spawn | 7 | 14 | |
+| model instances at spawn | 0 | 121 of 589 | 20.5%, which is beech's share of the mix |
+
+**606,484 triangles for 121 trees is Stage 4 drawing LOD0 at every distance,
+deliberately.** Every band's rung is 0 tonight so the gate is read against the
+near field with nothing hidden behind a downsample. Stage 5 assigns the bands
+on these numbers, and 121 beeches costing thirty-four times what 589 cones did
+is the argument for doing it.
+
+### One thing that did not move, and it is not a bug
+
+`tree borders` still reports **1,146 tree blocks** on all four runs, before and
+after beech left the block grid. The test samples chunks `cy` 4-14 - blocks
+y 64-224 - and a beech tops out around y 72 on that seed, so almost none of
+its blocks were ever in the sample. The test is proving the SCAN MARGIN, which
+is unchanged and must be; Stage 7 replaces it with the canopy-aware siblings
+the plan names.
+

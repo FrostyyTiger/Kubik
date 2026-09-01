@@ -274,17 +274,25 @@ static func stamp_chunk(chunk: Chunk, gen: TerrainGenerator) -> void:
 static func _stamp_found(writer, gen: TerrainGenerator, found: Dictionary) -> void:
 	if found.is_empty():
 		return
+	# TREES V3: A SPECIES DRAWN FROM THE LIBRARY IS NOT STAMPED AS BLOCKS.
+	#
+	# The two systems coexist for exactly one stage (see TreeTable.MODEL_SLOTS)
+	# and this line is the whole of the seam between them. It is HERE rather
+	# than inside TreeSpecies.draw() because the scan is what this epic keeps:
+	# the candidate walk, the crown area and `canopy_cover` all still happen
+	# for a model tree, and only the WRITE stops.
+	if TreeTable.drawn_as_model(found["species"], gen.config):
+		return
 	TreeSpecies.draw(writer, found["species"], found["bx"], found["ground"],
 		found["bz"], found["params"], gen.config)
 
 
 static func stamp_cell(writer, gen: TerrainGenerator, cell_x: int, cell_z: int,
 		masks: Masks = null) -> void:
-	var found := decide(gen, cell_x, cell_z, masks)
-	if found.is_empty():
-		return
-	TreeSpecies.draw(writer, found["species"], found["bx"], found["ground"],
-		found["bz"], found["params"], gen.config)
+	# Through _stamp_found so this and stamp_column() cannot disagree about
+	# which species the block stamper still owns - the self-test's border gate
+	# comes through here and the world comes through the other.
+	_stamp_found(writer, gen, decide(gen, cell_x, cell_z, masks))
 
 
 ## Everything about the tree at one candidate, or {} if there is none.

@@ -91,8 +91,13 @@ var _last_center_m := Vector3(INF, INF, INF)
 
 var _generator: TerrainGenerator = null
 var _config: WorldgenConfig = null
-var _slots := {}   # species -> MultiMeshInstance3D
+## SLOT KEY -> MultiMeshInstance3D. The key is FarTreesJob's - `c<species>`
+## for a cone and `m<variant>|<lod>` for a library mesh - so one species with
+## seven variants at three rungs is up to twenty-one slots and one draw call
+## each. See the note on FarTreesJob.buffers.
+var _slots := {}
 var _count := 0
+var _models := 0
 var _triangles := 0
 var _last_ms := 0
 
@@ -101,10 +106,11 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
 	_config = config
 	_last_center_m = Vector3(INF, INF, INF)
-	for species in _slots:
-		_slots[species].queue_free()
+	for key in _slots:
+		_slots[key].queue_free()
 	_slots.clear()
 	_count = 0
+	_models = 0
 
 
 ## Called every frame with the player's position. Cheap when nothing has moved.
@@ -215,52 +221,74 @@ func _apply(job: FarTreesJob) -> void:
 	_triangles = 0
 	var up := _uploader()
 	if up == null:
-		for species in job.buffers:
-			_apply_species(job, species)
+		for key in job.buffers:
+			_apply_species(job, key)
 		_apply_tail(job)
 		return
 	var work: Array[Callable] = []
-	for species in job.buffers:
-		work.append(_apply_species.bind(job, species))
+	for key in job.buffers:
+		work.append(_apply_species.bind(job, key))
 	up.submit(&"far_trees", work, _apply_tail.bind(job))
 
 
-func _apply_species(job: FarTreesJob, species: int) -> void:
-	var buf: PackedFloat32Array = job.buffers[species]
+func _apply_species(job: FarTreesJob, key: String) -> void:
+	var buf: PackedFloat32Array = job.buffers[key]
 	var n := buf.size() / FarTreesJob.FLOATS_PER_INSTANCE
 	if n <= 0:
 		return
-	var slot: MultiMeshInstance3D = _slots.get(species)
+	var mesh := _mesh_for_key(key)
+	if mesh == null:
+		# A library slot with no mesh: the mount went away between the job
+		# being submitted and its buffers landing, which the self-test's
+		# absent leg can actually produce. Drop the slice rather than
+		# assigning null to a MultiMesh, which is an error per instance.
+		return
+	var slot: MultiMeshInstance3D = _slots.get(key)
 	if slot == null:
-		slot = _make_slot(species)
-		_slots[species] = slot
+		slot = _make_slot(key, mesh)
+		_slots[key] = slot
 	# THE MESH IS RE-READ EVERY REBUILD, distance v2 Stage 5. far_terrace
 	# chooses between the cone and the stepped pyramid (hard rule 1: at 0
 	# the ring is the one f23c3f0 drew), and a slot built once at the old
 	# value would keep drawing cones on terraced ground until the species
-	# happened to disappear and come back. FarTreeMeshes caches both, so
-	# this is a dictionary lookup and not a rebuild.
-	slot.multimesh.mesh = FarTreeMeshes.for_species(species, _config)
+	# happened to disappear and come back. Both FarTreeMeshes and TreeModels
+	# cache, so this is a dictionary lookup and not a rebuild.
+	slot.multimesh.mesh = mesh
 	slot.multimesh.instance_count = n
 	slot.multimesh.buffer = buf
 	slot.visible = true
-	# Triangles the ring actually draws - the gate for Stage 5 is a ratio
-	# against the cone ring and nothing reported one.
-	_triangles += n * (slot.multimesh.mesh.surface_get_array_len(0) / 3)
+	# Triangles the field actually draws. A cone mesh is unindexed and a
+	# library mesh is indexed, so the count has to come from whichever array
+	# the mesh actually has - reading array_len on an indexed mesh gives its
+	# VERTEX count, which on a greedy quad mesh is two thirds of the answer.
+	var idx: int = mesh.surface_get_array_index_len(0)
+	var verts: int = mesh.surface_get_array_len(0)
+	_triangles += n * ((idx if idx > 0 else verts) / 3)
+
+
+## The mesh one slot key names: a cone for `c<species>`, a library rung for
+## `m<variant>|<lod>`.
+func _mesh_for_key(key: String) -> Mesh:
+	var species := FarTreesJob.species_of_key(key)
+	if species >= 0:
+		return FarTreeMeshes.for_species(species, _config)
+	var m := FarTreesJob.model_of_key(key)
+	return TreeModels.mesh_for(StringName(m[0]), int(m[1]), _config.block_size)
 
 
 func _apply_tail(job: FarTreesJob) -> void:
-	for species in _slots:
-		if not job.buffers.has(species):
-			_slots[species].multimesh.instance_count = 0
-			_slots[species].visible = false
+	for key in _slots:
+		if not job.buffers.has(key):
+			_slots[key].multimesh.instance_count = 0
+			_slots[key].visible = false
 	_count = job.count
+	_models = job.model_count
 	# THE TRIANGLE COUNT, printed here rather than folded into Game's
 	# "[FarTrees] N impostors in N ms" line: game.gd is append-only in this
 	# epic and has already spent its one line. Stage 5's gate is a ratio and
 	# nothing in the project reported the numerator.
-	print("[FarTrees] %d triangles over %d species meshes" % [
-		_triangles, _slots.size()])
+	print("[FarTrees] %d triangles over %d slots (%d model instances of %d)" % [
+		_triangles, _slots.size(), _models, _count])
 	rebuilt.emit(job.count, _last_ms)
 
 
@@ -279,13 +307,13 @@ func _uploader() -> FarUpload:
 	return far_field.uploader()
 
 
-func _make_slot(species: int) -> MultiMeshInstance3D:
+func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
-	mm.mesh = FarTreeMeshes.for_species(species, _config)
+	mm.mesh = mesh
 	var node := MultiMeshInstance3D.new()
-	node.name = "Species%d" % species
+	node.name = key
 	node.multimesh = mm
 	# NO SHADOWS FROM THE RING. A cone's shadow is not a tree's shadow, and at
 	# 200 m nobody can tell there is one - but the shadow map pays for every
@@ -298,7 +326,8 @@ func _make_slot(species: int) -> MultiMeshInstance3D:
 ## Impostors drawn, and how long the last rebuild took. For the F3 readout and
 ## for STATUS.md.
 func stats() -> Dictionary:
-	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles}
+	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles,
+		"models": _models}
 
 
 ## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even
