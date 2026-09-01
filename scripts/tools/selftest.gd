@@ -70,8 +70,8 @@ func _ready() -> void:
 		"far dispatch": _test_far_dispatch,
 		# DISTANCE V5 STAGE 1, appended at the end of the list.
 		"far slice parity": _test_far_slice_parity,
-		# DISTANCE V5 STAGE 3, appended after it.
-		"far geomorph parity": _test_far_geomorph_parity,
+		# DISTANCE V5 STAGES 3 AND 6, appended after it.
+		"far layer parity": _test_far_geomorph_parity,
 		# DISTANCE V5 STAGE 4, appended after it.
 		"height tile parity": _test_height_tile_parity,
 		"canonical world": _test_canonical_world,
@@ -2771,16 +2771,23 @@ func _test_far_geomorph_parity():
 	var have_cpp := FarMesher.available() and mesher.setup(heightmap, generator, wcfg)
 
 	var meshes := {}
-	for cells in [0.0, 4.0]:
+	# THE THREE COMBINATIONS THAT MATTER: neither layer, the geomorph alone,
+	# and both. Distance v5 Stage 6 added its layer to this test rather than to
+	# a second world, because a second world is another thirty seconds on every
+	# self-test run for a question this one can already answer.
+	for case in [["off", 0.0, 0.0], ["geo", 4.0, 0.0], ["both", 4.0, 1.0]]:
+		var cells: float = case[1]
 		wcfg.far_geomorph_cells = cells
+		wcfg.far_detail = case[2]
 		var job := FarFieldJob.new()
 		job.heightmap = heightmap
 		job.generator = generator
 		job.config = wcfg
 		job.center = centre
 		job.run()
-		meshes[cells] = job.arrays
-		print("  far_geomorph_cells %.0f: %d verts" % [cells, job.vertex_count])
+		meshes[case[0]] = job.arrays
+		print("  %-5s far_geomorph_cells %.0f, far_detail %.0f: %d verts" % [
+			case[0], cells, case[2], job.vertex_count])
 		if not have_cpp:
 			continue
 		if not mesher.build(wcfg, centre, PackedInt32Array()):
@@ -2814,25 +2821,26 @@ func _test_far_geomorph_parity():
 	#
 	# What it asserts is the honest thing: the mesh MOVED. A count and a
 	# footprint, both of which change only if the knob reaches code.
-	var off: Array = meshes[0.0]
-	var on: Array = meshes[4.0]
-	if off.is_empty() or on.is_empty():
-		print("  one of the two builds emitted nothing at all")
-		bad += 1
-		world.free()
-		return bad + 1
-	var same_verts: bool = (off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() \
-		== (on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
-	var same_quads: Dictionary = _slice_match(off, _slice_index(off), [on])
-	var moved: bool = not bool(same_quads["ok"])
-	if same_verts and not moved:
-		print("  far_geomorph_cells 0 -> 2 changed NOTHING - the knob reaches no code")
-		bad += 1
-	print("far geomorph parity: %d -> %d vertices with the geomorph on, mesh %s, c++ %s" % [
-		(off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size(),
-		(on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size(),
-		"CHANGED" if (not same_verts or moved) else "unchanged",
-		"compared" if have_cpp else "ABSENT"])
+	var verdicts := PackedStringArray()
+	for pair in [["off", "geo", "the geomorph"],
+			["geo", "both", "the detail layer"]]:
+		var off: Array = meshes[pair[0]]
+		var on: Array = meshes[pair[1]]
+		if off.is_empty() or on.is_empty():
+			print("  one of the two builds emitted nothing at all")
+			bad += 1
+			continue
+		var same_verts: bool = (off[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() \
+			== (on[Mesh.ARRAY_VERTEX] as PackedVector3Array).size()
+		var same_quads: Dictionary = _slice_match(off, _slice_index(off), [on])
+		var moved: bool = not bool(same_quads["ok"])
+		if same_verts and not moved:
+			print("  %s changed NOTHING - the knob reaches no code" % pair[2])
+			bad += 1
+		verdicts.append("%s %s" % [pair[2],
+			"CHANGES the mesh" if (not same_verts or moved) else "changes NOTHING"])
+	print("far layer parity: %s, c++ %s" % [
+		String(", ").join(verdicts), "compared" if have_cpp else "ABSENT"])
 	world.free()
 	return bad
 

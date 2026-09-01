@@ -463,6 +463,9 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# DISTANCE V5 STAGE 3. Redraws the far mesh; the whole point of it is
 	# judgeable by walking past a ring boundary with it on and off.
 	"far_geomorph_cells",
+	# DISTANCE V5 STAGE 6. Redraws the far mesh, and 0/1 standing still is the
+	# A/B the morning's eyes are for.
+	"far_detail",
 	# DISTANCE V4 STAGE 5. Which mesher draws the far country. On this list so
 	# the A/B is one spinbox and a redraw in place rather than a relaunch -
 	# which is the only way "the C++ mesh is the same mesh" can be judged by

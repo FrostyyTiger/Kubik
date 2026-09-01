@@ -189,6 +189,9 @@ struct Mesher {
 	// ring has no coarser neighbour to hand over to.
 	double t_outer = 0.0;
 	double t_geo = 0.0;
+	// THE DETAIL LAYER - far_field_job.gd carries the argument. Zero on ring 0
+	// and at far_detail 0.
+	double t_detail = 0.0;
 	double far_radius = 0.0;
 	int t_step = 0;
 	double t_band = 0.0;
@@ -367,6 +370,12 @@ struct Mesher {
 		double gain = c.far_peak_gain;
 		if (gain > 0.0) {
 			v = Math::lerp(v, w.height_max_filtered(bx, bz, t_level), gain);
+		}
+		// THE DETAIL LAYER, at the cell's own (geomorphed) position - see
+		// far_field_job.gd. The same engine noise object the generator built,
+		// which is what makes it identical rather than merely similar.
+		if (t_detail > 0.0) {
+			v += (double)w.detail_noise->get_noise_2d(bx, bz) * t_detail;
 		}
 		t_h[at] = (float)v;
 		return v;
@@ -582,6 +591,7 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 	if (ring < RING_COUNT - 1 && outer < far_radius) {
 		t_geo = Math::clamp(c.far_geomorph_cells, 0.0, 8.0) * (double)step;
 	}
+	t_detail = band <= 0.0 ? c.far_detail : 0.0;
 	// Per ring, because the cell grid is per ring and a key from the last ring
 	// could collide with a cell of this one.
 	vote_memo.clear();

@@ -654,6 +654,18 @@ func detail_at(bx: float, bz: float) -> float:
 
 
 ## Coarse cell index for a block position, or -1 outside the world.
+## THE RAW DETAIL FIELD, undamped, for the far mesh's own grain layer.
+## Distance v5 Stage 6.
+##
+## `detail_at()` is the voxel surface's roughness: the same noise, damped by
+## slope and faded out at a shore, and both of those are heightmap reads the far
+## mesh cannot afford per cell. This is the field underneath it, so the far
+## country's grain is the near country's grain and not a second invented
+## texture - see far_field_job.gd's own note.
+func detail_noise_at(bx: float, bz: float) -> float:
+	return _detail.get_noise_2d(bx, bz)
+
+
 func _cell_index(bx: float, bz: float) -> int:
 	if heightmap == null:
 		return -1

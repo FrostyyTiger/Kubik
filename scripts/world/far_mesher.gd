@@ -168,8 +168,8 @@ const CONFIG_KEYS: PackedStringArray = [
 	"far_filter_bias", "far_peak_gain", "far_level_ref_m", "far_normal_m",
 	"far_band_m", "far_band_step", "far_zone_cell_m", "far_zone_cell_ratio",
 	"far_riser_shade", "far_riser_lift", "far_riser_axis",
-	# DISTANCE V5 STAGE 3.
-	"far_geomorph_cells",
+	# DISTANCE V5 STAGES 3 AND 6.
+	"far_geomorph_cells", "far_detail",
 	"detail_amp", "detail_freq", "detail_flat_damp", "detail_flat_deg",
 	"detail_full_deg", "shore_flat_blocks",
 	"zone_blend_blocks", "zone_dither_blocks", "zone_jitter_blocks",

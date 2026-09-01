@@ -543,6 +543,47 @@ var _t_geo := 0.0
 ## outer edge is a handover or the end of the world.
 var _far_radius := 0.0
 
+# --- THE DETAIL LAYER, distance v5 Stage 6 -----------------------------------
+#
+# WHAT THE PYRAMID CANNOT KNOW. The far mesh reads a filtered height map, so
+# everything finer than its level is gone by construction - that is what a mip
+# level IS. Distance v5 Stage 5 was meant to buy that information back by
+# doubling the height map's resolution and could not afford it (see the status
+# doc), so this is the other half of the same idea: put the GRAIN back
+# analytically where there is no data, and only where there is no data.
+#
+# THREE RULES, and each is a way this goes wrong without it:
+#
+#   1. WORLD SPACE. The sample position is the cell's own - the SAME position,
+#      geomorph and all, that the height was read at. So two rings meeting at a
+#      boundary read the same detail for the same reason they read the same
+#      height, and Stage 3's fix carries this layer across for free. A layer
+#      keyed to the ring, the step or the level would put the ring boundary
+#      back and undo the stage before it.
+#   2. FAR RINGS ONLY. Ring 0 is the seam band, where the far mesh is blending
+#      onto the actual voxel surface and there is nothing to invent - inventing
+#      there is a step exactly where distance v3 Stage 7 spent a stage removing
+#      one.
+#   3. LOOK ONLY. It is added to the CELL height the far mesh draws and to
+#      nothing else. The pyramid is not written, `heightmap.cells` is not
+#      touched, and spawn, lakes and the voxel surface read the same functions
+#      they read yesterday. Hard rule 8.
+#
+# THE NOISE IS THE VOXEL WORLD'S OWN. `TerrainGenerator._detail` is the field
+# the near ground's roughness comes from, and the far mesher already holds it
+# for the seam band. Using it here means the far country's grain is the grain
+# you walk on when you get there, rather than a second invented texture that
+# has to be kept in step with the first - and it costs no new marshalling and
+# no new parity risk, because it is an engine object sampled natively on both
+# sides of the seam.
+#
+# WHAT IT DOES NOT DO: it rides the CELL height, which is the terraced path, so
+# at `far_terrace` 0 there is no cell and this layer is absent. That is hard
+# rule 1 rather than an oversight - far_terrace 0 is the smooth mesh this
+# project shipped, and adding grain to it would make the way back not the way
+# back.
+var _t_detail := 0.0
+
 ## THE CELL CACHE, one entry per cell of the ring currently being built.
 ##
 ## A cell needs its own quantised height and its four neighbours', so the naive
@@ -776,6 +817,8 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	_t_geo = 0.0
 	if ring < RING_STEP_MULTIPLE.size() - 1 and outer < _far_radius:
 		_t_geo = clampf(config.far_geomorph_cells, 0.0, 8.0) * float(step)
+	# Rule 2: far rings only. `band` is non-zero on ring 0 and nowhere else.
+	_t_detail = config.far_detail if band <= 0.0 else 0.0
 	# Per ring, because the cell grid is per ring and a key from the last ring
 	# could collide with a cell of this one.
 	_vote_memo.clear()
@@ -1510,6 +1553,11 @@ func _cell_h(i: int, j: int) -> float:
 	var gain: float = config.far_peak_gain
 	if gain > 0.0:
 		v = lerpf(v, heightmap.height_max_filtered(bx, bz, _t_level), gain)
+	# THE DETAIL LAYER - see the note by _t_detail. At the cell's own position,
+	# which is the geomorphed one, so the layer is boundary-stable for exactly
+	# the reason the height is.
+	if _t_detail > 0.0:
+		v += generator.detail_noise_at(bx, bz) * _t_detail
 	_t_h[at] = v
 	return v
 

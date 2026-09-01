@@ -17,7 +17,11 @@ name: selftest
 
 on:
   push:
-    branches: [main]
+    # AND EVERY FEATURE BRANCH, since distance v5. The merge condition for an
+    # overnight epic is "CI's selftest workflow green on the branch's final
+    # push" - which a main-only trigger cannot produce, because the only way to
+    # find out was to merge first and read the badge afterwards.
+    branches: [main, "feat/**"]
   # Lets you re-run the gates from the Actions tab without pushing anything.
   workflow_dispatch:
 
@@ -28,7 +32,12 @@ env:
 jobs:
   gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 30 UNTIL DISTANCE V5, and the suite grew four gates that build whole
+    # worlds - the canonical-seed world twice (both height-map builders), and a
+    # world big enough to have a far-mesh ring boundary in it three times. On
+    # ganymede that is about seven minutes; a cold godot-cpp build on top of it
+    # is another eleven.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4

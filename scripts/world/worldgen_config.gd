@@ -1240,6 +1240,36 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## HOW MUCH ANALYTIC GRAIN THE FAR MESH ADDS WHERE THE PYRAMID HAS NO DATA,
+## in blocks. Distance v5 Stage 6, decision 6. 0 is tonight-minus-this.
+##
+## The far mesh reads a FILTERED height map, so everything finer than its level
+## is gone by construction. Stage 5 was meant to buy that information back with
+## four times the real data and could not afford it; this puts the grain back
+## analytically, in the far rings only, sampled in WORLD space at the cell's own
+## position - so Stage 3's geomorph carries it across a ring boundary for free
+## and the two fixes cannot undo each other.
+##
+## 1.0 BLOCK, and the vertical step is why. `far_step_y_blocks` quantises every
+## cell to the block lattice, so a layer smaller than half a block is rounded
+## away entirely and one of about a block moves a shelf by one block - which is
+## the only grain a block-lattice far country can express, and exactly the
+## register the distance epics have been aiming at since v2.
+##
+## THE NOISE IS THE VOXEL WORLD'S OWN - `TerrainGenerator._detail`, the field
+## the ground you walk on is roughened with. So the far country's grain is the
+## grain you arrive at rather than a second texture somebody has to keep in
+## step with the first.
+##
+## LOOK, NOT SHAPE: it is added to the cell height the far mesh DRAWS and to
+## nothing else - not the pyramid, not `cells`, not the voxel surface, not
+## spawn, not lakes. LOCAL and unhashed, on FAR_ONLY_PROPERTIES.
+##
+## It rides the cell-height path, which is the terraced one, so at
+## `far_terrace` 0 it is absent - hard rule 1: that mesh is the way back and
+## has to stay the mesh this project shipped.
+@export var far_detail := 1.0
+
 ## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
 ##
 ## The world is unbounded by design, so the height map is built in tiles
@@ -1680,6 +1710,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_geomorph_cells",
 	# DISTANCE V5 STAGE 4. The height map's tile edge.
 	"heightmap_tile_blocks",
+	# DISTANCE V5 STAGE 6. The far mesh's analytic grain.
+	"far_detail",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

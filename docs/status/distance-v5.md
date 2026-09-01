@@ -747,3 +747,102 @@ sprint gets its 56 m back** - and the +59.6 MB of memory is already affordable.
 world: heightmap `b02e6498`, spawn (10, 34), **241 lakes**. That is the change
 Marcel accepted in advance and it is deliberately not being spent on a build
 whose streaming is four times slower to arrive.
+
+---
+
+## Stage 6 - the detail layer
+
+**The far country gets its grain back analytically, where the pyramid has no
+data, and the ring boundaries do not notice.** Max fizz identical or within one
+block at every boundary, the whole table's rms 0.981 -> 0.982, and the two
+meshers still diff to zero pixels on eight far-band shots.
+
+### What it is
+
+The far mesh reads a FILTERED height map, so everything finer than its level is
+gone by construction - that is what a mip level is. Stage 5 was meant to buy
+that information back with four times the real data and could not afford it. So
+Stage 6 puts the grain back analytically, under three rules, each of which is a
+way this goes wrong without it:
+
+1. **World space.** The sample position is the cell's own - the SAME position,
+   geomorph and all, that the height was read at. So two rings meeting at a
+   boundary read the same detail for the same reason they read the same height,
+   and Stage 3's fix carries this layer across for free. **A layer keyed to the
+   ring, the step or the level would put the ring boundary back and undo the
+   stage before it** - which is exactly what decision 6 warns about, and the
+   fizz table below is how it was checked rather than assumed.
+2. **Far rings only.** Ring 0 is the seam band, where the far mesh is blending
+   onto the actual voxel surface. Inventing detail there is a step exactly
+   where distance v3 Stage 7 spent a stage removing one.
+3. **Look only.** Added to the cell height the far mesh DRAWS and to nothing
+   else. The pyramid is not written, `heightmap.cells` is not touched, and
+   spawn, lakes and the voxel surface read the functions they read yesterday.
+
+**The noise is the voxel world's own** - `TerrainGenerator._detail`, the field
+the ground you walk on is roughened with, which the far mesher already holds
+for its seam band. So the far country's grain is the grain you arrive at rather
+than a second invented texture somebody has to keep in step with the first, and
+it costs no new marshalling and no new parity risk: it is an engine object
+sampled natively on both sides of the seam.
+
+`far_detail` is the amplitude in **blocks**, default **1.0**, LOCAL, unhashed,
+on `FAR_ONLY_PROPERTIES`. **One block is not an arbitrary default**:
+`far_step_y_blocks` quantises every cell onto the block lattice, so a layer
+under half a block is rounded away entirely and one of about a block moves a
+shelf by one block - which is the only grain a block-lattice far country can
+express.
+
+**It rides the cell-height path, which is the terraced one, so at
+`far_terrace` 0 it is absent.** That is hard rule 1 rather than an oversight:
+that mesh is the way back and has to stay the mesh this project shipped.
+
+### The gate
+
+Same commit, same box, deterministic, `far_ring_div` 4, geomorph at 4.
+
+| ring boundary, max fizz | `far_detail` 0 | `far_detail` 1 |
+| --- | --- | --- |
+| 150 m | 3.00 (rms 0.283) | 3.00 (rms 0.307) |
+| 300 m | 7.00 (rms 0.701) | 7.00 (rms 0.704) |
+| 600 m | 32.00 (rms 2.411) | 32.00 (rms 2.413) |
+| 1200 m | 47.00 (rms 2.635) | 48.00 (rms 2.648) |
+| 2400 m | 40.00 (rms 4.613) | 39.00 (rms 4.563) |
+| **ALL rms / max** | **0.981 / 61.00** | **0.982 / 61.00** |
+| roughness | 13.2524 | **13.2757** |
+| vertices per mesh | 3,338,451 | **3,436,848** (+2.9%) |
+
+**The layer is boundary-stable**, which is the gate: no boundary moves by more
+than one block and the whole table's rms moves by 0.1%. And it is doing
+something - 2.9% more vertices is 2.9% more risers, which is what a block of
+grain on a block lattice looks like.
+
+| Stage 6 gate (plan) | result |
+| --- | --- |
+| parity exact | **`far layer parity`: three knob combinations, both meshers, all exact**; and the five whole-mesh cases and the slice gate green beside them |
+| fizz table not worse than Stage 3's | **above** - and the comparison is against a control taken on the same commit, see below |
+| far-band A/B pixel-diff zero between meshers | **0.0000 on eight shots**, `2-summit` at 0.0002 (3 px, its own long-standing control) |
+| a labelled tour pair `far_detail` 0/1 | `build/tour/v5-s6-cpp` and `build/tour/v5-s6-d0` on ganymede |
+| full self-test | **green**, 3 m 44 s |
+
+**The control is on the same commit, and it has to be.** Stage 3's table was
+measured before Stage 4, and Stage 4's quantisation changes the height map by
+1/1024 of a block, which changes the far mesh built from it - the same
+`far_terrace 1.0` parity case reads 127,584 vertices tonight where it read
+127,800 at Stage 3. So "not worse than Stage 3's" is answered with
+`far_detail` 0 measured **now**, not with Stage 3's own numbers.
+
+### What the layer looks like
+
+`v5-s6-cpp` against `v5-s6-d0`, rows 0-300, mean |dL|: `6-postcard` **0.5479**,
+`14-postcard-dusk` 0.3370, `12-meadow-night` 0.1288, `13-meadow-dawn` 0.1162,
+`9-treeline` 0.0809. Those four postcard-class shots read **0.0000** in the
+mesher A/B on the same night, so the difference is the layer and not the
+harness. **`17-rim`, `11-forest-dusk`, `7-forest-interior` and
+`15-under-canopy` read 0.0000** - their rows 0-300 are sky or canopy rather than
+far rings.
+
+Half a luma level of mean difference over the far band is the register this was
+aimed at: a grain, not a new landscape. Marcel skipped the poster judging this
+cycle, so the pair is evidence rather than a gate - `far_detail` 0 on F4
+redraws it in place, standing still.
