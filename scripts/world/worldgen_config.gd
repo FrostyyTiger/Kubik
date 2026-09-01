@@ -1240,6 +1240,28 @@ const FOG_START_RATIO := 0.4
 ## redraws in place rather than asking for F7.
 @export var far_cpp := 1.0
 
+## THE HEIGHT MAP'S TILE EDGE, IN BLOCKS. Distance v5 Stage 4, decision 4.
+##
+## The world is unbounded by design, so the height map is built in tiles
+## anchored to the ORIGIN rather than as one array sized to a region - see
+## Heightmap's own note for what that does and does not yet change.
+##
+## 512 IS A MEASUREMENT. The plan's rule is "the size that keeps a tile build
+## under ~100 ms". On ganymede, at `coarse_step` 4, the GDScript builder costs
+## about 7.2 us a cell, so a 512-block tile is 128 x 128 cells and about 118 ms
+## - and the C++ builder does the same tile in single-digit milliseconds.
+## Doubling the resolution (Stage 5) quadruples the GDScript number and leaves
+## the C++ one comfortable, which is the shape of the whole night: the fallback
+## sets the ceiling and the crossing is what makes the ceiling irrelevant.
+##
+## Rounded DOWN to a multiple of `coarse_step`, because a tile that ended
+## mid-cell would put one cell in two tiles.
+##
+## SHAPE, BUT NOT A SHAPE KNOB. The tiling is an ordering of the same
+## arithmetic and the heightmap hash is identical across it - which is Stage
+## 4's own gate. LOCAL and unhashed on that evidence.
+@export var heightmap_tile_blocks := 512.0
+
 ## HOW MANY CELLS BEFORE A RING BOUNDARY THE CELL-HEIGHT SAMPLE SLIDES ONTO
 ## THE COARSE RING'S LATTICE. Distance v5 Stage 3. 0 turns the geomorph off and
 ## restores the ring boundaries STATUS items 9 and 18 describe.
@@ -1656,6 +1678,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_tree_step_m",
 	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.
 	"far_geomorph_cells",
+	# DISTANCE V5 STAGE 4. The height map's tile edge.
+	"heightmap_tile_blocks",
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",

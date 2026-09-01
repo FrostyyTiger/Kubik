@@ -524,3 +524,145 @@ on the way to the same vantage. **The mesh identity this gate exists to show is
 established three independent ways: five whole-mesh array comparisons at zero,
 the geomorph world's own comparison at zero, and nine far-band shots at zero
 differing pixels.**
+
+---
+
+## Stage 4 - the height map crosses, tiled, exact
+
+**The canonical world's startup goes 16,713 ms to 4,753 ms, and the two
+builders produce the same heightmap hash, the same spawn and the same 53 lakes
+- byte for byte.** Decision 3's crossing landed on its top rung; decision 4's
+tiling landed on a rung the plan did not name, and this section says which.
+
+### The three numbers
+
+Ganymede, seed 42, the canonical config, and both legs run in the same
+self-test every time from now on:
+
+```
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, c++ builder,      4753 ms
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, gdscript builder, 16713 ms
+```
+
+| Stage 4 gate (plan) | result |
+| --- | --- |
+| heightmap hash: GDScript-TILED vs today's `main` | **`76cccdb6`, equal** - the tiling changed nothing |
+| heightmap hash: C++ vs GDScript-tiled, both quantised | **`4782edac`, equal** - the crossing changed nothing |
+| spawn byte-equal to `main`'s | **(-44, -124)**, at every quantum measured |
+| lakes byte-equal to `main`'s | **53**, at every quantum measured |
+| startup coarse-map time under half of today's | **4,753 ms against 16,713**, 3.5x |
+| micro-gate, GDScript against C++ | **10,000 samples, 0 differing, worst 0.00000000000000000**; one 64x64 tile, 0 cells differing |
+| the self-test gains the canonical-seed hash test | `canonical world`, and it runs BOTH legs |
+| full self-test | **green** |
+
+**Decision 3's rung: the top one.** World truth reads the C++ tiles. The ladder
+in the plan - fall back to GDScript tiles for spawn and lakes if quantisation
+cannot make the two legs equal - was not needed and is not taken.
+
+### The quantisation, and what it cost
+
+Every height is rounded to **1/1024 of a block** as the last step of
+`height_at_block`, in `terrain_generator.gd` and in `height_tiles.cpp`, in the
+same commit. The argument is distance v4's Windows addendum: gcc and MSVC round
+the same expression one float ULP apart, that did not matter for a look-only far
+mesh, and it matters absolutely here because spawn and lakes are computed from
+this number and terrain is never sent over the network. Half a quantum is
+0.24 mm of world; a double ULP at these altitudes is about 0.00005 mm; two
+compilers cannot round to different multiples of something twenty thousand times
+larger than their disagreement.
+
+**What it changes is the hash and nothing else**, and that was measured rather
+than assumed. `scripts/tools/quantum_probe.gd` builds the canonical world at
+six quanta, GDScript builder, and reports what moved:
+
+| quantum | heightmap | spawn | lakes |
+| --- | --- | --- | --- |
+| off | **`76cccdb6`** | (-44, -124) | 53 |
+| **1/1024 (shipped)** | `4782edac` | (-44, -124) | 53 |
+| 1/16384 | `108862ec` | (-44, -124) | 53 |
+| 1/65536 | `cdc2fb91` | (-44, -124) | 53 |
+| 1/1048576 | `eec44af2` | (-44, -124) | 53 |
+| 1/16777216 | `be1bf398` | (-44, -124) | 53 |
+
+Two things worth reading off that table. **The `off` row is `main`'s own hash**,
+which is how the tiling was proved to change nothing - a separate question from
+the quantisation, and the only way to answer it separately. And **the hash moves
+at every quantum**: a rounding that changes no stored bits is a rounding that
+does nothing, so "the heightmap hash is unchanged" and "there is a quantisation"
+cannot both be true, and the gate that matters is the one under it - spawn and
+lakes, which do not move at any quantum this project could reasonably pick.
+
+### And an hour was lost to a config, which is worth writing down
+
+The first run of the canonical test reported the world had MOVED - hash
+`1344d3bb` against `76cccdb6`, and 56 lakes against 53 - and the obvious
+suspect was the quantisation. It was not. **The test built its config with
+`WorldgenConfig.new()` and the game builds it with `load_or_default()`, which
+also calls `apply_world_scale()`** - and that derives `continent_amp`,
+`mountain_amp`, `continent_freq`, `mountain_freq`, `base_altitude` and
+`max_altitude` from `world_scale`. A config without it builds a world with a
+different SHAPE, and three extra lakes is what a different shape looks like.
+
+`Selftest.canonical_config()` now builds it the way the game does and says so.
+It deliberately does NOT call `load_or_default()`: that reads
+`user://worldgen.tres`, so on a machine that has one the cross-box comparison
+would be of two different worlds.
+
+### The tiles: what landed, and what did not
+
+**What landed.** The map is built in tiles anchored to the ORIGIN rather than to
+the region's corner - `Chunk.floor_div(min_block, tile_blocks)` gives the first
+tile index and the region is however much of the world grid happens to be
+loaded, which is the property an unbounded world needs and a region-relative
+grid cannot have. `heightmap_tile_blocks` is the knob, default **512**, rounded
+down to a multiple of `coarse_step`. Today's 3 x 3 km region is a **12 x 12**
+grid of them with a partial edge tile, and the region is not required to be a
+whole number of tiles - it generally is not, and that is correct rather than
+tolerated.
+
+**The tile size is a measurement**, per the plan's rule of "under ~100 ms a
+tile". At `coarse_step` 4 on ganymede:
+
+| builder | per tile, median | worst | whole map |
+| --- | --- | --- | --- |
+| C++ | **10 ms** | 20 ms | 4,753 ms |
+| GDScript | ~116 ms | - | 16,713 ms |
+
+512 blocks is the largest power of two that keeps the GDScript fallback near
+the line; the C++ builder is an order of magnitude inside it and stays inside it
+through Stage 5's doubling.
+
+**What did NOT land, stated plainly.** The tiles still write into ONE region
+array - `Heightmap.cells` - and every existing reader still indexes it as
+`i + j * cols`: lakes, spawn, the two zone passes, four probes, the self-test
+and the C++ far mesher's own marshal. **So the global-extent assumption has
+moved out of the BUILDER and not out of the STORE.** Making each tile own its
+array is a change across eight files whose acceptance gate is a byte-identical
+world, it buys nothing until a second region exists, and attempting it in the
+same stage as the crossing and the quantisation would have put all three at
+risk of one bug. The note is in `heightmap.gd` so the next epic starts from a
+sentence rather than from a surprise.
+
+**The apron is in the same position.** The pyramid is built over the region in
+one pass, so it cannot see a tile seam - there is nothing between two tiles to
+see. An apron becomes necessary on the day tiles stop sharing an array, and
+that is written down next to the tile code rather than left to be rediscovered.
+
+### Where the C++ went, and why it is its own class
+
+`KubikHeightTiles`, not four more methods on `KubikFarMesher`, and the reason is
+hard rule 8's line. The far mesher is look-only and may be trusted on that
+basis; this class decides where the ground is. Same seam shape as distance v4's
+- data in, arrays out, `setup()` once per world, the generator's own eight
+`FastNoiseLite` refs sampled natively so the noise is bit-identical by
+construction - and the same fallback: `HeightTiles.available()` is false on a
+checkout with no compiled library and every tile is built in GDScript, which is
+hard rule 1 and is now also *checked*, because the canonical-world test runs
+both legs on every self-test run.
+
+One transcription detail cost a re-read and is the same class of thing distance
+v4's three precision notes are: **`_domain_warp` returns a `Vector2`, and a
+`Vector2` is float32.** Both warp components are truncated before they are added
+to the sample position. Done in double throughout, the whole map drifts by a
+fraction of a millimetre - which after quantisation is invisible until it is a
+different multiple of 1/1024 somewhere, and then it is a different world.

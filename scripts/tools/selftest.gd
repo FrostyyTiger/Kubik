@@ -72,6 +72,9 @@ func _ready() -> void:
 		"far slice parity": _test_far_slice_parity,
 		# DISTANCE V5 STAGE 3, appended after it.
 		"far geomorph parity": _test_far_geomorph_parity,
+		# DISTANCE V5 STAGE 4, appended after it.
+		"height tile parity": _test_height_tile_parity,
+		"canonical world": _test_canonical_world,
 	}
 	var failures := 0
 	for name in tests:
@@ -2832,3 +2835,177 @@ func _test_far_geomorph_parity():
 		"compared" if have_cpp else "ABSENT"])
 	world.free()
 	return bad
+
+
+## THE HEIGHT MAP'S TWO BUILDERS AGREE, EXACTLY. Distance v5 Stage 4,
+## decision 3.
+##
+## This is the far mesher's parity gate at a higher stake. The far mesh is
+## look-only, so distance v4 could reason that a disagreement draws a slightly
+## different mountain. The height map is world truth: `world.gd` finds lakes and
+## spawn in it and every voxel column reads it, and terrain is never sent over
+## the network - both machines regenerate it from a seed. A disagreement here is
+## two players in different worlds and no error on either machine.
+##
+## So the gate is EQUAL, not close, and the reason it can be is decision 3's
+## quantisation: both builders round to 1/1024 of a block as their last step, so
+## a one-ULP difference in the expression above it cannot survive into the
+## answer. The test compares the quantised heights (which is what the world
+## uses) at ten thousand positions, including a quarter off the map on each
+## axis, because a clamp is exactly the kind of edge a transcription gets
+## subtly wrong.
+func _test_height_tile_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 800
+	cfg.view_distance = -1
+	var generator := TerrainGenerator.new(31337, cfg)
+	if not HeightTiles.available():
+		print("height tile parity: c++ tile builder absent, 0 checks")
+		return 0
+	var tiles := HeightTiles.new()
+	if not tiles.setup(generator, cfg):
+		print("  the c++ tile builder refused this world")
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 909
+	var half := float(cfg.world_blocks_xz) * 0.5
+	var worst := 0.0
+	var differing := 0
+	var samples := 10000
+	for k in samples:
+		# A quarter of the samples land off the map on each axis.
+		var bx := rng.randf_range(-half * 1.5, half * 1.5)
+		var bz := rng.randf_range(-half * 1.5, half * 1.5)
+		var a := generator.height_at_block(bx, bz)
+		var b := tiles.height_at_block(bx, bz)
+		if a != b:
+			differing += 1
+		worst = maxf(worst, absf(a - b))
+	if differing > 0:
+		bad += 1
+
+	# AND A WHOLE TILE, through the array path rather than the scalar one -
+	# because the two are different code and the marshalling is where a tile
+	# comes back short, transposed or one row late.
+	var step := cfg.coarse_step
+	var cols := 64
+	var bx0 := -128
+	var bz0 := 64
+	var got := tiles.build_tile(bx0, bz0, cols, cols, step)
+	var tile_bad := 0
+	if got.size() != cols * cols:
+		print("  the tile came back %d cells, not %d" % [got.size(), cols * cols])
+		bad += 1
+	else:
+		for j in cols:
+			for i in cols:
+				var want := generator.height_at_block(
+					float(bx0 + i * step), float(bz0 + j * step))
+				if got[i + j * cols] != float(want):
+					tile_bad += 1
+		if tile_bad > 0:
+			bad += 1
+
+	print("height tile parity: %d samples, %d differing (worst %.17f); one %dx%d tile, %d cells differing" % [
+		samples, differing, worst, cols, cols, tile_bad])
+	return bad
+
+
+## THE CANONICAL WORLD, AND ITS FINGERPRINT. Distance v5 Stage 4.
+##
+## HARD RULE ZERO, AUTOMATED: same seed, same config, same world - and from
+## tonight that has to hold across a gcc build and an MSVC one, because the
+## height map now crosses to C++ and the height map is what spawn and lakes are
+## computed from.
+##
+## THIS TEST IS THE CROSS-BOX INSTRUMENT AND IT IS MEANT TO BE READ, not only
+## to pass. It prints the three numbers that describe the world, so running the
+## self-test on a second machine and comparing one line is the whole procedure.
+## The morning's job on gemini is exactly that - see docs/status/distance-v5.md.
+##
+## The expected values below are ganymede's, at the commit that wrote them. When
+## a stage deliberately changes the world - distance v5 Stage 5 changes the
+## resolution, and Marcel accepted that in advance - these move WITH the change,
+## in the same commit, and the status doc records the old and the new.
+const CANONICAL_SEED := 42
+
+## The QUANTISED map's fingerprint - distance v5 Stage 4. `main`'s was
+## `76cccdb6` and that is what this build produces with the quantisation turned
+## off, which is how the tiling was proved to change nothing; rounding every
+## height to 1/1024 of a block necessarily changes the stored bits and
+## therefore this number, and changes NOTHING ELSE about the world, which is
+## the point of the two lines under it.
+const CANONICAL_HEIGHTMAP := "4782edac"
+const CANONICAL_SPAWN := Vector2i(-44, -124)
+const CANONICAL_LAKES := 53
+
+
+## THE CANONICAL CONFIG, BUILT RATHER THAN LOADED. `load_or_default()` reads
+## `user://worldgen.tres`, so on a machine that has one this test would compare
+## two different worlds and call it a determinism failure. The two calls after
+## `new()` are exactly what `load_or_default()` does to a fresh config, and the
+## second of them is not optional: `apply_world_scale()` derives the continent
+## and mountain amplitudes and frequencies from `world_scale`, so a config
+## without it builds a world with a different SHAPE. Written down because the
+## first version of this test omitted it and reported the world had moved.
+static func canonical_config() -> WorldgenConfig:
+	var cfg := WorldgenConfig.new()
+	cfg.apply_view_preset()
+	cfg.apply_world_scale()
+	return cfg
+
+
+func _test_canonical_world():
+	var bad := 0
+	# BOTH LEGS, EVERY RUN. The expected values are one half of this test; the
+	# other half is that a checkout with no compiled library builds the SAME
+	# world - which is hard rule 1 and hard rule zero at once, and is the thing
+	# quantisation exists to buy.
+	var got := {}
+	for leg in ["c++", "gdscript"]:
+		var cfg := canonical_config()
+		var generator := TerrainGenerator.new(CANONICAL_SEED, cfg)
+		generator.force_gdscript_tiles = leg == "gdscript"
+		var ms := generator.build_heightmap()
+		var hm: Heightmap = generator.heightmap
+		var lakes := Lakes.new()
+		lakes.compute(hm, cfg)
+		generator.lakes = lakes
+		var spawn := generator.find_spawn()
+		got[leg] = {
+			"hash": hm.hash_key(), "spawn": spawn, "lakes": lakes.lake_count(),
+			"builder": generator.heightmap_builder, "ms": ms,
+		}
+		print("canonical world: seed %d, heightmap %s, spawn (%d, %d), %d lakes, %s builder, %d ms" % [
+			CANONICAL_SEED, got[leg]["hash"], spawn.x, spawn.y,
+			got[leg]["lakes"], got[leg]["builder"], ms])
+
+	# THE LINE THE MORNING COMPARES ACROSS TWO MACHINES is the one above. These
+	# three are what makes a mismatch legible rather than merely red.
+	var a: Dictionary = got["c++"]
+	if a["hash"] != CANONICAL_HEIGHTMAP:
+		print("  heightmap hash %s, expected %s - THE WORLD MOVED" % [
+			a["hash"], CANONICAL_HEIGHTMAP])
+		bad += 1
+	if a["spawn"] != CANONICAL_SPAWN:
+		print("  spawn (%d, %d), expected (%d, %d)" % [
+			a["spawn"].x, a["spawn"].y, CANONICAL_SPAWN.x, CANONICAL_SPAWN.y])
+		bad += 1
+	if a["lakes"] != CANONICAL_LAKES:
+		print("  %d lakes, expected %d" % [a["lakes"], CANONICAL_LAKES])
+		bad += 1
+
+	# AND THE TWO BUILDERS AGREE ON ALL THREE. Skipped, loudly, when there is
+	# no library to compare against - the two legs are then the same leg.
+	var b: Dictionary = got["gdscript"]
+	if a["builder"] == b["builder"]:
+		print("  (no compiled tile builder - both legs are gdscript)")
+	elif a["hash"] != b["hash"] or a["spawn"] != b["spawn"] \
+			or a["lakes"] != b["lakes"]:
+		print("  THE TWO BUILDERS DISAGREE: %s/%s, spawn %s/%s, lakes %d/%d" % [
+			a["hash"], b["hash"], a["spawn"], b["spawn"], a["lakes"], b["lakes"]])
+		bad += 1
+	return bad
+

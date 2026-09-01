@@ -38,12 +38,80 @@ var min_block := 0
 var _max_block := 0
 
 
+# --- TILES, distance v5 Stage 4 ----------------------------------------------
+#
+# WHY, AND IT IS NOT PERFORMANCE. `CLAUDE.md` § Worldgen guidance: "The world is
+# unbounded by design ... No new system may bake in a world edge, a global
+# heightmap, or any global-extent assumption - heightmaps and lakes go regional
+# (tiled) as the world opens." The height map is the global heightmap that
+# sentence is about.
+#
+# WHAT A TILE IS HERE. A square of world, `tile_blocks` on a side, ANCHORED TO
+# THE ORIGIN rather than to this region's corner - so a tile has the same
+# identity whatever region is loaded, which is the property an unbounded world
+# needs and a region-relative grid cannot have. Tiles are the unit the map is
+# BUILT in, the unit the C++ builder is handed, and the unit a build is timed
+# in.
+#
+# WHAT THIS DOES NOT DO YET, stated plainly rather than implied: the tiles
+# still write into ONE region array, `cells`, and every existing reader -
+# lakes, spawn, the probes, the C++ far mesher's marshal - still indexes that
+# array as `i + j * cols`. So the global-extent assumption has moved out of the
+# BUILDER and not yet out of the STORE. Making each tile own its own array is
+# a change across eight files whose gate is a byte-identical world, and it buys
+# nothing until a second region exists. See docs/status/distance-v5.md.
+#
+# THE APRON, likewise: the pyramid is built over the region in one pass, so it
+# cannot see a tile seam - there is nothing between two tiles to see. An apron
+# becomes necessary on the day tiles stop sharing an array, and the note is
+# here so that day starts from a sentence rather than from a bug report.
+
+## Blocks per tile edge. From `config.heightmap_tile_blocks`, and a multiple of
+## `step` - a tile that ended mid-cell would put one cell in two tiles.
+var tile_blocks := 512
+
+## Tile index range covering this region, inclusive, on both axes.
+var tile_lo := 0
+var tile_hi := 0
+
+
 func _init(config: WorldgenConfig) -> void:
 	step = config.coarse_step
 	cols = int(config.world_blocks_xz / config.coarse_step)
 	min_block = -int(config.world_blocks_xz / 2)
 	_max_block = min_block + (cols - 1) * step
 	cells.resize(cols * cols)
+	tile_blocks = maxi(int(config.heightmap_tile_blocks) / step, 1) * step
+	tile_lo = Chunk.floor_div(min_block, tile_blocks)
+	tile_hi = Chunk.floor_div(_max_block, tile_blocks)
+
+
+## Tiles per side over this region. The region is not required to be a whole
+## number of tiles and generally is not: the tile grid is the WORLD's, and a
+## region is however much of it happens to be loaded.
+func tile_count() -> int:
+	return tile_hi - tile_lo + 1
+
+
+## The cells of one tile, as a range of cell indices on each axis, clipped to
+## this region. `end` is exclusive. Empty when the tile has no cells here.
+func tile_cell_rect(tx: int, tz: int) -> Rect2i:
+	var lo_x := _cell_ceil(tx * tile_blocks)
+	var lo_z := _cell_ceil(tz * tile_blocks)
+	var hi_x := _cell_ceil((tx + 1) * tile_blocks)
+	var hi_z := _cell_ceil((tz + 1) * tile_blocks)
+	lo_x = clampi(lo_x, 0, cols)
+	lo_z = clampi(lo_z, 0, cols)
+	hi_x = clampi(hi_x, 0, cols)
+	hi_z = clampi(hi_z, 0, cols)
+	return Rect2i(lo_x, lo_z, maxi(hi_x - lo_x, 0), maxi(hi_z - lo_z, 0))
+
+
+## The first cell index at or after a block coordinate. `tile_blocks` is a
+## multiple of `step` and `min_block` is not necessarily on a tile boundary, so
+## this is a ceiling division rather than an exact one.
+func _cell_ceil(block: int) -> int:
+	return Chunk.floor_div(block - min_block + step - 1, step)
 
 
 ## Block coordinate of a cell index on either axis.
