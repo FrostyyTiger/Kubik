@@ -189,21 +189,27 @@ here on this list is filled by what a playtest taught us.
    placement - the open `TODO(marcel)` at `WorldgenConfig.grove_floor`, now
    with a second measurement feeding it.
 
-   **Look v3 - the painted world (direction settled 2026-08-31)** is the
-   next look epic, and it is a register change recorded in `DESIGN.md` § Art
-   direction: up close the world becomes a painting - sculpted forms,
-   family-toned paint, dense dressing, soft light - and the poster survives
-   at distance, where the comparison run showed it already holds. Scope now:
-   characters, gear, weapons, creatures, trees, flora, terrain dressing,
-   lighting. Structures excluded - nothing is built yet, so Sites v1 arrives
-   at this fidelity rather than being converted to it. The bar is Marcel's
-   nine-render reference set (kept off-repo; DESIGN.md carries the
-   description) and the gates are the KNIGHT TEST and the BELONGING TEST. A
-   demo at the bar, `kubik-knight-demo.bbmodel`, went to his desktop the day
-   of the ruling; Blockbench becomes the character authoring surface and the
-   plan owes the import half of the round trip. Concept then tech plan to be
-   written after the three in-flight runs (creatures v1 night 2, ui v1,
-   distance v3) land, so the trio is modelled once, in the new register.
+   **Look v3 - the painted world (direction settled 2026-08-31, re-cut
+   2026-09-01)** is the next look epic, and it is a register change recorded
+   in `DESIGN.md` § Art direction. The 2026-08-31 cut made the near world a
+   painting and kept the poster at distance; the 2026-09-01 ruling retires
+   the poster as a rendering register entirely - trees v3 makes near and
+   far one geometry family, so ONE surface language runs from boots to fog:
+   sculpted painted voxels, coarser with distance. The direction is named
+   **Art Deco fantasy**: Deco is the grammar of everything BUILT (monuments,
+   gates, gear ornament, UI) and never of nature, which stays sculpted-vox
+   naturalism - the contrast is deliberate - and the poster era survives as
+   the colour discipline (warm light, ink shade, the swatch gates, one gold
+   accent). Scope: characters, gear, weapons, creatures, trees, flora,
+   terrain dressing, lighting, the far field. Structures excluded - nothing
+   is built yet, so Sites v1 arrives at this fidelity rather than being
+   converted to it. The bar is Marcel's nine-render reference set (kept
+   off-repo; DESIGN.md carries the description) and the gates are the
+   KNIGHT TEST and the BELONGING TEST. A demo at the bar,
+   `kubik-knight-demo.bbmodel`, went to his desktop the day of the ruling;
+   Blockbench becomes the character authoring surface and the plan owes the
+   import half of the round trip. Concept then tech plan after distance v5
+   and trees v3 land, so the trio is modelled once, in the new register.
 
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.

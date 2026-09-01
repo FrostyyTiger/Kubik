@@ -1,5 +1,15 @@
 # Trees v2 - the last block-resident living thing leaves the grid
 
+> **SUPERSEDED by [`trees-v3.md`](trees-v3.md)** (Marcel's rulings,
+> 2026-09-01 evening). The fates of this plan's decisions: the diagnosis,
+> the placement hard rule and the Stage 0 audit list stand and are carried
+> forward; decision 5 (no purchased pack) is OVERTURNED - the pack's .vox
+> sources, not its chamfered meshes, become the tree library through the
+> game's own mesher; decision 2 and hard rule 3 (trunk stays blocks) are
+> OVERTURNED for whole-tree models; decision 6's impostors are replaced by
+> geometry-all-the-way (no cards); and the public build now ships treeless
+> by design. Author new work against trees-v3, not this file.
+
 Written 2026-09-01 against `main` at `2e92fef`, from Marcel's ruling of the
 same evening. **NOT SCHEDULED.** This plan collides with distance v4 and the
 C++ mesher port, both in flight; *Sequencing* below says when it can run and
