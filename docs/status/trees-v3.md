@@ -1202,28 +1202,62 @@ and was re-run** - the contended figures are in the git history of this
 document and were 73.9 ms worst frame against 31.8 and 37.6, which is a good
 reminder of what a busy box does to this probe.
 
-### The stream probe, `far_ring_div` 4, library mounted
+### The stream probe, `far_ring_div` 4, library mounted - three clean runs
 
-| | Stage 0 (single) | run 1 | run 2 | run 3 |
-| --- | --- | --- | --- | --- |
-| **chunks at spawn** | 2,369 | **2,222** | **2,222** | |
-| **load wall** | 24,872 ms | 19,522 | 18,199 | |
-| gen per chunk, workers | 9.51 ms | 4.23 | 3.93 | |
-| main-thread upload per chunk | 0.23 ms | 0.15 | 0.15 | |
-| sprint worst frame, out / back | 39.4 / 37.7 ms | 31.8 / 37.0 | 37.6 / 33.2 | |
-| frames over 33 ms | 8 | **2** | **2** | |
-| **holes** | 0 / 0 | **0 / 0** | **0 / 0** | |
-| collidable front min | 56 / 64 m | 64 / 72 | **72 / 72** | |
-| chunks/s | 101.5 / 111.5 | 111.3 / 126.9 | 116.6 / 132.5 | |
-| static memory | 393.1 MB | 394.1 | 395.7 | |
+| | Stage 0 (single) | run 1 | run 2 | run 3 | **median** |
+| --- | --- | --- | --- | --- | --- |
+| **chunks at spawn** | 2,369 | 2,222 | 2,222 | 2,222 | **2,222** |
+| **load wall** | 24,872 ms | 19,522 | 18,199 | 18,247 | **18,247** |
+| gen per chunk, workers | 9.51 ms | 4.23 | 3.93 | 3.88 | **3.93** |
+| main-thread upload per chunk | 0.23 ms | 0.15 | 0.15 | 0.14 | **0.15** |
+| sprint worst frame, out / back | 39.4 / 37.7 ms | 31.8 / 37.0 | 37.6 / 33.2 | 35.7 / 29.4 | **35.7 / 33.2** |
+| frames over 33 ms | 8 | 2 | 2 | 1 | **2** |
+| **holes** | 0 / 0 | **0 / 0** | **0 / 0** | **0 / 0** | **0** |
+| collidable front min | 56 / 64 m | 64 / 72 | 72 / 72 | 72 / 80 | **72 / 72** |
+| chunks/s | 101.5 / 111.5 | 111.3 / 126.9 | 116.6 / 132.5 | 117.6 / 134.1 | **116.6 / 132.5** |
+| static memory | 393.1 MB | 394.1 | 395.7 | 396.3 | **395.7** |
 
-**Static memory is the row that changed its story twice and the honest figure
-is the median.** Stage 7's single run read 511.0 MB and this document said so;
-three runs read 394.1, 395.7 and the third below. Distance v5 recorded exactly
-this lesson about exactly this probe - it samples static memory at the END of a
-run and a handover in flight is a large swing - and trees v3 walked into it
-anyway. **The library resident is real but it is tens of megabytes, not the
-118 the single run suggested.**
+**A 27% faster load, 8 m to 16 m more collidable ground in front of a sprinting
+player, chunks/s up about 16%, and frames over 33 ms down from 8 to 2 - while
+drawing seventy-two times the tree triangles.** The streaming win pays for the
+rendering cost and then some, which is the trade ruling 5 made without being
+able to prove it in advance.
+
+**Static memory reads 394-396 MB across three runs, and this document said
+511 MB one stage ago.** That figure was Stage 7's single run, and distance v5
+had already written down exactly this trap about exactly this probe: it samples
+static memory at the END of a run, so a handover in flight is a large swing.
+The library IS resident and it does cost - but it is a few megabytes against
+Stage 0's 393.1, not a hundred and eighteen. **A single run proves nothing, and
+this document published one anyway; three runs is what the provenance column
+has meant since distance v1.**
+
+### Hard rule 3 and the holes gate: both divisors, both legs
+
+| run | front min | worst frame | > 33 ms | chunks/s | static | **holes** |
+| --- | --- | --- | --- | --- | --- | --- |
+| **div 4, mounted** (median of 3) | 72 / 72 m | 35.7 / 33.2 ms | 2 | 116.6 / 132.5 | 395.7 MB | **0** |
+| **div 4, assetless** | 72 / 80 m | 35.8 / 31.2 ms | 2 | 122.5 / 137.9 | 383.2 MB | **0** |
+| **div 2, mounted** | 64 / 72 m | 28.1 / 38.4 ms | 1 | 106.9 / 120.5 | 321.0 MB | **0** |
+| **div 2, assetless** | 72 / 72 m | **27.3 / 26.4 ms** | **0** | 115.3 / 131.1 | 345.6 MB | **0** |
+
+**Holes 0 on all four**, which is the gate. And the assetless legs print the
+line ruling 6 is about:
+
+```
+[TreeField] 0 triangles over 0 slots (0 model instances of 0), 0 trunk colliders
+[TreeField] 0 trees in 494 ms
+```
+
+**That is the public build: placement computes, the field walks its bands, the
+loader finds no mount, nothing is planted, and nothing complains.** No
+fallback tree system - Marcel's "not two" - and the `div 2, assetless` run is
+the only one of the four that passes the stream probe's own STRICT mode, at
+zero frames over 33 ms.
+
+**The library costs about 12 MB of static memory**: 395.7 mounted against
+383.2 assetless at div 4. That is the honest figure for "38 geometries x 3
+rungs, assembled once and held".
 
 ### The deterministic numbers
 
@@ -1309,9 +1343,10 @@ there at all, because a billboard seen from above is a line.
    recorded next step if the fog moves out is the merged-lump rung - many
    trees, one mesh per far cell.
 2. **The library is resident.** 38 geometries x 3 rungs assembled at load and
-   held for the life of the world. Tens of megabytes; the single-run 118 MB
-   this document briefly reported was the stream probe's end-of-run sampling,
-   which distance v5 had already written down as a trap.
+   held for the life of the world. Across three runs that is **395.7 MB against
+   Stage 0's 393.1** - a few megabytes, not the 118 a single run briefly made
+   this document report. That mistake is left in Stage 7's own section rather
+   than edited out, because the lesson is the point.
 3. **The krummholz cushion is gone and is not coming back from a table edit.**
    The pack has no alpine cushion; Tree 16's six CUT STUMPS stand in at the
    right size and the wrong thing. This is the one shape the epic loses
@@ -1349,3 +1384,119 @@ there at all, because a billboard seen from above is a line.
 | **5. does `params_for()` slim now** | **later.** `decide()`'s output shape must not change and this night's deletion was already almost all red. |
 | **6. the library binary format** | `KTRE`, version 1, little-endian; 12-byte quads of `u16 x,y,z`, `u8 face`, `u8 palette`, `u16 w,h`; three LOD blocks each prefixed by a `u32` count. Godot's importer ignores it entirely, which was checked. |
 
+
+### The tool's per-variant table
+
+Stage 1's table, above, is the full one. The shape of it, restated because it
+is the finding a reader should leave with:
+
+| | voxels | shell | LOD0 tri | quads per shell voxel |
+| --- | --- | --- | --- | --- |
+| **the giant** (`t13_1`, dense canopy) | 1,324,790 | 74,140 | **5,642** | **0.038** |
+| **the lace** (`t10_3`, bare branches) | 15,879 | 10,221 | **33,194** | **1.63** |
+
+**Forty-three times worse per shell voxel, on a tree with eighty-three times
+fewer voxels.** Density is cheap and lace is dear, and it is dear in exact
+proportion to how little of it there is. Tree 10 is **54% of the library's
+LOD0 triangles for 1.5% of its voxels**, and its LOD1 is already a 4.5x cut if
+that ever needs spending.
+
+### For Marcel to rule on
+
+1. **The krummholz row is standing in with cut stumps and it is the one thing
+   this epic broke rather than changed.** Tree 16 is six sawn stumps at 2 m -
+   the right size, the wrong object - and the wind-flagged alpine cushion
+   trees v1 Stage 3 authored has no replacement in the pack. Three options and
+   none is free: live with the stumps; set the row's six weights to 0 and have
+   a treeless alpine zone, which is a defensible picture and a one-line change;
+   or author a cushion, which is the only one that gets the shape back. **Look
+   at `9-treeline` in the after tour before deciding.**
+
+2. **Ninety-three draw calls, and the plan predicted "high tens".** It is
+   thirty-eight geometries times however many rungs are live, and it is the
+   direct cost of every tree being real geometry. Nothing in the numbers says
+   it hurts - the sprint's worst frame improved against Stage 0 - but it is the
+   figure that grows if the library grows, and the lever is fewer variants per
+   species rather than fewer rungs.
+
+3. **Trees 09 and 10 are coconut palms and are benched, and the pack cost
+   money.** Ten of fifty-five variants are unused for that reason and two more
+   (`t05`, `t08`) for having no green twin. That is a fifth of the purchase
+   sitting idle. They are the right calls for THIS region; the Second Age's
+   coast is where palms would belong, and this is worth knowing before the next
+   pack is bought.
+
+4. **`tree_season` ships at 0 and the autumn forest is one number away.** Turn
+   it to 1 and the wood turns - 377 of 400 larch cells go autumn, with the
+   greens down to a third of their weight rather than deleted. It is
+   PROPERTIES, so both machines must agree; there is no day-night-style clock
+   driving it and nothing in this epic proposes one.
+
+5. **The crimson and pink forests are loaded, mapped, photographed and inert.**
+   `t15_4` is a pink hero. Setting its weight from 0.0 to anything puts one in
+   a far meadow, and that is the cheapest strangeness this game will ever be
+   able to buy. Not done, because "what is far is strange" is a design ruling
+   and not an executor's.
+
+
+---
+
+## Acceptance
+
+| merge condition (plan, Stage 10) | result |
+| --- | --- |
+| **full self-test, library present** | **green** - every stage, and at the head |
+| **full self-test, library moved aside** | **green** - every stage; eight tree gates self-skip and say so |
+| **CI `selftest.yml` green on the branch** | **green on every push**, which is the assetless proof by construction |
+| **placement does not move** (hard rule 1) | **28,383 trees, the same species mix, spawn (-44, -124), heightmap `4782edac`** - reprinted at Stage 0, 3, 5, 7 and 9 |
+| **determinism** (hard rule 2) | `registry determinism` hashes `decide()` + the chosen variant over a fixed rectangle and gets the same number twice, on each leg. **The two legs differ, and that is correct** - see below. |
+| **both states first-class** (hard rule 3) | above, plus holes 0 on all four leg x divisor combinations |
+| **no look change through a `WorldgenConfig` default** (hard rule 5) | three new properties, none edited: `tree_sway` and `tree_colliders` LOCAL, `tree_season` PROPERTIES because it decides which tree a cell grows |
+| **only this lane's files** (hard rule 6) | the far field, both far meshers and the heightmap are untouched; `world.gd` took one edit - the sky reserve's removal - which Stage 7 names |
+| **no frame-thread work without a budget** (hard rule 7) | every multimesh commit and the collider batch are slices on `FarUpload` |
+| **two repos, honest commits** (hard rule 8) | three commits to `Kubik-assets` (`388692c`, `76b1321`, `490ce13`), all pushed; **no pack-derived bytes in the public repo** - `assets/purchased/` is gitignored and the palette table carries indices and Kubik colours only |
+| the budget gate: worst LOD0 under 40,000 triangles | **33,194** |
+| standing 60 s -> 0 rebuilds | **0**, worst frame 9.6 ms |
+| trunk collider count == placement count | **213 / 213**, and a ray is stopped |
+| tool triangles == loader triangles | **exactly, 55 variants x 3 rungs** |
+
+### The two legs' registry hashes differ, and that is correct
+
+At Stage 7 `registry determinism` read `198620935` with the library and
+without it, and this document said so as a strength. **Stage 8 changed that
+and the change is right.** The season and snow-dust channels bias which
+COLOURWAY a cell grows, and a variant's season is read off its own sidecar
+through `TreePalette` - so an unmounted build, which has no sidecars, tags
+everything green and rolls differently.
+
+| | hash |
+| --- | --- |
+| library mounted | `871701716` |
+| library absent | `198620935` |
+
+**Nothing a player can see disagrees.** The variant is only ever used to DRAW,
+an unmounted build draws no trees at all, and every machine that has the
+library agrees with every other one. What the two legs share is the thing that
+matters and is asserted separately: **the same 28,383 trees, of the same
+species, in the same places** - `decide()` is untouched by any of this.
+
+The gate's real claim is unchanged and is the one hard rule 2 makes: **hashed
+from the cell, never stored, never synced, identical on both machines.**
+
+**Merging.** Every gate above is green, including CI on the branch, so the
+plan's merge condition is met.
+
+## What the morning finds
+
+One tree system where there were two, drawing sculpted forests from the
+player's boots to the fog with no card anywhere and no seam that is a change of
+KIND. The public build treeless, green, and proven so by CI on every push.
+Columns that end at the terrain and generate six times faster. A species,
+colour and season table Marcel retunes over coffee, with a pink hero one digit
+from existing. Gallery sheets of all 55 variants beside the player capsule and
+LOD ladders per species; tour pairs from the valley floor, the lake shore and
+the summit. The assets repo carrying the tool and the baked library.
+
+And the block-tree code - three thousand lines that taught this game what a
+tree is - deleted, with its lessons written into the header of the file that
+replaced it.
