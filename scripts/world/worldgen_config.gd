@@ -581,7 +581,16 @@ const FOG_START_RATIO := 0.4
 # --- Content ----------------------------------------------------------------
 
 ## One candidate tree per this many blocks, in both x and z.
-@export var tree_cell_blocks := 8
+##
+## 8 UNTIL TREES V4, WHICH IS 4 m - a spacing chosen when a crown was 2 to 4
+## blocks wide and the lattice was therefore the whole spacing rule. Against
+## the model library's 8 to 22 m crowns a 4 m lattice offers candidates that
+## `tree_canopy_spacing` then rejects almost all of, which is scan cost spent
+## to produce nothing: at 800 m the ring visited about 160,000 cells to keep a
+## few thousand. 24 blocks is 12 m, close to a typical crown's own width, so
+## most candidates are a real question again and the scan is a ninth of the
+## size. Density is held by `tree_density_scale`, which was retuned with it.
+@export var tree_cell_blocks := 16
 
 ## Global multiplier on the whole placement product. 0 empties the world of
 ## trees, 1 is the tuned density, 2 doubles it.
@@ -592,7 +601,23 @@ const FOG_START_RATIO := 0.4
 ## 0.45 cannot both be it. What survives is the thing a person actually reaches
 ## for the slider to do, which is "more trees" or "fewer trees" everywhere at
 ## once. Recorded as a departure.
-@export var tree_density_scale := 1.0
+## TREES V4 RAISED THIS FROM 1.0 TO 4.0, and it is a compensation rather than
+## a new opinion about how wooded the world is. The candidate lattice went from
+## 4 m to 8 m - a quarter of the candidates - and the crown rule now rejects a
+## further quarter of what survives.
+##
+## IT CANNOT FULLY COMPENSATE, AND THAT IS THE POINT. The pre-v4 forest ran at
+## about 3,400 trees per km2 with crowns up to 22.5 m across, which is why they
+## grew through each other; 4.0 lands at about 1,750 and no crown touches
+## another. The rest of the gap is not recoverable by this knob - it is the
+## arithmetic of putting 22 m trees on the ground without overlapping them. The
+## lever for a denser forest is a SMALLER TREE: `TreeTable`'s `height_m` is
+## NATIVE on every species today, and scaling the library to about 60% would
+## roughly triple how many fit. That is a look decision, not a tuning one.
+##
+## The ring costs about 0.5 ms per tree it draws, so this knob is also the
+## rebuild budget: 4.0 is a 2.0 s ring at far_tree_m 800, 2.0 is 1.4 s.
+@export var tree_density_scale := 4.0
 
 
 # --- Where a tree is allowed to grow ----------------------------------------
@@ -746,7 +771,22 @@ const FOG_START_RATIO := 0.4
 ## It is not the cause. The traversal probe stalls in the same way at Stage 4,
 ## BEFORE any tree changed, and gets FURTHER at jitter 2 (1,003 m) than at
 ## jitter 1 (875 m). See docs/status/world-feel-v1.md, Stage 5.
-@export var tree_jitter_blocks := 2
+@export var tree_jitter_blocks := 4
+
+## HOW MUCH ROOM A CROWN CLAIMS, as a multiple of the two crowns' radii summed.
+##
+## THE LATTICE STOPPED BEING THE SPACING RULE the night trees became models.
+## It bounded TRUNK separation, which is a walkability fact, and that was the
+## whole of the rule while a crown was 2 to 4 blocks wide - about what the
+## lattice already gave. The pack's crowns are up to 22.5 m and the lattice
+## did not move, so canopies grew straight through each other.
+##
+## 1.0 means two crowns may TOUCH and never interpenetrate, which is what
+## "trees should never completely overlap" asks for and reads a little
+## park-like. Below 1.0 they interlock - 0.8 is a closed forest canopy with
+## visible overlap - and 0 switches the whole test off and restores the
+## pre-trees-v3 behaviour. This is a LOOK knob and it is meant to be turned.
+@export var tree_canopy_spacing := 1.0
 
 ## How much wildness adds to the snag and krummholz weights at the far edge of
 ## the world, taken from spruce.
@@ -1413,7 +1453,23 @@ const FOG_START_RATIO := 0.4
 ## TreeField.update().
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like every far knob.
-@export var far_tree_step_m := 24.0
+##
+## TREES V4 DOUBLED IT TO 48 m, and the change that made this affordable is the
+## same one that made it necessary.
+##
+## 24 m was chosen while the ring had STRIDE BANDS. A rebuild moved the band
+## radii, and a moved band radius restrided a whole annulus at once - so
+## rebuilding often was how that jump was kept small. Trees v4 deleted the
+## strides: a rebuild now changes which LOD rung a tree draws at and nothing
+## else, and the rungs are already a fade apart. The visible cost of waiting
+## longer went with them.
+##
+## The benefit is the ring's share of the worker. Full density costs about
+## 0.5 ms per tree drawn - 1.7 s for a 800 m ring at the tuned density, against
+## 0.4 s for the old one-in-sixty-four - and this engine build SERIALISES
+## GDScript across threads, so ring time is chunk time not happening. At 24 m
+## and a walking pace that is a third of the worker; at 48 m it is a sixth.
+@export var far_tree_step_m := 48.0
 
 ## HOW MUCH OF A FRAME THE FAR SYSTEMS MAY SPEND HANDING MESHES TO THE
 ## RENDERER, in milliseconds. Distance v5 Stage 1, decision 1.

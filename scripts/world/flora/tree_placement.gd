@@ -66,6 +66,11 @@ const SALT_GROVE_KIND := 225
 ## lowering old_growth_keep does not reshuffle which trees are old growth.
 const SALT_OLD_GROWTH_THIN := 226
 
+## Which of two crowns that want the same ground keeps it (trees v4). Its own
+## salt, so spacing cannot correlate with the species or jitter rolls - a tree
+## must not be likelier to win because of what it is.
+const SALT_SPACING := 227
+
 
 # --- The masks --------------------------------------------------------------
 
@@ -259,7 +264,158 @@ static func cover_column(gen: TerrainGenerator,
 ## Stage 7's far-tree ring builds impostors from it, which is what makes a tree
 ## you walk up to the tree you saw at 300 m. Three restatements of a placement
 ## rule would have drifted apart by the second stage.
+## Does a tree stand at this candidate, and what is it?
+##
+## TWO HALVES SINCE TREES V4. `_decide_raw()` is the placement rule as it has
+## always been - zones, masks, rolls - and answers for ONE cell knowing nothing
+## about its neighbours. `_suppressed()` is the crown-spacing rule on top, and
+## it is the half that needs neighbours.
+##
+## THE SPLIT IS WHAT STOPS THE RECURSION. Spacing has to ask its neighbours
+## whether they grew a tree, and if that question were `decide()` the neighbour
+## would ask ITS neighbours and the world would never finish generating. It
+## asks `_decide_raw()` instead: one level, bounded, and the property below
+## survives it.
+## `cache` is an optional per-CALLER dictionary of raw decisions. A caller that
+## walks a whole region - the ring - hands the same one to every call and pays
+## for each cell once instead of once per neighbour that looks at it; see
+## `_raw_cached()`. Pass nothing and the behaviour is identical, just slower.
 static func decide(gen: TerrainGenerator, cell_x: int, cell_z: int,
+		masks: Masks = null, cache = null) -> Dictionary:
+	var found := _raw_cached(gen, cell_x, cell_z, masks, cache)
+	if found.is_empty():
+		return {}
+	if _suppressed(gen, found, masks, cache):
+		return {}
+	return found
+
+
+## A raw decision, from the cache when there is one.
+##
+## THE KEY IS ONE INTEGER, not a Vector2i. A candidate lattice never exceeds a
+## few million cells on an axis and packing the pair into one int makes this a
+## hash of a number rather than of a struct - which matters because this is the
+## hottest lookup in placement, called about fifty times per tree.
+static func _raw_cached(gen: TerrainGenerator, cell_x: int, cell_z: int,
+		masks: Masks, cache) -> Dictionary:
+	if cache == null:
+		return _decide_raw(gen, cell_x, cell_z, masks)
+	# 32 bits each into a 64-bit int, the low half masked so a NEGATIVE z
+	# cannot sign-extend over x and collide two different cells onto one key -
+	# which is a wrong tree rather than a slow one.
+	var key := (cell_x << 32) | (cell_z & 0xFFFFFFFF)
+	var hit = cache.get(key)
+	if hit != null:
+		return hit
+	var found := _decide_raw(gen, cell_x, cell_z, masks)
+	cache[key] = found
+	return found
+
+
+## THE CROWN SPACING RULE: no two trees that SURVIVE may have crowns that
+## interpenetrate, and that is a guarantee rather than a tendency.
+##
+## WHY IT HOLDS. Each candidate gets a hashed priority. A candidate dies if any
+## RAW-accepted neighbour with a higher priority stands close enough that their
+## crowns would meet. Suppose two survivors A and B did overlap: one of them
+## has the higher priority - say A - and A is raw-accepted by definition, so B
+## would have seen A and died. B is therefore not a survivor, and the pair
+## cannot exist. The proof needs the suppressor set to be the RAW decisions and
+## not the survivors, which is the same thing that keeps it one level deep.
+##
+## WHAT IT COSTS IN LOOK: a hole. A tree can be killed by a neighbour that is
+## itself killed by a third, so the ground it wanted is left empty. That is
+## visible as slightly thinner stands than the density asks for, and it is the
+## price of a rule that terminates. Raising `tree_density_scale` pays it back.
+##
+## ORDER-INDEPENDENT AND DETERMINISTIC, like every other decision in this file:
+## the answer is a function of (seed, cell) alone, so two players see the same
+## forest and a column rebuilt after an edit comes back identical.
+static func _suppressed(gen: TerrainGenerator, found: Dictionary,
+		masks: Masks, cache = null) -> bool:
+	var config := gen.config
+	var spacing: float = config.tree_canopy_spacing
+	if spacing <= 0.0:
+		return false
+	var r_self := canopy_radius_blocks(gen, found)
+	if r_self <= 0.0:
+		return false
+	# HOW FAR A NEIGHBOUR CAN REACH FROM. The widest crown in the library plus
+	# this one's, because that pair is the furthest apart two trunks can be and
+	# still touch.
+	#
+	# AND TWICE THE JITTER, which the first cut of this rule left out and the
+	# `tree spacing` gate caught: 2 overlapping pairs in 459 trees. The bound
+	# is on CELLS but the test is on TRUNKS, and a trunk sits up to
+	# `tree_jitter_blocks` from its cell centre. Two of them leaning toward
+	# each other put a pair one cell beyond the scan close enough to touch, and
+	# because neither could see the other, both survived.
+	var cell: int = maxi(config.tree_cell_blocks, 1)
+	var r_max := TreeModels.max_canopy_radius_m() / config.block_size
+	var jitter := float(maxi(config.tree_jitter_blocks, 0))
+	var reach := int(ceil(
+		((r_self + maxf(r_max, r_self)) * spacing + jitter * 2.0) / float(cell)))
+	var c: Vector2i = found["cell"]
+	var mine := WorldHash.hash01(c.x, c.y, gen.world_seed, SALT_SPACING)
+	for dz in range(-reach, reach + 1):
+		for dx in range(-reach, reach + 1):
+			if dx == 0 and dz == 0:
+				continue
+			var nx := c.x + dx
+			var nz := c.y + dz
+			var theirs := WorldHash.hash01(nx, nz, gen.world_seed, SALT_SPACING)
+			# STRICTLY HIGHER WINS, and an exact tie is broken on the cell
+			# coordinates so that the comparison can never call both of a pair
+			# the winner - which would delete both trees instead of one.
+			if theirs < mine:
+				continue
+			if theirs == mine and Vector2i(nz, nx) <= Vector2i(c.y, c.x):
+				continue
+			var other := _raw_cached(gen, nx, nz, masks, cache)
+			if other.is_empty():
+				continue
+			var r_other := canopy_radius_blocks(gen, other)
+			if r_other <= 0.0:
+				continue
+			var ddx := float(int(other["bx"]) - int(found["bx"]))
+			var ddz := float(int(other["bz"]) - int(found["bz"]))
+			var need := (r_self + r_other) * spacing
+			if ddx * ddx + ddz * ddz < need * need:
+				return true
+	return false
+
+
+## The crown radius of a placed tree, in BLOCKS.
+##
+## PUBLIC BECAUSE THE GATE MUST ASK THE SAME QUESTION. The first `tree spacing`
+## gate computed the radius its own way and reported two overlapping pairs that
+## did not exist: it read the library for species that are not DRAWN from the
+## library, where the rule reads the table. A gate that measures something the
+## rule never promised is a gate that fails for the wrong reason, so there is
+## one function and both call it.
+##
+## Off the model when there is one, because that is what is actually drawn.
+## The species table's `crown` is the fallback and it is only right in the
+## public build, where no model is drawn and the number describes nothing that
+## can overlap anyway.
+static func canopy_radius_blocks(gen: TerrainGenerator,
+		found: Dictionary) -> float:
+	var config := gen.config
+	if TreeTable.drawn_as_model(int(found["species"]), config):
+		# THE SPECIES' WIDEST, NOT THIS TREE'S. Which variant is drawn depends
+		# on the snow bias, and resolving that is a zone solve per candidate -
+		# paid 25 times per tree once neighbours ask it too. A species' variants
+		# are one tree in several colourways, so the widest of them stands in
+		# for any of them to within a voxel. See TreeModels.max_canopy_radius_of.
+		var slot := TreeTable.slot_of(int(found["species"]), config)
+		if slot != &"":
+			var r := TreeModels.max_canopy_radius_of(slot) / config.block_size
+			if r > 0.0:
+				return r
+	return float(found["params"].get("crown", 0))
+
+
+static func _decide_raw(gen: TerrainGenerator, cell_x: int, cell_z: int,
 		masks: Masks = null) -> Dictionary:
 	var config := gen.config
 
@@ -335,7 +491,8 @@ static func decide(gen: TerrainGenerator, cell_x: int, cell_z: int,
 	if zone == TerrainGenerator.ZONE_MEADOW and config.hero_probability > 0.0:
 		if hero_roll < config.hero_probability * spawn:
 			if _ground_ok(gen, surface, bx, bz, zone):
-				return _tree(gen, TreeSpecies.HERO, cell_x, cell_z, bx, bz, surface)
+				return _tree(gen, TreeSpecies.HERO, cell_x, cell_z, bx, bz,
+					surface, false, zone)
 			return {}
 
 	var base := _base_probability(gen, zone, surface, bx, bz)
@@ -363,7 +520,7 @@ static func decide(gen: TerrainGenerator, cell_x: int, cell_z: int,
 		return {}
 	if old_growth:
 		species = _old_growth_species(gen, cell_x, cell_z, species)
-	return _tree(gen, species, cell_x, cell_z, bx, bz, surface, old_growth)
+	return _tree(gen, species, cell_x, cell_z, bx, bz, surface, old_growth, zone)
 
 
 ## AN OLD WOOD IS SPRUCE, BEECH AND DEAD WOOD. Birch is a pioneer - it grows
@@ -405,9 +562,14 @@ static func _ground_ok(gen: TerrainGenerator, surface: float, bx: int, bz: int,
 
 
 static func _tree(gen: TerrainGenerator, species: int, cell_x: int, cell_z: int,
-		bx: int, bz: int, surface: float, old_growth := false) -> Dictionary:
+		bx: int, bz: int, surface: float, old_growth := false,
+		zone := -1) -> Dictionary:
 	return {
 		"species": species,
+		# CARRIED, NOT RECOMPUTED. `decide()` has already solved the elevation
+		# zone here, and `TreeFieldJob.variant_of()` wants the same answer to
+		# work out the snow bias - once per tree, and there are thousands.
+		"zone": zone,
 		"old_growth": old_growth,
 		"cell": Vector2i(cell_x, cell_z),
 		"bx": bx,
