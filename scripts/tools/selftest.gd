@@ -84,6 +84,7 @@ func _ready() -> void:
 		"tree field": _test_tree_field,
 		# TREES V3 STAGE 6.
 		"tree colliders": _test_tree_colliders,
+		"tree spacing": _test_tree_spacing,
 		# TREES V3 STAGE 8.
 		"tree swatches": _test_tree_swatches,
 	}
@@ -3262,6 +3263,71 @@ func _test_tree_field():
 		print("  WARNING: no model species in the sample - this test proved nothing")
 		return 1
 	return bad
+
+
+## NO TWO CROWNS MAY INTERPENETRATE, and this is the gate on the rule that
+## says so - trees v4, and Marcel's ask in his own words: "make it so that
+## they don't ever completely overlap".
+##
+## WHY A GATE AND NOT AN EYEBALL. The guarantee is a proof about a hash - a
+## candidate dies if any raw-accepted neighbour of higher priority stands
+## within their two radii - and a proof about a hash is exactly the kind of
+## claim that stays true right up until a salt changes or the scan reach is
+## rounded the wrong way. Both of those are one-character edits.
+##
+## IT CHECKS THE PAIR, NOT THE RULE. Every placed tree in the patch against
+## every other, on the radii the FIELD will draw them at, so a spacing rule
+## that computed the right thing from the wrong radius still fails here.
+func _test_tree_spacing():
+	if not TreeModels.available():
+		print("tree spacing: no library mounted, 0 checks (public build)")
+		return 0
+	var cfg := WorldgenConfig.load_or_default()
+	var gen := TerrainGenerator.new(42, cfg)
+	gen.build_heightmap()
+	var masks := TreePlacement.masks_for(gen)
+
+	# A patch wide enough to hold a few hundred trees, walked at the candidate
+	# lattice so this is the same set the ring would draw.
+	var reach := int(ceil(300.0 / cfg.block_size / float(cfg.tree_cell_blocks)))
+	var trees := []
+	for cz in range(-reach, reach + 1):
+		for cx in range(-reach, reach + 1):
+			var found := TreePlacement.decide(gen, cx, cz, masks)
+			if found.is_empty():
+				continue
+			# A CROWN OF ZERO IS NOT A CROWN. Snags carry crown (0, 0) in the
+			# species table and have no model slot, so the field draws nothing
+			# for them at all - and a thing that is not drawn cannot overlap
+			# something that is. The rule skips them for the same reason, and
+			# the first cut of this gate did not: it reported a snag standing
+			# inside a beech as two overlapping crowns, which is one crown.
+			var r := TreePlacement.canopy_radius_blocks(gen, found)
+			if r <= 0.0:
+				continue
+			trees.append([float(found["bx"]), float(found["bz"]), r])
+
+	var spacing: float = cfg.tree_canopy_spacing
+	var worst := 1.0e9
+	var bad := 0
+	for i in trees.size():
+		for j in range(i + 1, trees.size()):
+			var a: Array = trees[i]
+			var b: Array = trees[j]
+			var dx: float = a[0] - b[0]
+			var dz: float = a[1] - b[1]
+			var need: float = (float(a[2]) + float(b[2])) * spacing
+			var d := sqrt(dx * dx + dz * dz)
+			# The slack as a FRACTION of what the pair needed, so one tight
+			# pair of giants and one tight pair of stumps are comparable.
+			worst = minf(worst, d / maxf(need, 0.0001))
+			if d < need - 0.001:
+				bad += 1
+	print("tree spacing: %d trees, %d overlapping pairs; closest pair at %.2f of its required gap (spacing %.2f)" % [
+		trees.size(), bad, 0.0 if worst > 1.0e8 else worst, spacing])
+	if bad > 0:
+		return 1
+	return 0
 
 
 ## A TRUNK MUST STOP YOU, AND THE COUNT MUST MATCH PLACEMENT.

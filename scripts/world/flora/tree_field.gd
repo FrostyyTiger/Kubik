@@ -34,6 +34,17 @@ extends Node3D
 
 signal rebuilt(count: int, elapsed_ms: int)
 
+## Cells the placement memo may hold before it is dropped. About 300,000 cells
+## is a 800 m ring at an 8 m lattice with room to walk, and a dropped memo
+## costs one slow rebuild rather than a wrong tree.
+const PLACE_CACHE_MAX := 300000
+
+## Raw placement decisions, keyed by cell, shared by every job this field runs.
+var _place_cache := {}
+
+## What that memo was filled under: seed and config hash. A change empties it.
+var _place_cache_key := ""
+
 ## How far the centre must move before the ring is rebuilt, in metres.
 ##
 ## THREE chunks since distance v1 Stage 7, and it was two before that.
@@ -63,10 +74,7 @@ signal rebuilt(count: int, elapsed_ms: int)
 ## number and not a new one.
 const REBUILD_STEP_M := 24.0
 
-## How far in from the inner edge an impostor grows to full size, in metres.
-const FADE_M := 12.0
-
-## And how far in from the OUTER edge it shrinks away again, in metres.
+## How far in from the OUTER edge a tree shrinks away again, in metres.
 ##
 ## FOUR TIMES THE INNER FADE, and the asymmetry is the point rather than an
 ## oversight. The inner fade covers a handover 96 m from the player, where 12 m
@@ -216,7 +224,9 @@ func _start_if_idle() -> void:
 	# the first place.
 	job.outer_blocks = minf(_config.far_tree_m, _config.fog_end_m) \
 		/ _config.block_size
-	job.fade_blocks = FADE_M / _config.block_size
+	# NO INNER FADE. It shrank every tree inside the voxel radius to nothing
+	# once the voxel trees it handed over to were deleted; `_fade_at()` carries
+	# the receipt.
 	job.outer_fade_blocks = OUTER_FADE_M / _config.block_size
 	# The exact band reaches 1.6 times the voxel radius, so the handover to
 	# real trees and a good stretch beyond it are drawn candidate for
@@ -237,6 +247,24 @@ func _start_if_idle() -> void:
 	# The felled set. Nothing writes to it tonight - see the note on the job's
 	# own field, and on `removed_trees` below.
 	job.removed = removed_trees
+	# THE PLACEMENT MEMO, CARRIED BETWEEN REBUILDS. A rebuild is triggered by
+	# 24 m of walking into a ring hundreds of metres across, so nearly every
+	# cell it re-decides it decided last time - and placement is pure, so the
+	# answer is the same. Dropped wholesale when it gets big rather than
+	# evicted cleverly: the walk that filled it has moved on, and a dictionary
+	# that grows for a session is a leak with a slow fuse.
+	#
+	# AND IT IS THROWN AWAY WHEN THE CONFIG CHANGES. Every knob the F4 tuner
+	# owns - density, the lattice, crown spacing, the masks - is an input to
+	# the decision this memo holds, so a stale entry is a tree standing where
+	# the current settings say no tree stands. Keyed on the config's own hash
+	# rather than on a list of the knobs that matter, because that list is a
+	# thing someone would have to remember to update.
+	var ckey := "%d|%s" % [_generator.world_seed, _config.hash_key()]
+	if ckey != _place_cache_key or _place_cache.size() > PLACE_CACHE_MAX:
+		_place_cache.clear()
+		_place_cache_key = ckey
+	job.cache = _place_cache
 	_job = job
 	_task = WorkerThreadPool.add_task(job.run, false, "kubik far trees")
 

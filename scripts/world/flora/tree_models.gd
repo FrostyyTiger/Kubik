@@ -121,6 +121,69 @@ static func trunk_of(variant: StringName) -> Vector2:
 		float(t.get("height_voxels", 1)) * unit)
 
 
+## HOW MUCH GROUND THIS TREE'S CROWN COVERS, as a radius in metres.
+##
+## Measured off the model's own bounding box, because the species table's
+## `crown` is not a measurement of anything that is drawn any more. Those
+## numbers described the voxel trees ruling 5 deleted - 2 to 8 BLOCKS, so 1 to
+## 4 m - while the pack's widest crown is t07 at 180 voxels, which is 22.5 m
+## across. Placement read the small number and spaced trees 4 m apart, and the
+## canopies grew through each other. Spacing reads this instead.
+##
+## THE WIDER OF THE TWO HORIZONTAL AXES, not their mean: a crown that is 22 m
+## on one axis and 14 m on the other still needs 22 m of room, because the
+## yaw the field gives it is hashed and can point either way.
+static func canopy_radius_m(variant: StringName) -> float:
+	var d := info(variant)
+	if d.is_empty():
+		return 0.0
+	var s: Array = d.get("size", [])
+	if s.size() < 3:
+		return 0.0
+	var unit := float(d.get("voxel_m", 0.125))
+	return maxf(float(s[0]), float(s[2])) * unit * 0.5
+
+
+## The widest crown in the whole library, in metres. Cached: spacing asks for
+## it once per candidate to bound how far it has to look for a neighbour that
+## could reach it, and scanning 55 sidecars for that would undo the point.
+static func max_canopy_radius_m() -> float:
+	_scan()
+	if _max_canopy_m < 0.0:
+		_max_canopy_m = 0.0
+		for name in _index:
+			_max_canopy_m = maxf(_max_canopy_m, canopy_radius_m(name))
+	return _max_canopy_m
+
+static var _max_canopy_m := -1.0
+
+
+## The widest crown among one species' variants, in metres, cached per species.
+##
+## SPACING ASKS THIS AND NOT `canopy_radius_m()`, and the difference is 1.4
+## SECONDS of ring rebuild. Getting an individual variant's radius means
+## getting the variant, and that means `TreeFieldJob.variant_of()` - a zone
+## solve and a band lookup per candidate, paid 25 times over for every tree
+## because spacing asks its neighbours too. A species' variants are the same
+## tree in different colours or dustings, so their widest is within a voxel or
+## two of any one of them, and using it spaces trees on a dictionary lookup.
+##
+## Conservative by construction: the widest of a set is never smaller than the
+## member actually drawn, so crowns can only end up further apart than the rule
+## strictly needs, never closer.
+static func max_canopy_radius_of(species: StringName) -> float:
+	_scan()
+	if _by_species_max.has(species):
+		return float(_by_species_max[species])
+	var r := 0.0
+	for name in _by_species.get(species, []):
+		r = maxf(r, canopy_radius_m(name))
+	_by_species_max[species] = r
+	return r
+
+static var _by_species_max := {}
+
+
 ## THE DOMINANT CANOPY COLOUR OF ONE VARIANT, LINEAR - decision 7's new pin.
 ##
 ## `FarTreeMeshes.color_of_species()` read `Block.color_of(row["leaves"])`, and
@@ -137,6 +200,31 @@ static func canopy_color(variant: StringName) -> Color:
 
 # --- The meshes -------------------------------------------------------------
 
+## THE PROXY RUNG, trees v4. One rung past the baked three, built here rather
+## than by the tool, and the reason it exists is the whole of decision 1.
+##
+## The baked ladder barely falls: 5801 triangles at LOD0, 2002 at LOD1, 822 at
+## LOD2 - the coarsest rung is only seven times cheaper than the finest. A
+## ladder that shallow cannot carry a forest to the fog, so the ring used to
+## drop 63 trees in 64 and draw the survivor eight times too wide instead. That
+## is what made a tree change size and its neighbours appear as you walked
+## toward them.
+##
+## SIXTEEN TRIANGLES: an octahedron crown over a four-sided trunk, at the
+## model's own height, crown radius and trunk radius, in the model's own
+## colours. About 360 times cheaper than LOD0 and 50 times cheaper than LOD2,
+## which is the fall the ladder was missing.
+##
+## AND IT IS NOT A CARD. The ruling against billboards is a ruling against flat
+## cutouts that turn to face you, and this is a solid lump with real normals
+## that lights and self-shadows from any angle. What it loses at 400 m is
+## silhouette detail, which is what an LOD rung is for.
+const PROXY_LOD := 3
+
+## Rungs a caller may ask for: the three baked ones plus the proxy.
+const RUNG_COUNT := 4
+
+
 ## One variant at one LOD rung, assembled and cached. null if there is no
 ## library, no such variant, or the rung is empty.
 static func mesh_for(variant: StringName, lod: int,
@@ -151,7 +239,8 @@ static func mesh_for(variant: StringName, lod: int,
 	_mutex.lock()
 	got = _meshes.get(key)
 	if got == null:
-		got = _build(variant, lod, block_size)
+		got = _build_proxy(variant, block_size) if lod >= PROXY_LOD \
+			else _build(variant, lod, block_size)
 		_meshes[key] = got
 		_triangles[key] = 0 if got == null \
 			else got.surface_get_array_index_len(0) / 3
@@ -174,6 +263,8 @@ static func clear_cache() -> void:
 	_mutex.lock()
 	_meshes.clear()
 	_triangles.clear()
+	_max_canopy_m = -1.0
+	_by_species_max.clear()
 	_mutex.unlock()
 
 
@@ -340,6 +431,94 @@ const FACE_AXES := [
 	[2, 0, 1, 1, true],    # +Z: u = x, v = y
 	[2, 0, 1, 0, false],   # -Z
 ]
+
+
+## The 16-triangle lump. Same vertex format as a baked rung - position,
+## normal, colour with the sway weight in alpha - so the field, the material
+## and the wind shader cannot tell the difference.
+##
+## MEASURED IN VOXELS AND SCALED LIKE EVERY OTHER RUNG, not read from
+## `height_m`: a rung has to be the same size in metres as the tree it stands
+## in for at ANY block size, and `height_m` is only right at 0.5 m blocks.
+static func _build_proxy(variant: StringName, block_size: float) -> ArrayMesh:
+	var d: Dictionary = _index.get(variant, {})
+	if d.is_empty():
+		return null
+	var size: Array = d.get("size", [])
+	if size.size() < 3:
+		return null
+	var unit := block_size / float(VOXELS_PER_BLOCK)
+	var h := float(int(size[1])) * unit
+	var r := maxf(float(int(size[0])), float(int(size[2]))) * unit * 0.5
+	if h <= 0.0 or r <= 0.0:
+		return null
+	var t: Dictionary = d.get("trunk", {})
+	var tr := maxf(float(t.get("radius_voxels", 1.0)) * unit, unit)
+	# The crown sits on the trunk and the trunk is never the whole tree: a
+	# stump has no crown to speak of and a palm is almost all trunk, so the
+	# split is the model's own, clamped so both parts always exist.
+	var th := clampf(float(t.get("height_voxels", 0)) * unit, h * 0.1, h * 0.8)
+	var cy := (th + h) * 0.5
+	var ry := (h - th) * 0.5
+
+	var canopy := canopy_color(variant)
+	var bark := TreePalette.color_of(variant, int(d.get("trunk_palette",
+		d.get("canopy_palette", 0))))
+	bark = Color(bark.r * 0.45, bark.g * 0.45, bark.b * 0.45)
+
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var cols := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	# THE CROWN: an octahedron. Six points, eight faces, flat-shaded so each
+	# face carries its own normal - a smooth-shaded one reads as a balloon.
+	var tips := [
+		Vector3(0.0, cy + ry, 0.0), Vector3(0.0, cy - ry, 0.0),
+		Vector3(r, cy, 0.0), Vector3(-r, cy, 0.0),
+		Vector3(0.0, cy, r), Vector3(0.0, cy, -r)]
+	var faces := [
+		[0, 4, 2], [0, 2, 5], [0, 5, 3], [0, 3, 4],
+		[1, 2, 4], [1, 5, 2], [1, 3, 5], [1, 4, 3]]
+	for f in faces:
+		var a: Vector3 = tips[f[0]]
+		var b: Vector3 = tips[f[1]]
+		var c: Vector3 = tips[f[2]]
+		var nrm := (b - a).cross(c - a).normalized()
+		for p in [a, b, c]:
+			indices.append(verts.size())
+			verts.append(p)
+			normals.append(nrm)
+			cols.append(Color(canopy.r, canopy.g, canopy.b,
+				clampf(p.y / h, 0.0, 1.0)))
+
+	# THE TRUNK: four quads. Below the crown it is a sliver of pixels, and at
+	# the distance this rung is drawn it mostly says "the tree stands here".
+	var corners := [
+		Vector3(-tr, 0.0, -tr), Vector3(tr, 0.0, -tr),
+		Vector3(tr, 0.0, tr), Vector3(-tr, 0.0, tr)]
+	for i in 4:
+		var a: Vector3 = corners[i]
+		var b: Vector3 = corners[(i + 1) % 4]
+		var top_a := Vector3(a.x, cy, a.z)
+		var top_b := Vector3(b.x, cy, b.z)
+		var nrm := (b - a).cross(Vector3.UP).normalized()
+		for p in [a, b, top_b, a, top_b, top_a]:
+			indices.append(verts.size())
+			verts.append(p)
+			normals.append(nrm)
+			cols.append(Color(bark.r, bark.g, bark.b,
+				clampf(p.y / h, 0.0, 1.0)))
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = cols
+	arrays[Mesh.ARRAY_INDEX] = indices
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 static func _build(variant: StringName, lod: int,
