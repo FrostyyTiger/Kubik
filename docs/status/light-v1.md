@@ -1378,3 +1378,111 @@ grade, glow gated to emissives, grain and vignette, `--lens off`), Stage 5
 water that reflects (depth tint, Fresnel, SSR), Stage 6 the documents. Before
 they start: the cost instrument, the Windows rebuild, and your rulings on items
 5 and 6 above, which the plan says are appended to section 1 as bound answers.
+
+---
+
+## Night two - morning message
+
+**1. Where it is.** `feat/light-v1`, last commit `5f13989`, pushed. Night two
+added six: the Q25 band notch `ad3002f`, Stage 4 `14b5ad8`, the extended Q25
+`43919af`, Stage 5 `5355e42`, Stage 6 `5f13989`.
+
+**Stages 4, 5 and 6 are green. Nothing was wrapped early and nothing was
+reverted.** Both self-tests, the worldgen probe and the transfer gate passed at
+every stage; the world numbers and the config hash have not moved since Stage 1.
+**Phase 1 is complete**: the whole of `RECONCILIATION.md` section 9's "real
+light" is in.
+
+**Q26: the Windows library is Fable's**, from this head. Q19's Windows last-bit
+count is still open and is recorded by Fable, not by me. On ganymede, stripped,
+it is **zero**.
+
+**2. What to open first.**
+
+The pair the round 3 brief asks for, in `build/tour/compare/`:
+
+- **`23-hour-night-light-4-vs-light-4-lensoff.png`** - the night with the lens
+  and without it, same eye, same hour, same world. This is the comparison shot.
+- `25-lens-fence-light-4-vs-light-4-lensoff.png` - D40's grain fence, the gold
+  line at 100 m with and without.
+
+Then the arc, five labels wide:
+`6-postcard-light-base-vs-light-0-vs-light-3b-vs-light-4-vs-light-5.png` and
+`5-lake-...` - poster, real light, palette, lens, water.
+
+Then the five hours in `build/tour/light-5/`: `20-hour-day`,
+`21-hour-evening`, `22-hour-dusk`, `23-hour-night`, `24-hour-eerie`.
+
+**3. BLOCKING findings.** None.
+
+**4. The cost table** (Q23), twenty frames at each settled vantage, worst /
+median in ms. **Nothing else was running on this box for any of these runs** -
+`pgrep godot` was zero before each.
+
+| shot | lens ON | lens OFF | Stage 5, SSR on |
+| --- | --- | --- | --- |
+| `20-hour-day` | 14.3 / 13.4 | 16.1 / 13.3 | 14.4 / 13.8 |
+| `21-hour-evening` | 16.3 / 13.6 | 14.5 / 13.7 | 15.0 / 14.0 |
+| `22-hour-dusk` | 15.6 / 13.8 | 14.4 / 13.5 | 15.1 / 14.3 |
+| `23-hour-night` | 14.0 / 13.3 | 15.2 / 13.1 | 16.9 / 13.9 |
+| `24-hour-eerie` | 14.1 / 13.5 | 14.4 / 13.5 | 16.0 / 13.9 |
+| `5-lake` | 17.0 / 13.6 | 14.5 / 13.2 | **17.2** / 13.7 |
+
+**Worst per-shot frame with everything on: 17.2 ms against rule 6's 45 ms.
+PASS, with 28 ms of headroom.** The medians sit between 13.1 and 14.3 ms in
+every column, and the worst-frame column swaps which side is higher from shot to
+shot: **neither the lens nor SSR is measurable above the sampling noise.**
+
+Load line: **2,222 chunks in 19,105 ms wall, 539 ms main thread, 3.28 ms gen per
+chunk on workers, 0.11 ms main-thread upload per chunk.**
+
+**Q23's one bounded `--stream-probe` attempt was made and abandoned.** Twenty
+minutes, idle box, the real flag: it produced **no output at all** and was
+killed by its own timeout. That is the fourth attempt across two nights and the
+fourth to never exit. Recorded, and left as the phase 1b bug Q23 says it is.
+
+**5. For Marcel.**
+
+1. **Q19's Windows count**, after Fable's rebuild. Ganymede says zero.
+2. **The mushroom halation gate fails its letter and passes its spirit.** The
+   glow adds 49 warm pixels and 2 V of peak to the mushroom band while a bare
+   patch of the same meadow gains none - so it lands on emissives and nothing
+   else - but the plan wanted +8 V of surround. `glow_intensity` is the lever,
+   at 0.6 of a 0.3-1.0 range, left at the plan's value rather than moved to
+   chase a number. Your call whether it should be stronger.
+3. **The lakes are one metre deep**, so water shows its shallow teal and never
+   its deep one. That is world truth, not a shader, and it belongs with D56's
+   break. Finding B7.
+4. **The valley bands do very little** away from a vantage standing in one; what
+   hazes a lakeside postcard is the ambient volumetric field and the far term,
+   both now at 0.6 for day and evening. If the day is still too soft for you,
+   those two are the knobs and they are documented.
+5. **Thinning fog darkens the frame**, because the volumetric field is lit by
+   the sky and was adding scattered light as well as veiling contrast. Fog and
+   exposure are coupled; anyone reaching for exposure should know the fog moved
+   first.
+
+**6. For the bible.** Seven findings, written up in full above: **B1** a
+physical sky cannot be made violet at dusk (and Q24 widened the window to
+215-285, which dusk now passes at H 226.5); **B2** the bible gives dawn no hour;
+**B3** eerie's "base of things `#101f26`" cannot be done without repainting a
+material; **B4** a circular sun arc makes the night half the day, not fifteen
+minutes; **B5** a closed spruce interior at real tree size may simply be a dark
+place; **B6** seven palette rows are silences the bible has not filled; **B7**
+there is no deep water in this world, so a lake cannot be two colours.
+
+**7. Tunables moved off their start, night two.** `deep_m` 6.0 m to **3.0 m**,
+the bottom of its range, and it still cannot reach the deep teal (B7). Day and
+evening `band_scale` to **0.6** (Q25); day and evening `fog_density` and
+`vol_density` to **0.6** of the fog-pass values (Q25 extended). Nothing in
+Stage 4 ended up moved: two knobs were moved chasing a 5 V sky difference and
+both were put back when the difference turned out to be **the vignette**, doing
+what a vignette does at the edge of a frame. Sampled where the gate means, near
+the middle, it is 0.0 to 0.2 V.
+
+**8. What is left.** Phase 1 is done. Next in `RECONCILIATION.md` section 9 is
+**1b, the chunk mesher in C++** (D56) - and it inherits two things from this
+run: the stream probe's hang, which Q23 assigns to it, and the `+0.0%` AO merge
+finding (Q27), which the C++ mesher plan is to measure rather than assume. Then
+phase 2, people and fire, where the campfire becomes the first warm light and
+the emissive path built here gets its first real point light.
