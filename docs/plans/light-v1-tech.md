@@ -38,12 +38,25 @@ the journal or the mutation path.
 
 ## 0. The contract
 
-**Who and where.** One agent, Marcel's Windows 11 box (RTX 5080), Godot 4.7.2
-at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7.2-stable_win64_console.exe`
-(`<godot>` below). **Forward+ only** (grill Q1). ganymede has no Vulkan and
-cannot render one frame of this plan; nothing here runs there. Tours and
-gallery sheets open a window; that is expected overnight. Python 3 with PIL
-is present.
+**Who and where.** One agent, on one of two boxes, **Forward+ only** (grill
+Q1):
+
+- **ganymede** (Ubuntu 24.04, RTX 3070 Ti 8 GB, NVIDIA driver 595.84), the
+  box every overnight run since distance v4 has used. `~/bin/godot`
+  (4.7.2), `~/Kubik`, `~/godot-cpp`; the tour and the sheets run under
+  `xvfb-run -a -s "-screen 0 1280x720x24"` with `XDG_RUNTIME_DIR` set to
+  a writable directory. Verified 2026-09-03: Godot starts as `Vulkan 1.4 -
+  Forward+ - Using Device #0: NVIDIA GeForce RTX 3070 Ti` under Xvfb. The
+  look v2 status's "ganymede has no Vulkan" was true the night it was
+  written and is not true now. The audio errors it prints are the missing
+  sound card and mean nothing.
+- **Marcel's Windows 11 box** (RTX 5080), Godot 4.7.2 at
+  `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7.2-stable_win64_console.exe`,
+  where the brief's cost line is finally measured.
+
+`<godot>` below is whichever binary the run uses. Tours and gallery sheets
+open a window; that is expected overnight. Python 3 with PIL is present on
+both.
 
 **Branch.** `feat/light-v1` (grill Q2). One commit per stage minimum, pushed
 to `origin` after every stage. Merged to `main` by Marcel after the morning
@@ -97,9 +110,9 @@ the confirmed column then binds, exactly as look v2's did.
 
 | # | question | proposed answer | binds |
 | --- | --- | --- | --- |
-| 1 | One renderer or two? Look v2 gated Forward+ against opengl3 and then never rendered a Forward+ frame. | **Forward+ only.** Volumetric fog, SSAO, SSR, the compositor and soft directional shadows do not exist on Compatibility, and pillar 2 needs all of them. The opengl3 tour and swatch runs are dropped; every "must compile on both renderers" note is retired; the run happens on the Windows box. Recorded "for the bible" as a proposed engine decision (Forward+ required, like D49's library). | section 0, gates |
+| 1 | One renderer or two? Look v2 gated Forward+ against opengl3 and then never rendered a Forward+ frame. | **Forward+ only.** Volumetric fog, SSAO, SSR, the compositor and soft directional shadows do not exist on Compatibility, and pillar 2 needs all of them. The opengl3 tour and swatch runs are dropped; every "must compile on both renderers" note is retired. Recorded "for the bible" as a proposed engine decision (Forward+ required, like D49's library). | section 0, gates |
 | 2 | Branch or `main`? | **`feat/light-v1`**, pushed after every stage, merged after review. Stages 0 to 2 leave the game looking half-built between them, and the assets session pulls the repos in parallel. | section 0 |
-| 3 | Who runs it, and when? | **Two nights of Opus**: setup plus stages 0 to 3, then stages 4 to 6. Alternative on the table: Fable runs Stage 0 with Marcel in the loop first (it is the stage where the transfer numbers are decided by eye), Opus takes the rest. | section 0 |
+| 3 | Who runs it, where, and when? | **Two nights of Opus on ganymede**: setup plus stages 0 to 3, then stages 4 to 6. Ganymede renders Forward+ on its RTX 3070 Ti now (section 0), it is the box trees v3's cost baseline was measured on, and it leaves Marcel's box free. The brief's cost line is re-measured on the 5080 in the morning. Alternative on the table: Fable runs Stage 0 with Marcel in the loop on the Windows box first (it is the stage where the transfer numbers are decided by eye), Opus takes the rest on ganymede. | section 0 |
 | 4 | What is the colour gate now that the shader is not a ramp the sheet can mirror? | **Two sheets.** The **transfer gate** stays hard: eight authored colours on `unshaded` quads, tonemap forced to linear for that sheet only, measured within **6 units per sRGB channel** of the authored hex - proves one conversion between `push_back` and the frame. The **light sheet** is a measurement, not a gate: the same eight, lit and in shadow under the real environment at each of the four hours, printed as `authored / measured / delta` and written to JSON for the report. Palette hexes are **not tunable**; exposure, sun energy and ambient energy are (section 4). | section 2, Stage 0 |
 | 5 | Three shades per material: authored, or from light? The pillar says "one body colour in three shades plus per-cube noise"; the audit read the shades as light. | **Both, in the bible's own words.** The block carries the bible's **base** hex; the per-cube noise is a **sparse step** toward the material's shade or light value on about a third of cubes (the existing `grain_sparse` mechanism, re-ranged); the third shade comes from light. Tree canopy families map onto the conifer ramp: `CANOPY_A`, `CANOPY_B` to the shade `#575d54`, `CANOPY_C` to the base `#7e8986`, `CANOPY_D` to the light `#9b9f81`, so the pack's inner/outer needle distinction survives as material and not as baked light. Bark and autumn families unchanged. | Stage 3 |
 | 6 | Which sky? | **`PhysicalSkyMaterial`**, graded per hour from the keyframe table (rayleigh and mie tints, turbidity, energy, ground colour). It is the engine's own radiance, so the sky ambient, the sky-tinted shadows and the water's reflection all agree by construction, and D6's "real sunset from the lighting, graded a little toward pink first and violet after" is what it does. Night: the material's `night_sky` panorama is **generated in code at startup** (hashed stars on the slate gradient), never a file in `assets/`. **No clouds in phase 1**: D18's cubic clouds are volumes, not a sky parameter, and the round 3 brief does not ask for them. | Stage 1 |
@@ -125,10 +138,17 @@ the confirmed column then binds, exactly as look v2's did.
 ## 2. Setup and the gates
 
 ```
+git checkout main && git pull --ff-only    # ganymede's checkout was at 464f6f3 on 2026-09-03, seven commits behind
 git checkout -b feat/light-v1 main
 <godot> --headless --path . --import
 python scripts/tools/sync_assets.py        # the tree library must be mounted; a treeless tour judges nothing
 ```
+
+On ganymede every windowed command below is wrapped in
+`xvfb-run -a -s "-screen 0 1280x720x24"` with `XDG_RUNTIME_DIR` exported to
+a writable directory, and the first tour's console must show
+`Vulkan 1.4 - Forward+ - Using Device #0: NVIDIA`; anything else (a
+Compatibility fallback, llvmpipe) is a stop-and-record before Stage 0.
 
 **Baselines, same day:**
 
