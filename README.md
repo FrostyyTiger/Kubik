@@ -259,10 +259,13 @@ EXPORT that does not have it.
 
 ### Where it is shot
 
-The game is played **and shot on Forward+, on a GPU**. The overnight box,
-ganymede, has an RTX 3070 Ti and renders Vulkan Forward+ under a virtual
-display; every tour and gallery sheet since distance v1 was taken there, and
-that is where anything visual is checked (`CLAUDE.md` § Where work runs):
+The game is played **and shot on Forward+, on a GPU, and on nothing else**.
+Light v1's grill Q1 retired the Compatibility branch outright: volumetric fog,
+SSAO, SSR, soft directional shadows and the colour adjustment do not exist
+there, and pillar 2 needs all of them. The overnight box, ganymede, has an
+RTX 3070 Ti and renders Vulkan Forward+ under a virtual display; every tour and
+gallery sheet since distance v1 was taken there, and that is where anything
+visual is checked (`CLAUDE.md` § Where work runs):
 
 ```
 export XDG_RUNTIME_DIR=/tmp/xdg-$USER && mkdir -p $XDG_RUNTIME_DIR
@@ -272,24 +275,42 @@ xvfb-run -a -s "-screen 0 1280x720x24" ~/bin/godot --path . -- --tour --seed 42 
 The first console line must say `Vulkan 1.4 - Forward+ - Using Device #0:
 NVIDIA`. Status docs from before 2026-08-27 (world feel v1, look v2) were
 rendered on Mesa llvmpipe in Compatibility because the box had no Vulkan driver
-then; their frames and numbers are history, not references.
+then; their frames and numbers are history, not references. The `opengl3`
+second run those docs describe is gone with the branch it tested.
 
-Compatibility is no longer where anything is shot. The second set below is
-kept only for the day a colour path needs checking on it, and light v1
-proposes retiring it altogether:
+**The flags a tour takes.**
+
+| flag | what it does |
+| --- | --- |
+| `--seed <n>` | the world. 42 everywhere in the status docs |
+| `--label <name>` | the directory under `build/tour/` |
+| `--weather eerie` | D7's weather: saturation down, fog thick and inverted, every warm light off |
+| `--lens off` | D40's film lens off - the grain, the vignette, the glow and the grade together, so "lens off" is one state |
+| `--set <name>=<value>` | any config knob, hashed or local |
+
+**Two sheets, not one** (light v1 Q4), from `scenes/character/gallery.tscn`:
 
 ```
-godot --path . -- --tour --seed 42 --label <name>
-godot --path . --rendering-driver opengl3 -- --tour --seed 42 --label <name>-gl
+godot --path . scenes/character/gallery.tscn -- --sheet transfer --strict --label <name>
+godot --path . scenes/character/gallery.tscn -- --sheet light --label <name>
 ```
 
-**`--rendering-driver` goes BEFORE the `--`, and the line above used to have it
-after.** Anything after `--` is passed to the game rather than to the engine, so
-the old form selected no driver at all and silently took the second set of
-pictures on Forward+ as well. It is not an error and there is no warning: the
-two directories fill up, the images differ by a frame of the day cycle, and
-nothing says the comparison did not happen. Found in distance v2 Stage 5, when a
-"both renderers" gate produced two identical measurements.
+`transfer` is the **gate**: eight authored colours on an unshaded material with
+the tonemap forced to LINEAR and the glow, the grade and the atmosphere switched
+off for the sheet alone, measured within **6 units per sRGB channel** of the
+authored hex. It proves there is exactly ONE conversion between `push_back` and
+the frame, and `--strict` makes a miss a non-zero exit. `light` is a
+**measurement and not a gate**: the same eight through the real material under
+the real environment, lit and in shadow, at each of the four hours, written to
+`light.json`. The bible's hexes are starting points, so a delta there is a
+finding rather than a failure.
+
+**The cost line comes from the tour** (light v1 Q23). `_report_cost` measures
+twenty frames at each settled vantage and prints the worst and the median beside
+the primitive count. The number that matters is the worst per-shot frame across
+the five hour shots and `5-lake`, with the lens on and off. The streaming probe
+below answers a different question - whether the ground keeps up while you move -
+and does not currently exit; see `docs/status/light-v1.md`.
 
 ### The streaming probe
 

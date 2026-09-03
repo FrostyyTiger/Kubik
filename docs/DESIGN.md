@@ -80,29 +80,48 @@ something by name:
 Five rules, re-cut on 2026-08-31, rule 3 again on 2026-09-01. Everything
 drawn obeys all of them; a feature that cannot is drawn differently.
 
-1. **Shade is an ink.** (Look v2, unchanged.) The shade side keeps the
-   surface's luminance and takes the ink's hue - blue-violet, a colour and
-   never a darkness. The ramp desaturates the albedo toward its own luminance
-   (`kubik_shade_desat`, 0.55 day / 0.75 night) and colours the result with
-   the ink. Warmth is safety made visible: the campfire is the one warm thing
-   in a cool night.
-2. **Paint is voxels, never maps.** Supersedes look v1's "no texture, no
-   specular, no gradient" - the second half stands, the first is re-read.
-   There are still no texture maps, no specular, no gradient across a face: a
-   colour is a voxel's colour on a model and a vertex colour on the wire,
-   nowhere else. But a material is now PAINTED, in tones of its own family -
-   steel in five greys, skin in four tones, bark in three browns - laid as
-   patches and runs with intent: a highlight row along a plate's top edge,
-   wear at a rim, strata in a cliff face, slivers under a whorl. Never
-   white-noise jitter, never a tone from another family's ramp.
+1. **The engine lights; the material only says what a surface IS.**
+   (Light v1 Stage 0, 2026-09-03. This replaces "shade is an ink".) There is
+   no lighting ramp any more and no custom `light()` anywhere: a real
+   directional sun with a one-degree angular size, soft shadows tinted by the
+   sky through full sky ambient, SSAO, volumetric fog and an AgX tonemap do
+   all of it. What a material declares is its albedo, its roughness, its
+   specular and - on the two things that glow - its emission. Pillar 2's own
+   sentence is the rule: mood "comes from light, fog, the hour and the lens,
+   never from repainting a thing".
+
+   The ink it replaces was `kubik_shade` desaturating an albedo toward its own
+   luminance and colouring the result. It went with the three-band quantiser
+   it existed to serve. Measured after: a tree's cast shadow on open ground
+   reads V 17.6 at hue 206.5 against a sky at hue 214.0 - never black, and the
+   sky's own colour, which is what D8 asks for and what an ink could only
+   approximate.
+
+2. **One body colour in three shades, and only one of them is authored.**
+   (Light v1 Stage 3; the bible's material rule, `10-color-and-light.md`.) A
+   block carries the **base** hex and nothing else. The **shade** and the
+   **light** come from the sun and the sky falling on it. Between them sits
+   the bible's per-cube noise - "one step up or down on random cubes" - as a
+   step on the `grain_sparse` share of half-metre cells by `grain_step`, at
+   every distance, because a material fact does not fade with range.
+
+   Five paint operations were deleted to make room, from the C++ far mesher
+   and its GDScript twin in the same commit: baked corner AO, a slope tint, an
+   aspect tint against a fixed compass direction, a per-vertex hash jitter and
+   an altitude band that stepped a mountain's colour every 60 m. They existed
+   because the ramp faceted. Under real light they were painting what light
+   does. `ao_strength` survives as a knob at 0 so the old look can still be
+   photographed.
+
 3. **Distance is the same paint, coarser - and fog holds its hue.** Re-cut
    2026-09-01; the earlier clause "distance is where the paint stops" is
    retired with the poster register. The far field is the same world made of
    BIGGER BLOCKS (distance v3): 4 m at the seam through 8, 16 and 32 to
-   64 m at the rim, terraced with lit tops and shaded risers, painted on a
-   world-space block lattice that grows with distance so a hillside at 3 km
-   is flecked in ten-metre cells rather than in half-metre ones nobody can
-   resolve. A far cell is one real material chosen by a majority vote over
+   64 m at the rim, terraced with lit tops and shaded risers - LIT and SHADED
+   by the sun, since light v1 Stage 3, rather than painted that way: a riser
+   is dark because it faces away from the sun and a shelf top is lit because
+   it does not. The optional grain on a world-space lattice that grows with
+   distance survives as `far_grain`, at 0. A far cell is one real material chosen by a majority vote over
    four sub-samples, never a blend - and trees v3 sends the same sculpted
    trees out to the fog as fat-voxel LODs, so the forest obeys this rule
    too. Fog steps to a colour a step darker than the sky's lowest band
@@ -184,27 +203,44 @@ silhouettes. The taste authority is `docs/research/art-direction.md` §2.5
 
 ### The pipeline: linear maths, sRGB on the wire
 
-Every palette in the game is stored **linear** and every multiplier that acts
-on one - baked AO, the far field's skirt and altitude band, the aspect tint -
-is a linear multiplication. The **one** conversion is `Look.to_wire()`, called
-by each mesh builder on its final colour at `push_back`, because the renderer
-decodes an 8-bit vertex colour on the way to the shader; push linear and it is
-decoded twice. The sky is converted once on the way out of its own shader,
-which does not get the conversion other surfaces do.
+Every palette in the game is stored **linear**. The **one** conversion is
+`Look.to_wire()`, called by each mesh builder on its final colour at
+`push_back`, because the renderer decodes an 8-bit vertex colour on the way to
+the shader; push linear and it is decoded twice. Since light v1 Stage 3 there
+is nothing else in the path at all - the multipliers this paragraph used to
+list, baked AO and the far field's altitude band and the aspect tint, are gone
+- so a far vertex is `Look.to_wire(zone colour)` and a near one is
+`Look.to_wire(Block.color_of(id))`.
 
-`light()` writes the LIGHT, and `ALBEDO` is white: the albedo travels to it in
-a varying, so it is applied exactly once whatever the renderer does after
-`light()` returns.
+`ALBEDO` is the albedo. It travelled as a varying to a custom `light()` while
+the ramp existed, because that function owned the whole expression; with the
+ramp gone the engine multiplies albedo by its own light and there is nothing to
+apply twice.
 
-Where it lives: `scripts/world/look.gd` holds the one lighting ramp every
-shader in the game is built from, the banded fog, the sky, `Look.to_wire()` and
-`Look.predict()`; `SkyCycle.KEYFRAMES` is the time-of-day table - four
-keyframes (dawn, noon, dusk, night) x eleven rows, blended by
-`keyframe_at(elevation, morning)`, and it is the only place an hour's colour is
-decided; the UI theme is `assets/ui/deco_theme.tres` (paper `#F2E8D0`, ink
-`#1E2430`, gold, alpine blue `#2F5D8A`, sun `#E8863A`, pale ink `#7D7C78`;
-Limelight for titles, Josefin Sans for body). `docs/plans/look-v1.md` is the
-first argument and `docs/plans/look-v2.md` the second.
+**The transfer sheet is what keeps this honest**, every stage:
+`--sheet transfer --strict`, eight authored colours through an unshaded
+material with the tonemap forced to LINEAR, measured within 6 units per
+channel. It has read a worst channel delta of 1 to 2 through the poster
+renderer and through the one that replaced it.
+
+Where it lives: `scripts/world/look.gd` holds the one opaque shader every
+vertex-coloured mesh in the game is built from, the water shader,
+`Look.configure_environment()` - which lights the game AND the gallery's
+sheets, so a colour judged on a sheet means what it means in the world - and
+`Look.to_wire()`. `SkyCycle.KEYFRAMES` is the time-of-day table: four hours
+(**day, evening, dusk, night**, the bible's own, `10-color-and-light.md`) plus
+`EERIE` as a dictionary of overrides applied on top, blended by
+`keyframe_at(elevation, morning, weather)`, and it is the only place an hour's
+colour is decided. `SkyCycle.HOURS` holds the four as sun ELEVATIONS and
+`time_for_elevation()` inverts the arc, so the tour, the light sheet and the
+table all name the same hour. The film lens is `scripts/ui/lens.gd` plus the
+glow and the grade in `configure_environment()`; the valley fog is
+`scripts/world/valley_fog.gd`. The UI theme is `assets/ui/deco_theme.tres`
+(paper `#F2E8D0`, ink `#1E2430`, gold, alpine blue `#2F5D8A`, sun `#E8863A`,
+pale ink `#7D7C78`; Limelight for titles, Josefin Sans for body).
+`docs/plans/light-v1-tech.md` is the current argument and
+`docs/status/light-v1.md` its measurements; `docs/plans/look-v1.md` and
+`look-v2.md` are the two that came before and are superseded.
 
 ## Character identity model
 

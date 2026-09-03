@@ -1075,6 +1075,46 @@ and the only symptom is a flat pale sheet where a lake should be. Fixed with
 
 ---
 
+## Stage 6 - Docs
+
+**Shipped**, in Q18's scope: this run rewrites **only its own two reserved
+spots** plus its own status doc, and hands everything else to
+`docs/plans/docs-reconciliation.md`.
+
+- **`README.md` § Where it is shot** - Forward+ only and why (Q1: volumetric
+  fog, SSAO, SSR, soft shadows and the grade do not exist on Compatibility and
+  pillar 2 needs all five), so the `opengl3` second run and its `--rendering-
+  driver` trap are gone with the branch they tested. A table of the flags a
+  tour takes, `--weather eerie` and `--lens off` among them. The two sheets and
+  what each is for: `transfer` a hard gate at 6 units per channel, `light` a
+  measurement because the bible's hexes are starting points. And where the cost
+  line comes from now.
+- **`docs/DESIGN.md`, the colour-pipeline paragraph** - "shade is an ink" is
+  replaced by "the engine lights; the material only says what a surface IS",
+  with the measurement that makes it a claim rather than an assertion. A second
+  rule states the bible's material rule as this repo implements it: one body
+  colour in three shades, of which **only the base is authored**. Rule 3's far
+  half is corrected - a riser is dark because it faces away from the sun, not
+  because it was painted. The "linear maths, sRGB on the wire" section drops
+  the multipliers that no longer exist, and the "where it lives" paragraph is
+  re-pointed at `configure_environment()`, the four hours, `HOURS`, `lens.gd`
+  and `valley_fog.gd`.
+- **`STATUS.md`** replaced by light v1's. Trees v3's own status was already at
+  `docs/status/trees-v3.md`, so nothing had to move.
+- **`docs/plans/look-v1.md`, `look-v2.md` and `look-v2-tech.md`** each get a
+  superseded note at the top, naming what replaced them and why they are still
+  worth reading: their arguments and their measurements are what made light v1
+  writable, and only their numbers are dead.
+
+Deliberately **not** touched, because Q18 hands them to a docs-only session:
+`README.md`'s pitch, pillars, status paragraph, "unbounded" section and hard
+rule one; `docs/DESIGN.md`'s setting, races, scale ratio and art-direction
+sections; `docs/DIRECTOR.md`; `docs/IDEAS.md`; `TODO.md`; `docs/ROADMAP.md`.
+
+**Gate:** full self-test green after the edits.
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.

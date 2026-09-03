@@ -1,5 +1,14 @@
 # Look v2 - tech plan for an autonomous overnight run
 
+> **SUPERSEDED by `docs/plans/light-v1-tech.md`** (phase 1 of
+> `RECONCILIATION.md`, run 2026-09-03). The poster this plan builds - the
+> three-band toon ramp, the banded fog, the painted sky, flat water, the
+> dither and the linear tonemapper - was replaced wholesale by the engine's
+> own light under bible pillar 2. Kept for its arguments and its
+> measurements, which is why light v1 could be written; not for its numbers,
+> which are dead. The run that replaced it is `docs/status/light-v1.md`.
+
+
 This is the work order for `docs/plans/look-v2.md`, written so that one agent
 (Opus, unattended, on Marcel's Windows box) can execute it end to end without
 asking anyone anything. `docs/research/art-direction.md` is the argument,
