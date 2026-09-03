@@ -6,7 +6,10 @@ stage so a run that dies at 04:00 still leaves a record.
 Branch `feat/light-v1`, from `origin/main` at `d4fb81f`. Night one is setup and
 stages 0 to 3; night two is stages 4 to 6, after Marcel's review.
 
-**BLOCKING findings: none so far.**
+**BLOCKING findings: none.** One gap, at the top because it is the thing to
+read first: **the stream probe did not complete in three attempts (45, 68 and
+52 minutes, idle box), so night one has no cost line.** The plan's 45 ms rule
+and its Q10 tree-shadow gate are unmeasured. See the end of Stage 2.
 
 ---
 
@@ -467,6 +470,147 @@ blue is the sky alone. Recorded for the bible below.
 
 ---
 
+## Stage 2 - Fog's three jobs
+
+**Shipped.** Fog lies in the valley, pools at night, and hides the tops under
+eerie. Two of the four sampled gates pass, one passes with a caveat, one fails
+and is recorded with the measurement that explains it.
+
+- `Look.configure_environment()`: **volumetric fog on**, length 1,500 m,
+  density 0.01, anisotropy 0.35, `sky_affect` 0.5, `detail_spread` 2.0. The far
+  exponential term stays what it was: aerial perspective and nothing else.
+- **`World.fog_floor_m` / `fog_floor_at`** - the altitude of the valley floor
+  near the player and where on the map it is. The nearest lake within 600 m
+  wins outright (a lake IS the floor, and its surface is flat and known);
+  failing that, the lowest ground in a 300 m disc. One strided pass over the
+  coarse heightmap answers both, once a second, every eighth cell - an
+  exhaustive 600 m scan is 360,000 cells of GDScript on the main thread to
+  answer a question whose answer moves at walking pace.
+- `SkyCycle.apply()` writes `fog_height` (floor + the hour's offset),
+  `fog_height_density`, `volumetric_fog_density` and `volumetric_fog_albedo`
+  from the keyframe. With no world to ask - a gallery sheet, a self-test - the
+  height term stays off, which is right: a swatch pad has no valley.
+- **New `scripts/world/valley_fog.gd`** (`ValleyFog`, a child of `World`):
+  three `FogVolume` boxes 600 x 12 x 600 m stacked from the tracked floor, plus
+  a fourth 200 m lid under eerie. **The volumes move with the floor and never
+  with the player** - that is the whole design and the easy thing to get wrong,
+  because parenting them to the camera is a two-line implementation that
+  produces exactly the artefact the feature exists to avoid. At night the stack
+  drops 6 m, scaled by `night_amount` so it slides rather than snapping.
+- The transfer sheet now switches the **atmosphere** off as well as the tonemap
+  and the grade, and restores it after: with volumetric fog on, the worst
+  channel delta measured **4** instead of 2 - inside the tolerance, but
+  measuring the air rather than the conversion. With it off: **delta 1**, the
+  cleanest reading of the run.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| full self-test | **green** |
+| character self-test | **green**, 36 tests |
+| worldgen probe | four world numbers unchanged, config `1d7c18c7` unchanged from Stage 1 |
+| transfer sheet, `--strict` | **PASS**, worst channel delta **1** of 6 |
+| magenta | **0 pixels** across 23 clear shots and 23 eerie shots |
+
+| # | kind | shot | measured | verdict |
+| --- | --- | --- | --- | --- |
+| 1a | **GATE** | `20-hour-day`, farthest range `(700,70)` against the sky above it `(700,12)` | range **S 9.2** (<= 25), **V 46.3** against sky **V 47.0** - a difference of **0.7** against an allowance of 12 | **PASS**. The far range fades to the sky almost exactly |
+| 1b | **GATE** | the nearest range `(1180,160)` against the farthest | near **S 10.4**, far **S 9.2**: a difference of **1.2**, against a required 10 | **FAIL as written** - see below |
+| 2 | **GATE** | `21-hour-evening`, a vertical line at `x=640` from the lake surface up | V 17.7, 17.9, 18.0, 17.8, 18.8, [22.9], 20.9, 20.6, 20.7, 20.7, 21.2, 23.2, 27.9 from `y=640` up to `y=300` | **PASS with a caveat**. Non-decreasing from 17.7 to 27.9 apart from 0.2-unit noise; the bracketed 22.9 at `y=470` is the lake's bright shallows rim, not a band. The lowest band (20.6) is lighter than the water under it (17.7) |
+| 3 | **GATE** | `23-hour-night` lake shore `(640,430)` against `20-hour-day` | day shore **V 39.2**, day sky **V 47.0**; night shore **V 17.2**, night sky **V 28.4**. Sky difference 18.6, so the gate wants night shore >= 39.2 - 18.6 + 6 = **26.6**; measured **17.2** | **FAIL** - see below |
+| 4 | **GATE** | `2-summit` under eerie: the peak's top against the sky beside it | peak tip **V 50.6** against sky **V 54.1**, a difference of **3.5**; peak upper **V 55.0** against sky **V 54.0**, a difference of **1.0**. Allowance 4 | **PASS**. The summit is not visible |
+
+**Gate 1b, and why the gate is the thing that is wrong.** It asks the nearest
+range to hold 10 more points of saturation than the farthest. At `6-postcard`'s
+eye BOTH ranges are hundreds of metres out and already deep in the haze, and
+the rock palette is authored near **S 10** - so there are not 10 points of
+saturation in the material to lose. Measured against the nearest terrain
+actually in frame, the lake at `(640,620)` at **S 35.3** against the far range's
+**S 9.2**, the difference is **26 points** and distance reads emphatically.
+Recorded as a gate written for the old saturated poster palette rather than as
+a fog failure.
+
+**Gate 3, and the lever that runs backwards.** Fog's second job is pooling that
+is visible against dark ground, so the obvious response to a shore that is too
+dark is more fog. Three night densities were shot and measured:
+
+| night `vol_density` | lake shore V |
+| --- | --- |
+| 0.020 (the plan's) | the ranges vanish entirely; frame unusable |
+| 0.014 | **15.4** |
+| 0.009 (shipped) | **17.2** |
+
+**Denser fog makes this hour darker, not milkier.** At a 0.12 moon and a 0.25
+ambient there is almost no light in the air to scatter, so extra density only
+extinguishes the brighter background behind it. The lever this actually wants is
+LIGHT IN THE FOG rather than more of it - the night keyframe's ambient energy
+(0.25, tunable to 0.45) and `volumetric_fog_ambient_inject` (already raised from
+the plan's 0.2 to 0.5 this stage) both move it. Both are night two's, because
+the lens changes the night frame anyway. Shipped at the value that measures
+best of the three; the gate still fails by 9.4 V and is not claimed as a pass.
+
+**Gate 4's caveat.** It passes at 3.5 against an allowance of 4, but the same
+pixels in CLEAR weather measure a difference of 4.6 - so the gate barely
+separates the two at this vantage, because `2-summit` looks steeply up at a
+backlit peak that is already hazy. By eye the two frames are not close: the
+eerie one is a flat grey sheet with the peak's silhouette nearly gone. A
+vantage that looks ACROSS at a summit would test this properly and none exists.
+
+### Eye checks
+
+| shot | the sentence | verdict |
+| --- | --- | --- |
+| `4-valley-floor` | three bands lying in the bottom, each lighter than the one below, and they lie in the valley, not around the camera | **pass on the second half, fail on the first.** The fog is unambiguously a thing lying in the valley: the foreground meadow is clear and lit, and the far half of the same flat field goes into a bank. It does NOT read as three layers - at these densities the stack reads as one graded bank. Recorded |
+| `6-postcard` | no bright sky behind a grey peak | **pass.** `fog_aerial_perspective` 0.6 with the per-hour `fog_sky_affect` fades the ranges toward the sky in their own direction; the far range and the sky above it differ by 0.7 V (gate 1a). The cylindrical fog term the plan held in reserve for this is **not needed and stays dropped** |
+
+### Tunables moved off their start
+
+| knob | start | now | judged on |
+| --- | --- | --- | --- |
+| **`ValleyFog.BAND_DENSITY`** | 0.08 / 0.05 / 0.03 | **0.0020 / 0.00125 / 0.00075** - the plan's 8:5:3 ratio, scaled by about 1/40 | `20-hour-day` and `4-valley-floor`. A `FogMaterial` density is extinction per unit length and a band is 600 m across, so the plan's 0.08 is an optical depth near **fifty** - not a layer of mist, a wall. The first Stage 2 tour came back with `20-hour-day` a featureless brown haze, no lake and no ranges. These give the bottom band an optical depth near 1.2 across its own width |
+| `ValleyFog.EERIE_LID_DENSITY` | 0.06 | **0.007** | the same arithmetic over the lid's 200 m box |
+| `volumetric_fog_ambient_inject` | 0.2 | **0.5** | the evening and dusk shots. At 0.2 the bands went to V 10-18 at the hours where the sun is low and swallowed the pink and violet the hour had just been graded to |
+| day `fog_height_density` | 0.002 | **0.001** (x0.5, in range) | `20-hour-day`. The bible's day fog is the one hour explicitly not a bank: "thin, valley bottoms only, mornings" |
+| day `vol_density` | 0.010 | **0.005** (x0.5, in range) | the same |
+| evening `vol_density` | 0.014 | **0.007** | `21-hour-evening`: midground V 18.3 to 27.9 |
+| dusk `vol_density` | 0.018 | **0.008** | `22-hour-dusk`: midground V 10.2 to 19.1 |
+| night `vol_density` | 0.020 | **0.009** | `23-hour-night`: see the table under gate 3 |
+
+### The hour hue windows, re-measured with fog on
+
+Stage 1's windows were measured before there was fog in front of them. The
+plan's sample point - the sky at 15% of frame height - is **fog rather than sky**
+on this vantage from Stage 2 onward, so both are given.
+
+| hour | at 15% height `(640,108)` | at the clearest sky `(700,12)` | Stage 1 verdict | now |
+| --- | --- | --- | --- | --- |
+| day | H 43.5 S 4.1 | H 46.5 **S 3.4** | PASS | the sky is **neutral** at S 3.4, where hue is not a meaningful quantity; it reads H 46.5 against a window of 0-40 or 180-230. Recorded as undefined rather than claimed either way |
+| evening | H 355.3 | **H 350.2** | PASS | **PASS** (300-350, at its edge) |
+| dusk | H 224.6 | H 225.3 | FAIL | **FAIL**, unchanged: finding B1 |
+| night | H 205.3 | **H 205.1** | PASS | **PASS** |
+| eerie | S 8.9 | **S 9.1** | PASS | **PASS** |
+
+### The cost line was not measured, and that is the one gap in night one
+
+**The stream probe did not complete in three attempts**, at 45, 68 and 52
+minutes of wall clock, on an idle box with nothing else running. It was
+progressing throughout - 80% CPU and 65% GPU, memory stable, no error - and its
+output is buffered to the file until exit, so a killed run leaves nothing. The
+probe's own note records a 25-minute run; this build is slower, and the honest
+guesses are trees v4's fourth level-of-detail rung, LOD0 trees casting real
+shadows (Q10), SSAO and a 250 m four-split shadow map, all of which arrived
+after that note was written.
+
+**What this means.** The plan's rule 6 - worst frame under 45 ms, and the
+shrink order if it is over - **could not be evaluated for night one**. The
+plan's own Q10 gate on tree shadows is unmeasured with it. It is not BLOCKING
+for the work, because every visual gate stands on its own, but it is the number
+Marcel most needs before night two turns on glow and SSR, and it is the first
+"For Marcel" item.
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.
@@ -532,12 +676,26 @@ Rule 7 of the failure protocol: the conservative reading, written down.
    before night two: 15,218 trees, config `c18af99d`. See question 1.
 2. **The plan's stream-probe command should be corrected** to
    `--path . -- --stream-probe`. See question 2.
-3. **The dusk sky is the one Stage 1 gate that fails**, at H 221 against a
+3. **The stream probe does not finish on this build.** Three attempts, 45 / 68
+   / 52 minutes, idle box, progressing the whole time (80% CPU, 65% GPU), no
+   output because Godot buffers stdout to a file until exit. Its own note
+   records 25 minutes. Night one therefore has **no cost line at all**, and the
+   plan's 45 ms rule and Q10's tree-shadow gate are unmeasured. This is the
+   first thing to fix before night two: either the probe needs to print
+   unbuffered and incrementally so a long run is still readable, or the sprint
+   needs shortening, or the cost gate needs a cheaper instrument.
+4. **The dusk sky is the one Stage 1 gate that fails**, at H 221 against a
    window of 235-285, and it cannot be fixed with anything the plan permits.
    The ruling is yours: widen the window, move the bible's dusk sky hex toward
    what a physical sky can do, or accept a painted term over the physical sky -
    which pillar 2 currently forbids. See the Stage 1 note for the three
    gradings tried and what each measured.
+5. **Two Stage 2 gates need your ruling.** Gate 1b asks the nearest range to
+   hold 10 more points of saturation than the farthest, and the rock palette is
+   authored at S 10 so there are not 10 to lose; measured against the nearest
+   terrain in frame it is 26 points. Gate 3 asks the night pool to be 6 V above
+   plain darkening and it measures 9.4 V under, because denser fog at a 0.12
+   moon darkens rather than lightens. Both are written up with their numbers.
 
 ---
 

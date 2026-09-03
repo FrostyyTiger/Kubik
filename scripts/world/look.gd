@@ -121,8 +121,30 @@ static func configure_environment(env: Environment, sun: DirectionalLight3D) -> 
 		# so Stage 0's frame is this function and nothing else.
 		env.glow_enabled = false          # Stage 4, the lens
 		env.adjustment_enabled = false    # Stage 4, the grade
-		env.volumetric_fog_enabled = false  # Stage 2, fog's three jobs
 		env.ssr_enabled = false           # Stage 5, water
+
+		# VOLUMETRIC FOG, AND IT IS WHAT CARRIES FOG'S THREE JOBS (Stage 2).
+		#
+		# The far term above is aerial perspective and nothing else. The bible
+		# asks fog to do three things the far term cannot: lie in bands in the
+		# valley bottoms, pool at the feet of things at night, and hide the
+		# tops of tall things in eerie weather. All three are statements about
+		# a PLACE, and a distance fog is a function of the camera - so they
+		# need a density field with a position. This is that field;
+		# `ValleyFog` puts `FogVolume`s into it.
+		env.volumetric_fog_enabled = true
+		env.volumetric_fog_length = VOLUMETRIC_LENGTH_M
+		env.volumetric_fog_density = VOLUMETRIC_DENSITY
+		env.volumetric_fog_anisotropy = 0.35
+		# ENOUGH OF THE SKY'S OWN LIGHT IN THE FOG that a band reads as LIT AIR
+		# rather than as smoke. The plan's 0.2 was measured too low at the
+		# hours that matter: with the sun at 0.70 and below, the evening and
+		# dusk bands went to V 10-18 and swallowed the pink and the violet the
+		# hour had just been graded to. At 0.5 the fog takes the sky's colour
+		# and a band lies in the valley as something you can see the light in.
+		env.volumetric_fog_ambient_inject = 0.5
+		env.volumetric_fog_sky_affect = 0.5
+		env.volumetric_fog_detail_spread = 2.0
 
 		# THE FAR TERM. Exponential rather than the poster's depth fog, with
 		# aerial perspective on so distance fades toward the SKY in that
@@ -190,6 +212,15 @@ const SHADOW_BIAS := 0.05
 const FOG_DENSITY_DAY := 0.0006
 const FOG_AERIAL_PERSPECTIVE := 0.6
 const FOG_SKY_AFFECT := 0.3
+
+## How far the volumetric froxel field reaches, in metres. Range 800-2,000, and
+## it is the second cost knob of this phase after the shadow distance: the field
+## is a fixed froxel grid, so doubling the length halves its depth resolution
+## rather than doubling its cost.
+const VOLUMETRIC_LENGTH_M := 1500.0
+## The ambient density of the field, before any FogVolume is added to it.
+## Range x0.5-x2, judged on the hour shots and shot 6.
+const VOLUMETRIC_DENSITY := 0.01
 
 
 # --- The shaders --------------------------------------------------------------

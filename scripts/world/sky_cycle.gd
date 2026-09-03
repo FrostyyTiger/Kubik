@@ -79,8 +79,13 @@ const KEYFRAMES := {
 		"sky_turbidity": 10.0, "sky_energy": 1.00, "sky_ground": "#6B6659",
 		"fog_sky_affect": 0.30,
 		"fog": "#C6C6C4", "fog_density": 0.0006,
-		"fog_height_offset": 40.0, "fog_height_density": 0.002,
-		"vol_density": 0.010,
+		# THIN, AND IN THE VALLEY BOTTOMS ONLY. The bible's day fog is the one
+		# hour that is explicitly not a fog bank: "thin, valley bottoms only,
+		# mornings". Half the height term and half the volumetric of the plan's
+		# starting row, both inside the tunable table's x0.5, because at the
+		# plan's numbers a midday postcard came back as haze with no lake in it.
+		"fog_height_offset": 40.0, "fog_height_density": 0.001,
+		"vol_density": 0.005,
 		"warm": 0.0, "saturation": 1.0,
 	},
 	# EVENING, THE PINK HALF (D6). The whole world is tinted, and the shadow
@@ -96,7 +101,7 @@ const KEYFRAMES := {
 		"fog_sky_affect": 0.60,
 		"fog": "#E8AFC9", "fog_density": 0.0009,
 		"fog_height_offset": 40.0, "fog_height_density": 0.002,
-		"vol_density": 0.014,
+		"vol_density": 0.007,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# DUSK, THE VIOLET HALF. The bible's table says of the sun here: "none; fire
@@ -115,7 +120,7 @@ const KEYFRAMES := {
 		"fog_sky_affect": 0.60,
 		"fog": "#736EB7", "fog_density": 0.0012,
 		"fog_height_offset": 40.0, "fog_height_density": 0.003,
-		"vol_density": 0.018,
+		"vol_density": 0.008,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# NIGHT IS SLATE, NOT COBALT (D7). Cobalt is the desert's night (D26) and
@@ -131,8 +136,20 @@ const KEYFRAMES := {
 		"sky_turbidity": 6.0, "sky_energy": 0.35, "sky_ground": "#121A24",
 		"fog_sky_affect": 0.50,
 		"fog": "#466477", "fog_density": 0.0009,
+		# MEASURED, AND THE OBVIOUS LEVER RUNS BACKWARDS AT THIS HOUR. Fog's
+		# second job is pooling that is VISIBLE against dark ground, so the
+		# first instinct is more of it. Three values were shot: at the plan's
+		# 0.020 the night frame lost its ranges entirely; at 0.014 the lake
+		# shore measured V 15.4; at 0.009 it measured V 17.1. Denser fog makes
+		# the night DARKER, not milkier, because at a 0.12 moon and a 0.25
+		# ambient there is almost no light in the air to scatter - so extra
+		# density only extinguishes the brighter background behind it.
+		#
+		# Lighting the fog rather than thickening it is the lever this wants,
+		# and it is night two's: ambient energy and the ambient inject both
+		# move the fog and the ground together. Recorded in the status doc.
 		"fog_height_offset": 40.0, "fog_height_density": 0.004,
-		"vol_density": 0.020,
+		"vol_density": 0.009,
 		"warm": 1.0, "saturation": 1.0,
 	},
 }
@@ -309,6 +326,16 @@ const HANDOVER := 0.08
 const ARC_TILT := 0.35
 
 var config: WorldgenConfig = null
+
+## The world, for the one thing the sky needs from it: where the valley floor
+## is, so the height fog and the fog bands have somewhere to sit (Stage 2).
+## Null in the gallery and in the self-tests, and the fog terms switch off when
+## it is - a swatch pad has no valley.
+var world: World = null
+
+## The bands that lie in the valley bottom. Owned by `World`, driven from here
+## because the hour decides how thick they are and what colour they take.
+var valley_fog: ValleyFog = null
 
 ## 0 is midnight, 0.25 sunrise, 0.5 noon, 0.75 sunset.
 var time_of_day := 0.3
@@ -631,6 +658,24 @@ func apply() -> void:
 		# fog and the lights).
 		_env.fog_sky_affect = kf["fog_sky_affect"]
 		_env.ambient_light_energy = kf["ambient_energy"]
+		# THE VALLEY-BOTTOM TERM (Stage 2). Height fog needs a height, and the
+		# only height worth having is the local valley floor - `World` tracks it
+		# once a second off the coarse heightmap. With no world to ask (a
+		# gallery sheet, a self-test) there is no floor and the term stays off,
+		# which is right: a swatch pad has no valley.
+		var floor_m := world.fog_floor_m if world != null else INF
+		if is_finite(floor_m):
+			_env.fog_height = floor_m + kf["fog_height_offset"]
+			# EERIE INVERTS IT. A negative height density thickens the fog
+			# UPWARD, so what disappears is the top of a thing rather than its
+			# feet - D7's "thick fog that hides the tops of tall things".
+			_env.fog_height_density = kf["fog_height_density"]
+		else:
+			_env.fog_height_density = 0.0
+		# The volumetric field takes the hour's colour, so a band in the valley
+		# and the distance behind it are the same fog.
+		_env.volumetric_fog_density = kf["vol_density"]
+		_env.volumetric_fog_albedo = (kf["fog"] as Color).linear_to_srgb()
 		# THE GRADE IS STAGE 4'S, with one exception that cannot wait for it:
 		# eerie is defined by saturation coming down (D7), so the adjustment is
 		# switched on only where this hour asks for less than full colour. At
@@ -639,6 +684,15 @@ func apply() -> void:
 		_env.adjustment_enabled = sat < 0.999
 		if _env.adjustment_enabled:
 			_env.adjustment_saturation = sat
+
+	if valley_fog != null and world != null:
+		# THE BANDS LIE IN THE VALLEY, and the hour decides how thick they are.
+		# `vol_density` against the day's is the scale, so night doubles the
+		# stack and eerie quadruples it without a second table.
+		valley_fog.place(world.fog_floor_m, world.fog_floor_at,
+			kf["vol_density"] / ValleyFog.VOL_DENSITY_BASE,
+			(kf["fog"] as Color).linear_to_srgb(),
+			night_amount(elevation), weather() == "eerie")
 
 	if _sky != null:
 		# THE PHYSICAL SKY, GRADED. It computes its own scattering from the

@@ -250,6 +250,37 @@ var _have_last_center := false
 ## but not touch.
 var _far_field: FarField = null
 
+# --- Light v1 Stage 2: where the valley floor is -----------------------------
+#
+# WHAT THE FOG SITS ON. The bible's fog lies in valley bottoms and pools at the
+# feet of things, and both of those are statements about a PLACE - so something
+# has to know where the bottom is. This is that: the altitude of the nearest
+# lake within FOG_FLOOR_LAKE_M, or with no lake in reach, the lowest ground in a
+# FOG_FLOOR_DISC_M disc around the player.
+#
+# LOCAL AND UNHASHED, and it never touches worldgen: it is read off the coarse
+# heightmap that already exists and decides nothing about what is in the world.
+#
+# ONCE A SECOND, ON A STRIDE. A 600 m radius is 300 coarse cells here, so an
+# exhaustive scan is 360,000 cells - tens of milliseconds of GDScript on the
+# main thread, every second, to answer a question whose answer moves at walking
+# pace. Every eighth cell is 5,600 samples and lands the floor within a few
+# metres, which is far inside a 12 m fog band.
+
+## The altitude of the valley floor near the player, in METRES. INF until the
+## first scan, which is what ValleyFog reads as "nowhere to put a band yet".
+var fog_floor_m := INF
+## Where on the map that floor was found, in metres. The bands are placed HERE
+## and not at the player, which is what keeps them lying in the valley.
+var fog_floor_at := Vector3.ZERO
+
+const FOG_FLOOR_LAKE_M := 600.0
+const FOG_FLOOR_DISC_M := 300.0
+const FOG_FLOOR_STRIDE := 8
+const FOG_FLOOR_PERIOD_MS := 1000
+
+var _fog_floor_next_ms := 0
+
 # --- The decoration layer (foliage v1 Stage 5) ------------------------------
 #
 # Ground cover does not live in chunks, in the mesher, or in the edit
@@ -377,6 +408,7 @@ func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 
 func _process(delta: float) -> void:
 	_track_frame(delta)
+	_update_fog_floor()
 	if _build_queue.is_empty() and _in_flight.is_empty() \
 			and _flora_queue.is_empty() \
 			and _flora_in_flight.is_empty():
@@ -863,6 +895,74 @@ func _build_lakes() -> void:
 ## A rolling window rather than a max since load: a max since load is a number
 ## that only goes up, and after the first hitch it stops telling you whether
 ## the thing you just changed made the next one better.
+## Find the valley floor near the player. Once a second, on a stride.
+##
+## One pass answers both questions the plan asks in order: the nearest flooded
+## cell within 600 m wins outright, because a lake IS the floor and its surface
+## is flat and known; failing that, the lowest ground within 300 m. Tracking the
+## minimum in the same loop costs nothing and saves a second scan.
+func _update_fog_floor() -> void:
+	if generator == null or generator.heightmap == null:
+		return
+	var now := Time.get_ticks_msec()
+	if now < _fog_floor_next_ms:
+		return
+	_fog_floor_next_ms = now + FOG_FLOOR_PERIOD_MS
+
+	var hm: Heightmap = generator.heightmap
+	var bs: float = config.block_size
+	var cell_m := float(hm.step) * bs
+	var px := _last_center_m.x
+	var pz := _last_center_m.z
+	# The heightmap's cell grid is anchored at min_block, not at the origin, so
+	# a world position becomes a cell index through cell_to_block's inverse.
+	var ci := int(round((px / bs - float(hm.min_block)) / float(hm.step)))
+	var cj := int(round((pz / bs - float(hm.min_block)) / float(hm.step)))
+	var reach := int(ceil(maxf(FOG_FLOOR_LAKE_M, FOG_FLOOR_DISC_M) / cell_m))
+
+	var best_lake_d2 := INF
+	var best_lake_level := 0.0
+	var best_lake_at := Vector3.ZERO
+	var lowest := INF
+	var lowest_at := Vector3.ZERO
+	var have_lakes := lakes != null and not lakes.lake_id.is_empty()
+	var lake_r2 := FOG_FLOOR_LAKE_M * FOG_FLOOR_LAKE_M
+	var disc_r2 := FOG_FLOOR_DISC_M * FOG_FLOOR_DISC_M
+
+	var j := maxi(cj - reach, 0)
+	var j_end := mini(cj + reach, hm.cols - 1)
+	var i_lo := maxi(ci - reach, 0)
+	var i_end := mini(ci + reach, hm.cols - 1)
+	while j <= j_end:
+		var wz := float(hm.cell_to_block(j)) * bs
+		var dz := wz - pz
+		var i := i_lo
+		while i <= i_end:
+			var wx := float(hm.cell_to_block(i)) * bs
+			var dx := wx - px
+			var d2 := dx * dx + dz * dz
+			if d2 <= lake_r2:
+				var idx := i + j * hm.cols
+				if have_lakes and d2 < best_lake_d2 and lakes.lake_id[idx] >= 0:
+					best_lake_d2 = d2
+					best_lake_level = float(lakes.lakes[lakes.lake_id[idx]]["level"]) * bs
+					best_lake_at = Vector3(wx, best_lake_level, wz)
+				if d2 <= disc_r2:
+					var h := hm.cell_height(i, j) * bs
+					if h < lowest:
+						lowest = h
+						lowest_at = Vector3(wx, h, wz)
+			i += FOG_FLOOR_STRIDE
+		j += FOG_FLOOR_STRIDE
+
+	if is_finite(best_lake_d2):
+		fog_floor_m = best_lake_level
+		fog_floor_at = best_lake_at
+	elif is_finite(lowest):
+		fog_floor_m = lowest
+		fog_floor_at = lowest_at
+
+
 func _track_frame(delta: float) -> void:
 	var now := Time.get_ticks_msec()
 	_frame_window.append([now, delta * 1000.0])

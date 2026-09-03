@@ -379,10 +379,21 @@ void fragment() {
 	var exposure := env.tonemap_exposure
 	var glow := env.glow_enabled
 	var adjust := env.adjustment_enabled
+	# THE ATMOSPHERE COMES OFF TOO, from Stage 2. Volumetric fog is a scene
+	# effect and not a transfer error, but it sits between the quad and the
+	# camera and tints it: with it on the worst channel delta measured 4 rather
+	# than 2, still inside the tolerance and still measuring the wrong thing.
+	# This sheet answers one question - is there exactly ONE conversion between
+	# push_back and the frame - and everything that is not that conversion is
+	# switched off for it and restored after.
+	var vol := env.volumetric_fog_enabled
+	var fog := env.fog_enabled
 	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
 	env.tonemap_exposure = 1.0
 	env.glow_enabled = false
 	env.adjustment_enabled = false
+	env.volumetric_fog_enabled = false
+	env.fog_enabled = false
 
 	_aim_at_swatches()
 	var image := await _capture()
@@ -393,6 +404,8 @@ void fragment() {
 	env.tonemap_exposure = exposure
 	env.glow_enabled = glow
 	env.adjustment_enabled = adjust
+	env.volumetric_fog_enabled = vol
+	env.fog_enabled = fog
 
 
 func _report_transfer(image: Image) -> void:

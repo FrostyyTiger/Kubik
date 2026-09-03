@@ -151,6 +151,13 @@ func _ready() -> void:
 	print("[Game] physics %s at %d Hz" % [
 		ProjectSettings.get_setting("physics/3d/physics_engine", "Default"),
 		Engine.physics_ticks_per_second])
+	# THE SKY NEEDS THE WORLD FOR ONE THING (Stage 2): where the valley floor
+	# is, so the height fog and the fog bands sit in the valley rather than
+	# around the camera. Wired before setup(), which applies the hour once.
+	_sky.world = _world
+	_sky.valley_fog = ValleyFog.new()
+	_sky.valley_fog.name = "ValleyFog"
+	_world.add_child(_sky.valley_fog)
 	_sky.setup(config, $Sun, $WorldEnvironment)
 	_debug.setup(config, _world, _player, _sky)
 	# THE PLAY HUD (ui v1 Stage 4). Same shape as the line above it: this
