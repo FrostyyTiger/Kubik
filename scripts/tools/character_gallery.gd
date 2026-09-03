@@ -286,18 +286,14 @@ const SWATCH_SHADE_Y := 3.2
 ## The plan's number, and it is not widened - see light-v1-tech.md section 5.2.
 const SWATCH_TOLERANCE := 6
 
-## THE FOUR HOURS THE LIGHT SHEET IS SHOT AT.
+## THE FOUR HOURS THE LIGHT SHEET IS SHOT AT, by name.
 ##
-## Times of day in Stage 0, because `SkyCycle.HOURS` and the elevation anchors
-## it resolves are Stage 1's. Stage 1 replaces these with
-## `SkyCycle.time_for_elevation()` on the anchors so the sheet and the tour ask
-## for an hour by the same name and get the same sun.
-const LIGHT_HOURS := [
-	{"name": "day", "t": 0.50},
-	{"name": "evening", "t": 0.74},
-	{"name": "dusk", "t": 0.79},
-	{"name": "night", "t": 0.95},
-]
+## `SkyCycle.HOURS` holds them as sun ELEVATIONS and `time_for_elevation()`
+## answers with a time, so the sheet, the tour and the keyframe table all name
+## the same hour and cannot drift apart when the day length or the arc's warp
+## changes underneath them. Stage 0 shot these at four raw times because the
+## anchors did not exist yet.
+const LIGHT_HOURS: Array[String] = ["day", "evening", "dusk", "night"]
 
 var _swatch_probes: Array = []
 
@@ -451,11 +447,11 @@ func _sheet_light() -> void:
 	_aim_at_swatches()
 
 	var hours := []
-	for hour in LIGHT_HOURS:
-		_set_time(hour["t"])
+	for hour_name in LIGHT_HOURS:
+		_set_time(SkyCycle.time_for_elevation(SkyCycle.HOURS[hour_name], true))
 		var image := await _capture()
-		_save_image(image, "light-%s" % hour["name"])
-		hours.append(_report_light(image, hour))
+		_save_image(image, "light-%s" % hour_name)
+		hours.append(_report_light(image, hour_name))
 	_set_time(-1.0)
 
 	_write_json({
@@ -465,11 +461,11 @@ func _sheet_light() -> void:
 	Look.apply_local_knobs(config)
 
 
-func _report_light(image: Image, hour: Dictionary) -> Dictionary:
+func _report_light(image: Image, hour_name: String) -> Dictionary:
 	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
 	var kf := SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)
 	print("[Light] %s - t %.3f, elevation %+.3f, sun %s, energy %.2f" % [
-		hour["name"], _sky.time_of_day, elevation,
+		hour_name, _sky.time_of_day, elevation,
 		(kf["sun"] as Color).linear_to_srgb().to_html(false), kf["energy"]])
 	print("[Light] %-10s %-9s %-9s %s" % ["name", "authored", "lit", "shadow"])
 	var rows := []
@@ -483,7 +479,7 @@ func _report_light(image: Image, hour: Dictionary) -> Dictionary:
 			"name": probe["name"], "authored": probe["authored"],
 			"lit": lit.to_html(false), "shadow": shade.to_html(false)})
 	return {
-		"hour": hour["name"], "time_of_day": _sky.time_of_day,
+		"hour": hour_name, "time_of_day": _sky.time_of_day,
 		"elevation": elevation, "energy": kf["energy"],
 		"sun": (kf["sun"] as Color).linear_to_srgb().to_html(false),
 		"swatches": rows,

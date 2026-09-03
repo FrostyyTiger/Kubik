@@ -314,11 +314,44 @@ func _choose_vantages() -> Array:
 	# what this plan changes most, and they change most at the ends of the day.
 	shots.append({
 		"name": "14-postcard-dusk",
-		"note": "shot 6's vantage at dusk, 0.74",
+		"note": "shot 6's vantage at the dusk anchor",
 		"target": postcard["look_at"],
 		"eye_cell": postcard["eye"],
 		"distance": 0.0, "height": 15.0,
-		"time": 0.74,
+		"hour": "dusk",
+	})
+
+	# THE FIVE HOURS, FROM ONE VANTAGE (light v1 Stage 1).
+	#
+	# The four hours of `10-color-and-light.md` plus eerie weather, all from
+	# `6-postcard`'s eye, so the only thing that differs between the five
+	# pictures is the light. That is what makes them a comparison rather than
+	# five nice screenshots: the round 3 brief asks whether the decided hours
+	# read, and an hour that only reads from its own flattering vantage has not
+	# answered.
+	#
+	# Each asks for its hour BY NAME and SkyCycle resolves it through the
+	# elevation anchors, so the day length and the arc's warp can change
+	# underneath without these five quietly becoming different hours.
+	for hour_name in ["day", "evening", "dusk", "night"]:
+		shots.append({
+			"name": "2%d-hour-%s" % [["day", "evening", "dusk", "night"].find(hour_name), hour_name],
+			"note": "shot 6's vantage at the %s anchor" % hour_name,
+			"target": postcard["look_at"],
+			"eye_cell": postcard["eye"],
+			"distance": 0.0, "height": 15.0,
+			"hour": hour_name,
+		})
+	# EERIE IS THE DAY WITH THE LIFE TAKEN OUT (D7), so it is shot at the day
+	# anchor: the difference between 20 and 24 is then the weather and nothing
+	# else, which is the comparison the brief wants.
+	shots.append({
+		"name": "24-hour-eerie",
+		"note": "shot 6's vantage at the day anchor, eerie weather",
+		"target": postcard["look_at"],
+		"eye_cell": postcard["eye"],
+		"distance": 0.0, "height": 15.0,
+		"hour": "day", "weather": "eerie",
 	})
 
 	# --- Foliage v1 Stage 1: four vantage points about what grows -----------
@@ -490,33 +523,27 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 		"name": "11-forest-dusk",
 		"note": "shot 7 again, at dusk - the acceptance test",
 		"eye_m": forest_eye, "target": forest_look,
-		# 0.74, NOT THE 0.85 THE PLAN ASKS FOR, and the difference is the
-		# whole shot. In this game's light curve sun_energy bottoms out the
-		# INSTANT the sun crosses the horizon - day_amount() is
-		# clamp(elevation * 3), so it is already zero at elevation zero - and
-		# 0.85 is a long way past that. Shot at 0.85 the forest interior came
-		# back as a black rectangle with one glowing mushroom in it, which
-		# proves the mushroom works and proves nothing about the forest.
-		#
-		# 0.74 is the last moment there is enough light to see a forest by:
-		# the sun is just below the horizon, dusk_amount is near its peak so
-		# the light is warm, and sun_energy is still 0.19. That is the picture
-		# the acceptance test is asking for. Night proper is shot separately,
-		# and 12-meadow-night is where the fireflies are.
-		"time": 0.74,
+		# AN HOUR BY NAME SINCE LIGHT V1 STAGE 1, and the raw time it replaces
+		# is worth keeping in the record. It was 0.74 and not the 0.85 the look
+		# v2 plan asked for, because sun_energy used to bottom out the instant
+		# the sun crossed the horizon and 0.85 came back as a black rectangle
+		# with one glowing mushroom in it. Under the four hours that argument
+		# is gone: "evening" is an ELEVATION (+0.09), the keyframe at that
+		# elevation is the pink one, and the day length and the warp can change
+		# underneath without this shot quietly becoming a different hour.
+		"hour": "evening",
 	})
 
 	# NIGHT, IN THE MEADOW, and it needs its own shot rather than being read
 	# off the dusk one. Fireflies exist only over open ground and only after
 	# dark, and glowing mushrooms are only visible once there is nothing else
-	# lighting them - at 0.85 the sky is still orange and both are invisible.
-	# 0.95 is properly night.
+	# lighting them.
 	out.append({
 		"name": "12-meadow-night",
-		"note": "fireflies and glowing things, at 0.95",
+		"note": "fireflies and glowing things, at the night anchor",
 		"eye_m": meadow_eye,
 		"target": _along(meadow_eye, _hashed_heading(8), 16.0, 0.5),
-		"time": 0.95,
+		"hour": "night",
 	})
 
 	# THE TWO ENDS OF THE DAY, added by look v2 Stage 2 (tech plan Q15).
@@ -560,9 +587,12 @@ func _foliage_vantages(hm: Heightmap, gen: TerrainGenerator,
 
 	out.append({
 		"name": "13-meadow-dawn",
-		"note": "shot 1's meadow at dawn, 0.24",
+		"note": "shot 1's meadow at dawn - the evening anchor, morning side",
 		"eye_m": meadow_eye,
 		"target": _along(meadow_eye, _hashed_heading(8), 16.0, 0.5),
+		# The MORNING side of the same elevation the evening shot uses, so the
+		# pair photographs the one thing that separates dawn from dusk in this
+		# table: the dawn set is the evening set with the colour taken down.
 		"time": 0.24,
 	})
 	return out
@@ -1073,9 +1103,22 @@ func _capture(index: int, shot: Dictionary) -> void:
 	# would silently relight every shot after it, and the tour would stop being
 	# a comparison harness halfway through its own run.
 	var restore := -1.0
-	if shot.has("time") and _sky != null:
+	var restore_weather := ""
+	if (shot.has("time") or shot.has("hour") or shot.has("weather")) and _sky != null:
 		restore = _sky.time_of_day
-		_sky.time_of_day = shot["time"]
+		if shot.has("hour"):
+			# AN HOUR BY NAME, RESOLVED THROUGH THE ANCHOR (light v1 Stage 1).
+			# The shot asks for "evening" and SkyCycle answers with the time at
+			# which the sun stands at the evening anchor's elevation - so a
+			# shot called evening and the keyframe called evening cannot drift
+			# apart when the arc or the day length changes.
+			var anchor: float = SkyCycle.HOURS[shot["hour"]]
+			_sky.time_of_day = SkyCycle.time_for_elevation(anchor, true)
+		elif shot.has("time"):
+			_sky.time_of_day = shot["time"]
+		if shot.has("weather") and _sky.config != null:
+			restore_weather = _sky.config.weather
+			_sky.config.weather = shot["weather"]
 		_sky.apply()
 		for i in SETTLE_FRAMES:
 			await get_tree().process_frame
@@ -1092,6 +1135,8 @@ func _capture(index: int, shot: Dictionary) -> void:
 	_report_cost(shot["name"])
 
 	if restore >= 0.0 and _sky != null:
+		if restore_weather != "" and _sky.config != null:
+			_sky.config.weather = restore_weather
 		_sky.time_of_day = restore
 		_sky.apply()
 

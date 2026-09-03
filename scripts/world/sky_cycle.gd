@@ -16,93 +16,279 @@ extends Node
 ## tested without a window - which matters here, because a full day is eight
 ## minutes of real time and nobody is watching a headless run for eight minutes.
 
-## THE TIME-OF-DAY SETS, AS DATA.
+## THE FOUR HOURS, AS DATA (light v1 Stage 1).
 ##
 ## Habit 1 (CLAUDE.md): facts as a table, not as twelve constants scattered
-## down a file. Four keyframes - dawn, noon, dusk, night - each a full set of
-## every colour the hour decides, and one function blends between them. A
-## director, a debug panel or a later biome can read this; twelve constants
-## could only be read by the code that named them.
+## down a file. A director, a debug panel or a later biome can read this.
 ##
-## sRGB IN THE FILE, LINEAR OUT OF keyframe_at(). The hex is what was authored
-## and what `docs/research/art-direction.md` section 2.11 records; the
-## conversion happens once, on first use, and everything downstream is linear.
+## THE HOURS ARE THE BIBLE'S NOW, and there are four of them plus a weather.
+## `10-color-and-light.md` names day, evening (pink), dusk (violet) and night
+## (slate), and D6 is Marcel's own wording for why evening and dusk are two
+## hours of ONE evening rather than one hour called sunset: "pink first, violet
+## after". The table this replaced was dawn / noon / dusk / night, where "dusk"
+## carried the whole of the evening as a single orange row - so the pink was
+## never a colour the world passed through, and the violet was a tint on it.
 ##
-## `fog_dark` is not authored - it is derived, the fog colour one band darker,
-## because rule 2 says a far range is a cut-out against the sky and never glass
-## over it.
+## EERIE IS NOT AN HOUR (D7, Q13). It is a weather that sits on top of whichever
+## hour it is: "night or day with the life taken out - saturation down, thick
+## fog that hides the tops of tall things, and every warm light off". So it is
+## one Dictionary of overrides applied after the blend, and never a fifth row.
+##
+## EVERY HEX IS A STARTING POINT, in the bible's own words at the top of
+## `10-color-and-light.md`: "with real light the sky does most of this by itself
+## and the grading only nudges it toward the reference". The `sky_*` rows below
+## grade a PhysicalSkyMaterial, which computes its own scattering; what actually
+## lands on screen is measured and recorded in `docs/status/light-v1.md`, and a
+## delta there is a finding rather than a failure.
+##
+## sRGB IN THE FILE, LINEAR OUT OF keyframe_at(). The conversion happens once,
+## on first use, and everything downstream is linear.
+##
+## THE ROWS.
+##
+##   sun / energy        the directional light. At night it is the moon.
+##   ambient_energy      how much of the sky's own light reaches the shade.
+##   shade               NOT PUBLISHED. The bible's shadow colour for this hour,
+##                       kept so the status doc can print measured against
+##                       authored. Real light makes the shadow now.
+##   sky_horizon         }  NOT PUBLISHED either, and for the same reason: the
+##   sky_high            }  bible's sky, against which the physical sky's own
+##                          answer is recorded.
+##   sky_rayleigh        the physical sky's Rayleigh tint - the sky's own colour
+##   sky_mie             its Mie tint - the haze around the sun
+##   sky_turbidity       how much haze. High turbidity is a thick evening.
+##   sky_energy          the sky's brightness multiplier
+##   sky_ground          what the sky sees below its horizon
+##   fog                 the far fog's colour
+##   fog_density         the exponential far term
+##   fog_height_offset   metres above the valley floor the height fog sits
+##   fog_height_density  the valley-bottom term (Stage 2)
+##   vol_density         the volumetric field's density (Stage 2)
+##   warm                1 where warm light exists, 0 where it does not
+##   saturation          the grade's saturation. 1.0 everywhere but eerie.
 const KEYFRAMES := {
-	"dawn": {
-		"sun": "#FFC7A0", "energy": 0.85, "shade": "#9A97BE", "shade_desat": 0.55,
-		"fog": "#E4CDB8", "horizon": "#F3C79E", "sky_mid": "#E4C9C2",
-		"sky_top": "#BBD5DC", "water": "#B6BCCE", "cloud_lit": "#FFE2C8",
-		"accent": "#F2A80D",
+	# THE NEUTRAL ALPINE DAY (D5). Pale pink-grey at the horizon, colder and
+	# bluer higher up, a warm white sun and a navy shadow. Warm lights are OFF
+	# by day: a lit window means life, and at noon it means nothing.
+	"day": {
+		"sun": "#FFF4E0", "energy": 1.00,
+		"ambient_energy": 1.00,
+		"shade": "#22294D",
+		"sky_horizon": "#D3C2BB", "sky_high": "#B3E4EF",
+		"sky_rayleigh": "#B3E4EF", "sky_mie": "#D3C2BB",
+		"sky_turbidity": 10.0, "sky_energy": 1.00, "sky_ground": "#6B6659",
+		"fog_sky_affect": 0.30,
+		"fog": "#C6C6C4", "fog_density": 0.0006,
+		"fog_height_offset": 40.0, "fog_height_density": 0.002,
+		"vol_density": 0.010,
+		"warm": 0.0, "saturation": 1.0,
 	},
-	"noon": {
-		"sun": "#FFF2D1", "energy": 1.00, "shade": "#7A7396", "shade_desat": 0.55,
-		"fog": "#C9C3C4", "horizon": "#EBDFC8", "sky_mid": "#B4C1D6",
-		"sky_top": "#89A1CB", "water": "#4A6A8A", "cloud_lit": "#F2E8D0",
-		"accent": "#C9A24A",
+	# EVENING, THE PINK HALF (D6). The whole world is tinted, and the shadow
+	# goes magenta with the sky rather than staying navy - which is the half of
+	# D8 a fixed shadow colour can never do.
+	"evening": {
+		"sun": "#F9C5A5", "energy": 0.70,
+		"ambient_energy": 0.80,
+		"shade": "#813263",
+		"sky_horizon": "#F0D2EC", "sky_high": "#CCA8EB",
+		"sky_rayleigh": "#CCA8EB", "sky_mie": "#F0D2EC",
+		"sky_turbidity": 14.0, "sky_energy": 1.00, "sky_ground": "#5A4650",
+		"fog_sky_affect": 0.60,
+		"fog": "#E8AFC9", "fog_density": 0.0009,
+		"fog_height_offset": 40.0, "fog_height_density": 0.002,
+		"vol_density": 0.014,
+		"warm": 1.0, "saturation": 1.0,
 	},
+	# DUSK, THE VIOLET HALF. The bible's table says of the sun here: "none; fire
+	# takes over #f5c05e". Taken as a very low energy rather than as zero - the
+	# day-cycle self-test asserts the light never goes out, and a directional
+	# light at zero is a different frame from one at 0.18, not a darker one.
+	# What "the sun is gone" reads as is the sky doing the lighting, which at
+	# ambient 0.5 against sun 0.18 is what this row is.
 	"dusk": {
-		"sun": "#FCA55A", "energy": 0.90, "shade": "#4A6FB4", "shade_desat": 0.65,
-		"fog": "#D9C4B0", "horizon": "#F4CBA0", "sky_mid": "#9A8CC0",
-		"sky_top": "#6C68A4", "water": "#6E7396", "cloud_lit": "#F2C489",
-		"accent": "#E8A02E",
+		"sun": "#8F86B5", "energy": 0.18,
+		"ambient_energy": 0.50,
+		"shade": "#0B1123",
+		"sky_horizon": "#A281C3", "sky_high": "#63559E",
+		"sky_rayleigh": "#63559E", "sky_mie": "#A281C3",
+		"sky_turbidity": 26.0, "sky_energy": 0.45, "sky_ground": "#2A2438",
+		"fog_sky_affect": 0.60,
+		"fog": "#736EB7", "fog_density": 0.0012,
+		"fog_height_offset": 40.0, "fog_height_density": 0.003,
+		"vol_density": 0.018,
+		"warm": 1.0, "saturation": 1.0,
 	},
+	# NIGHT IS SLATE, NOT COBALT (D7). Cobalt is the desert's night (D26) and
+	# does not belong here. The moon is the sun's antipode at #b9c2cf and 0.12
+	# (Q16); with sky ambient on at a quarter, a moonlit hillside is still a
+	# hillside.
 	"night": {
-		"sun": "#9AAAD0", "energy": 0.75, "shade": "#39456E", "shade_desat": 0.75,
-		"fog": "#223A5E", "horizon": "#25406E", "sky_mid": "#1D3764",
-		"sky_top": "#152A55", "water": "#2C3E63", "cloud_lit": "#6F7C9E",
-		"accent": "#E8892E",
+		"sun": "#B9C2CF", "energy": 0.12,
+		"ambient_energy": 0.25,
+		"shade": "#1A2534",
+		"sky_horizon": "#213147", "sky_high": "#0C1722",
+		"sky_rayleigh": "#213147", "sky_mie": "#0C1722",
+		"sky_turbidity": 6.0, "sky_energy": 0.35, "sky_ground": "#121A24",
+		"fog_sky_affect": 0.50,
+		"fog": "#466477", "fog_density": 0.0009,
+		"fog_height_offset": 40.0, "fog_height_density": 0.004,
+		"vol_density": 0.020,
+		"warm": 1.0, "saturation": 1.0,
 	},
 }
 
-## How much darker `fog_dark` is than the fog. One band, in linear.
-const FOG_DARK_MIX := 0.18
+## EERIE (D7, Q13). Applied on top of whichever hour it is, never instead of it.
+##
+## "The difference between night and eerie is only the fog and the lights."
+## Sky flat, fog thick, saturation down, every warm light off. The height
+## density goes NEGATIVE, which is what makes the fog thicken UPWARD and hide
+## the tops of tall things instead of pooling at their feet.
+##
+## `10-color-and-light.md` also asks for "the base of things #101f26", which is
+## a per-material floor rather than a light, and is NOT reproduced in phase 1.
+## Recorded as a silence in docs/status/light-v1.md.
+const EERIE := {
+	"sky_horizon": "#E1F2F8", "sky_high": "#C3DCE8",
+	"sky_rayleigh": "#C3DCE8", "sky_mie": "#E1F2F8",
+	"sky_turbidity": 24.0, "sky_ground": "#8E9CA4",
+	"fog": "#97B4C7", "fog_sky_affect": 1.0,
+	"warm": 0.0, "saturation": 0.55,
+	"fog_density_scale": 4.0, "vol_density_scale": 4.0,
+	"fog_height_density": -0.004,
+}
+
+## THE HOUR ANCHORS, as sun elevations. The tour and the gallery ask for an hour
+## by NAME and `time_for_elevation()` answers with a time, so a shot called
+## "evening" and the keyframe called "evening" cannot drift apart.
+const HOURS := {
+	"day": 0.60,
+	"evening": 0.09,
+	"dusk": -0.15,
+	"night": -0.85,
+}
+
+## Where the evening and dusk sets peak, and how wide their shoulders are.
+## Evening peaks with the sun just above the horizon and dusk just below it,
+## which is what makes them two halves of one evening rather than two hours.
+const EVENING_PEAK := 0.09
+const EVENING_WIDTH := 0.26
+const DUSK_PEAK := -0.15
+const DUSK_WIDTH := 0.30
+
+## Dawn is the evening set with the colour taken down. The bible gives dawn no
+## hour of its own - its table has four rows and none of them is sunrise - so
+## this is a silence filled rather than a rule followed, and it is recorded as
+## one. A morning is a cooler, paler evening; it is not a sunset played
+## backwards, which is what one shared horizon row would make it.
+const DAWN_SATURATION := 0.70
+
 
 static var _keyframes_linear := {}
+static var _dawn_linear := {}
+static var _eerie_linear := {}
 
 
 ## One keyframe, every colour linear, built once.
 static func keyframe(name: String) -> Dictionary:
-	if _keyframes_linear.is_empty():
-		for key in KEYFRAMES:
-			var row := {}
-			for field in KEYFRAMES[key]:
-				var v = KEYFRAMES[key][field]
-				if typeof(v) == TYPE_STRING:
-					row[field] = Color.html(v).srgb_to_linear()
-				else:
-					row[field] = float(v)
-			row["fog_dark"] = (row["fog"] as Color).lerp(Color(0.0, 0.0, 0.0), FOG_DARK_MIX)
-			_keyframes_linear[key] = row
+	_build_keyframes()
 	return _keyframes_linear[name]
+
+
+static func _build_keyframes() -> void:
+	if not _keyframes_linear.is_empty():
+		return
+	for key in KEYFRAMES:
+		_keyframes_linear[key] = _to_linear(KEYFRAMES[key])
+	_eerie_linear = _to_linear(EERIE)
+	# DAWN IS THE EVENING SET WITH THE COLOUR TAKEN DOWN. Desaturated toward
+	# each colour's own luminance, so the hue is the evening's and only the
+	# strength differs - a pale pink morning rather than a second palette to
+	# keep in step with the first.
+	_dawn_linear = {}
+	for field in _keyframes_linear["evening"]:
+		var v = _keyframes_linear["evening"][field]
+		if typeof(v) == TYPE_COLOR:
+			var l := Look.luma(v)
+			_dawn_linear[field] = (v as Color).lerp(Color(l, l, l), 1.0 - DAWN_SATURATION)
+		else:
+			_dawn_linear[field] = v
+
+
+static func _to_linear(row: Dictionary) -> Dictionary:
+	var out := {}
+	for field in row:
+		var v = row[field]
+		if typeof(v) == TYPE_STRING:
+			out[field] = Color.html(v).srgb_to_linear()
+		else:
+			out[field] = float(v)
+	return out
 
 
 ## The set for this sun elevation, every colour LINEAR, ready to publish.
 ##
-## Night to noon by how light it is, then pulled toward the horizon keyframe -
-## dusk in the afternoon, dawn in the morning - by how near the sun is to the
-## horizon. AT WEIGHT 1.0, which is the whole of look v2's "dusk exists": look
-## v1 blended at 0.85 and 0.75, so the dusk set was never actually reached and
-## the sky at sunset was a washed-out noon rather than the poster's orange.
+## NIGHT TO DAY BY HOW LIGHT IT IS, then pulled toward the evening set and then
+## the dusk set by two windows either side of the horizon. The windows are what
+## make the evening a place the world passes THROUGH rather than a tint applied
+## to noon: evening peaks with the sun at +0.09 and dusk at -0.15, so a full
+## descent runs day -> pink -> violet -> slate in that order and never skips
+## one.
+##
+## ON THE MORNING SIDE the evening set is replaced by the dawn set. Dusk's
+## violet is kept as it is, because the violet before sunrise is the same
+## violet as the violet after sunset - it is the sky doing the same thing with
+## the sun on the other side.
 ##
 ## Pure, like everything in this section, so the day-cycle self-test can walk a
 ## whole day through it without a window.
-static func keyframe_at(elevation: float, morning := false) -> Dictionary:
-	var night := keyframe("night")
-	var noon := keyframe("noon")
-	var edge := keyframe("dawn") if morning else keyframe("dusk")
+static func keyframe_at(elevation: float, morning := false, weather := "clear") -> Dictionary:
+	_build_keyframes()
+	var night: Dictionary = _keyframes_linear["night"]
+	var day: Dictionary = _keyframes_linear["day"]
+	var edge: Dictionary = _dawn_linear if morning else _keyframes_linear["evening"]
+	var dusk: Dictionary = _keyframes_linear["dusk"]
+
 	var d := day_amount(elevation)
-	var k := dusk_amount(elevation)
+	var e_w := _shoulder(elevation, EVENING_PEAK, EVENING_WIDTH)
+	var k_w := _shoulder(elevation, DUSK_PEAK, DUSK_WIDTH)
+
 	var out := {}
-	for field in noon:
-		if typeof(noon[field]) == TYPE_COLOR:
-			out[field] = (night[field] as Color).lerp(noon[field], d).lerp(edge[field], k)
+	for field in day:
+		if typeof(day[field]) == TYPE_COLOR:
+			var c: Color = (night[field] as Color).lerp(day[field], d)
+			c = c.lerp(edge[field], e_w)
+			out[field] = c.lerp(dusk[field], k_w)
 		else:
-			out[field] = lerpf(lerpf(night[field], noon[field], d), edge[field], k)
+			var f := lerpf(night[field], day[field], d)
+			f = lerpf(f, edge[field], e_w)
+			out[field] = lerpf(f, dusk[field], k_w)
+
+	if weather == "eerie":
+		_apply_eerie(out)
 	return out
+
+
+## The eerie overrides, on top of the blended hour.
+##
+## The two `_scale` entries multiply rather than replace, because "thick fog"
+## has to mean four times whatever this hour's fog already was - a flat density
+## would make an eerie noon and an eerie night the same weather, and D7 says
+## eerie is "night OR day with the life taken out".
+static func _apply_eerie(out: Dictionary) -> void:
+	for field in _eerie_linear:
+		if field.ends_with("_scale"):
+			continue
+		out[field] = _eerie_linear[field]
+	out["fog_density"] = out["fog_density"] * _eerie_linear["fog_density_scale"]
+	out["vol_density"] = out["vol_density"] * _eerie_linear["vol_density_scale"]
+
+
+## A window that peaks at `peak` and falls to nothing `width` either side of it,
+## with the corners taken off so an hour arrives and leaves rather than
+## switching on.
+static func _shoulder(elevation: float, peak: float, width: float) -> float:
+	var t := clampf(1.0 - absf(elevation - peak) / width, 0.0, 1.0)
+	return smoothstep(0.0, 1.0, t)
 
 
 ## Where the light comes from during twilight, while it is neither the sun's
@@ -156,6 +342,9 @@ func setup(p_config: WorldgenConfig, sun: DirectionalLight3D,
 	Look.configure_environment(_env, _sun)
 	if _env != null and _env.sky != null:
 		_sky = _env.sky.sky_material as PhysicalSkyMaterial
+		if _sky != null and _sky.night_sky == null:
+			# Once, at setup: the material keeps it and apply() never touches it.
+			_sky.night_sky = make_night_panorama()
 	time_of_day = config.day_start
 	apply()
 
@@ -171,10 +360,133 @@ func _process(delta: float) -> void:
 # --- Pure functions of time, so they can be tested without a window ---------
 
 ## Unit vector pointing at the sun. y > 0 means daytime.
+##
+## The angle comes from `arc_angle()` rather than straight from `t`, because
+## the sun does not move at one speed - see the warp below.
 static func sun_position(t: float) -> Vector3:
-	# t = 0.25 puts the sun on the eastern horizon, 0.5 overhead, 0.75 west.
-	var angle := (t - 0.25) * TAU
+	# arc_angle(0.25) is 0, which puts the sun on the eastern horizon; PI/2 is
+	# overhead and PI is west.
+	var angle := arc_angle(t)
 	return Vector3(cos(angle), sin(angle), -ARC_TILT).normalized()
+
+
+# --- The warped arc (D52, Q7) -------------------------------------------------
+#
+# A FULL DAY IS ABOUT FORTY MINUTES AND THE EVENING IS SIX TO EIGHT OF THEM.
+# That is D52, and `day_seconds` 2400 gives the first half of it. The second
+# half is this: at a uniform angular speed, 2400 seconds of day puts the sun's
+# passage from +8 to -12 degrees - the whole pink-then-violet evening - at
+# about 133 seconds. Two minutes is not an evening, and no amount of widening
+# the pink window fixes it, because a pink sky under a sun at 40 degrees is not
+# an evening either. It is a filter.
+#
+# So the sun SLOWS DOWN where the light is worth watching. Its angular speed
+# drops by a factor of three across the evening window and by two across the
+# dawn window, and runs uniform everywhere else, normalised so the circle still
+# closes in `day_seconds`. The evening then takes about six and a half minutes
+# of a forty-minute day, which is what the bible asks for, and the sun is
+# genuinely low while it happens.
+#
+# ONE FUNCTION OWNS IT so the compass, the tour, the gallery and the day-cycle
+# self-test cannot disagree about where the sun is. Everything that wants an
+# angle asks `arc_angle(t)`; everything that wants a time for a given elevation
+# asks `time_for_elevation()`, which inverts it.
+
+## The evening window's edges, in degrees of elevation: +8 descending to -12.
+const WARP_HIGH_DEG := 8.0
+const WARP_LOW_DEG := -12.0
+## How much the sun is slowed inside each window.
+const WARP_EVENING := 3.0
+const WARP_DAWN := 2.0
+
+## The arc angles the window edges sit at. `sun_position` divides sin(angle) by
+## the arc's own length, so an elevation of `e` degrees is at
+## asin(sin(e) * |(1, 0, -ARC_TILT)|).
+static func _angle_of_elevation(deg: float) -> float:
+	var tilt := sqrt(1.0 + ARC_TILT * ARC_TILT)
+	return asin(clampf(sin(deg_to_rad(deg)) * tilt, -1.0, 1.0))
+
+
+## The arc in segments: each entry is [angle at the end of the segment, how many
+## seconds of day one radian of it costs]. Built once, walked in both
+## directions.
+static var _segments: Array = []
+static var _segments_total := 0.0
+
+
+static func _build_arc() -> void:
+	if not _segments.is_empty():
+		return
+	var hi := _angle_of_elevation(WARP_HIGH_DEG)   # + , just above the horizon
+	var lo := _angle_of_elevation(WARP_LOW_DEG)    # - , just below it
+	# Walking from angle 0 (sunrise, on the eastern horizon) all the way round.
+	# The dawn window straddles 0, so it is split: its second half runs from 0
+	# up to +8 degrees, and its first half is the last segment before the wrap.
+	_segments = [
+		[hi, WARP_DAWN],               # 0 .. +8 deg, still dawn
+		[PI - hi, 1.0],                # the day
+		[PI - lo, WARP_EVENING],       # +8 .. -12 deg on the way down: the evening
+		[TAU + lo, 1.0],               # the night
+		[TAU, WARP_DAWN],              # -12 .. 0 deg on the way up: dawn again
+	]
+	_segments_total = 0.0
+	var prev := 0.0
+	for seg in _segments:
+		_segments_total += (seg[0] - prev) * seg[1]
+		prev = seg[0]
+
+
+## The sun's arc angle at time `t`. Monotonic, and it closes the circle at
+## t + 1.
+static func arc_angle(t: float) -> float:
+	_build_arc()
+	var u := fposmod(t - 0.25, 1.0) * _segments_total
+	var prev := 0.0
+	for seg in _segments:
+		var span: float = (seg[0] - prev) * seg[1]
+		if u <= span:
+			return prev + u / seg[1]
+		u -= span
+		prev = seg[0]
+	return prev
+
+
+## The inverse: the time of day at which the sun stands at arc angle `angle`.
+static func arc_time(angle: float) -> float:
+	_build_arc()
+	var a := fposmod(angle, TAU)
+	var acc := 0.0
+	var prev := 0.0
+	for seg in _segments:
+		if a <= seg[0]:
+			acc += (a - prev) * seg[1]
+			break
+		acc += (seg[0] - prev) * seg[1]
+		prev = seg[0]
+	return fposmod(0.25 + acc / _segments_total, 1.0)
+
+
+## The time of day at which the sun's ELEVATION is `e`, on the evening side of
+## the arc or the morning side.
+##
+## By bisection on `sun_position` itself rather than by inverting the geometry,
+## so it can never drift from the thing it is inverting: if the arc changes,
+## this follows it for free. Twelve iterations puts it inside a thousandth of a
+## day, which is under three seconds of a forty-minute one.
+static func time_for_elevation(e: float, evening := true) -> float:
+	# Noon and midnight bracket exactly one monotonic descent (evening) and one
+	# monotonic ascent (morning).
+	var lo := arc_time(PI * 0.5) if evening else arc_time(PI * 1.5)
+	var hi := lo + 0.5
+	for i in 40:
+		var mid := (lo + hi) * 0.5
+		var m := sun_position(mid).y
+		# Descending on the evening side, ascending on the morning side.
+		if (m > e) == evening:
+			lo = mid
+		else:
+			hi = mid
+	return fposmod((lo + hi) * 0.5, 1.0)
 
 
 ## How much of "full daylight" this elevation is. Reaches 1 while the sun is
@@ -277,11 +589,11 @@ static func sun_energy(elevation: float, morning := false) -> float:
 func apply() -> void:
 	var sun_pos := sun_position(time_of_day)
 	var elevation := sun_pos.y
-	# MORNING OR AFTERNOON. The horizon keyframe is dawn before noon and dusk
-	# after it; without this the sky is the same orange at both ends of the day
-	# and sunrise is a sunset played backwards.
+	# MORNING OR AFTERNOON. The horizon set is the dawn set before noon and the
+	# evening set after it; without this the sky is the same pink at both ends
+	# of the day and sunrise is a sunset played backwards.
 	var morning := time_of_day < 0.5
-	var kf := keyframe_at(elevation, morning)
+	var kf := keyframe_at(elevation, morning, weather())
 
 	# NIGHT, PUBLISHED TO EVERY SHADER AT ONCE. Written here rather than by
 	# anything that draws, because the sun's elevation is what defines it and
@@ -289,9 +601,8 @@ func apply() -> void:
 	RenderingServer.global_shader_parameter_set(
 		&"kubik_night", night_amount(elevation))
 
-	# WARM LIGHT EXISTS OR IT DOES NOT. The one fact a shader still needs and
-	# cannot derive - Stage 1 puts a `warm` row on every hour and takes it to 0
-	# under eerie weather (D7). Until then every hour has warm light.
+	# WHERE WARM LIGHT EXISTS. 0 by day, 1 from the evening on, and 0 at every
+	# hour under eerie weather (D7).
 	Look.publish(kf)
 
 	if _sun != null:
@@ -303,19 +614,94 @@ func apply() -> void:
 		_sun.light_color = (kf["sun"] as Color).linear_to_srgb()
 		_sun.light_energy = kf["energy"]
 		# Never hidden. The moon is the sun's antipode and the night's only
-		# directional light; hiding it would take the sky's ambient as the
-		# whole of the night, which is a flat grey world.
+		# directional light.
 		_sun.visible = true
 
 	if _env != null:
-		# THE FOG TAKES THE HOUR'S COLOUR. Stage 1 puts a density on every hour
-		# too; Stage 0 draws at the day density Look set.
+		# THE HOUR OWNS THE FOG - its colour and how much of it there is. The
+		# height term is Stage 2's and stays at nothing until it has a valley
+		# floor to sit on.
 		_env.fog_light_color = (kf["fog"] as Color).linear_to_srgb()
+		_env.fog_density = kf["fog_density"]
+		# HOW MUCH OF THE SKY THE FOG OWNS. The bible's rule is "fog always
+		# fades to the current sky colour"; this is the other half of the same
+		# fact - a thick evening air tints the sky it is suspended in. It rises
+		# with the hour's density and goes to 1.0 under eerie, where the sky
+		# IS the fog (D7: the difference between night and eerie is only the
+		# fog and the lights).
+		_env.fog_sky_affect = kf["fog_sky_affect"]
+		_env.ambient_light_energy = kf["ambient_energy"]
+		# THE GRADE IS STAGE 4'S, with one exception that cannot wait for it:
+		# eerie is defined by saturation coming down (D7), so the adjustment is
+		# switched on only where this hour asks for less than full colour. At
+		# every clear hour it stays off and the frame is exactly Stage 0's.
+		var sat: float = kf["saturation"]
+		_env.adjustment_enabled = sat < 0.999
+		if _env.adjustment_enabled:
+			_env.adjustment_saturation = sat
 
 	if _sky != null:
-		# THE SUN DISC. The physical sky draws its own; the rest of the sky's
-		# grading is Stage 1's, from the re-authored keyframe table.
+		# THE PHYSICAL SKY, GRADED. It computes its own scattering from the
+		# sun's position; these rows nudge it toward the bible's hours rather
+		# than painting them, which is the whole difference between this and
+		# the poster sky it replaced.
+		_sky.rayleigh_color = (kf["sky_rayleigh"] as Color).linear_to_srgb()
+		_sky.mie_color = (kf["sky_mie"] as Color).linear_to_srgb()
+		_sky.ground_color = (kf["sky_ground"] as Color).linear_to_srgb()
+		_sky.turbidity = kf["sky_turbidity"]
+		_sky.energy_multiplier = kf["sky_energy"]
+		# The disc stays small: Stage 4 has to keep it under the glow threshold,
+		# and D40 allows clipped white only there.
 		_sky.sun_disk_scale = 1.0
+
+
+## The weather this world is in: "clear" or "eerie" (Q13). Local and unhashed -
+## it is a modifier on the hour, not a fact about the world.
+func weather() -> String:
+	return config.weather if config != null else "clear"
+
+
+# --- The night sky ------------------------------------------------------------
+
+## THE STARS, BUILT IN CODE AND NEVER SAVED (Q6).
+##
+## `PhysicalSkyMaterial` goes to its ground colour once the sun is below the
+## horizon unless it is given a night panorama, and hard rule "no new textures"
+## has exactly one exception in this plan: a code-generated night sky is not a
+## texture asset. Nothing is written to `assets/`; this is an Image built at
+## setup and handed straight to the material.
+##
+## The gradient is the night keyframe's own two hexes, so the stars sit on the
+## same slate the table asks for and the sky and the fog cannot disagree. The
+## stars are a two-stage hash - one to decide whether a texel is a star at all,
+## a second for how bright - which is how the poster sky drew them and the one
+## thing in it worth keeping.
+static func make_night_panorama() -> ImageTexture:
+	const W := 1024
+	const H := 512
+	_build_keyframes()
+	var high := Color.html(KEYFRAMES["night"]["sky_high"] as String)
+	var horizon_c := Color.html(KEYFRAMES["night"]["sky_horizon"] as String)
+	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
+	var rng := RandomNumberGenerator.new()
+	for y in H:
+		# 0 at the top of the sphere, 1 at the bottom. The gradient runs from
+		# the high colour overhead to the horizon colour at the equator and
+		# holds it below, because nothing looks at the bottom of the sphere.
+		var v := float(y) / float(H - 1)
+		var band := clampf(v * 2.0, 0.0, 1.0)
+		var base := high.lerp(horizon_c, band)
+		for x in W:
+			var c := base
+			# Deterministic, and dense enough to read at 1024 x 512 without
+			# becoming a field of salt. Stars thin out toward the horizon, as
+			# haze thins them in life.
+			rng.seed = hash(Vector2i(x, y))
+			if rng.randf() > 0.9985 - 0.0010 * (1.0 - band):
+				var b := rng.randf()
+				c = base.lerp(Color(0.95, 0.96, 1.0), 0.35 + 0.65 * b * b)
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
 
 
 ## Called after the tuning panel or a config reload changes the numbers.

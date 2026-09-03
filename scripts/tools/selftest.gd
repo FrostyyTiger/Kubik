@@ -746,8 +746,51 @@ func _test_day_cycle():
 		print("  the sun crossed the horizon %d times in a day, expected 2" % crossings)
 		bad += 1
 
-	print("day cycle: 1441 steps, elevation %.3f to %.3f, %d horizon crossings, %d bad" % [
-		lowest, highest, crossings, bad])
+	# THE EVENING IS SIX TO EIGHT MINUTES OF A FORTY-MINUTE DAY (D52).
+	#
+	# Half of that is `day_seconds` and half of it is the warp in
+	# `SkyCycle.arc_angle()`, and only this catches the second half: at a
+	# uniform angular speed a 2,400-second day gives the sun's passage from +8
+	# to -12 degrees about 133 seconds, and nothing else in the suite would
+	# notice the warp being removed. The window is measured through
+	# `time_for_elevation()`, which inverts the arc by bisecting
+	# `sun_position()` itself, so this tests the arc rather than a second
+	# description of it.
+	var tilt_hi := sin(deg_to_rad(SkyCycle.WARP_HIGH_DEG))
+	var tilt_lo := sin(deg_to_rad(SkyCycle.WARP_LOW_DEG))
+	var t_hi := SkyCycle.time_for_elevation(tilt_hi, true)
+	var t_lo := SkyCycle.time_for_elevation(tilt_lo, true)
+	var evening_s := fposmod(t_lo - t_hi, 1.0) * 2400.0
+	if evening_s < 360.0 or evening_s > 480.0:
+		print("  the evening (+%.0f to %.0f deg) takes %.0f s of a 2400 s day, want 360-480"
+			% [SkyCycle.WARP_HIGH_DEG, SkyCycle.WARP_LOW_DEG, evening_s])
+		bad += 1
+
+	# The arc must not run backwards anywhere, or the compass, the tour and the
+	# clock disagree about which way the day is going.
+	var previous_angle := SkyCycle.arc_angle(0.25)
+	var regressions := 0
+	for step in range(1, 2001):
+		var angle := SkyCycle.arc_angle(0.25 + float(step) / 2001.0)
+		if angle < previous_angle - 1e-9:
+			regressions += 1
+		previous_angle = angle
+	if regressions > 0:
+		print("  the sun's arc runs backwards at %d of 2000 steps" % regressions)
+		bad += 1
+
+	# Every hour anchor must resolve to a time that puts the sun back at it.
+	for hour_name in SkyCycle.HOURS:
+		var want: float = SkyCycle.HOURS[hour_name]
+		var at := SkyCycle.time_for_elevation(want, true)
+		var got := SkyCycle.sun_position(at).y
+		if absf(got - want) > 0.002:
+			print("  hour '%s' wants elevation %+.3f, resolved to t %.4f which is %+.3f"
+				% [hour_name, want, at, got])
+			bad += 1
+
+	print("day cycle: 1441 steps, elevation %.3f to %.3f, %d horizon crossings, evening %.0f s, %d bad" % [
+		lowest, highest, crossings, evening_s, bad])
 	return 1 if bad > 0 else 0
 
 

@@ -314,6 +314,159 @@ The tour was re-shot after the fix; every number above is from the re-shot set.
 
 ---
 
+## Stage 1 - The hours: four plus eerie, a physical sky, a slow evening
+
+**Shipped.** The keyframe table is the bible's, the sky is the engine's own,
+the day is forty minutes with an evening you can watch happen, and eerie is a
+flag.
+
+- `SkyCycle.KEYFRAMES` re-authored from dawn / noon / dusk / night to
+  **day / evening / dusk / night**. D6 is why: evening and dusk are two hours of
+  one evening, "pink first, violet after", and the old table carried the whole
+  evening as a single orange row called dusk - so the pink was never a colour
+  the world passed through. Each row now carries the sun, its energy, the
+  ambient energy, the bible's shade and sky hexes (kept for the record, not
+  published), the physical sky's rayleigh, mie, turbidity, energy, ground and
+  sky-affect, the fog's colour and density, the height-fog rows Stage 2 reads,
+  the volumetric density Stage 2 reads, `warm`, and `saturation`.
+- **`EERIE` is one dictionary of overrides applied after the blend** (D7, Q13),
+  never a fifth hour: "the difference between night and eerie is only the fog
+  and the lights". Its two `_scale` entries multiply rather than replace, so an
+  eerie noon and an eerie night are both four times their own fog.
+- `HOURS` holds the four elevation anchors, and `time_for_elevation()` inverts
+  the arc by bisecting `sun_position()` itself. The tour, the light sheet and
+  the keyframe table now all name an hour and get the same sun, so none of them
+  can drift when the day length or the warp changes.
+- **`keyframe_at()`** blends night to day by daylight, then pulls toward the
+  evening set and the dusk set through two shouldered windows peaking at +0.09
+  and -0.15. On the morning side the evening set is replaced by a **dawn set**,
+  which is the evening set desaturated to 0.70 - the bible gives dawn no hour of
+  its own, so this is a silence filled and it is recorded as one.
+- **The night sky is generated in code** (Q6): a 1024 x 512 `Image`, the night
+  row's own two hexes as the gradient, stars from a two-stage hash, handed to
+  `PhysicalSkyMaterial.night_sky` once at setup and never written to `assets/`.
+- **`day_seconds` 480 to 2400** (D52), and the warp that makes it mean
+  something: `SkyCycle.arc_angle()` slows the sun threefold across the evening
+  window (+8 to -12 degrees) and twofold across the dawn window, uniform
+  elsewhere, normalised so the circle still closes. Measured: the evening takes
+  **360 s of a 2400 s day**. At a uniform speed the same passage takes 133 s.
+- `WorldgenConfig.weather` ("clear" or "eerie"), LOCAL and unhashed, with
+  `--weather eerie` on the command line; the tour resolves hours by name and a
+  shot may carry its own weather.
+- The tour gains **`20-hour-day`, `21-hour-evening`, `22-hour-dusk`,
+  `23-hour-night`, `24-hour-eerie`**, all five from `6-postcard`'s eye so the
+  only thing that differs between them is the light. `11-forest-dusk`,
+  `12-meadow-night` and `14-postcard-dusk` take hour names instead of raw times.
+- `_test_day_cycle` gains three assertions: the evening window takes 360 to
+  480 s, the arc never runs backwards over 2,000 steps, and every hour anchor
+  resolves to a time that puts the sun back at it.
+
+### The config hash moved, and it was supposed to
+
+| | Stage 0 | Stage 1 |
+| --- | --- | --- |
+| heightmap | `4782edac` | **`4782edac`** |
+| spawn | `(-44, -124)` | **`(-44, -124)`** |
+| lakes | 53 | **53** |
+| trees | 15,218 | **15,218** |
+| config hash | `c18af99d` | **`1d7c18c7`** |
+
+**What a seed produces is byte-identical; the config fingerprint is not.** The
+only hashed field this stage touches is `day_seconds`, which D52 takes from 480
+to 2400. It was left in `PROPERTIES` deliberately rather than moved to the
+local list to keep the hash still: it does not change what a seed produces, but
+two machines running different clocks would disagree about the hour for a whole
+session, and the hour is what every light in the world is a function of. That
+is exactly the class of disagreement the join handshake exists to refuse.
+Stage 0's rule - "if the hash moves, a knob was not local" - is about the knobs
+that stage **deleted**, and all of those were local. This is a hashed knob
+changing value, which is a different event and a correct one.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| transfer sheet, `--strict` | **PASS**, worst channel delta 2 of 6 |
+| light sheet | four tables written, `build/character/light-1/light.json`; hours resolved through the anchors |
+| full self-test | **green**, including the three new day-cycle assertions |
+| character self-test | **green**, 36 tests |
+| worldgen probe | the four world numbers unchanged; config hash moved as above |
+| magenta, all 23 shots | **0 pixels**, and 0 across the 23 eerie shots too |
+| **the evening lasts 360-480 s** | **PASS at 360 s** (self-test, measured through `time_for_elevation`) |
+
+### The hue windows, sky sampled at 15% of frame height on the five hour shots
+
+| hour | window | measured `(640,108)` | verdict |
+| --- | --- | --- | --- |
+| day | H 0-40 or 180-230 | **H 183.5** S 1.1 V 47.1 | **PASS** |
+| evening | H 300-350 or 0-30 | **H 345.9** S 10.1 V 49.6 | **PASS** |
+| dusk | H 235-285 | **H 221.2** S 30.1 V 43.4 | **FAIL by 14 degrees** - see below |
+| night | H 195-235 | **H 205.0** S 31.2 V 35.4 | **PASS** |
+| eerie | S <= 20 | H 202.3 **S 8.7** V 55.9 | **PASS** |
+
+| ordering gate | measured | verdict |
+| --- | --- | --- |
+| evening pinker than day: S higher and H nearer 320 | evening S 10.1 at H 345.9 against day S 1.1 at H 183.5 | **PASS** |
+| dusk darker than evening: V lower | dusk V 43.4 against evening V 49.6 | **PASS** |
+
+| eerie gate | measured | verdict |
+| --- | --- | --- |
+| no orange anywhere in `24-hour-eerie` (no pixel with H 20-50 and S > 40) | **0 pixels**, against ~3,700 in `20-hour-day` from the same vantage | **PASS** |
+| the mushrooms in `12-meadow-night` do not glow under eerie | **0 warm pixels** against **~2,368** in clear weather at the same hour; the amber mushroom band at `(70,395)` goes from H63.9 S70.8 to H173.6 S9.4 | **PASS** |
+
+### The one gate that fails: the dusk sky is blue-violet, not violet
+
+`22-hour-dusk`'s sky measures **H 221.2 S 30.1**, against the bible's violet
+`#63559e` (H 252) to `#a281c3` (H 270) and the plan's window of 235 to 285.
+
+**Everything permitted was tried, and it is recorded as a finding rather than
+chased further.** A fast sky probe was written for this
+(`build/` is not involved; it renders the environment alone at each hour in
+about thirty seconds, so a grading change could be judged without a
+twelve-minute tour) and it walked the levers:
+
+| what was tried | dusk sky hue |
+| --- | --- |
+| the plan's starting values (`fog_sky_affect` 0.3, turbidity 18, sky energy 0.80) | H 208.6 |
+| `fog_sky_affect` per hour, dusk at 0.60 - the top of its tunable range | H 218.3 |
+| plus turbidity 18 to 26 (+44%, inside the +-50% the table allows) and sky energy 0.80 to 0.45 | **H 221.2** |
+
+**Why it stops there.** `PhysicalSkyMaterial` is a daylight scattering model,
+and its zenith and anti-solar sky sit near H 200 to 210 whatever
+`rayleigh_color` is set to - the tint biases the scattering, it does not paint
+the sky. The violet in this hour comes from the **fog**, whose colour is the
+bible's own `#736eb7` (H 244) and which is not a tunable, so the sky's hue is
+pinned to a blend of about H 205 and H 244 at a mixing weight capped at 0.6.
+That arithmetic lands at H 221, which is what was measured.
+
+Reaching H 244 needs either a `fog_sky_affect` above its range or a painted
+term on top of the physical sky, and pillar 2 forbids the second in as many
+words: "Real sky with cubic clouds (D18). **No painted skies.**"
+
+**The eye check for this hour passes anyway**, which is the interesting part:
+`22-hour-dusk` reads as violet - the ranges are mauve-violet, the fog is
+violet, the sun is gone and the sky is still lighter than the ground. What is
+blue is the sky alone. Recorded for the bible below.
+
+### Eye checks
+
+| shot | the sentence | verdict |
+| --- | --- | --- |
+| `21-hour-evening` | the whole world is tinted, shadows are magenta not grey | **pass**. Every range, the fog and the ground are pink-mauve; this is the frame where D6's "the world is tinted as a whole" is most obviously true |
+| `22-hour-dusk` | violet, the sun gone, the sky still lighter than the ground | **pass** - see the note above about the sky's own hue |
+| `23-hour-night` | slate, not black, stars visible, the moonlit hillside is still a hillside | **pass**. The generated star field reads, the ranges keep their shape, and nothing is crushed |
+| `24-hour-eerie` | the life taken out | **pass**, and against `20-hour-day` from the same eye it is the clearest pair in the set |
+
+### Tunables moved off their start
+
+| knob | start | now | judged on |
+| --- | --- | --- | --- |
+| `fog_sky_affect` | 0.3, one value for every hour | **per hour: day 0.30, evening 0.60, dusk 0.60, night 0.50, eerie 1.00** | the five hour shots. At one flat 0.3 the evening sky measured H 56.6 - an olive grey - because the physical sky's own scattering dominated the hour's grading. Per hour it measures H 345.9. Eerie at 1.00 is the plan's own number (section 1.2) |
+| dusk `sky_turbidity` | 18.0 | **26.0** (+44%, inside +-50%) | `22-hour-dusk`, and the sky probe: H 218.3 to H 221.2 |
+| dusk `sky_energy` | 0.80 | **0.45** | the same, to let the violet fog carry more of the sky |
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.
@@ -348,7 +501,21 @@ Rule 7 of the failure protocol: the conservative reading, written down.
    the transfer sheet, which measures the conversion they travel through. The
    value-tier ladder under it is arithmetic on authored hexes and never needed a
    frame.
-5. **`far_grain` survives as a knob.** The plan deletes `far_field_code()`, the
+5. **The dusk sun is "none" in the bible and 0.18 here.** The hours table says
+   of the dusk sun: "none; fire takes over #f5c05e". Taken as a very low energy
+   rather than as zero, because `_test_day_cycle` asserts the light never goes
+   out - and it is right to: a directional light at zero energy is a different
+   frame from one at 0.18, not a darker one, and there is no fire in the game
+   yet to take over (that is phase 2). At ambient 0.50 against sun 0.18 the sky
+   does the lighting, which is what "the sun is gone" reads as.
+6. **`day_seconds` stayed hashed.** D52 changes it and the config fingerprint
+   moves with it. Moving it to the local list would have held the hash still,
+   and was rejected: two machines running different clocks would disagree about
+   the hour for a whole session. See the Stage 1 note.
+7. **Dawn is the evening set desaturated to 0.70.** The bible's hours table has
+   four rows and none of them is sunrise. Filled rather than left, because the
+   morning side of the arc has to blend toward something; recorded as a silence.
+8. **`far_grain` survives as a knob.** The plan deletes `far_field_code()`, the
    splice anchors, the Bayer function and `far_dither_m`, and says `far_grain`
    "stays as an optional uniform on a copy of the opaque material, default 0".
    Taken: the uniform and its lattice code live in `OPAQUE_SHADER` itself,
@@ -365,10 +532,50 @@ Rule 7 of the failure protocol: the conservative reading, written down.
    before night two: 15,218 trees, config `c18af99d`. See question 1.
 2. **The plan's stream-probe command should be corrected** to
    `--path . -- --stream-probe`. See question 2.
+3. **The dusk sky is the one Stage 1 gate that fails**, at H 221 against a
+   window of 235-285, and it cannot be fixed with anything the plan permits.
+   The ruling is yours: widen the window, move the bible's dusk sky hex toward
+   what a physical sky can do, or accept a painted term over the physical sky -
+   which pillar 2 currently forbids. See the Stage 1 note for the three
+   gradings tried and what each measured.
 
 ---
 
 ## For the bible
 
-Nothing yet from Stage 0; the findings the round 3 brief wants come from the
-hours (Stage 1) and the palette (Stage 3).
+Numbered in the words `ROUND-3-BRIEF.md` asks for, so the report can lift them.
+
+**B1. A physical sky cannot be made violet at dusk, and the bible's dusk sky
+hexes assume a painted one.** `10-color-and-light.md` gives dusk a sky of
+`#63559e` (H 252) to `#a281c3` (H 270). `PhysicalSkyMaterial` graded as far as
+the plan allows - rayleigh and mie tinted to those two hexes, turbidity +44%,
+sky energy down to 0.45, `fog_sky_affect` at the top of its range - measures
+**H 221**. Its zenith and anti-solar sky sit near H 205 whatever the tint is
+set to, because the tint biases scattering rather than painting the sky, and
+the violet reaching the frame comes from the fog. The hour still READS as
+violet, because the ranges and the fog carry it; it is the sky alone that stays
+blue. Either the dusk sky rows are starting points that land at H 221 and the
+bible should say so, or the sky needs a painted term, which pillar 2 forbids in
+as many words ("No painted skies"). **The evening's pink survives the same
+treatment and lands at H 346**, so this is specific to violet at that
+elevation and not a general failure of the approach.
+
+**B2. The bible gives dawn no hour.** Its hours table has four rows - day,
+evening, dusk, night - and the world passes through sunrise twice a day. This
+run fills the silence with "the evening set desaturated to 0.70" and records
+it; the bible should either name a dawn or say in writing that dawn is a paler
+evening.
+
+**B3. "The base of things `#101f26`" is not reproduced.** The eerie entry asks
+for it. It is a per-material floor rather than a light - it repaints a
+material, which pillar 2 forbids - and there is no mechanism in phase 1 that
+could apply it without becoming exactly the kind of paint this phase removed.
+Recorded as unbuilt.
+
+**B4. A day's night is half of it, not fifteen minutes.** The plan's prose says
+"night is about 15 minutes" of a forty-minute day. A circular sun arc is
+symmetric by construction, so with `day_seconds` 2400 and the warp the sun is
+below the horizon for **1,236 s, about 20.6 minutes**. Getting to 15 would need
+an asymmetric arc, which nothing decides. The bible's own rule - "the night
+long enough to want the fire" - is satisfied either way; the 15-minute figure
+should be dropped or the arc should be decided.

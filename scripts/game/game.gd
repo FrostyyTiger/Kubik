@@ -129,6 +129,7 @@ func _ready() -> void:
 	# After the preset, so --set can override a value the preset owns; before
 	# everything that reads one.
 	config.apply_cli_overrides(OS.get_cmdline_user_args())
+	_apply_weather_arg()
 	_apply_msaa()
 	# The camera's far plane is on this line because it used to disagree with
 	# the fog and nobody could see that it did: player.tscn carried a literal
@@ -1345,6 +1346,24 @@ func _adopt_host_config(config_data: Dictionary) -> void:
 ## runs - the plan asks for chunk and vertex counts per preset, and a
 ## measurement you have to hand-edit the config for is a measurement nobody
 ## repeats. Also the fastest way to answer "is it my machine or the settings".
+## `--weather eerie` (Q13). A modifier on the hour, not a fifth hour.
+##
+## Its own flag rather than `--set weather=eerie` because the tour and the
+## brief both ask for it by name and a string knob does not fit the F4 panel's
+## numeric sliders. `--set` reaches it too; this is the readable spelling.
+func _apply_weather_arg() -> void:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--weather")
+	if i < 0 or i + 1 >= argv.size():
+		return
+	var want := argv[i + 1]
+	if want != "clear" and want != "eerie":
+		push_warning("[Game] --weather %s: expected 'clear' or 'eerie'" % want)
+		return
+	config.weather = want
+	print("[Game] weather %s" % want)
+
+
 func _apply_view_arg() -> void:
 	var argv := OS.get_cmdline_user_args()
 	var i := argv.find("--view")

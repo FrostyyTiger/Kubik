@@ -1545,7 +1545,26 @@ const FOG_START_RATIO := 0.4
 @export var far_riser_lift := 1.6
 
 ## Real seconds per in-game day.
-@export var day_seconds := 480.0
+## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
+##
+## It was eight, which put the pink-then-violet evening under a minute and made
+## the hour the tone leans on hardest ("a lit window in a valley at dusk should
+## land like the song's swell") something you could miss by looking away. D52
+## answers 40 minutes, the evening six to eight of them.
+##
+## THE SECOND HALF OF THAT IS NOT HERE but in `SkyCycle.arc_angle()`: at a
+## uniform angular speed even a 2,400-second day gives the evening only about
+## 133 seconds, so the sun is slowed threefold across it. This knob sets how
+## long the circle takes; the warp sets where the time goes.
+##
+## HASHED, and it stays hashed. It does not change what a seed produces - the
+## probe's heightmap, spawn, lakes and trees are identical either side of this
+## - but two machines running different clocks would disagree about the hour
+## for the whole of a session, and the hour is what every light in the world is
+## a function of. That is the class of disagreement the handshake exists to
+## refuse. The config hash therefore MOVES with this change, which is correct
+## and is recorded in docs/status/light-v1.md.
+@export var day_seconds := 2400.0
 
 ## Where the cycle starts. 0.25 is sunrise, 0.5 midday.
 ##
@@ -1556,6 +1575,20 @@ const FOG_START_RATIO := 0.4
 ## lands within a few percent of its authored colour, which is the point of
 ## having authored it.
 @export var day_start := 0.38
+
+## THE WEATHER, and there is no weather system (Q13).
+##
+## "clear" or "eerie". Eerie is D7's "night or day with the life taken out":
+## saturation down, fog thick and inverted so the tops of tall things vanish,
+## and every warm light off through the `kubik_warm` global. It is a MODIFIER
+## ON THE HOUR and never a fifth hour - `SkyCycle.EERIE` is one dictionary of
+## overrides applied after the blend.
+##
+## No transitions, no rain, no snowfall: that is the weather epic. This is one
+## flag so the round 3 brief's eerie shot can be taken.
+##
+## LOCAL and unhashed: it changes the light on a world, never the world.
+@export var weather := "clear"
 
 
 # --- Presentation -----------------------------------------------------------
@@ -1834,6 +1867,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
 	"grain_sparse", "grain_step", "canopy_shade",
+	# LIGHT V1 STAGE 1. The eerie flag (Q13): a modifier on the hour.
+	"weather",
 ]
 
 
