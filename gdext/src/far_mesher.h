@@ -57,11 +57,6 @@ public:
 	// expression at a time.
 	int z_backdrop(int64_t p_bx, int64_t p_bz, double p_altitude) const;
 	int z_surface(int64_t p_bx, int64_t p_bz, double p_altitude) const;
-	int c_treeline_band(double p_band_m) const;
-	double c_band_m_at(int p_step_blocks, double p_terrace) const;
-	Color c_band_color(const Color &p_color, double p_y_m, int p_band_treeline,
-			double p_band_m) const;
-	Color c_aspect_shade(const Color &p_color, const Vector3 &p_normal) const;
 	Color c_vertex(const Color &p_color, const Vector3 &p_normal,
 			const Vector3 &p_point) const;
 

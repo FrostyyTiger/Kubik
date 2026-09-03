@@ -429,12 +429,20 @@ static func _mushroom() -> Array:
 ## and tilted up, and only surface voxels in the upper 60% take the light tone.
 ## A per-voxel lighting rule would give a rock a soft shoulder, which is the one
 ## thing the direction forbids: the poster's rock has a line down it.
+## Which way a boulder's lighter face points, in XZ. Was Block.SUN_ASPECT.
+const BOULDER_LIT_DIR := Vector2(0.0, -1.0)
+
+
 static func _blob(radius: int, height: int, color: int, salt: int,
 		stone: bool = false, lit_color: int = -1) -> Array:
 	var out := []
 	var rr := float(radius)
 	var hh := float(maxi(height, 1))
-	var plane := Vector3(Block.SUN_ASPECT.x, 0.6, Block.SUN_ASPECT.y).normalized()
+	# THE LIT SIDE OF A BOULDER, and it owns its direction now: Block.SUN_ASPECT
+	# left with the aspect tint in light v1 Stage 3. This is a shape fact - a
+	# boulder is authored with a lighter face - and not a lighting one, so it
+	# survives the strip with its own constant.
+	var plane := Vector3(BOULDER_LIT_DIR.x, 0.6, BOULDER_LIT_DIR.y).normalized()
 	# Occupancy, so the second pass can ask whether a voxel is on the surface.
 	var filled := {}
 	for y in range(0, height + 1):

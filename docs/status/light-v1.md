@@ -611,6 +611,136 @@ Marcel most needs before night two turns on glow and SSR, and it is the first
 
 ---
 
+## Stage 3 - The palette, and the paint stripped from both legs
+
+**Shipped.** The bible's three named materials are in the table, five paint
+operations are gone from the C++ and its GDScript twin in one commit, and the
+far parity tests compare the stripped legs and find them identical.
+
+- **`Block.COLORS`**: `STONE` `#ADA9A1` to **`#5E524B`** and `SNOW` `#F2F0E8`
+  to **`#E6DAD1`** - the bases of the bible's Rock and Snow, each "one body
+  colour in three shades" whose other two shades now come from light and from
+  the per-cube step (Q5). Every other row is a **bible silence** and is kept
+  exactly as look v2 authored it, marked as such in its own comment.
+- **`TreePalette.FAMILIES`**: the four canopy indices map onto the bible's
+  conifer ramp - `CANOPY_A` and `CANOPY_B` to the shade `#575D54`, `CANOPY_C`
+  to the base `#7E8986`, `CANOPY_D` to the light `#9B9F81`. The pack's
+  inner/outer needle distinction survives as **material** and not as baked
+  light. `SNOW` follows `Block.SNOW`.
+- **The C++ lost the paint** (Q15): `aspect_curve`, `aspect_shade`,
+  `block_jitter`, `treeline_band`, `band_m_at` and `band_color` are gone from
+  `far_build.cpp`; `far_band_m`, `far_band_step`, the three `far_riser_*`,
+  `slope_tint`, `aspect_tint`, the three `color_jitter_*`, `SUN_ASPECT_*` and
+  the two tint salts left `far_world.h` and its marshalling; four of the five
+  `c_*` micro-gate bindings left `far_mesher`. `c_vertex` survives and is now
+  one line: `Look.to_wire` on the zone colour.
+- **The GDScript twin lost it in step**, in the same commit, so the parity
+  tests never saw the two legs disagree.
+- `Block.jitter`, `aspect_shade`, `aspect_curve`, `SUN_ASPECT` and the salts are
+  deleted outright; `flora_models.gd`'s boulder keeps its lit-side plane and
+  owns the constant now.
+- `chunk_mesher.gd` emits `Look.to_wire(Block.color_of(id))` and nothing else.
+  `_under_canopy` and the canopy scan are gone; **`ColumnJob` stopped calling
+  `TreePlacement.cover_column()` on the streaming path**, which was a full
+  candidate walk per column feeding a value nothing reads any more.
+  `cover_column()` itself stays - the worldgen probe measures grove density with
+  it and the self-test proves it deterministic.
+- Eleven config knobs deleted with their F4 rows, their `to_dict` entries and
+  their places in the two far-mesher marshalling lists. **All were LOCAL and
+  the config hash did not move**: `1d7c18c7` before and after.
+
+### The library was rebuilt inside the run
+
+`~/bin/scons platform=linux target=editor custom_api_file=~/godot-cpp/extension_api.json -j6`,
+clean, no warnings, 17:49. The self-test's `far dispatch` line reads **"c++
+present, three legs, meshes identical"**, so the rebuilt library is the one
+being tested.
+
+### Q19 answered, on ganymede
+
+The plan asks whether the 15 last-bit colour parity misses the Windows
+self-test reports vanish once the paint is at identity. Stripped rather than
+parked, on ganymede:
+
+```
+far zone parity: 10000 samples x 3 functions, all identical
+far parity: 5 checks, colours compared
+far slice parity: 4 checks, c++ compared
+far layer parity: the geomorph CHANGES the mesh, the detail layer CHANGES the mesh, c++ compared
+```
+
+**Zero misses.** The parity harness went from seven compared functions to three
+because four of them no longer exist on either leg; what is left is the whole
+of what a far vertex travels through. **The Windows count is still Marcel's to
+take** after the Windows rebuild - it is the first "For Marcel" item - but the
+ganymede result says the hazard was the paint.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| full self-test | **green**, with the rebuilt library |
+| character self-test | **green**, 36 tests |
+| worldgen probe | heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config **`1d7c18c7`** - unchanged |
+| transfer sheet, `--strict` | **PASS**, worst channel delta **1** of 6 |
+| magenta | **0 pixels** across all 23 shots |
+
+| # | kind | shot | measured | verdict |
+| --- | --- | --- | --- | --- |
+| 1 | **GATE** | `2-summit` lit snow `(900,300)` | **H 34.7 S 5.5** V 59.7 | **PASS** - H within 15 of 26 (window 11-41), S <= 15 |
+| 2 | **GATE** | `2-summit` lit rock flank `(700,500)` | **H 39.0 S 11.1** V 37.9 | **PASS** - H within 20 of 22 (window 2-42), S <= 30 |
+| 3 | RECORD | `7-forest-interior` lit conifer `(700,430)` against `#9b9f81` (H68 S22 V62) | H 100.0 S 11.1 **V 10.6** | the hue is the conifer family's; the value is a forest interior's |
+| 4 | RECORD | the same, shaded crown `(600,200)` against `#575d54` (H100 S9 V36) | **H 105.7 S 9.8** V 8.7 | the hue lands within 6 degrees of the authored shade |
+
+### The Stage 0 gate that failed, re-measured
+
+Stage 0's `7-forest-interior` gate wanted a shaded spruce crown at V >= 8 and
+measured **V 2.5 / 1.6 / 2.0** on the old near-black canopy. On the bible's
+conifer ramp, at the same three pixels:
+
+| pixel | Stage 0 | Stage 3 |
+| --- | --- | --- |
+| `(600,200)` | V 2.5, H 164.6 | **V 8.7**, H 105.7 |
+| `(300,120)` | V 1.6, H 0.0 | **V 4.3**, H 24.0 |
+| `(1050,180)` | V 2.0, H 2.3 | **V 7.1**, H 30.0 |
+
+**Three to four times the value, and a hue that means something.** At Stage 0
+those three hues - 164, 0, 2 - were noise off a near-black pixel; the brightest
+sample now clears the gate outright and reads as the conifer's own grey-green.
+The other two do not, and the Stage 0 argument stands for them: a closed spruce
+interior at real tree size genuinely occludes the sky, and "V >= 8 everywhere
+in a wood" may be a rule written for a poster. Logged as B5 for the bible.
+
+### Eye checks
+
+| shot | the sentence | verdict |
+| --- | --- | --- |
+| `8-meadow-closeup` | a flat field is flat with a scatter of stepped cubes, and a wall reads by its own shadow, not by a painted band | **pass**. Unchanged from Stage 0, which is the point: the mesher stopped painting and nothing about the ground got worse |
+| `9-treeline` | the far flank has no contour stripes | **pass**. The stepped rock either side of this shot is clean; the altitude bands that drew contour lines across a far mountain are gone from both legs |
+| `7-forest-interior` | the conifers are the bible's grey-green, neither the old near-black nor a lime | **pass**. The crowns read grey-green: the lit crown at H 100.0 S 11.1 and the shaded at H 105.7 S 9.8, against an authored shade of H 100 S 9 |
+
+### Column job, before and after
+
+| | trees v3 | light v1 Stage 3 |
+| --- | --- | --- |
+| gen per chunk, on workers | 9.51 ms | **3.06 ms** |
+| main-thread upload per chunk | 0.23 ms | **0.10 ms** |
+| chunks at spawn | 2,369 | 2,222 |
+| flora per column, on workers | - | 8.62 ms |
+
+Read with care: trees v3's line was measured on a different config (trees v4 has
+landed since) and on a different view preset, so this is **not** a controlled
+before/after and is not claimed as one. What can be said is that no cost was
+added: the mesher stopped sampling AO corners at `ao_strength` 0, stopped
+computing aspect and jitter per vertex, and `ColumnJob` stopped walking the
+canopy scan. The self-test's own `ao cost` line, which IS controlled, reads
+**3,973 to 3,973 quads (+0.0%)** - the merge did not widen, because at this
+world's quad sizes the AO codes were already constant along almost every run.
+That is a finding: the plan expected bigger quads from dropping baked AO and on
+this terrain there were none to win.
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.

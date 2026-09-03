@@ -97,23 +97,35 @@ enum {
 ## the shader, and a linear value pushed straight in is decoded twice. The
 ## transfer sheet (`--sheet transfer`) proves the round trip every stage.
 ##
-## THE HEXES BELOW WERE RE-AUTHORED in look v2 Stage 4, from
-## docs/research/art-direction.md section 3, against a colour path that was
-## finally measured. Every one of them is what lands on screen at noon, warmed
-## by the sun and nothing else.
+## THE HEXES BELOW ARE THE BIBLE'S WHERE THE BIBLE HAS ONE (light v1 Stage 3).
+##
+## `../Kubik-bible/style-bible/10-color-and-light.md` names three materials this
+## table carries: Rock `#3e3734 / #5e524b / #8b8a83`, Snow
+## `#cfd6dc / #e6dad1 / #f4f1ee` and Conifer `#575d54 / #7e8986 / #9b9f81`. Each
+## is "one body colour in three shades", and under pillar 2 the block carries
+## the BASE and the other two shades come from light and from the per-cube step
+## - which is grill Q5, answered in the bible's own words. So `STONE` and `SNOW`
+## take their base hex here, and the conifer ramp lands on `TreePalette`.
+##
+## EVERY OTHER ROW IS A BIBLE SILENCE and is kept exactly as look v2 Stage 4
+## authored it, marked as such in its comment. `20-world-and-terrain.md` says
+## only "meadow green", "greens, grey rock" and "natural by default"; inventing
+## a hex to fill that would be this repo deciding art direction from the wrong
+## side. The silences are listed in docs/status/light-v1.md so the round 3
+## report can ask for them.
 const COLORS := [
 	Color(0.0000, 0.0000, 0.0000),   # AIR          #000000  never drawn
-	Color(0.4179, 0.3968, 0.3564),   # STONE           #ADA9A1  bare rock - neutral, so warmth is the sun's
-	Color(0.1946, 0.1144, 0.0630),   # DIRT            #7A5F47  soil
-	Color(0.2159, 0.3185, 0.0595),   # GRASS           #809945  meadow - green, not lime
-	Color(0.5711, 0.5271, 0.4072),   # SAND            #C7C0AB  unused for now
-	Color(0.8879, 0.8714, 0.8070),   # SNOW         #F2F0E8
-	Color(0.1620, 0.0976, 0.0467),   # FOREST_FLOOR    #70583D  brown floor under near-black spruce
+	Color(0.1119, 0.0844, 0.0704),   # STONE           #5E524B  bible "Rock", base of #3e3734 / #5e524b / #8b8a83
+	Color(0.1946, 0.1144, 0.0630),   # DIRT            #7A5F47  soil - a bible silence, kept
+	Color(0.2159, 0.3185, 0.0595),   # GRASS           #809945  "meadow green" only - a bible silence, kept
+	Color(0.5711, 0.5271, 0.4072),   # SAND            #C7C0AB  a bible silence, kept
+	Color(0.7913, 0.7011, 0.6376),   # SNOW            #E6DAD1  bible "Snow", base of #cfd6dc / #e6dad1 / #f4f1ee
+	Color(0.1620, 0.0976, 0.0467),   # FOREST_FLOOR    #70583D  a bible silence, kept
 	Color(0.0284, 0.0782, 0.0482),   # LEAVES          #2F4F3E  foliage
 	Color(0.1119, 0.0545, 0.0395),   # TRUNK           #5E4238  
-	Color(0.2831, 0.2961, 0.2705),   # SHORE           #91948E  wet gravel - grey, and the rim is drawn
-	Color(0.3325, 0.3372, 0.1384),   # ALPINE_GRASS    #9C9D68  short olive turf
-	Color(0.1470, 0.0409, 0.0331),   # HEATH           #6B3933  maroon dwarf shrub
+	Color(0.2831, 0.2961, 0.2705),   # SHORE           #91948E  wet gravel - the bible is silent; kept
+	Color(0.3325, 0.3372, 0.1384),   # ALPINE_GRASS    #9C9D68  a bible silence, kept
+	Color(0.1470, 0.0409, 0.0331),   # HEATH           #6B3933  a bible silence, kept
 	Color(0.0395, 0.1070, 0.0648),   # LEAVES_SPRUCE_B #385C48  spruce, shade B
 	Color(0.0782, 0.1946, 0.0423),   # LEAVES_BEECH    #4F7A3A  beech, shade A
 	Color(0.1144, 0.2542, 0.0612),   # LEAVES_BEECH_B  #5F8A46  beech, shade B
@@ -169,111 +181,27 @@ static func name_of(id: int) -> String:
 	return NAMES[id] if id >= 0 and id < NAMES.size() else "unknown(%d)" % id
 
 
-# --- Terrain v2 Stage 10: making one colour into many ----------------------
+# --- The colour path, and what left it --------------------------------------
 #
-# The palette is nine flat colours and the world is built entirely out of them,
-# so a meadow is one exact green over its whole extent and reads as a painted
-# surface. These two functions break that up without adding a single vertex.
+# LIGHT V1 STAGE 3 EMPTIED THIS SECTION (grill Q15).
 #
-# THE CONSTRAINT THAT SHAPES BOTH OF THEM IS GREEDY MESHING. Per-BLOCK colour
-# variation is the obvious implementation and it is incompatible with merging:
-# if neighbouring blocks differ in colour they cannot share a quad, and a flat
-# meadow chunk goes from one quad to two hundred and fifty six. So the
-# variation lives in the VERTICES instead, sampled at the quad's corners and
-# interpolated across it. Two quads meeting at a lattice point sample the same
-# point and get the same value, so the field is continuous, nothing has to
-# split, and the cost is zero quads.
-
-## Deterministic per-vertex tint, hashed from a coarse lattice.
-##
-## `patch` is how many blocks share one hash cell. Small values give fine
-## mottling that is mostly invisible after interpolation; large ones give broad
-## drifts of tone across a hillside, which is what actually reads. The value
-## and hue amounts are fractions and are meant to be small - this is texture,
-## not confetti.
-##
-## Hue is faked as a red-against-blue tilt rather than a real HSV rotation.
-## The palette is stored linear, a correct rotation means converting to sRGB,
-## to HSV, back, and back again per vertex, and the visible difference between
-## that and tilting two channels in opposite directions by two percent is
-## nothing at all.
-static func jitter(color: Color, bx: int, bz: int, world_seed: int,
-		patch: int, value_amount: float, hue_amount: float) -> Color:
-	if value_amount <= 0.0 and hue_amount <= 0.0:
-		return color
-	var cell := maxi(patch, 1)
-	var cx := (bx - posmod(bx, cell)) / cell
-	var cz := (bz - posmod(bz, cell)) / cell
-	var v := 1.0 + (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_VALUE) * 2.0 - 1.0) * value_amount
-	var h := (WorldHash.hash01(cx, cz, world_seed, SALT_TINT_HUE) * 2.0 - 1.0) * hue_amount
-	return Color(
-		maxf(color.r * v * (1.0 + h), 0.0),
-		maxf(color.g * v, 0.0),
-		maxf(color.b * v * (1.0 - h), 0.0),
-		color.a)
-
-
-## Tint one face by which way it points.
-##
-## SLOPE. Steep faces get less sky, so they are darker. The renderer's own
-## lighting already does some of this, which is why the default is gentle - the
-## job here is to separate a wall from a floor when both happen to be lit the
-## same, not to relight the world.
-##
-## ASPECT. A slope facing the sun is warmer and drier than one in shade, and in
-## the Alps that is visible as a real difference in what grows on it. Baked
-## against a FIXED direction rather than against the sun's actual position,
-## deliberately: the mesh is built once and the sun moves, so a baked lighting
-## term would be wrong for half of every day. What this bakes is not lighting,
-## it is aspect - a fact about the ground, which does not move.
-static func aspect_shade(color: Color, normal: Vector3,
-		slope_amount: float, aspect_amount: float) -> Color:
-	var out := color
-	if slope_amount > 0.0:
-		# 1 for a floor or ceiling, 0 for a wall.
-		var flatness := absf(normal.y)
-		var shade := 1.0 - slope_amount * (1.0 - flatness)
-		out = Color(out.r * shade, out.g * shade, out.b * shade, out.a)
-	if aspect_amount > 0.0:
-		var facing := aspect_curve(normal.x * SUN_ASPECT.x + normal.z * SUN_ASPECT.y)
-		var warm := 1.0 + aspect_amount * facing
-		var cool := 1.0 - aspect_amount * facing
-		out = Color(out.r * warm, out.g * (1.0 + aspect_amount * facing * 0.35),
-			out.b * cool, out.a)
-	return out
-
-
-## Which way "sunward" points, in XZ. Any fixed direction would do; this one is
-## the -Z the camera starts looking along, so the aspect difference is visible
-## in the first screenshot rather than behind you.
-const SUN_ASPECT := Vector2(0.0, -1.0)
-
-const SALT_TINT_VALUE := 301
-const SALT_TINT_HUE := 302
-
-
-## The aspect tint picks a side. (Was a TODO from terrain v2; look v1 did it.)
-##
-## `dot` is -1 for a face pointing directly away from the sun, +1 for one
-## pointing straight at it, and 0 for one side-on. Returned unchanged, the tint
-## varies smoothly through every angle - which is physically reasonable and
-## visually weak, because almost every face in a voxel world is side-on and
-## almost every face therefore gets almost no tint at all.
-##
-## What a real Alpine hillside looks like is two kinds of slope, not a gradient
-## between them: the sunny side is dry and brown, the shaded side is dark and
-## green, and the changeover is quick.
-##
-##   Hint:  return smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0
-##   Still -1 to +1, but it spends most of its range near the two ends instead
-##   of in the middle. Push the 0.4 in towards zero to make the changeover
-##   sharper, out towards 1 to make it gentler.
-##
-## Worth doing with aspect_tint turned well up in the F4 panel first, so you
-## can see what the curve is doing, and then turning it back down.
-##
-## DONE IN LOOK V1, exactly as the hint says. A poster hillside is two flat
-## tones meeting at the ridge, which is what this curve makes of the aspect:
-## most of the range sits at the two ends and the changeover is quick.
-static func aspect_curve(dot: float) -> float:
-	return smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0
+# `jitter()` hashed a coarse lattice and tilted a vertex's value and hue by a
+# few percent; `aspect_shade()` darkened a face by its steepness and warmed it
+# by how far it pointed at a FIXED compass direction; `aspect_curve()` made
+# that changeover quick, so a hillside read as two flat tones meeting at the
+# ridge. `SUN_ASPECT` and the two hash salts served them.
+#
+# All five existed because the toon ramp faceted and because a greedy-meshed
+# hillside in one flat colour had nothing for the eye to grab. Under real light
+# with soft sky-tinted shadows and SSAO neither problem exists, and painting a
+# baked compass direction into a vertex is the thing pillar 2 names outright:
+# mood "comes from light, fog, the hour and the lens, never from repainting a
+# thing".
+#
+# The per-cube step grain that replaces them is in `Look.OPAQUE_SHADER`, and it
+# is not a descendant of these - it is the bible's own sentence, "one step up
+# or down on random cubes", applied per cell in the fragment rather than
+# interpolated across a quad from its corners.
+#
+# `flora_models.gd`'s boulder keeps a lit-side plane and now owns the constant
+# it needs, so nothing outside this file depended on SUN_ASPECT.

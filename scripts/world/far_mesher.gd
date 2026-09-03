@@ -159,15 +159,16 @@ static func _config_data(config: WorldgenConfig) -> Dictionary:
 
 ## THE FAR MESHER'S WHOLE READ OF THE CONFIG. Checked against far_field_job.gd
 ## by grep, not by memory: every `config.<name>` in that file, plus the ones
-## its callees (`detail_at`, `zone_at`, `_slope_zone`, `wildness_at`,
-## `Block.jitter`, `Block.aspect_shade`) read on its behalf.
+## its callees (`detail_at`, `zone_at`, `_slope_zone`, `wildness_at`) read on
+## its behalf. The paint knobs - far_band_m, far_band_step, the three
+## far_riser_*, slope_tint, aspect_tint and the color_jitter_* trio - left this
+## list with the code that read them in light v1 Stage 3.
 const CONFIG_KEYS: PackedStringArray = [
 	"block_size", "world_blocks_xz", "coarse_step", "far_step",
 	"voxel_radius_chunks", "fog_end_m",
 	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_vote",
 	"far_filter_bias", "far_peak_gain", "far_level_ref_m", "far_normal_m",
-	"far_band_m", "far_band_step", "far_zone_cell_m", "far_zone_cell_ratio",
-	"far_riser_shade", "far_riser_lift", "far_riser_axis",
+	"far_zone_cell_m", "far_zone_cell_ratio",
 	# DISTANCE V5 STAGES 3 AND 6.
 	"far_geomorph_cells", "far_detail",
 	"detail_amp", "detail_freq", "detail_flat_damp", "detail_flat_deg",
@@ -175,8 +176,8 @@ const CONFIG_KEYS: PackedStringArray = [
 	"zone_blend_blocks", "zone_dither_blocks", "zone_jitter_blocks",
 	"slope_zone_strength", "snow_max_slope_deg", "rock_slope_deg",
 	"wildness_rock_deg", "min_altitude", "max_altitude",
-	"slope_tint", "aspect_tint",
-	"color_jitter_blocks", "color_jitter_value", "color_jitter_hue",
+	
+	
 ]
 
 
@@ -287,23 +288,10 @@ func z_surface(bx: int, bz: int, altitude: float) -> int:
 	return _impl.z_surface(bx, bz, altitude)
 
 
-func c_treeline_band(band_m: float) -> int:
-	return _impl.c_treeline_band(band_m)
+# c_treeline_band, c_band_m_at, c_band_color and c_aspect_shade left with the
+# paint in light v1 Stage 3 (Q15). One expression is all that remains.
 
 
-func c_band_m_at(step_blocks: int, terrace: float) -> float:
-	return _impl.c_band_m_at(step_blocks, terrace)
-
-
-func c_band_color(color: Color, y_m: float, band_treeline: int,
-		band_m: float) -> Color:
-	return _impl.c_band_color(color, y_m, band_treeline, band_m)
-
-
-func c_aspect_shade(color: Color, normal: Vector3) -> Color:
-	return _impl.c_aspect_shade(color, normal)
-
-
-## The whole per-vertex tail of _push_quad: aspect shade, jitter, to_wire.
+## The whole per-vertex tail of _push_quad, which is now Look.to_wire alone.
 func c_vertex(color: Color, normal: Vector3, point: Vector3) -> Color:
 	return _impl.c_vertex(color, normal, point)

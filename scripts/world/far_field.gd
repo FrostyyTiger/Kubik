@@ -433,14 +433,14 @@ func _print_wall_summary() -> void:
 
 ## Every LOCAL knob that changes only the far mesh or the impostor ring.
 const FAR_ONLY_PROPERTIES: PackedStringArray = [
-	"far_terrace", "far_riser_shade",
+	"far_terrace", 
 	"far_filter_bias", "far_peak_gain", "far_normal_m", "far_level_ref_m",
-	"far_band_m", "far_band_step", "far_zone_cell_m", "far_zone_cell_ratio",
+	"far_zone_cell_m", "far_zone_cell_ratio",
 	"far_tree_tint",
 	# DISTANCE V3, appended. Every one of them redraws the far mesh or the
 	# impostor ring and nothing else, which is what earns a place on this
 	# list - and being on it is what makes a knob judgeable standing still.
-	"far_vote", "far_grain", "far_riser_axis",
+	"far_vote", "far_grain", 
 	# far_grain and far_fog_start_frac are UNIFORMS and are already live
 	# through Look.apply_local_knobs() before this runs. They are on this
 	# list anyway, and deliberately: being on it is what makes the panel say

@@ -80,8 +80,8 @@ inline int64_t floor_div(int64_t a, int64_t b) {
 // The salts the far mesher's callees use. terrain_generator.gd and block.gd.
 constexpr int64_t SALT_ZONE_DITHER = 101;
 constexpr int64_t SALT_SLOPE_ZONE = 205;
-constexpr int64_t SALT_TINT_VALUE = 301;
-constexpr int64_t SALT_TINT_HUE = 302;
+// SALT_TINT_VALUE and SALT_TINT_HUE left with the per-vertex jitter in light
+// v1 Stage 3. Nothing hashes a colour any more.
 
 // terrain_generator.gd's elevation zones, low to high.
 constexpr int ZONE_SHORE = 0;
@@ -90,10 +90,9 @@ constexpr int ZONE_ROCK = 5;
 constexpr int ZONE_SNOW = 6;
 constexpr int ZONE_COUNT = 7;
 
-// block.gd. SUN_ASPECT is Vector2(0, -1) - any fixed direction would do, and
-// this one is the -Z the camera starts looking along.
-constexpr double SUN_ASPECT_X = 0.0;
-constexpr double SUN_ASPECT_Y = -1.0;
+// SUN_ASPECT left with the aspect tint in light v1 Stage 3. A fixed compass
+// direction baked into a vertex colour is the definition of painting what
+// light should do, and there is real light now.
 
 // --- The config -----------------------------------------------------------
 
@@ -113,14 +112,12 @@ struct Config {
 	double far_filter_bias = 1.0;
 	double far_peak_gain = 0.60;
 	double far_level_ref_m = 100.0;
+	// far_normal_m STAYS. A flank-averaged normal is a coarse mesh's CORRECT
+	// normal under real light - it is shape, not paint, and it is the reason a
+	// far mountain is one lit flank instead of a patchwork of facets.
 	double far_normal_m = 96.0;
-	double far_band_m = 60.0;
-	double far_band_step = 0.03;
 	double far_zone_cell_m = 24.0;
 	double far_zone_cell_ratio = 0.06;
-	double far_riser_shade = 1.0;
-	double far_riser_lift = 1.6;
-	double far_riser_axis = 0.08;
 	double far_geomorph_cells = 4.0;
 	double far_detail = 1.0;
 	// The detail layer, for the seam band.
@@ -140,12 +137,12 @@ struct Config {
 	double wildness_rock_deg = 12.0;
 	double min_altitude = 1.0;
 	double max_altitude = 833.7;
-	// The colour path.
-	double slope_tint = 0.10;
-	double aspect_tint = 0.18;
-	int color_jitter_blocks = 6;
-	double color_jitter_value = 0.0;
-	double color_jitter_hue = 0.0;
+	// THE COLOUR PATH IS GONE (light v1 Stage 3, grill Q15). far_band_m,
+	// far_band_step, far_riser_shade, far_riser_lift, far_riser_axis,
+	// slope_tint, aspect_tint and the three color_jitter_* fields left this
+	// struct with the code that read them. A far vertex now carries
+	// Look.to_wire(zone colour) and nothing else: one flat colour per material,
+	// near and far, and the light does the rest.
 
 	void read(const Dictionary &p_d);
 };

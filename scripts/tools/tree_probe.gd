@@ -103,7 +103,10 @@ func _init() -> void:
 			mesh_us += job.mesh_usec
 			reserved_chunks += cy_range.size()
 			built_chunks += job.built.size()
-			cover_sum += job.canopy_cover
+			# ASKED DIRECTLY SINCE LIGHT V1 STAGE 3. ColumnJob stopped running
+			# the canopy scan when the canopy ink was removed, so the probe
+			# calls the same function itself rather than reporting a zero.
+			cover_sum += TreePlacement.cover_column(gen, cx, cz)
 			n += 1
 
 	var generation := maxi(gen_us + tree_us, 1)

@@ -49,10 +49,24 @@ const FAMILIES := {
 	# LEAVES_BEECH and LEAVES_BEECH_B, unchanged - so a purchased conifer and a
 	# block-tree beech were the same green, right up until tonight deleted the
 	# block-tree beech.
-	&"CANOPY_A": Color(0.0284, 0.0782, 0.0482),   # #2F4F3E
-	&"CANOPY_B": Color(0.0395, 0.1070, 0.0648),   # #385C48
-	&"CANOPY_C": Color(0.0782, 0.1946, 0.0423),   # #4F7A3A
-	&"CANOPY_D": Color(0.1144, 0.2542, 0.0612),   # #5F8A46
+	# THE BIBLE'S CONIFER RAMP (light v1 Stage 3, grill Q5).
+	#
+	# `10-color-and-light.md` gives Conifer as one material in three shades:
+	# #575d54 / #7e8986 / #9b9f81. The pack's four canopy indices are an
+	# inner/outer needle distinction, not four species, so they map onto those
+	# three: A and B are both the SHADE (the inner needles a spruce hides in its
+	# own crown), C is the BASE and D is the LIGHT. The distinction survives as
+	# MATERIAL and not as baked light, which is the whole of what this stage is
+	# about.
+	#
+	# What they were: #2F4F3E / #385C48 / #4F7A3A / #5F8A46, a near-black green
+	# authored to survive a toon ramp that lifted the shade side with an ink.
+	# Under real light that reads as a black tree, and 7-forest-interior at
+	# Stage 0 measured a shaded crown at V 2.5.
+	&"CANOPY_A": Color(0.0953, 0.1095, 0.0887),   # #575D54  conifer shade
+	&"CANOPY_B": Color(0.0953, 0.1095, 0.0887),   # #575D54  conifer shade
+	&"CANOPY_C": Color(0.2086, 0.2502, 0.2384),   # #7E8986  conifer base
+	&"CANOPY_D": Color(0.3278, 0.3467, 0.2195),   # #9B9F81  conifer light
 
 	# The autumn ramp. B and C are LEAVES_LARCH and LEAVES_LARCH_B - the warm
 	# accent this world already had - and A is NEW, because the block palette
@@ -74,7 +88,7 @@ const FAMILIES := {
 
 	# Block.SNOW itself, so a snow-dusted crown and the snow on the ridge
 	# behind it are the same white.
-	&"SNOW": Color(0.8879, 0.8714, 0.8070),       # #F2F0E8
+	&"SNOW": Color(0.7913, 0.7011, 0.6376),       # #E6DAD1  follows Block.SNOW
 
 	# The bark ramp. BARK is Block.TRUNK and BARK_LIGHT is FOREST_FLOOR, both
 	# unchanged; BARK_DARK is NEW and is the most-used family in the whole

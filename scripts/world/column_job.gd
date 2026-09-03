@@ -119,14 +119,16 @@ func run() -> void:
 	var t1 := Time.get_ticks_usec()
 	gen_usec = t1 - t0
 
-	# ONCE FOR THE WHOLE COLUMN. See the note at the top.
+	# THE CANOPY SCAN LEFT THE HOT PATH IN LIGHT V1 STAGE 3.
 	#
-	# TREES V3 STAGE 7: THE SCAN SURVIVES AND THE WRITER IS GONE. There is no
-	# ColumnWriter and no tree block to bind it to - `TreeField` draws every
-	# tree in the game - but the column still has to know how much of its sky
-	# its own trees cover, and that has always come from this scan rather than
-	# from the voxels.
-	canopy_cover = TreePlacement.cover_column(generator, chunk_x, chunk_z)
+	# It ran `TreePlacement.cover_column()` once per column so the mesher could
+	# darken the ground under a wood, because no tree cast a shadow at any
+	# distance. LOD0 trees cast real shadows now (Q10) and `_under_canopy` is
+	# gone, so this was a full candidate walk per column feeding a value nothing
+	# reads. `cover_column()` itself stays - the worldgen probe measures grove
+	# density with it and the self-test proves it deterministic - and only the
+	# per-column call on the streaming path goes. `tree_usec` therefore now
+	# measures nothing and stays at zero, which the load line prints.
 	var t2 := Time.get_ticks_usec()
 	tree_usec = t2 - t1
 
@@ -142,7 +144,7 @@ func run() -> void:
 			continue
 		var chunk: Chunk = _chunks[cy]
 		var arrays := ChunkMesher.build_arrays(
-			chunk, _solid_at, config, world_seed, canopy_cover)
+			chunk, _solid_at, config, world_seed)
 		built[cy] = {
 			"chunk": chunk,
 			"arrays": arrays,

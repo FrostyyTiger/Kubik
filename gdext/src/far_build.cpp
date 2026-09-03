@@ -82,90 +82,26 @@ static int frontier_sector_of(int64_t dx, int64_t dz) {
 	return s < 0 ? 0 : (s > FRONTIER_SECTORS - 1 ? FRONTIER_SECTORS - 1 : s);
 }
 
-// --- block.gd and look.gd, the colour path --------------------------------
-
-// Block.aspect_curve
-static double aspect_curve(double dot) {
-	return Math::smoothstep(-0.4, 0.4, dot) * 2.0 - 1.0;
-}
-
-// Block.aspect_shade. Each Color constructor TRUNCATES to float32, exactly as
-// GDScript's does, so the two multiplies are not one multiply.
-Color aspect_shade(const Color &color, const Vector3 &normal,
-		double slope_amount, double aspect_amount) {
-	Color out = color;
-	if (slope_amount > 0.0) {
-		double flatness = Math::abs((double)normal.y);
-		double shade = 1.0 - slope_amount * (1.0 - flatness);
-		out = Color((float)(out.r * shade), (float)(out.g * shade),
-				(float)(out.b * shade), out.a);
-	}
-	if (aspect_amount > 0.0) {
-		double facing = aspect_curve((double)normal.x * SUN_ASPECT_X
-				+ (double)normal.z * SUN_ASPECT_Y);
-		double warm = 1.0 + aspect_amount * facing;
-		double cool = 1.0 - aspect_amount * facing;
-		out = Color((float)(out.r * warm),
-				(float)(out.g * (1.0 + aspect_amount * facing * 0.35)),
-				(float)(out.b * cool), out.a);
-	}
-	return out;
-}
-
-// Block.jitter
-Color block_jitter(const Color &color, int64_t bx, int64_t bz,
-		int64_t world_seed, int64_t patch, double value_amount, double hue_amount) {
-	if (value_amount <= 0.0 && hue_amount <= 0.0) {
-		return color;
-	}
-	int64_t cell = patch > 1 ? patch : 1;
-	int64_t cx = floor_div(bx, cell);
-	int64_t cz = floor_div(bz, cell);
-	double v = 1.0 + (hash01(cx, cz, world_seed, SALT_TINT_VALUE) * 2.0 - 1.0)
-					* value_amount;
-	double h = (hash01(cx, cz, world_seed, SALT_TINT_HUE) * 2.0 - 1.0) * hue_amount;
-	return Color((float)Math::max(color.r * v * (1.0 + h), 0.0),
-			(float)Math::max(color.g * v, 0.0),
-			(float)Math::max(color.b * v * (1.0 - h), 0.0), color.a);
-}
-
-// FarFieldJob.treeline_band
-int treeline_band(const World &w, double band_m) {
-	double m = band_m > 0.0 ? band_m : w.config.far_band_m;
-	if (m <= 0.0 || (int)w.zone_thresholds.size() <= ZONE_FOREST) {
-		return 0;
-	}
-	double treeline_m = (double)w.zone_thresholds[ZONE_FOREST] * w.config.block_size;
-	return (int)Math::floor(treeline_m / m);
-}
-
-// FarFieldJob.band_m_at
-double band_m_at(const Config &c, int step_blocks, double terrace) {
-	if (terrace <= 0.0) {
-		return c.far_band_m;
-	}
-	return Math::lerp(c.far_band_m, (double)step_blocks * c.block_size,
-			Math::clamp(terrace, 0.0, 1.0));
-}
-
-// FarFieldJob.band_color
-Color band_color(const Color &color, double y_m, const Config &c,
-		int band_treeline, double band_m) {
-	double step_amount = c.far_band_step;
-	if (step_amount <= 0.0 || c.far_band_m <= 0.0) {
-		return color;
-	}
-	double m = band_m > 0.0 ? band_m : c.far_band_m;
-	if (m <= 0.0) {
-		return color;
-	}
-	step_amount *= m / c.far_band_m;
-	int64_t band = (int64_t)Math::floor(y_m / m);
-	double k = Math::clamp(1.0 + step_amount * (double)(band - band_treeline),
-			0.85, 1.25);
-	return Color((float)(color.r * k), (float)(color.g * k), (float)(color.b * k),
-			color.a);
-}
+// --- look.gd, the colour path ---------------------------------------------
+//
+// LIGHT V1 STAGE 3 EMPTIED THIS SECTION (grill Q15). What stood here was five
+// paint operations that ran before a vertex reached the renderer: an aspect
+// curve and an aspect/slope shade off a FIXED compass direction, a per-vertex
+// hash jitter, an altitude band that stepped a mountain's colour every 60 m,
+// and a riser shade that darkened a vertical face. They existed because the
+// toon ramp faceted - far_field_job.gd said so out loud: "the poster ramp
+// paints three flat tones, and on a facet normal that means every triangle of
+// a mountain picks its own tone."
+//
+// Under real light with soft sky-tinted shadows that problem does not exist,
+// and the fix was dead weight painting colour where the bible wants light
+// ("mood comes from light, fog, the hour and the lens, never from repainting a
+// thing", pillar 2). Marcel's answer to Q15 was to strip it now rather than
+// park it at identity knobs, so both legs lost it in one commit and the parity
+// tests never saw them disagree.
+//
+// What is left is the one conversion: Look.to_wire, linear maths and sRGB on
+// the wire.
 
 // --- The builder ---------------------------------------------------------
 
@@ -204,7 +140,6 @@ struct Mesher {
 	std::vector<float> t_t;
 	std::vector<float> sector_exclude;
 	bool voting = false;
-	int band_treeline = 0;
 	std::unordered_map<int64_t, int> vote_memo;
 
 	// The output. `sinks[0]` is the whole mesh when not slicing, and one
@@ -524,16 +459,13 @@ struct Mesher {
 		if (lighting_normal != Vector3()) {
 			normal = lighting_normal;
 		}
-		// ONCE PER QUAD, not once per vertex - the jitter is what varies
-		// across the four corners and the aspect shade is not.
-		Color shaded = aspect_shade(color, normal, c.slope_tint, c.aspect_tint);
 		Sink &o = *out;
 		int32_t first = (int32_t)o.verts.size();
 		const Vector3 quad[4] = { p0, p1, p2, p3 };
 		for (int k = 0; k < 4; k++) {
 			o.verts.push_back(quad[k]);
 			o.normals.push_back(normal);
-			o.colors.push_back(shade_vertex(shaded, quad[k]));
+			o.colors.push_back(shade_vertex(color));
 		}
 		o.indices.push_back(first);
 		o.indices.push_back(first + 1);
@@ -543,18 +475,13 @@ struct Mesher {
 		o.indices.push_back(first + 3);
 	}
 
-	// The last three things that happen to a vertex colour: the aspect and
-	// slope tint from the facet's normal, the per-vertex jitter hashed off a
-	// coarse lattice, and Look.to_wire - the ONE conversion in the whole colour
-	// path. Linear maths, sRGB on the wire.
-	Color shade_vertex(const Color &shaded, const Vector3 &p) const {
-		double inv_bs = 1.0 / c.block_size;
-		return block_jitter(shaded,
-				(int64_t)Math::round((double)p.x * inv_bs),
-				(int64_t)Math::round((double)p.z * inv_bs),
-				w.world_seed, c.color_jitter_blocks, c.color_jitter_value,
-				c.color_jitter_hue)
-				.linear_to_srgb();
+	// THE ONLY THING THAT HAPPENS TO A VERTEX COLOUR: Look.to_wire, the one
+	// conversion in the whole colour path. Linear maths, sRGB on the wire.
+	// Everything that used to sit in front of it - the aspect and slope tint
+	// off the facet normal, the per-vertex jitter off a coarse lattice - was
+	// paint doing what light does, and left in light v1 Stage 3.
+	Color shade_vertex(const Color &color) const {
+		return color.linear_to_srgb();
 	}
 
 	// _push_riser, and _push_skirt through it with equal depths.
@@ -711,14 +638,6 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			int zone = far_zone(zone_bx, zone_bz, zone_h, ring, zone_cell);
 			Color color = w.zone_colors[(size_t)zone];
 
-			// THE BAND INTERVAL IS THE RING'S STEP HEIGHT, per quad, because
-			// the terrace fades across the seam band and the interval with it.
-			double band_m = band_m_at(c, step, terr);
-			int band_tl = band_treeline;
-			if (band_m != c.far_band_m) {
-				band_tl = treeline_band(w, band_m);
-			}
-			color = band_color(color, mid_h * bs, c, band_tl, band_m);
 			Vector3 flank = flank_normal(bx0 + step / 2, bz0 + step / 2);
 			push_quad(p0, p1, p2, p3, color, flank);
 
@@ -767,17 +686,13 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 				// THE LIFT IS ASYMMETRIC, and it goes only where the dark is:
 				// a riser facing the sun is an honest voxel side face, one
 				// facing away is lifted off the shade floor. The axis term
-				// gives a far cube its four tones.
-				double away = Math::clamp(-((double)ed.di * SUN_ASPECT_X
-												  + (double)ed.dj * SUN_ASPECT_Y),
-						0.0, 1.0);
-				double cross = Math::abs((double)ed.di * SUN_ASPECT_Y
-						- (double)ed.dj * SUN_ASPECT_X);
-				double k = c.far_riser_shade
-						* Math::lerp(1.0, c.far_riser_lift, away)
-						* (1.0 - c.far_riser_axis * cross);
-				Color riser((float)(color.r * k), (float)(color.g * k),
-						(float)(color.b * k), color.a);
+				// A RISER TAKES ITS TOP'S COLOUR (light v1 Stage 3). It was
+				// darkened here by a fixed-compass "sun aspect", lifted on the
+				// away-facing side and dimmed across it, which gave a far cube
+				// four painted tones. Under real light a riser is dark because
+				// it faces away from the sun, and that is the renderer's to
+				// say.
+				Color riser = color;
 				double da, db;
 				if (t_full) {
 					da = hq - nq;
@@ -814,10 +729,6 @@ void Mesher::run(const Dictionary &args) {
 	t_amount = Math::clamp(c.far_terrace, 0.0, 1.0);
 	t_step_y = Math::max(c.far_step_y_blocks, 0.0);
 	voting = c.far_vote > 0.0;
-	// The treeline's band, once per job, read from the generator's own zone
-	// thresholds rather than re-derived.
-	band_treeline = treeline_band(w, 0.0);
-
 	int tlr = TERRACE_LEVEL_RING < 0 ? 0
 									 : (TERRACE_LEVEL_RING > RING_COUNT - 1 ? RING_COUNT - 1
 																			: TERRACE_LEVEL_RING);

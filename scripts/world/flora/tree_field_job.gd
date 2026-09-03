@@ -166,8 +166,9 @@ func run() -> void:
 	# workers happened to run first.
 	if _tint_on() or _terrace_on():
 		heightmap.build_pyramid()
-	if _tint_on():
-		_band_treeline = FarFieldJob.treeline_band(generator, config)
+	# `_band_treeline` stays at 0: the altitude bands it indexed left with the
+	# far field's paint in light v1 Stage 3, and backdrop_color no longer reads
+	# it. Kept as a parameter so the call shape does not churn.
 
 	var inner_sq := inner_blocks * inner_blocks
 	var outer_sq := outer_blocks * outer_blocks

@@ -71,15 +71,8 @@ const LOCAL_TUNING_ROWS := [
 	["view_distance", "view distance (-1..3)", -1.0, 3.0, 1.0],
 	["ao_strength", "light: baked AO (0 = SSAO)", 0.0, 1.0, 0.05],
 	["msaa_level", "MSAA (0 off, 3 = 8x)", 0.0, 3.0, 1.0],
-	["color_jitter_value", "tint: brightness", 0.0, 0.3, 0.01],
-	["color_jitter_hue", "tint: hue", 0.0, 0.2, 0.005],
-	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
-	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
-	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
 	["grain_sparse", "light: grain sparse", 0.0, 0.5, 0.05],
 	["grain_step", "light: grain step", 0.0, 0.25, 0.01],
-	["far_band_m", "poster: far band (m)", 5.0, 200.0, 5.0],
-	["far_band_step", "poster: far band step", 0.0, 0.3, 0.01],
 	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
 	["far_zone_cell_m", "poster: far zone cell (m)", 0.0, 128.0, 4.0],
 	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
@@ -112,14 +105,11 @@ const LOCAL_TUNING_ROWS := [
 	# The top of this range is 1.5, not 1.0, because the useful direction may be
 	# UP: a riser above 1.0 LIFTS an away-facing slope off the shade band, which
 	# is what the black crush in the treeline band wants. See the status doc.
-	["far_riser_shade", "distance: riser shade", 0.0, 1.5, 0.05],
-	["far_riser_lift", "distance: riser lift (away)", 1.0, 2.5, 0.05],
 	# DISTANCE V3, appended after distance v2's block. Every row here redraws
 	# the far country in place - no reroll, no chunk rebuilt, the player
 	# standing still - which is the property the whole epic is judged by.
 	["far_vote", "distance: far vote (0/1)", 0.0, 1.0, 1.0],
 	["far_grain", "distance: far grain", 0.0, 0.2, 0.005],
-	["far_riser_axis", "distance: riser axis (cross)", 0.0, 0.3, 0.01],
 	["far_fog_start_frac", "distance: fog start (x reach)", 0.0, 0.9, 0.05],
 	["far_overdraw", "distance: far starts at (x r)", 0.0, 0.9, 0.05],
 	["far_tree_grain", "distance: far tree grain", 0.0, 0.3, 0.01],

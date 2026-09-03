@@ -33,13 +33,8 @@ void Config::read(const Dictionary &d) {
 	far_peak_gain = cfg_f(d, "far_peak_gain", far_peak_gain);
 	far_level_ref_m = cfg_f(d, "far_level_ref_m", far_level_ref_m);
 	far_normal_m = cfg_f(d, "far_normal_m", far_normal_m);
-	far_band_m = cfg_f(d, "far_band_m", far_band_m);
-	far_band_step = cfg_f(d, "far_band_step", far_band_step);
 	far_zone_cell_m = cfg_f(d, "far_zone_cell_m", far_zone_cell_m);
 	far_zone_cell_ratio = cfg_f(d, "far_zone_cell_ratio", far_zone_cell_ratio);
-	far_riser_shade = cfg_f(d, "far_riser_shade", far_riser_shade);
-	far_riser_lift = cfg_f(d, "far_riser_lift", far_riser_lift);
-	far_riser_axis = cfg_f(d, "far_riser_axis", far_riser_axis);
 	far_geomorph_cells = cfg_f(d, "far_geomorph_cells", far_geomorph_cells);
 	far_detail = cfg_f(d, "far_detail", far_detail);
 
@@ -60,11 +55,6 @@ void Config::read(const Dictionary &d) {
 	min_altitude = cfg_f(d, "min_altitude", min_altitude);
 	max_altitude = cfg_f(d, "max_altitude", max_altitude);
 
-	slope_tint = cfg_f(d, "slope_tint", slope_tint);
-	aspect_tint = cfg_f(d, "aspect_tint", aspect_tint);
-	color_jitter_blocks = (int)cfg_f(d, "color_jitter_blocks", color_jitter_blocks);
-	color_jitter_value = cfg_f(d, "color_jitter_value", color_jitter_value);
-	color_jitter_hue = cfg_f(d, "color_jitter_hue", color_jitter_hue);
 }
 
 static std::vector<float> to_floats(const Variant &p_v) {

@@ -933,24 +933,24 @@ const FOG_START_RATIO := 0.4
 ## mesh's edge invisible rather than a cliff at the horizon.
 @export var fog_start_m := 360.0
 @export var fog_end_m := 600.0
-
-# LIGHT V1 STAGE 0 DELETED fog_bands, sky_bands AND cloud_cover. The banded
-# fog and the poster sky they tuned are gone: the environment's exponential fog
-# with aerial perspective is the far term now, and the sky is the engine's own
-# PhysicalSkyMaterial. All three were LOCAL, so the config hash does not move.
-
-## THE FAR FIELD AS A BACKDROP, see FarFieldJob. Every far_band_m of altitude
-## the far mesh steps its colour's value by far_band_step - MONOTONIC since
-## look v2 Stage 2, lighter with altitude rather than alternating, so a
-## mountain reads as stacked contour bands; and its lighting normal is the
-## heightmap's slope averaged over far_normal_m, so a flank is one tone rather
-## than a patchwork of triangles. Look knobs, local. The voxels near the
-## player do neither - they have their own terraces.
-@export var far_band_m := 60.0
-@export var far_band_step := 0.03
 ## 24 m was the first value and the postcard came back still a patchwork: at
 ## 8 and 16 m per vertex that is a couple of quads, and the coarse heightmap
 ## has a ridge every few of those. A flank is a hundred metres wide.
+# LIGHT V1 STAGE 3 DELETED THE FAR FIELD'S PAINT KNOBS (grill Q15):
+# far_band_m, far_band_step, far_riser_shade, far_riser_lift and far_riser_axis
+# tuned altitude bands and a riser shade that existed because the toon ramp
+# faceted, and slope_tint, aspect_tint and the three color_jitter_* knobs tuned
+# the same idea on the voxels. All of it was paint doing what light does, and
+# the code that read it left the C++ and its GDScript twin in one commit so the
+# parity tests never saw them disagree. canopy_shade went with the canopy ink
+# for the same reason: LOD0 trees cast real shadows now.
+#
+# All eleven were LOCAL, so the config hash does not move for them.
+
+## FAR_NORMAL_M STAYS, and it is not paint. A flank-averaged lighting normal is
+## a coarse mesh's CORRECT normal: it is what makes a far mountain one lit flank
+## instead of a patchwork of facets, which under real light matters more than it
+## did under the ramp, not less.
 @export var far_normal_m := 96.0
 ## Metres per zone-colour cell in the rings beyond the first; 0 samples every
 ## quad. Blocks of colour on the far peaks rather than speckle.
@@ -1100,38 +1100,6 @@ const FOG_START_RATIO := 0.4
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed.
 @export var far_fog_start_frac := 0.2
-
-## HOW MUCH DARKER A RISER FACING ACROSS THE ASPECT AXIS IS, distance v3
-## Stage 3. 0 is distance v2's behaviour exactly.
-##
-## Distant Horizons bakes Minecraft's own per-direction shade multipliers into
-## vertex colour at build time - 1.0 up, 0.8 north/south, 0.6 east/west - and
-## the research doc calls it "the cheapest and most effective single thing
-## making the far field read as cubes rather than a surface"
-## (`docs/research/distant-horizons.md` §2e). Two of the three are already true
-## here: a riser carries its own horizontal normal, so Look's ramp lights it as
-## a voxel side face and `slope_tint` darkens it as a wall. What is missing is
-## the distinction between the two compass axes, and without it every riser on
-## a hillside is the same tone whichever way it faces.
-##
-## THE 0.8/0.6 CONSTANTS ARE NOT IMPORTED, and the plan says not to import them
-## blindly into a poster with its own lighting ramp. The near field's own value
-## spread between a sun-facing and an away-facing surface is what `aspect_tint`
-## produces, and it is measurable rather than a matter of opinion: at
-## aspect_tint 0.18 a face pointing at the sun comes out at Rec. 709 luma
-## x1.070 and one pointing away at x0.930, a ratio of 1.15. A cross-axis face
-## sits between the two, so half of that spread is the honest translation.
-## **0.08**, then, not Minecraft's 0.25 - the far country gets the near
-## country's own contrast, not another game's.
-##
-## THE DIRECTION IS `Block.SUN_ASPECT`, reused rather than re-picked, which is
-## the same fixed compass direction `aspect_tint` and `far_riser_lift` already
-## dot against. Three mechanisms, one axis: a riser facing the sun keeps
-## far_riser_shade, one facing away is lifted off the shade floor by
-## far_riser_lift, and one facing across is darkened by this.
-##
-## LOOK, NOT SHAPE. LOCAL and unhashed; it multiplies a colour and nothing else.
-@export var far_riser_axis := 0.08
 
 ## HOW HARD THE FAR COUNTRY'S BLOCK LATTICE IS PAINTED, distance v3 Stage 2.
 ##
@@ -1473,77 +1441,6 @@ const FOG_START_RATIO := 0.4
 ## is in it. LOCAL and unhashed, like every far knob.
 @export var far_upload_budget_ms := 4.0
 
-## HOW DARK A TERRACE RISER IS DRAWN, as a multiplier on its albedo. Distance
-## v2 Stage 3.
-##
-## A riser already carries its own HORIZONTAL normal - _push_quad derives it
-## from the winding, and only the top quad is handed _flank_normal instead - so
-## Look's three-band ramp lits or shades it exactly as it does a voxel's side
-## face, and Block.aspect_shade applies the same slope_tint (x0.90 for a wall)
-## and aspect_tint. That is decision 8's "one lighting language, both halves",
-## and it is true before this constant is applied at all.
-##
-## SHIPPED AT 1.0, NOT AT THE PLAN'S 0.7, AND THE PICTURES DECIDED IT. The plan
-## expected the near field's contrast to be STRONGER than a 0.7 multiplier and
-## it is the other way round: the near field's lit-top-to-shaded-side ratio is
-## the ramp's own (distance v1 measured a lit meadow top at #809137 against
-## shaded verticals at #272B2D, a luma ratio of 0.31) times slope_tint's 0.90,
-## with no albedo margin anywhere. 1.0 IS matching the near field exactly.
-##
-## Measured on the far massifs of `6-postcard`, seed 42, Forward+ on ganymede -
-## mean absolute vertical luma gradient over the whole far band, which is what
-## "do the steps read" is as a number:
-##
-##     far_terrace 0    2.764        (no steps at all)
-##     riser 0.50       3.052   mean luma  90.8
-##     riser 0.70       3.547   mean luma  96.4
-##     riser 1.00       4.073   mean luma 103.1
-##
-## Darkening the risers makes the mountain darker and the steps WEAKER, both
-## monotonically. It is not a contrast knob; it is a dimmer. Left on F4 as
-## `distance: riser shade` so Marcel can overrule it in one spinbox, with the
-## 0.50 and 0.70 tours on disk.
-@export var far_riser_shade := 1.0
-
-## HOW MUCH A RISER FACING AWAY FROM THE SUN IS LIFTED. Distance v2 follow-up,
-## and the reason far_riser_shade above stays at an honest 1.0.
-##
-## THE PROBLEM, found by elimination rather than by theory. Terracing takes the
-## far band's dead-black share from 7.08% to 15.63%. It is NOT the altitude
-## bands - turning them off makes it worse, 15.63% - nor the impostors, which
-## were HIDING dark ground (worse again at 18.06%), nor the near field's own
-## behaviour arriving at range, because a near cliff measures 0.00%. It is the
-## risers, and three plausible explanations died to get there.
-##
-## GEOMETRY CANNOT FIX IT. A riser is as tall as the terrain's own height
-## difference to its neighbour, so its area is cell width x slope and the step
-## size only ROUNDS it. On anything steeper than 45 degrees the far country is
-## mostly vertical face by construction, and the cubic lock only makes actual
-## cubes on 45-degree ground.
-##
-## THE TRAP IN THE LIGHT. Look's ramp is three flat bands. On a slope facing
-## fully away from the sun the top (which carries the flank normal) and the
-## riser (horizontal) land in the SAME band, so nothing separates them and they
-## crush together into one flat black. A symmetric lift was measured at 1.30: it
-## moved the whole frame 15.64% -> 14.37% and the treeline band itself
-## 34.79% -> 34.11%, which is nearly nothing, while lifting the LIT side too -
-## where it is not needed and where a riser brighter than its own shelf top
-## starts to read as a cheat.
-##
-## SO THE LIFT GOES ONLY WHERE THE DARK IS. A riser facing the sun is drawn at
-## far_riser_shade, an honest voxel side face with no cheat in it; one facing
-## away is multiplied by this. The mesher already knows which is which - it is
-## the same dot against Block.SUN_ASPECT that aspect_tint uses - so it costs
-## nothing new. 1.0 disables it and restores a symmetric riser exactly.
-##
-## THE APPROXIMATION, stated rather than buried: SUN_ASPECT is a FIXED compass
-## direction, not the real sun, so this is right around noon and drifts at dawn
-## and dusk. That is the same approximation aspect_tint has shipped with since
-## look v1 - "any fixed direction would do" - and inheriting it is deliberate.
-##
-## LOCAL and unhashed, and read only where far_terrace emits a riser at all.
-@export var far_riser_lift := 1.6
-
 ## Real seconds per in-game day.
 ## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
 ##
@@ -1620,32 +1517,6 @@ const FOG_START_RATIO := 0.4
 ## Per VERTEX, not per block, because per-block colour is incompatible with
 ## greedy meshing - see Block.jitter(). The cost is zero extra quads.
 
-## How far the per-vertex tint moves brightness, as a fraction. Terrain v2
-## started at 0.05; look v1 tried 0.10 for a lithograph grain and the spawn
-## tour showed why per-VERTEX tint cannot give one: a greedy-meshed meadow is
-## a few huge quads, so the jitter lands on their corners and interpolates
-## across them as soft blotches, and doubling it doubled the blotches. 0.07
-## is where it reads as ground again. Grain would need per-block colour, which
-## greedy meshing rules out - see Block.jitter().
-@export var color_jitter_value := 0.0
-
-## Red-against-blue tilt, as a fraction. Smaller than the value jitter: a hue
-## shift is much more visible than a brightness shift at the same magnitude.
-@export var color_jitter_hue := 0.0
-
-## Blocks per tint cell. 6 blocks is 3 m - about a player and a half, so the
-## grain is a texture on the ground rather than a patchwork of fields. Was 12
-## through terrain v2, at the old half-strength.
-@export var color_jitter_blocks := 6
-
-## How much darker a vertical face is than a horizontal one, 0 to 1.
-@export var slope_tint := 0.0
-
-## How much warmer a sun-facing slope is than a shaded one, 0 to 1. This is
-## aspect, not lighting - see Block.aspect_shade(). Look v1 doubled it and
-## made the curve pick a side, so a slope is two tones meeting at the ridge.
-@export var aspect_tint := 0.0
-
 ## THE MATERIAL NOISE, light v1 Stage 0, and it is the bible's own sentence
 ## rather than an effect: "one body colour in three shades plus a little
 ## per-cube noise (one step up or down on random cubes) so big walls do not
@@ -1662,19 +1533,6 @@ const FOG_START_RATIO := 0.4
 ## never where a block stands.
 @export var grain_sparse := 0.33
 @export var grain_step := 0.12
-
-## HOW DARK THE GROUND GOES UNDER A CLOSED CANOPY, at full cover.
-##
-## World feel v1 Stage 6, and a LOCAL knob: it is a rendering decision, it does
-## not move a block, and two machines disagreeing about it is a difference of
-## taste rather than of world. On F4. Tuned blind on this box - if 0.35 reads
-## as mud on a real GPU, 0.25.
-## 0 FROM LIGHT V1 STAGE 0. The canopy ink darkened the ground under a closed
-## canopy because no tree cast a shadow; LOD0 trees cast real shadows now
-## (Q10), so painting a second one is painting what light already does. The
-## knob stays so the old look can be photographed for the report; the code
-## that reads it is stripped in Stage 3.
-@export var canopy_shade := 0.0
 
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
@@ -1837,10 +1695,10 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"wind_strength", "night_life", "far_tree_tint",
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
 	"fog_start_m", "fog_end_m",
-	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
+	"far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
-	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_riser_shade", "far_riser_lift",
-	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
+	"far_terrace", "far_step_y_blocks", "far_ring_div",
+	"far_vote", "far_grain", "far_fog_start_frac",
 	"far_overdraw", "far_tree_grain",
 	# DISTANCE V4. LOCAL and unhashed like every far knob before it - and it
 	# has to be on THIS list rather than only in the @export block, or
@@ -1864,9 +1722,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# TREES V3 STAGE 6. The trunk collider ring.
 	"tree_colliders",
 	"ao_strength", "msaa_level",
-	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
-	"slope_tint", "aspect_tint",
-	"grain_sparse", "grain_step", "canopy_shade",
+	"grain_sparse", "grain_step",
 	# LIGHT V1 STAGE 1. The eerie flag (Q13): a modifier on the hour.
 	"weather",
 ]

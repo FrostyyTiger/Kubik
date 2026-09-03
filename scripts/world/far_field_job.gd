@@ -622,7 +622,6 @@ var _t_full := false
 ## zone thresholds rather than re-derived - the bands have to agree with where
 ## the forest actually stops or the backdrop contradicts the world in front of
 ## it. -1 until run() computes it.
-var _band_treeline := 0
 
 
 func run() -> void:
@@ -634,9 +633,6 @@ func run() -> void:
 	heightmap.build_pyramid()
 	var bs: float = config.block_size
 	var base_step := base_step_blocks(config)
-	# The treeline's band, once. zone_thresholds[ZONE_FOREST] is the top of the
-	# forest zone in BLOCKS; _band_color works in metres.
-	_band_treeline = treeline_band(generator, config)
 	var far_radius := config.fog_end_m / bs * FOG_MARGIN
 	_far_radius = far_radius
 	# DISTANCE V2 STAGE 0. Read once per job rather than per quad: it is a knob
@@ -1004,16 +1000,6 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# gradient across the quad - and a lighting normal from the slope
 			# of the whole flank rather than of this one facet. See the two
 			# helpers below.
-			# THE BAND INTERVAL IS THE RING'S STEP HEIGHT, distance v2 Stage 7,
-			# so a band boundary IS a shelf boundary and lands on a riser
-			# instead of wandering across a slope. Per quad rather than per
-			# ring, because the terrace fades across the seam band and the
-			# interval fades with it.
-			var band_m := band_m_at(config, step, terr)
-			var band_tl := _band_treeline
-			if band_m != config.far_band_m:
-				band_tl = treeline_band(generator, config, band_m)
-			color = _band_color(color, mid_h * bs, band_m, band_tl)
 			var flank := _flank_normal(bx0 + step / 2, bz0 + step / 2)
 
 			_push_quad(p0, p1, p2, p3, color, w_verts, w_normals, w_colors, w_indices, flank)
@@ -1084,46 +1070,24 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				# the terrace is fading in across the seam band (Stage 8) the two
 				# ends can differ, which is why the riser is a trapezoid rather
 				# than a rectangle.
-				# THE LIFT IS ASYMMETRIC, and this is the whole of the black
-				# crush fix. Measured: terracing takes the far band's dead-black
-				# share from 7.08% to 15.63%, and it is the RISERS - turning off
-				# the altitude bands makes it worse (15.63%) and turning off the
-				# impostors worse still (18.06%), so neither of those is the
-				# cause. Geometry cannot fix it either: a riser is as tall as the
-				# terrain's own height difference to its neighbour, so its area
-				# is cell width x slope and the step size only rounds it.
+				# A RISER TAKES ITS TOP'S COLOUR (light v1 Stage 3, Q15).
 				#
-				# That leaves light, and light has a trap: the ramp is three flat
-				# bands, so on a slope facing fully away from the sun the top and
-				# the riser land in the SAME band and nothing separates them.
-				# They crush together into one flat black.
+				# What stood here was the whole of distance v2's black-crush
+				# fix, and it is worth recording why it can go. The toon ramp
+				# was three flat bands, so on a slope facing fully away from the
+				# sun a shelf top and its riser landed in the SAME band and
+				# crushed together into one flat black - measured, the far
+				# band's dead-black share went from 7.08% to 15.63% with
+				# terracing on. The answer was to paint the riser: darken it
+				# against a fixed compass direction, lift the away-facing side
+				# off the shade floor, dim it across the axis. Four painted
+				# tones on a far cube.
 				#
-				# A symmetric lift was tried at 1.30 and is a weak lever - the
-				# treeline band moved 34.79% to 34.11% - because it lifts the lit
-				# side too, where it is not needed and where it starts to look
-				# like a cheat (a riser brighter than its own shelf top).
-				#
-				# So the lift goes only where the dark is. `e[4]`/`e[5]` are the
-				# edge's outward direction in cells, which is exactly what
-				# Block.aspect_shade already dots against SUN_ASPECT, so the
-				# mesher knows which risers face away without computing anything
-				# new. A riser facing the sun is drawn at far_riser_shade and is
-				# an honest voxel side face; one facing away is lifted off the
-				# shade floor by far_riser_lift.
-				var away := clampf(-(float(e[4]) * Block.SUN_ASPECT.x
-					+ float(e[5]) * Block.SUN_ASPECT.y), 0.0, 1.0)
-				# THE AXIS TERM, distance v3 Stage 3. `cross` is 1 for a riser
-				# facing ACROSS the aspect axis and 0 for one facing along it -
-				# the perp dot of the edge's outward direction against
-				# Block.SUN_ASPECT, which is the same fixed direction aspect_tint
-				# has picked since look v1, so the far country and the near
-				# country disagree about nothing. See far_riser_axis.
-				var cross := absf(float(e[4]) * Block.SUN_ASPECT.y
-					- float(e[5]) * Block.SUN_ASPECT.x)
-				var k: float = config.far_riser_shade \
-					* lerpf(1.0, config.far_riser_lift, away) \
-					* (1.0 - config.far_riser_axis * cross)
-				var riser := Color(color.r * k, color.g * k, color.b * k, color.a)
+				# The ramp is gone. A riser now faces away from the sun and is
+				# darker for that reason, continuously, and a shelf top beside
+				# it is lit - so there is nothing to crush and nothing to
+				# unpaint it with.
+				var riser_color := color
 				var da: float
 				var db: float
 				if _t_full:
@@ -1137,7 +1101,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				if da <= 0.0 and db <= 0.0:
 					continue
 				_push_riser(e[0], e[1], maxf(da, 0.0) * bs, maxf(db, 0.0) * bs,
-					riser, w_verts, w_normals, w_colors, w_indices)
+					riser_color, w_verts, w_normals, w_colors, w_indices)
 
 
 ## The zone of one far-field quad.
@@ -1362,26 +1326,6 @@ func _filtered(bx: int, bz: int, band: float) -> float:
 	return lerpf(mean,
 		heightmap.height_max_filtered(float(bx), float(bz), level), gain)
 
-
-## Altitude bands - look v1's far field as a stacked backdrop.
-##
-## Every far_band_m of altitude the value steps by far_band_step, MONOTONICALLY
-## lighter with altitude, so a mountain reads as contour bands the way a poster
-## paints one. Applied to a quad's MIDDLE height, once per quad, which is what
-## makes the band edge a hard stepped line along the quad grid rather than a
-## gradient interpolated across it. Off at far_band_step 0.
-## MONOTONIC, NOT ALTERNATING (look v2 Stage 2).
-##
-## Alternating put a lighter band directly above a darker one at every second
-## boundary, and on a flank that climbs across several of them that reads as a
-## ZIGZAG - the red zigzag on shot 9's treeline that look v1 recorded and could
-## not name. Ranges get lighter with altitude and the fog bands carry the
-## distance; the two axes stop fighting each other. Zeroed at the treeline so
-## the forest keeps the colour it was authored with, and clamped either side so
-## a 400 m peak does not run away to white.
-func _band_color(color: Color, y_m: float, band_m: float,
-		band_treeline: int) -> Color:
-	return band_color(color, y_m, config, band_treeline, band_m)
 
 
 ## The slope of the FLANK, not of the facet: the heightmap's gradient over
@@ -1696,21 +1640,19 @@ func _push_quad(p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3, color: Color
 	if lighting_normal != Vector3.ZERO:
 		normal = lighting_normal
 
-	# The same aspect and jitter the voxels get, from the same functions and the
-	# same seed. If the far field skipped them, the boundary between voxels and
-	# far mesh would be a visible line in COLOUR as well as in geometry - and
-	# Stage 5 has just spent a whole commit removing it from the geometry.
-	var shaded := Block.aspect_shade(color, normal, config.slope_tint, config.aspect_tint)
-	var inv_bs := 1.0 / config.block_size
+	# ONE FLAT COLOUR PER MATERIAL, NEAR AND FAR (light v1 Stage 3, Q15). The
+	# aspect shade and the per-vertex jitter that used to run here are gone from
+	# both legs in the same commit, so the parity tests never saw them disagree.
+	# The seam still cannot show a line in colour, and for a better reason than
+	# before: the voxels beside it now emit the same flat zone colour through
+	# the same one conversion.
+	var wire := Look.to_wire(color)
 
 	var first := verts.size()
 	for p in [p0, p1, p2, p3]:
 		verts.push_back(p)
 		normals.push_back(normal)
-		colors.push_back(Look.to_wire(Block.jitter(shaded,
-			int(round(p.x * inv_bs)), int(round(p.z * inv_bs)), generator.world_seed,
-			config.color_jitter_blocks, config.color_jitter_value,
-			config.color_jitter_hue)))
+		colors.push_back(wire)
 	indices.push_back(first)
 	indices.push_back(first + 1)
 	indices.push_back(first + 2)
@@ -1768,97 +1710,28 @@ static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
 
 
-## The band the treeline falls in. Read from the generator's own thresholds
-## rather than re-derived, so the bands agree with where the forest stops.
-##
-## `band_m` overrides config.far_band_m, which distance v2 Stage 7 needs: the
-## band interval is now per RING, so the band the treeline falls in is too.
-static func treeline_band(generator: TerrainGenerator,
-		config: WorldgenConfig, band_m := 0.0) -> int:
-	var m := band_m if band_m > 0.0 else config.far_band_m
-	if m <= 0.0 or generator == null \
-			or generator.zone_thresholds.size() <= TerrainGenerator.ZONE_FOREST:
-		return 0
-	var treeline_m: float = \
-		generator.zone_thresholds[TerrainGenerator.ZONE_FOREST] * config.block_size
-	return int(floor(treeline_m / m))
-
-
-## The altitude band applied to one colour. See _band_color above.
-static func band_color(color: Color, y_m: float, config: WorldgenConfig,
-		band_treeline: int, band_m := 0.0) -> Color:
-	var step_amount: float = config.far_band_step
-	if step_amount <= 0.0 or config.far_band_m <= 0.0:
-		return color
-	var m := band_m if band_m > 0.0 else config.far_band_m
-	if m <= 0.0:
-		return color
-	# THE TOTAL VALUE CHANGE IS THE CONSTANT, NOT THE PER-BAND STEP. Distance v2
-	# Stage 7 takes the interval from 60 m to a ring's own cell width - 16 m at
-	# ring 2, about four times as many bands - and far_band_step at 0.03 per
-	# band would be four times too strong at that density. Scaling it by the
-	# same ratio keeps the value change per METRE of altitude exactly where look
-	# v1 and look v2 put it, and keeps the 0.85-1.25 clamp landing at the same
-	# altitudes. It also makes far_band_step still mean what its label says.
-	step_amount *= m / config.far_band_m
-	var band := int(floor(y_m / m))
-	var k := clampf(1.0 + step_amount * float(band - band_treeline), 0.85, 1.25)
-	return Color(color.r * k, color.g * k, color.b * k, color.a)
-
-
-## THE ALTITUDE BAND INTERVAL AT ONE DISTANCE, in metres. Distance v2 Stage 7,
-## decision 7.
-##
-## The colour has been drawing contour steps since look v1 - one band per quad,
-## "which is what makes the band edge a hard stepped line along the quad grid
-## rather than a gradient interpolated across it". It was drawing them onto a
-## SMOOTH slope, so the band edge wandered along the triangle grid: that is the
-## chevron zigzag where snow meets rock in Marcel's shot, the colour saying
-## terraced while the shape said smooth.
-##
-## Lock the interval to the ring's own step height and the two stop fighting:
-## a band boundary is a shelf boundary, so it lands on a riser. 60 m -> 16 m at
-## ring 2.
-##
-## LERPED BY far_terrace RATHER THAN SWITCHED, so at 0.0 it is exactly 60 m and
-## hard rule 1 holds for the colour as well as for the geometry. There is no
-## point locking bands to shelves that are not being drawn.
-static func band_m_at(config: WorldgenConfig, step_blocks: int,
-		terrace: float) -> float:
-	if terrace <= 0.0:
-		return config.far_band_m
-	return lerpf(config.far_band_m, float(step_blocks) * config.block_size,
-		clampf(terrace, 0.0, 1.0))
-
-
 ## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
-## conversion and before the per-vertex jitter and aspect shade.
+## conversion.
 ##
 ## What an impostor converges towards. It reads the FILTERED height rather than
 ## the raw one on purpose: the question this answers is "what colour is the
-## mountain the eye sees behind this tree", and the mountain the eye sees is
-## the one drawn off the pyramid. Near a summit the two differ by tens of
-## blocks - that is Stage 0's PEAK LOSS - and a tree that converged towards the
-## true ground's zone while the far mesh beside it drew a different one would
-## be a green cone on a grey slope, which is the artefact this is here to
-## remove.
+## mountain the eye sees behind this tree", and the mountain the eye sees is the
+## one drawn off the pyramid.
+##
+## ONE FLAT ZONE COLOUR since light v1 Stage 3. It used to run the altitude
+## band over it, at the far mesh's own interval for this distance, so an
+## impostor converged toward the exact painted band behind it. With no band to
+## agree about, the agreement is free.
+##
+## `band_treeline` is kept in the signature and unread: `TreeFieldJob` passes it
+## and a phase-3 building pass will want the same hook.
 static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 		config: WorldgenConfig, bx: int, bz: int, d_m: float,
 		band_treeline: int) -> Color:
 	var h := filtered_height(heightmap, config, float(bx), float(bz),
 		level_at_distance(config, d_m))
 	var zone := backdrop_zone(generator, bx, bz, h)
-	# THE SAME BAND INTERVAL THE MESH USES AT THIS DISTANCE, distance v2
-	# Stage 7. An impostor converges towards the colour the far mesh paints
-	# behind it, and if the two disagreed about where a band edge is the tree
-	# would converge towards a colour that is not there.
-	var bm := band_m_at(config, ring_step_blocks(config, d_m),
-		clampf(config.far_terrace, 0.0, 1.0))
-	var tl := band_treeline
-	if bm != config.far_band_m:
-		tl = treeline_band(generator, config, bm)
-	return band_color(Block.color_of(TerrainGenerator.ZONE_SURFACE[zone]),
-		h * config.block_size, config, tl, bm)
+	return Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 
 ## THE RING'S CELL WIDTH AT ONE DISTANCE, in blocks - which is also that ring's

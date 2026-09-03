@@ -12,20 +12,11 @@ namespace kubik {
 // elapsed_ms}, which is FarFieldJob's three members by another route.
 Dictionary build_far_mesh(World &p_world, const Dictionary &p_args);
 
-// --- Stage 4's micro-gates ---------------------------------------------------
-//
-// The colour path, one expression at a time, for the same reason Stage 2's
-// pyramid is: a whole-mesh diff says the two meshers disagree and never where.
-// Declared here rather than left static in the .cpp purely so the self-test can
-// reach them.
-
-Color aspect_shade(const Color &p_color, const Vector3 &p_normal,
-		double p_slope_amount, double p_aspect_amount);
-Color block_jitter(const Color &p_color, int64_t p_bx, int64_t p_bz,
-		int64_t p_world_seed, int64_t p_patch, double p_value, double p_hue);
-int treeline_band(const World &p_world, double p_band_m);
-double band_m_at(const Config &p_config, int p_step_blocks, double p_terrace);
-Color band_color(const Color &p_color, double p_y_m, const Config &p_config,
-		int p_band_treeline, double p_band_m);
+// LIGHT V1 STAGE 3 REMOVED THIS BLOCK. What stood here was the colour path
+// declared one expression at a time - aspect_shade, block_jitter,
+// treeline_band, band_m_at and band_color - exposed to the self-test so a
+// parity miss could be located rather than merely detected. There is no colour
+// path left to locate: a far vertex carries Look.to_wire(zone colour) and
+// nothing else, which is one expression and the parity test compares it whole.
 
 } // namespace kubik

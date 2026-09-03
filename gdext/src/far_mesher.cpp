@@ -27,15 +27,9 @@ void KubikFarMesher::_bind_methods() {
 			&KubikFarMesher::z_backdrop);
 	ClassDB::bind_method(D_METHOD("z_surface", "bx", "bz", "altitude"),
 			&KubikFarMesher::z_surface);
-	ClassDB::bind_method(D_METHOD("c_treeline_band", "band_m"),
-			&KubikFarMesher::c_treeline_band);
-	ClassDB::bind_method(D_METHOD("c_band_m_at", "step_blocks", "terrace"),
-			&KubikFarMesher::c_band_m_at);
-	ClassDB::bind_method(D_METHOD("c_band_color", "color", "y_m",
-								   "band_treeline", "band_m"),
-			&KubikFarMesher::c_band_color);
-	ClassDB::bind_method(D_METHOD("c_aspect_shade", "color", "normal"),
-			&KubikFarMesher::c_aspect_shade);
+	// c_treeline_band, c_band_m_at, c_band_color and c_aspect_shade left with
+	// the paint in light v1 Stage 3. c_vertex stays: it is the one expression
+	// a far vertex colour still goes through, and the parity test compares it.
 	ClassDB::bind_method(D_METHOD("c_vertex", "color", "normal", "point"),
 			&KubikFarMesher::c_vertex);
 }
@@ -101,36 +95,11 @@ int KubikFarMesher::z_surface(int64_t p_bx, int64_t p_bz, double p_altitude) con
 	return world.surface_zone_at(p_bx, p_bz, p_altitude);
 }
 
-int KubikFarMesher::c_treeline_band(double p_band_m) const {
-	return kubik::treeline_band(world, p_band_m);
-}
-
-double KubikFarMesher::c_band_m_at(int p_step_blocks, double p_terrace) const {
-	return kubik::band_m_at(world.config, p_step_blocks, p_terrace);
-}
-
-Color KubikFarMesher::c_band_color(const Color &p_color, double p_y_m,
-		int p_band_treeline, double p_band_m) const {
-	return kubik::band_color(p_color, p_y_m, world.config, p_band_treeline, p_band_m);
-}
-
-Color KubikFarMesher::c_aspect_shade(const Color &p_color, const Vector3 &p_normal) const {
-	return kubik::aspect_shade(p_color, p_normal, world.config.slope_tint,
-			world.config.aspect_tint);
-}
-
-// The whole per-vertex tail of _push_quad: the aspect shade off the facet
-// normal, the jitter hashed at the vertex's own block position, and the one
-// wire conversion.
+// THE WHOLE PER-VERTEX TAIL OF _push_quad, and since light v1 Stage 3 it is one
+// line. The normal and the point are kept in the signature so the self-test's
+// parity harness does not change shape and so a future per-vertex term has
+// somewhere to go; neither is read.
 Color KubikFarMesher::c_vertex(const Color &p_color, const Vector3 &p_normal,
 		const Vector3 &p_point) const {
-	Color shaded = kubik::aspect_shade(p_color, p_normal, world.config.slope_tint,
-			world.config.aspect_tint);
-	double inv_bs = 1.0 / world.config.block_size;
-	return kubik::block_jitter(shaded,
-			(int64_t)Math::round((double)p_point.x * inv_bs),
-			(int64_t)Math::round((double)p_point.z * inv_bs),
-			world.world_seed, world.config.color_jitter_blocks,
-			world.config.color_jitter_value, world.config.color_jitter_hue)
-			.linear_to_srgb();
+	return p_color.linear_to_srgb();
 }
