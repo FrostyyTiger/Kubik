@@ -116,6 +116,10 @@ knob) and Q18 (a hand-off brief for the document rewrites) differ from the
 recommendation and the plan below follows the answers. **An answer here is
 binding.**
 
+Night-two rulings Q23 to Q28 were bound on the evening of 2026-09-03 by
+Fable, on Marcel's instruction to go with the recommendations from night
+one's morning message; they are binding in the same way.
+
 | # | question | proposed answer | binds |
 | --- | --- | --- | --- |
 | 1 | One renderer or two? Look v2 gated Forward+ against opengl3 and then never rendered a Forward+ frame. | **Forward+ only.** Volumetric fog, SSAO, SSR, the compositor and soft directional shadows do not exist on Compatibility, and pillar 2 needs all of them. The opengl3 tour and swatch runs are dropped; every "must compile on both renderers" note is retired. Recorded "for the bible" as a proposed engine decision (Forward+ required, like D49's library). | section 0, gates |
@@ -140,6 +144,12 @@ binding.**
 | 20 | What is "judging by eye" for an agent? | As look v2: every eye check is a binary sentence about a named shot, and wherever possible a sampled 9x9 window (H in degrees, S and V in percent) the agent measures with PIL and names by pixel coordinates in the status doc. The agent reads every PNG it shoots. | all stages |
 | 21 | Commit hygiene? | `feat(light):`, `fix(light):`, `docs:`; body says what changed and what shot judged it; the trailers this session's harness prescribes. Every commit passes both self-tests and the probe. | all |
 | 22 | If a stage's tour looks worse than before? | Stage 0 is expected to: it is flatter and greyer before the hours and the lens arrive. For any other stage: check the sampled windows; if they pass and the eye check fails, record it, do not revert; if a sampled window fails and no tunable fixes it, revert that stage's visual edit to its last green commit and record. | section 5 |
+| 23 | Night one found the stream probe never exits (three tries, 45 to 68 minutes on an idle box). What is night two's cost instrument? | **The tour's own cost line.** `_report_cost` prints the frame cost per shot; night two's cost line is the worst of the five hour shots and `5-lake`, lens on and lens off, SSR on, plus the load line; rule 6's 45 ms applies to that worst per-shot frame. One `--stream-probe` attempt (the real flag; section 2's `--script` form was wrong) under a 20-minute timeout, recorded if it exits and abandoned if not. The hang itself is a bug for phase 1b, not this run. | Stage 4, 5, section 5 |
+| 24 | The dusk sky measures H 221 against a window of 235-285 and no permitted lever moves it (finding B1). | **Widen the window to 215-285.** No painted term over the physical sky; B1 stays a finding for the bible. | Stage 1 gate, Stage 4 hour gates |
+| 25 | Stage 2's gates 1b (near-versus-far saturation) and 3 (the night pool) are written against assumptions this palette does not meet, and the lakeside postcard is still hazy at every clear hour after the fog pass. | **Both become RECORD.** One more notch on the valley bands before Stage 4: the day and evening band densities at 0.6 of the fog-pass values, kept if gate 1a still passes and the mountains and the sky read in `20-hour-day`; twenty minutes at most, its own commit, before and after in the status doc. | night two setup |
+| 26 | The Windows library. | **Rebuilt by Fable on Marcel's box from the branch head** at night two's launch; Q19's Windows count is recorded by Fable in the morning, not by the agent. | - |
+| 27 | Baked AO off did not widen the merge (`ao cost` +0.0%). | **Recorded for phase 1b**, not investigated in this run: the C++ mesher plan measures it rather than assuming it. | Stage 3 record |
+| 28 | Where does night two run? | **The same session and worktree**, from the branch head after `git pull --ff-only`; stages 4 to 6 as written, with Q18's docs scope; the morning message under "Night two - morning message". | section 0 |
 
 ---
 
