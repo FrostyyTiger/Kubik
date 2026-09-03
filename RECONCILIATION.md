@@ -37,7 +37,9 @@ Worth naming, because it says the direction was already converging.
 
 ## 3. Decisions only Marcel can make
 
-These are not audit findings. They are places where the bible and Marcel's own earlier rulings in this repo disagree, or where the repo committed to something the bible never mentions. Each gets a recommendation. They go into the bible as new decisions, numbered from D44 by whoever logs them.
+These are not audit findings. They are places where the bible and Marcel's own earlier rulings in this repo disagree, or where the repo committed to something the bible never mentions. Each gets a recommendation.
+
+**Decided 2026-09-03, logged in the bible as D44 to D55.** A both (D44). B real relief with the vista rule (D45). C cap four, design for two (D46). D placed volumes (D47). E the assets-side pipeline (D48). F retire the rule (D49). G the public checkout is source, not a runnable game, since every development and test machine mounts all three repos (D50). H body type, no perks (D51). I about forty minutes (D52). J the forest pack at its own grain, about 1.9 cm (D53). K the bolts stay, against the recommendation, as a spark and a chill that obey altitude, with the lore amended (D54). L sprint and field of view logged as they are (D55). The recommendations below are kept as written for the record.
 
 **A. Bounded or unbounded.** The repo rules the world unbounded by design and forbids any system from assuming a world edge (`CLAUDE.md:54-58`, Marcel, 2026-08-31). The bible's lore has rings zero to four from the capital and "the end of the map" at the Builders' city. Recommendation: both, because they are not the same question. The terrain is unbounded and seeded, with no wall. The content is ringed and ends at the far city, and beyond ring four there is only sea and eerie weather. Keep the "no global-extent assumption" rule, since D41's ten kilometres needs it, and rewrite only the parts of worldgen that measure wildness from the map centre instead of from the capital.
 
