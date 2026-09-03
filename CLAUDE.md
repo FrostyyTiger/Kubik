@@ -1,5 +1,13 @@
 # Kubik
 
+## Read this first (2026-09-03)
+
+The game's direction is the bible, the sibling repo `../Kubik-bible`. Where this file, `README.md` or `docs/` disagree with the bible, the bible wins and the text here is stale until the reconciliation rewrites it. The audit of this repo against the bible is `RECONCILIATION.md` (verdicts per system, the decisions D44-D56, and the order of work in section 9). The four detailed audits are in `docs/reconciliation/`.
+
+Working order: phase 0 housekeeping, phase 1 real light, phase 1b the chunk mesher in C++, phase 2 people and fire, phase 3 buildings, phase 4 the round 3 scene and its report (`../Kubik-bible/ROUND-3-BRIEF.md`), phase 5 the world-truth break, phase 6 the rest. When Marcel says "do phase N", start from `RECONCILIATION.md` section 9 and the bible files it names, write the plan in `docs/plans/` in the shape of `docs/plans/look-v2-tech.md`, and run it.
+
+Rules that changed under the bible and are not yet rewritten below: the world is unbounded terrain with ringed content (D44); relief is real size (D45); hard rule one (the game must run without the compiled library) is retired (D49); the public checkout is source, not a runnable game (D50). Purchased assets stay in the private `Kubik-assets` repo, mounted by `scripts/tools/sync_assets.py`, never committed here.
+
 ## Design pillars
 
 Four. Every feature must serve at least one, and contradict none.
