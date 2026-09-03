@@ -163,12 +163,14 @@ The brief needs a landmark gate, five houses, a campfire with two viking players
 |---|---|---|
 | 0. Housekeeping | Fill the eight blank seller fields in the licence records. Run `sync_assets.py`. Land the house generator and its outputs in `Kubik-assets`. Log decisions A to L in the bible. | hours |
 | 1. Real light | New environment, sun with soft sky-tinted shadows, sky ambient, filmic tonemap. Rip the ramp. Then the four hours plus eerie in the sky cycle. Then volumetric fog's three jobs. Then the bible palette and the stripped mesher colour path. Then the D40 lens pass. Then reflective water. | about two weeks |
+| 1b. The chunk mesher in C++ (D56) | The first unattended C++ epic, once the material rule is proven on screen: voxels in, arrays out, one flat colour per material plus per-cube noise, no baked corner shading, so quads merge bigger. Removes about three quarters of the column cost before fog and buildings add theirs. Cannot break a world: the mesher decides how a chunk looks, never what it is. | about one week |
 | 2. People and fire | Promote `purchased_view.gd`, load two vikings, drive the sit pose from the packs' clips. The campfire prop with an emissive core and a point light. Rip races and the parts kit behind a flag first, delete after the scene passes. | about one week |
 | 3. Buildings | `BuildingModels` loader. Place five houses at the tree line with flattened footprints. The landmark generator with setbacks, flutes, sunburst and crown, baked straight to `.ktree`. Place it on a knoll. | one to two weeks |
 | 4. The scene and the report | The brief's shots and measurements, into `discussions/11-ROUND-3-REPORT.md` in the bible. | days |
-| 5. After the scene | The C++ rewrite of the chunk mesher, the column generator, lakes and the zone pass, about two and a half to three weeks, because GDScript worker threads are serialised at about one effective thread and the mesher is three quarters of the column job. Then real relief, rings from the capital and the tile store. Then the journal, the nouveau UI, creatures. | months |
+| 5. The world-truth break (D56) | One epic, right after the scene passes and before any content is authored on a seed: real relief (D45), rings measured from the capital (D44), the tiled heightmap store, the generator, lakes and zone pass in C++, the 10 km far field. Every one of these changes what a seed produces, so they happen once and together. About two to three weeks. | weeks |
+| 6. After that | The journal with typed facts and IDs, the nouveau UI, creatures, combat and death. | months |
 
-Nothing in phase five is needed for one valley. Do not let it in early.
+Nothing in phases five and six is needed for one valley. Do not let them in early. The mesher is the one engine item pulled forward, because it is safe at any time and it is the biggest single cost.
 
 ## 10. What this costs, honestly
 
