@@ -984,6 +984,97 @@ bound values and the sampling method is the thing that changed.
 
 ---
 
+## Stage 5 - Water that reflects
+
+**Shipped.** The lake is clear, tinted by how much water the eye looks through,
+and it mirrors - and the reason it does not reach the bible's deep teal is a
+world-truth fact rather than a rendering one.
+
+- **`Look.WATER_SHADER` rebuilt.** The colour comes from the DEPTH TEXTURE:
+  the distance from a water pixel to whatever was drawn behind it is the path
+  length through water, and the tint runs from the bible's shallow `#42c1c9` to
+  its deep `#265f6e` over `deep_m` metres of it. A shoreline is a gradient
+  because the lakebed rises under it, not because a ring was drawn at a fixed
+  number of cells.
+- **A Fresnel term drives ALPHA**, so the water goes opaque exactly where the
+  reflection should win. Straight down you see the bed; along the surface you
+  see the sky. Without it a reflective surface reads as polished stone.
+- `ROUGHNESS` 0.02 against the sky radiance the whole world is already lit by,
+  with **SSR on** (64 steps, fade in 0.15, out 2.0, tolerance 0.2) for what a
+  cubemap cannot know - the shore and the ranges.
+- **`lakes.gd` lost the rings.** `RING_DEPTH`, `WATER_SHALLOW`, `WATER_DEEP`,
+  `WATER_ALPHA` and `_ring_at` are gone; the mesh carries white at alpha 1 and
+  the shader owns the colour. The run in the meshing loop no longer breaks
+  where a ring changes, so a lake is now a handful of long quads instead of
+  three rings of short ones.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| full self-test | **green** |
+| character self-test | **green**, 36 tests |
+| worldgen probe | four world numbers and config `1d7c18c7` unchanged |
+| transfer sheet, `--strict` | **PASS**, worst channel delta **1** of 6 |
+| **cost with SSR on** | worst per-shot frame across the five hours and `5-lake`: **17.2 ms** (`5-lake`), against rule 6's 45 ms. **PASS.** Medians 13.7 to 14.3 ms. Nothing else was running on the box |
+
+| # | kind | measurement | verdict |
+| --- | --- | --- | --- |
+| 1 | **GATE** | `5-lake` water hue | body `(350,320)` **H 188.5**, shallows `(95,345)` **H 188.6**, near shore `(120,370)` **H 175.7** - all inside the required 175-200 | **PASS** |
+| 2 | **GATE** | the mountain's reflection is present | **PASS, by the gate's second alternative**, and the status doc records which: the far half of the lake, where the view is grazing and the Fresnel term is high, takes the dark ranges and reads **V 38.3** against the near water's **V 49.9 to 53.3**. The reflection is darker than the sky rather than brighter, which is what a lake under a mountain does |
+| 3 | **GATE** | `5-lake` shallows against the body: at least 10 V | near-shore water `(120,370)` **V 53.3** against the body `(350,320)` **V 38.3** - a difference of **15.0** | **PASS** |
+| 4 | RECORD | the Fresnel gradient across `6-postcard`'s water, near to grazing | **V 49.9 to 57.3**, a rise of **7.4 V** over one lake | the reflection term is doing real work |
+| 5 | RECORD | water against the bible's `#42c1c9` / `#265f6e` | measured H 188.5 S 21.5 V 38.3; the bible's shallow is H184 S67 V79 and its deep H193 S65 V43 | the HUE is right to within 5 degrees of either; the SATURATION is a third of the bible's - see below |
+
+### Why the deep teal is unreachable, and it is not the shader
+
+`deep_m` ships at **3.0 m, the bottom of the plan's 3-10 range** rather than
+its 6 m start, and it still cannot reach the deep colour. The reason is in the
+worldgen probe:
+
+```
+lake 0   3612 cells   level 42.01   depth mean 1.36 max 2.00 blocks
+lake 1   2489 cells   level 48.90   depth mean 0.70 max 2.00 blocks
+lake 2   1583 cells   level 60.33   depth mean 1.04 max 2.00 blocks
+```
+
+**`lake_max_depth` caps a lake at 2 blocks - one metre - and the five largest
+average 0.35 to 0.7 m.** Against the plan's 6 m the tint reached about a sixth
+of the way from shallow to deep and the lake photographed as one flat pale
+teal; at 3 m it reaches a third. The bible's deep `#265f6e` is not reachable at
+any setting inside the permitted range, because there is no deep water in this
+world to reach it with.
+
+That is why the measured saturation is a third of the bible's: the lake is
+showing its SHALLOW colour, thinned further by the fog and the sky reflected in
+it, because shallow is all it has. Recorded as finding **B7** rather than fixed
+here - lake depth is world truth, and this is a rendering stage.
+
+### Eye checks
+
+| shot | the sentence | verdict |
+| --- | --- | --- |
+| `5-lake` | clear at the edge, teal in the body, no drawn rim | **pass.** The three hard rings are gone; what is left is a continuous gradient from bright shallows to a darker body, and the reeds at the waterline read through it |
+| `6-postcard` | the lake mirrors the mountain and the evening sky; it is still | **pass on stillness and on the mirror, with the caveat above.** The far half of the water carries the ranges as a darker field and brightens 7.4 V toward the grazing edge where it takes the sky. There is no wave, no normal map and no scroll anywhere in the shader |
+
+### Tunables moved off their start
+
+| knob | start | now | judged on |
+| --- | --- | --- | --- |
+| `deep_m` | 6.0 m | **3.0 m** (the bottom of the 3-10 range) | `5-lake` and `6-postcard`. At 6 m the depth tint spanned a sixth of its range over a 1 m lake and the water was one flat colour |
+
+### One mistake worth recording
+
+The first Stage 5 shader carried `depth_draw_opaque` **and** read
+`hint_depth_texture`. A surface that reads the depth texture must not have
+written to it first: the water's own depth is what comes back, the path length
+through the water computes as zero everywhere, and the lake renders at its
+shallow colour edge to edge with no reflection at all. It compiles, it runs,
+and the only symptom is a flat pale sheet where a lake should be. Fixed with
+`depth_draw_never` and noted in the shader so nobody re-adds it.
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.
@@ -1123,6 +1214,17 @@ gravel shore, alpine turf or heath beyond "meadow green", "greens, grey rock"
 and "natural by default". Those seven keep look v2's hexes, each marked in
 `block.gd` as a silence rather than as a decision. They are most of what the
 ground of this world is made of.
+
+**B7. There is no deep water in this world, so a lake cannot be two colours.**
+`10-color-and-light.md` gives Lake two hexes, shallow `#42c1c9` and deep
+`#265f6e`, and `20-world-and-terrain.md` asks for "lakes still and reflective".
+The reflection is built and works. The two colours cannot both appear:
+`lake_max_depth` caps a lake at **2 blocks, one metre**, and the five largest
+lakes on seed 42 average 0.35 to 0.7 m deep. A depth-driven tint therefore
+lives in the first third of its ramp at the shallowest setting the plan allows,
+and the deep teal is unreachable at any of them. Either lakes get deeper - which
+is world truth, and belongs with D56's one break - or the bible should say that
+the deep colour is for water the player cannot stand in, and name where that is.
 
 **B4. A day's night is half of it, not fifteen minutes.** The plan's prose says
 "night is about 15 minutes" of a forty-minute day. A circular sun arc is

@@ -159,7 +159,15 @@ static func configure_environment(env: Environment, sun: DirectionalLight3D,
 		env.adjustment_contrast = ADJUST_CONTRAST
 		env.adjustment_brightness = 1.0
 
-		env.ssr_enabled = false           # Stage 5, water
+		# SSR, FOR WHAT THE SKY CUBEMAP CANNOT KNOW: the shore, the ranges and
+		# (phase 3) the lit walls. The sky's own reflection comes from the
+		# radiance the world is lit by and needs none of this; screen-space is
+		# what puts the MOUNTAIN in the lake.
+		env.ssr_enabled = true
+		env.ssr_max_steps = 64
+		env.ssr_fade_in = 0.15
+		env.ssr_fade_out = 2.0
+		env.ssr_depth_tolerance = 0.2
 
 		# VOLUMETRIC FOG, AND IT IS WHAT CARRIES FOG'S THREE JOBS (Stage 2).
 		#
@@ -419,21 +427,90 @@ void fragment() {
 ## Double-sided because the surface is a single plane with nothing underneath
 ## it: standing in a lake and looking up at a one-sided surface shows you
 ## nothing at all, which reads as a bug rather than as water.
+## WATER THAT REFLECTS (D5, pillar 2, Stage 5).
+##
+## "Clear water that reflects the sky and the lit walls", and
+## `20-world-and-terrain.md`: "Water is clear and reflects. Lakes are teal and
+## still." Three things make that, and none of them is a wave.
+##
+## COLOUR FROM DEPTH, NOT FROM A RING. Until Stage 5 the lake was three drawn
+## rings - a rim, a shelf and a body, each a flat colour - which is how a poster
+## draws a lake and not how one looks. The depth texture gives the real answer:
+## the distance from this water pixel to whatever is behind it is how much water
+## the eye is looking through, so the tint runs from the bible's shallow
+## `#42c1c9` to its deep `#265f6e` over `deep_m` metres of it. A shoreline is
+## then a gradient because the lakebed rises, not because a ring was drawn there.
+##
+## FRESNEL, WHICH IS THE WHOLE OF WHY WATER LOOKS LIKE WATER. Straight down
+## into a lake you see the bed; along it you see the sky. That is one term -
+## reflectance rising toward grazing angles - and without it a reflective
+## surface reads as polished stone. It drives ALPHA, so the water goes opaque
+## exactly where the reflection should win.
+##
+## AND THE REFLECTION ITSELF IS THE ENGINE'S: roughness near zero against the
+## sky radiance the whole world is already lit by, with SSR on top for the
+## shore and the ranges that a cubemap cannot know about. The sky the lake
+## mirrors is by construction the sky above it, because they are the same
+## PhysicalSkyMaterial.
+##
+## STILL. No waves, no normal map, no scrolling. The bible says "still" twice.
+##
+## `depth_draw_never`, AND IT IS LOAD-BEARING. A surface that reads the depth
+## texture must not have written to it first: with `depth_draw_opaque` the
+## water's own depth is what `hint_depth_texture` hands back, so the path
+## length through the water comes out as zero everywhere and the lake renders
+## at its shallow colour edge to edge with no reflection at all. That is
+## exactly what the first Stage 5 postcard showed - a flat pale cyan sheet -
+## and it is the one mistake this shader can make that still compiles.
 const WATER_SHADER := """
 shader_type spatial;
-render_mode blend_mix, depth_draw_opaque, cull_disabled, diffuse_lambert, specular_schlick_ggx;
+render_mode blend_mix, depth_draw_never, cull_disabled, diffuse_burley, specular_schlick_ggx;
 """ + HEADER + """
-varying vec3 world_pos;
+uniform sampler2D depth_tex : hint_depth_texture, filter_linear_mipmap;
 
-void vertex() {
-	world_pos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
-}
+uniform vec4 shallow : source_color = vec4(0.259, 0.757, 0.788, 1.0);
+uniform vec4 deep : source_color = vec4(0.149, 0.373, 0.431, 1.0);
+// METRES OF WATER AT WHICH THE DEEP COLOUR IS REACHED, and 3.0 is the BOTTOM
+// of the plan's 3-10 range rather than its middle, because this world's lakes
+// are far too shallow for the rest of it. `lake_max_depth` caps a lake at 2
+// blocks - one metre - and the probe measures the five largest at a mean depth
+// of 0.35 to 0.7 m. Against the plan's 6 m the tint reached about a sixth of
+// the way from shallow to deep and the lake read as one flat pale teal; at 3 m
+// it reaches a third. The bible's deep `#265f6e` is not reachable at all until
+// lakes are deeper than the generator makes them, and that is recorded as a
+// finding rather than fixed here: lake depth is world truth and this is a
+// rendering stage.
+uniform float deep_m = 3.0;
+// How fast reflectance climbs toward grazing angles.
+uniform float fresnel_power = 5.0;
+uniform float alpha_shallow = 0.55;
+uniform float alpha_deep = 0.96;
 
 void fragment() {
-	ALBEDO = kubik_to_linear(COLOR.rgb);
-	ALPHA = COLOR.a;
-	ROUGHNESS = 1.0;
-	SPECULAR = 0.1;
+	// HOW MUCH WATER THE EYE IS LOOKING THROUGH. The depth texture holds what
+	// was drawn BEFORE this surface - the lakebed - so the difference between
+	// its linear depth and this fragment's is the path length through water.
+	float bed_raw = texture(depth_tex, SCREEN_UV).r;
+	vec3 ndc = vec3(SCREEN_UV * 2.0 - 1.0, bed_raw);
+	vec4 view = INV_PROJECTION_MATRIX * vec4(ndc, 1.0);
+	view.xyz /= view.w;
+	float bed_dist = -view.z;
+	float here = -VERTEX.z;
+	float through = max(bed_dist - here, 0.0);
+
+	float t = clamp(through / max(deep_m, 0.001), 0.0, 1.0);
+	ALBEDO = mix(shallow.rgb, deep.rgb, t);
+
+	// THE FRESNEL TERM. 0 looking straight down, 1 along the surface.
+	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), fresnel_power);
+	// Clear where it is shallow, opaque where it is deep, and opaque wherever
+	// the reflection wins whatever the depth is.
+	ALPHA = clamp(mix(alpha_shallow, alpha_deep, t) + f * (1.0 - alpha_shallow), 0.0, 1.0);
+
+	// Near a mirror, and a whisper of body. The reflection is the sky radiance
+	// this world is already lit by, plus SSR for what a cubemap cannot know.
+	ROUGHNESS = 0.02;
+	SPECULAR = 0.5;
 	METALLIC = 0.0;
 }
 """

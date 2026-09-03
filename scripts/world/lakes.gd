@@ -338,32 +338,6 @@ func _find_lakes(heightmap: Heightmap, config: WorldgenConfig, total: int) -> vo
 
 # --- Water surface ----------------------------------------------------------
 
-## One mesh for every lake in the world.
-##
-## Quads are merged along each row first: a lake 100 cells across becomes 100
-## quads instead of 10,000, for nothing but a while loop. Merging in two
-## dimensions as the chunk mesher does would do better still, and lakes are
-## flat and few enough that it has not been worth it.
-## Which of the three rings a water cell is in: 0 rim, 1 shallows, 2 body.
-##
-## Chebyshev distance to the nearest cell that is NOT this lake, capped at the
-## shelf width - a full distance transform for three buckets would cost more
-## code than the buckets are worth, and a lake is a few thousand cells.
-func _ring_at(i: int, j: int, id: int, rim_cells: int, shelf_cells: int) -> int:
-	for r in range(1, shelf_cells + 1):
-		for dj in range(-r, r + 1):
-			for di in range(-r, r + 1):
-				if maxi(absi(di), absi(dj)) != r:
-					continue
-				var ci := i + di
-				var cj := j + dj
-				if ci < 0 or cj < 0 or ci >= _cols or cj >= _cols:
-					return 0 if r <= rim_cells else 1
-				if lake_id[ci + cj * _cols] != id:
-					return 0 if r <= rim_cells else 1
-	return 2
-
-
 func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 	if lakes.is_empty():
 		return []
@@ -375,35 +349,25 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 
 	var bs: float = config.block_size
 	var step: int = config.coarse_step
-	# THE COLOUR IS THIS FILE'S AGAIN, and it is the bible's (light v1 Stage 0).
+	# THE MESH CARRIES NO COLOUR AT ALL SINCE STAGE 5, and that is the point.
 	#
-	# Until light v1 the vertex colour was a DARKENING FACTOR - a grey - and
-	# the colour itself arrived as the global `kubik_water`, published per hour
-	# by SkyCycle so the mesh never had to be rebuilt when the sun moved. Under
-	# real light that global is gone with the rest of the poster's publish
-	# path, and the hour tints the water by LIGHTING it rather than by
-	# repainting it (pillar 2: mood "never from repainting a thing"). A factor
-	# with no colour behind it draws a white sheet, which is what the first
-	# Stage 0 postcard came back with.
+	# This file has drawn the lake three different ways. Look v1 gave it three
+	# RINGS - a rim one cell wide, a shallows and a body - each a flat darkening
+	# factor, because that is how a poster draws a lake. Light v1 Stage 0 gave
+	# the rings the bible's two teals when the hour's water colour went away
+	# with the poster's globals. Stage 5 takes the question off this file
+	# entirely: the water shader reads the DEPTH TEXTURE and tints from shallow
+	# to deep by how much water the eye is looking through, so a shoreline is a
+	# gradient because the lakebed rises under it, not because a ring was drawn
+	# there at a fixed number of cells.
 	#
-	# So the rings carry the bible's two lake hexes directly
-	# (`10-color-and-light.md`: Lake #265f6e / #42c1c9). The mapping is the one
-	# the bible implies: the rim is the SHALLOWS and takes the light teal, the
-	# body is DEEP and takes the dark one, the shelf sits between them. That is
-	# the same fact Stage 5 will compute per pixel from the depth buffer, and
-	# these three rings are what it replaces.
-	const WATER_SHALLOW := "#42c1c9"
-	const WATER_DEEP := "#265f6e"
-	## Rim, shelf, body: how far each ring sits from shallow toward deep.
-	const RING_DEPTH := [0.0, 0.55, 1.0]
-	const WATER_ALPHA := 0.92
-	var water_shallow := Color.html(WATER_SHALLOW).srgb_to_linear()
-	var water_deep := Color.html(WATER_DEEP).srgb_to_linear()
+	# So the vertex colour is white at alpha 1 and the shader owns the colour.
+	# `RING_DEPTH`, `WATER_SHALLOW`, `WATER_DEEP` and `WATER_ALPHA` are gone,
+	# and `_ring_at` with them: the rim and shelf widths were the last thing in
+	# this world that decided what water looks like by counting cells.
 	# The plan's rim and shelf are 2 and 8 BLOCKS; the lake grid is in cells of
 	# `step` blocks, so they are rounded to whole cells here and the status doc
 	# records what they landed on.
-	var rim_cells := maxi(1, int(round(2.0 / float(step))))
-	var shelf_cells := maxi(rim_cells + 1, int(round(8.0 / float(step))))
 
 	for j in _cols:
 		var i := 0
@@ -412,12 +376,12 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			if id < 0:
 				i += 1
 				continue
-			var ring := _ring_at(i, j, id, rim_cells, shelf_cells)
-			# The run also breaks where the RING changes, so every quad is one
-			# flat colour.
+			# THE RUN IS AS LONG AS THE LAKE. It used to break wherever the
+			# ring changed, because every quad had to be one flat colour;
+			# with the colour coming from the depth buffer per pixel there is
+			# nothing left to break it, so a lake is a handful of long quads.
 			var run := 1
-			while i + run < _cols and lake_id[i + run + j * _cols] == id \
-					and _ring_at(i + run, j, id, rim_cells, shelf_cells) == ring:
+			while i + run < _cols and lake_id[i + run + j * _cols] == id:
 				run += 1
 
 			var level: float = lakes[id]["level"]
@@ -436,9 +400,7 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			]:
 				verts.push_back(p)
 				normals.push_back(Vector3.UP)
-				var c := water_shallow.lerp(water_deep, RING_DEPTH[ring])
-				c.a = WATER_ALPHA
-				colors.push_back(Look.to_wire(c))
+				colors.push_back(Color(1.0, 1.0, 1.0, 1.0))
 			indices.push_back(first)
 			indices.push_back(first + 1)
 			indices.push_back(first + 2)
