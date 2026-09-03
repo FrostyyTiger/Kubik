@@ -651,6 +651,48 @@ pass on the bands: they are doing very little at any vantage that is not
 standing in one. Left as a finding rather than widened into a change Q25 did
 not authorise.
 
+### Q25 extended: the two knobs that actually do haze the postcard
+
+The notch above changed nothing because the bands are not what hazes a lakeside
+vantage. Q25 was extended on that finding, after Stage 4 was pushed: **the
+ambient volumetric density and the far exponential density, at day and evening
+only, at 0.6 of the fog-pass values.** Dusk, night and eerie untouched.
+
+| knob | before | after |
+| --- | --- | --- |
+| day `fog_density` | 0.0003 | **0.00018** |
+| day `vol_density` | 0.005 | **0.003** |
+| evening `fog_density` | 0.00045 | **0.00027** |
+| evening `vol_density` | 0.005 | **0.003** |
+
+**Kept. Both conditions met.**
+
+| | before (`light-4`) | after (`light-4c`) |
+| --- | --- | --- |
+| `20-hour-day` far range `(700,70)` | H 38.2 **S 9.6 V 41.6** | H 38.8 **S 8.8 V 38.1** |
+| `20-hour-day` sky above it `(700,12)` | **V 41.3** | **V 39.8** |
+| gate 1a: range against the sky above it | 0.3 V | **1.7 V** (allowance 12) |
+| `20-hour-day` near range `(1180,160)` | H 31.8 S 11.1 V 33.6 | H 25.4 **S 14.0** V 30.0 |
+| `20-hour-day` midground `(640,300)` | V 35.7 | V 30.5 |
+| `21-hour-evening` midground | V 27.4 | V 24.8 |
+| `4-valley-floor` bank `(640,250)` | V 42.9 | **V 39.1** |
+| `4-valley-floor` foreground `(640,600)` | V 40.0 | **V 41.0** |
+
+Gate 1a still passes at 1.7 V against an allowance of 12, at S 8.8 against a
+ceiling of 25. **The mountains and the sky read**, and better than before: the
+near range's saturation goes UP, 11.1 to 14.0, and by eye the right-hand slope
+recovers its rock and its treeline where the previous frame had them under a
+wash. **`4-valley-floor` keeps its bands** - the bank is still there at V 39.1
+against a clear, lit foreground at V 41.0, and trees still recede into it.
+
+**Thinning fog made the frame DARKER, not brighter, and that is worth knowing.**
+Every sampled window dropped 3 to 5 V. The volumetric field is lit by the sky
+ambient, so it was adding scattered light as well as veiling contrast; less of
+it means less light in the air. That is the right trade here - the contrast it
+was costing was worth more than the light it was adding - but it means the fog
+knobs and the exposure are coupled, and anyone reaching for exposure next
+should know the fog moved first.
+
 ### The hour hue windows, re-measured with fog on
 
 Stage 1's windows were measured before there was fog in front of them. The

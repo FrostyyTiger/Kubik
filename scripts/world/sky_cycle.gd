@@ -84,14 +84,14 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#B3E4EF", "sky_mie": "#D3C2BB",
 		"sky_turbidity": 10.0, "sky_energy": 1.00, "sky_ground": "#6B6659",
 		"fog_sky_affect": 0.30,
-		"fog": "#C6C6C4", "fog_density": 0.0003,
+		"fog": "#C6C6C4", "fog_density": 0.00018,
 		# THIN, AND IN THE VALLEY BOTTOMS ONLY. The bible's day fog is the one
 		# hour that is explicitly not a fog bank: "thin, valley bottoms only,
 		# mornings". Half the height term and half the volumetric of the plan's
 		# starting row, both inside the tunable table's x0.5, because at the
 		# plan's numbers a midday postcard came back as haze with no lake in it.
 		"fog_height_offset": 40.0, "fog_height_density": 0.0005,
-		"vol_density": 0.005, "band_scale": 0.6,
+		"vol_density": 0.003, "band_scale": 0.6,
 		"warm": 0.0, "saturation": 1.0,
 	},
 	# EVENING, THE PINK HALF (D6). The whole world is tinted, and the shadow
@@ -105,9 +105,9 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#CCA8EB", "sky_mie": "#F0D2EC",
 		"sky_turbidity": 14.0, "sky_energy": 1.00, "sky_ground": "#5A4650",
 		"fog_sky_affect": 0.60,
-		"fog": "#E8AFC9", "fog_density": 0.00045,
+		"fog": "#E8AFC9", "fog_density": 0.00027,
 		"fog_height_offset": 40.0, "fog_height_density": 0.001,
-		"vol_density": 0.005, "band_scale": 0.6,
+		"vol_density": 0.003, "band_scale": 0.6,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# DUSK, THE VIOLET HALF. The bible's table says of the sun here: "none; fire
