@@ -142,30 +142,21 @@ var frozen := false
 
 var _sun: DirectionalLight3D = null
 var _env: Environment = null
-var _sky: ShaderMaterial = null
+var _sky: PhysicalSkyMaterial = null
 
 
 func setup(p_config: WorldgenConfig, sun: DirectionalLight3D,
 		world_environment: WorldEnvironment) -> void:
 	config = p_config
 	_sun = sun
-	if _sun != null:
-		# HARD SHADOWS, AND NO HIGHLIGHT. A poster's shadow is a shape with an
-		# edge, and the ramp in Look turns the shadow map straight into the
-		# shade band, so blur here would only soften the one line the look is
-		# built on. Specular is disabled in every poster material already; this
-		# is for anything that is not one.
-		_sun.shadow_blur = 0.25
-		_sun.light_specular = 0.0
 	_env = world_environment.environment
+	# ONE DECISION LIGHTS THE GAME AND THE SHEETS. The environment, the sky
+	# material, the tonemap, SSAO and the sun's shadow all come from Look, so
+	# the gallery's swatch sheets are lit by the same call the world is.
+	Look.configure_environment(_env, _sun)
 	if _env != null and _env.sky != null:
-		# THE POSTER SKY replaces whatever the scene had, which is a
-		# ProceduralSkyMaterial in every scene that has a sky - kept in the
-		# .tscn files as the thing to fall back to if Look is ever unwired.
-		_sky = Look.sky_material()
-		_env.sky.sky_material = _sky
+		_sky = _env.sky.sky_material as PhysicalSkyMaterial
 	time_of_day = config.day_start
-	_apply_fog_distances()
 	apply()
 
 
@@ -268,17 +259,15 @@ static func night_amount(elevation: float) -> float:
 	return 1.0 - smoothstep(-0.10, 0.06, elevation)
 
 
-## The night value is the MOON's energy, and it is what lights the lit side of
-## everything after dark - there is no ambient any more, see apply(). 0.04 was
-## the figure when sky ambient did most of the night's work; the moon has to do
-## it alone now, and a moonlit hillside should still be a hillside.
+## The keyframe's own energy, which for the night row is the MOON's.
 ##
-## LOOK V2 STAGE 0 PUT THESE BACK UP. 0.70 / 0.32 were chosen to cancel a bug:
-## the ramp applied the albedo twice and carried Lambert's PI, so a lit surface
-## arrived squared and 3.14x too bright, and halving the energy was the only
-## lever anyone had. Both errors are fixed in Look.RAMP now, so the energy is
-## the energy again: 1.0 at noon puts a lit #86B04A on screen at #86A73B -
-## authored, warmed by the sun, and nothing else.
+## LIGHT V1 STAGE 0 GAVE THE NIGHT A SECOND LIGHT. The night keyframe's energy
+## used to have to carry the whole of the dark on its own, because ambient was
+## disabled outright and the ramp painted shade from the directional pass. Sky
+## ambient is on at full contribution now, so the moon lights the lit side and
+## the sky lights everything else - which is what makes a night slate rather
+## than black (D7) and a shadow sky-coloured rather than empty (D8). Stage 1
+## re-authors the energies against the bible's four hours.
 static func sun_energy(elevation: float, morning := false) -> float:
 	return keyframe_at(elevation, morning)["energy"]
 
@@ -300,9 +289,10 @@ func apply() -> void:
 	RenderingServer.global_shader_parameter_set(
 		&"kubik_night", night_amount(elevation))
 
-	# THE POSTER'S GLOBALS, published before anything draws with them. Linear,
-	# because every palette in the game is - see Look.
-	Look.publish(kf, config.fog_start_m, config.fog_end_m, config.fog_bands)
+	# WARM LIGHT EXISTS OR IT DOES NOT. The one fact a shader still needs and
+	# cannot derive - Stage 1 puts a `warm` row on every hour and takes it to 0
+	# under eerie weather (D7). Until then every hour has warm light.
+	Look.publish(kf)
 
 	if _sun != null:
 		# The light travels FROM the sun (or the moon), so it points the other
@@ -312,86 +302,23 @@ func apply() -> void:
 		_sun.global_transform.basis = Basis.looking_at(-light_direction(time_of_day), Vector3.UP)
 		_sun.light_color = (kf["sun"] as Color).linear_to_srgb()
 		_sun.light_energy = kf["energy"]
-		# Never hidden. See light_direction(): a night without the light is a
-		# night without shade, which is black.
+		# Never hidden. The moon is the sun's antipode and the night's only
+		# directional light; hiding it would take the sky's ambient as the
+		# whole of the night, which is a flat grey world.
 		_sun.visible = true
 
 	if _env != null:
+		# THE FOG TAKES THE HOUR'S COLOUR. Stage 1 puts a density on every hour
+		# too; Stage 0 draws at the day density Look set.
 		_env.fog_light_color = (kf["fog"] as Color).linear_to_srgb()
-		# NO AMBIENT. The ramp in Look owns the shade colour, and sky ambient
-		# on top of it is exactly the "grey everywhere" the poster is not. The
-		# environment's ambient is left in the scene for the handful of things
-		# that are not poster materials, at nothing.
-		_env.ambient_light_energy = 0.0
 
 	if _sky != null:
-		var day := day_amount(elevation)
-		var dusk := dusk_amount(elevation)
-		var night := night_amount(elevation)
-		_sky.set_shader_parameter("sky_top", kf["sky_top"])
-		_sky.set_shader_parameter("sky_mid", kf["sky_mid"])
-		# THE HORIZON IS NOT THE FOG. Look v1 made them the same value so the
-		# far mesh's last band could never be a line against the sky; look v2
-		# gives the sky its own horizon row and puts the fog a step DARKER, so
-		# a far range is a cut-out against the sky rather than glass over it.
-		# The sky shader reads kubik_fog_color itself for everything below the
-		# horizon, which is what keeps the two in agreement.
-		_sky.set_shader_parameter("sky_horizon", kf["horizon"])
-		_sky.set_shader_parameter("cloud_lit", kf["cloud_lit"])
-		# The gold moon, Marcel's sixteenth refinement. The night keyframe's
-		# accent; the moon's LIGHT stays the cold blue in kf["sun"].
-		_sky.set_shader_parameter("moon_color", keyframe("night")["accent"])
-		_sky.set_shader_parameter("sun_dir", sun_pos)
-		_sky.set_shader_parameter("moon_dir", -sun_pos)
-		_sky.set_shader_parameter("sun_color", kf["sun"])
-		_sky.set_shader_parameter("day", day)
-		_sky.set_shader_parameter("dusk", dusk)
-		_sky.set_shader_parameter("night", night)
-		# The rays fan out at dawn and dusk and are a faint fact by noon.
-		_sky.set_shader_parameter("ray_strength", lerpf(0.22, 0.6, dusk))
-		_sky.set_shader_parameter("ray_extent", lerpf(0.7, 1.6, dusk))
-		_sky.set_shader_parameter("sky_bands", float(config.sky_bands))
-		_sky.set_shader_parameter("cloud_cover", config.cloud_cover)
-
-
-## Fog distances come from the config and only change when it does.
-func _apply_fog_distances() -> void:
-	if _env == null or config == null:
-		return
-
-	# LINEAR tonemapping, not Filmic.
-	#
-	# There are no textures here - a block is exactly its colour - so the
-	# palette IS the art direction, and a tonemapper that reshapes it is
-	# reshaping the art. Measured off the first tour: Filmic turned #86B04A
-	# meadow into #68D62F on screen, brighter AND hue-shifted toward green,
-	# because it curves each channel separately. Linear reproduces what was
-	# authored, and the light energies below are set so a fully lit flat
-	# surface lands at about 1.0 and nothing clips.
-	_env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	_env.tonemap_exposure = 1.0
-
-	_env.fog_enabled = true
-	# Depth fog rather than exponential: the config says "clear until 120 m,
-	# gone by 200 m", and depth fog takes exactly those two numbers. Matching
-	# an exponential curve to them would be a fudge factor nobody could tune.
-	_env.fog_mode = Environment.FOG_MODE_DEPTH
-	_env.fog_depth_begin = config.fog_start_m
-	_env.fog_depth_end = config.fog_end_m
-	_env.fog_depth_curve = 1.0
-	_env.fog_density = 1.0
-	# THE POSTER SKY OWNS ITS HORIZON. The environment's fog used to tint the
-	# sky (0.6) and bleed depth into it (0.25), which put a second, un-banded
-	# gradient over the one the sky shader draws - so the horizon was neither
-	# the sky's colour nor the fog's, and no swatch through it could be
-	# predicted. Both off; the sky shader and Look's banded fog agree by
-	# construction instead.
-	_env.fog_sky_affect = 0.0
-	_env.fog_aerial_perspective = 0.0
+		# THE SUN DISC. The physical sky draws its own; the rest of the sky's
+		# grading is Stage 1's, from the re-authored keyframe table.
+		_sky.sun_disk_scale = 1.0
 
 
 ## Called after the tuning panel or a config reload changes the numbers.
 func rebind(p_config: WorldgenConfig) -> void:
 	config = p_config
-	_apply_fog_distances()
 	apply()

@@ -934,15 +934,10 @@ const FOG_START_RATIO := 0.4
 @export var fog_start_m := 360.0
 @export var fog_end_m := 600.0
 
-## How many flat steps the fog takes between the two. Look v1: distance is
-## bands, not haze - see Look. 1 is a single hard cut at fog_end; 64 is
-## indistinguishable from ordinary depth fog. A look knob, local.
-@export var fog_bands := 4
-
-## The poster sky, see Look.SKY_SHADER. Flat bands between horizon and zenith,
-## and how much of the sky the clouds cover, 0 to 1. Look knobs, local.
-@export var sky_bands := 5
-@export var cloud_cover := 0.35
+# LIGHT V1 STAGE 0 DELETED fog_bands, sky_bands AND cloud_cover. The banded
+# fog and the poster sky they tuned are gone: the environment's exponential fog
+# with aerial perspective is the far term now, and the sky is the engine's own
+# PhysicalSkyMaterial. All three were LOCAL, so the config hash does not move.
 
 ## THE FAR FIELD AS A BACKDROP, see FarFieldJob. Every far_band_m of altitude
 ## the far mesh steps its colour's value by far_band_step - MONOTONIC since
@@ -1074,28 +1069,11 @@ const FOG_START_RATIO := 0.4
 ## LOOK, NOT SHAPE, and never a hole: hard rule 2 does not trade against a
 ## vertex count.
 @export var far_overdraw := 0.0
+# LIGHT V1 STAGE 0 DELETED far_dither_m. The 4x4 Bayer screen-space dissolve
+# it clipped the far field with was an ordered dither, and D41 asks for the
+# opposite: "far things arrive out of fog, never at a boundary". The fog is the
+# answer; the ring geomorph keeps the geometry quiet. LOCAL, so the hash holds.
 
-## THE DITHERED DISSOLVE'S CLIP DISTANCE, in metres. 0 is off, and 0 is the
-## shipped value. Distance v3 Stage 7.
-##
-## DH's 4x4 Bayer discard is implemented and it is switched off, and the reason
-## is a direct conflict with the line above rather than an opinion.
-##
-## The dissolve exists to hide DH's near clip plane: fragments nearer than
-## `clip` are discarded, over `[clip, 1.5 * clip]`, so the LOD's inner edge is
-## a fade instead of a line. **Every fragment it discards is a fragment that
-## was covering a hole.** DH can afford that because vanilla Minecraft meshes a
-## chunk in milliseconds; our far mesh takes 6.3 s to rebuild, which is exactly
-## why `far_overdraw` is 0, and discarding the overdraw would undo it.
-##
-## It is left in, on a knob, because the conflict is a property of the rebuild
-## time and not of the idea. If the far-mesh job ever gets cheap - the
-## GDExtension conversation in STATUS.md - the dissolve becomes affordable and
-## this is where it lives. A safe value TODAY is about 30 m: the stream probe
-## measures the frontier ahead of a sprinting player at no less than 40 m, so
-## fragments inside 30 m are covering ground that is always there. It is
-## photographed in docs/status/distance-v3.md at 30.
-@export var far_dither_m := 0.0
 
 ## WHERE THE AIR BEGINS, as a fraction of the FAR RADIUS. Distance v3 Stage 5,
 ## decision 4, and DH's `farFogStart` default.
@@ -1169,7 +1147,7 @@ const FOG_START_RATIO := 0.4
 ## So the far country has had no per-block variation at all, at any distance.
 ## This is that grain, extended outward on a lattice that GROWS with view
 ## distance instead of being switched off - Distant Horizons' noise recipe with
-## its dropoff turned inside out. See Look.FAR_GRAIN_DECL for the mechanism and
+## its dropoff turned inside out. See the `far_grain` uniform in Look.OPAQUE_SHADER for the mechanism and
 ## why the average colour is provably unmoved.
 ##
 ## Defaults to the near field's own `grain_amount`, which is the honest starting
@@ -1628,26 +1606,29 @@ const FOG_START_RATIO := 0.4
 @export var color_jitter_blocks := 6
 
 ## How much darker a vertical face is than a horizontal one, 0 to 1.
-@export var slope_tint := 0.10
+@export var slope_tint := 0.0
 
 ## How much warmer a sun-facing slope is than a shaded one, 0 to 1. This is
 ## aspect, not lighting - see Block.aspect_shade(). Look v1 doubled it and
 ## made the curve pick a side, so a slope is two tones meeting at the ridge.
-@export var aspect_tint := 0.18
+@export var aspect_tint := 0.0
 
-## THE GRAIN, look v2 Stage 3. The tooth of the paper: a hash of the world-space
-## half-metre cell, offsetting value by grain_amount and hue by grain_hue. Not a
-## texture - hard rule 3 - and not per-vertex jitter either, which is what this
-## replaces: jitter varied a whole QUAD and read as blotches, this varies a cell
-## and reads as a surface. Terrain only; figures never take it.
-@export var grain_amount := 0.065
-@export var grain_hue := 0.03
-## Gate the grain to the top share of cells at a fixed step, for materials flat
-## enough that an even grain reads as noise. 0 is off, and it is off.
-@export var grain_sparse := 0.0
-## How dark the bottom half-metre of a vertical face goes, so a terrace riser
-## has a line under it. 1.0 is off.
-@export var contact_band := 0.72
+## THE MATERIAL NOISE, light v1 Stage 0, and it is the bible's own sentence
+## rather than an effect: "one body colour in three shades plus a little
+## per-cube noise (one step up or down on random cubes) so big walls do not
+## look flat" (`10-color-and-light.md`).
+##
+## `grain_sparse` is the share of half-metre cells that take a step at all;
+## `grain_step` is how far the step goes, up or down by a second hash. That is
+## a STEP on SOME cells, at every distance. What it replaces - grain_amount and
+## grain_hue - was a continuous wobble in value and hue on EVERY cell, faded
+## out by 45 m, and `contact_band` was a drawn line under every vertical face.
+## Both were paint doing what light does, and light does it now.
+##
+## LOCAL, like every knob in this block: they change how a surface is drawn and
+## never where a block stands.
+@export var grain_sparse := 0.33
+@export var grain_step := 0.12
 
 ## HOW DARK THE GROUND GOES UNDER A CLOSED CANOPY, at full cover.
 ##
@@ -1655,14 +1636,23 @@ const FOG_START_RATIO := 0.4
 ## not move a block, and two machines disagreeing about it is a difference of
 ## taste rather than of world. On F4. Tuned blind on this box - if 0.35 reads
 ## as mud on a real GPU, 0.25.
-@export var canopy_shade := 0.35
+## 0 FROM LIGHT V1 STAGE 0. The canopy ink darkened the ground under a closed
+## canopy because no tree cast a shadow; LOD0 trees cast real shadows now
+## (Q10), so painting a second one is painting what light already does. The
+## knob stays so the old look can be photographed for the report; the code
+## that reads it is stripped in Stage 3.
+@export var canopy_shade := 0.0
 
 ## How dark a fully enclosed corner goes, 0 to 1. 0 disables baked AO entirely
 ## and restores the pre-v2 mesher exactly, including its quad count.
 ##
 ## TUNED BLIND - this box has no display. 0.45 is the value AO conventionally
 ## lands near in voxel games; check it on a real GPU before trusting it.
-@export var ao_strength := 0.45
+## 0 FROM LIGHT V1 STAGE 0 (Q9). SSAO does this job downstream of the mesh, and
+## at 0 the mesher skips the corner sampling entirely so a run merges by block
+## id alone - bigger quads and a cheaper column job, measured in Stage 3. The
+## knob stays so the baked-AO look can still be photographed.
+@export var ao_strength := 0.0
 
 ## Multisample antialiasing for the 3D viewport: 0 off, 1 = 2x, 2 = 4x, 3 = 8x.
 ##
@@ -1813,12 +1803,12 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life", "far_tree_tint",
 	"view_distance", "voxel_radius_chunks", "sim_radius_chunks", "far_step", "max_jobs_in_flight",
-	"fog_start_m", "fog_end_m", "fog_bands", "sky_bands", "cloud_cover",
+	"fog_start_m", "fog_end_m",
 	"far_band_m", "far_band_step", "far_normal_m", "far_zone_cell_m",
 	"far_level_ref_m", "far_filter_bias", "far_peak_gain", "far_zone_cell_ratio",
 	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_riser_shade", "far_riser_lift",
 	"far_vote", "far_grain", "far_riser_axis", "far_fog_start_frac",
-	"far_overdraw", "far_dither_m", "far_tree_grain",
+	"far_overdraw", "far_tree_grain",
 	# DISTANCE V4. LOCAL and unhashed like every far knob before it - and it
 	# has to be on THIS list rather than only in the @export block, or
 	# World.setup()'s clone drops it and the panel's value never reaches the
@@ -1843,7 +1833,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"ao_strength", "msaa_level",
 	"color_jitter_value", "color_jitter_hue", "color_jitter_blocks",
 	"slope_tint", "aspect_tint",
-	"grain_amount", "grain_hue", "grain_sparse", "contact_band", "canopy_shade",
+	"grain_sparse", "grain_step", "canopy_shade",
 ]
 
 

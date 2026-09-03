@@ -126,8 +126,8 @@ func _run() -> void:
 func _sheets() -> Dictionary:
 	return {
 		"testcube": _sheet_testcube,
-		"swatches": _sheet_swatches,
-		"swatch-ramp": _sheet_swatch_ramp,
+		"transfer": _sheet_transfer,
+		"light": _sheet_light,
 		"closeup": _sheet_closeup,
 		"lineup-front": _sheet_lineup_front,
 		"lineup-back": _sheet_lineup_back,
@@ -233,19 +233,36 @@ func _sheet_testcube() -> void:
 	await _shoot("testcube", 2.4)
 
 
-# --- The swatch sheet ---------------------------------------------------------
+# --- The two colour sheets ----------------------------------------------------
 #
-# STAGE 0'S ONLY INSTRUMENT. Eight authored colours drawn twice - once with
-# their normal up, where the frozen sun puts them over BAND_LIT and the ramp's
-# lit branch owns them, and once facing the camera, where n.l is negative and
-# the shade branch owns them. Each quad is sampled out of the frame that was
-# just shot and compared with Look.predict(), which mirrors the ramp.
+# LIGHT V1 STAGE 0 SPLIT ONE SHEET INTO TWO, and the split is grill Q4.
 #
-# WHY IT EXISTS. Look v1 tuned every constant through a colour path nobody had
-# measured, so every constant absorbed the path's error. This sheet is the
-# measurement: authored | predicted | measured | delta, on both renderers,
-# every stage that touches a colour. `--strict` makes a miss an exit code so a
-# stage cannot be committed green while a swatch is red.
+# Until light v1 there was one sheet and it was a hard gate: eight authored
+# colours drawn lit and shaded, sampled out of the frame, and held against
+# `Look.predict()`, a GDScript mirror of the toon ramp. That worked because the
+# ramp was arithmetic simple enough to mirror line for line. There is no ramp
+# any more - the engine lights the world - and nothing in GDScript can predict
+# a PBR frame with sky ambient, SSAO and a filmic tonemap in it. A gate that
+# cannot be predicted is not a gate.
+#
+# So the one question the old sheet really answered is split from the one it
+# only appeared to:
+#
+#   TRANSFER - still a hard gate, still 6 units per channel, never widened.
+#   Eight colours on an UNSHADED material with the tonemap forced to LINEAR:
+#   no light, no tonemap curve, no grade. What comes back is exactly what the
+#   engine did to the value between `push_back` and the frame, so this proves
+#   there is ONE CONVERSION in the colour path and nothing else. It is the
+#   claim "what is authored is what is on screen", stated where it can still
+#   be stated.
+#
+#   LIGHT - a MEASUREMENT, not a gate. The same eight through the real
+#   material under the real environment, lit and in shadow, at each of four
+#   hours, printed as authored / lit / shadow. Where real light lands against
+#   the bible's hexes is the round 3 report's colour evidence, and the bible
+#   says at the top of `10-color-and-light.md` that its hexes are "starting
+#   points for the grading, not exact targets". A number here is never a
+#   failure; it is a finding.
 #
 # The quads cast no shadow. A vertical quad at 3.2 m throws a shadow onto the
 # pad about 1.7 m downsun of it, and with the sun's arc tilted that lands on a
@@ -265,151 +282,37 @@ const SWATCH_SIZE := 1.2
 const SWATCH_PITCH := 1.55
 ## y of the shade row's centre. Clear of the lit row, and clear of the pad.
 const SWATCH_SHADE_Y := 3.2
-## Per-channel sRGB units a swatch may miss its prediction by. The plan's
-## number, and it is not widened - see look-v2-tech.md section 5.2.
+## Per-channel sRGB units a transfer swatch may miss the authored value by.
+## The plan's number, and it is not widened - see light-v1-tech.md section 5.2.
 const SWATCH_TOLERANCE := 6
+
+## THE FOUR HOURS THE LIGHT SHEET IS SHOT AT.
+##
+## Times of day in Stage 0, because `SkyCycle.HOURS` and the elevation anchors
+## it resolves are Stage 1's. Stage 1 replaces these with
+## `SkyCycle.time_for_elevation()` on the anchors so the sheet and the tour ask
+## for an hour by the same name and get the same sun.
+const LIGHT_HOURS := [
+	{"name": "day", "t": 0.50},
+	{"name": "evening", "t": 0.74},
+	{"name": "dusk", "t": 0.79},
+	{"name": "night", "t": 0.95},
+]
 
 var _swatch_probes: Array = []
 
 
-## TEMPORARY (Stage 0.3, experiment): measure the engine's own transfer.
+## Build the two rows of swatches. Shared by both sheets so they measure the
+## same geometry in the same frame, and only the material differs.
 ##
-## Sixteen greys pushed RAW into ARRAY_COLOR - no srgb_to_linear - and drawn in
-## the SHADE band, where the ramp multiplies by kubik_shade alone: no sun, no
-## energy, no PI, and nothing clips. So measured_linear / shade_linear is
-## exactly what the engine did to the value we pushed, and the shape of that
-## curve names the bug.
-func _sheet_swatch_ramp() -> void:
-	for child in _subjects_root.get_children():
-		child.free()
-	var holder := Node3D.new()
-	_subjects_root.add_child(holder)
-	var n := 16
-	var half := SWATCH_SIZE * 0.5
-	var probes := []
-	for i in n:
-		var v := float(i) / float(n - 1)
-		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
-		holder.add_child(_swatch_quad([
-			Vector3(cx - half, SWATCH_SHADE_Y - half, SUBJECT_Z),
-			Vector3(cx + half, SWATCH_SHADE_Y - half, SUBJECT_Z),
-			Vector3(cx + half, SWATCH_SHADE_Y + half, SUBJECT_Z),
-			Vector3(cx - half, SWATCH_SHADE_Y + half, SUBJECT_Z),
-		], Vector3.BACK, Color(v, v, v), false))
-		probes.append({"v": v, "centre": Vector3(cx, SWATCH_SHADE_Y, SUBJECT_Z)})
-
-	var span := float(n) * SWATCH_PITCH + 1.0
-	var aspect := float(get_viewport().size.x) / float(get_viewport().size.y)
-	var half_angle := atan(tan(deg_to_rad(FOV) * 0.5) * aspect)
-	var distance := maxf(9.0, (span * 0.5) / tan(half_angle))
-	var look_at := Vector3(0.0, SWATCH_SHADE_Y + SWATCH_PITCH * 1.5, SUBJECT_Z)
-	_camera.global_position = look_at + Vector3(0.0, 0.0, 1.0) * distance
-	_camera.look_at(look_at, Vector3.UP)
-
-	# A second row whose albedo arrives as a UNIFORM instead of a vertex
-	# colour. If this row is clean and the vertex row is not, the error is the
-	# vertex path and belongs at the push; if both bend the same way, it is
-	# downstream of ALBEDO and no push conversion can reach it.
-	var uni_shader := Shader.new()
-	uni_shader.code = Look.OPAQUE_SHADER.replace(
-		"v_albedo = kubik_to_linear(COLOR.rgb);", "v_albedo = test_color.rgb;").replace(
-		"shader_type spatial;", "shader_type spatial;\nuniform vec4 test_color;")
-	for i in n:
-		var v := float(i) / float(n - 1)
-		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
-		var y := SWATCH_SHADE_Y + SWATCH_PITCH
-		var q := _swatch_quad([
-			Vector3(cx - half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y + half, SUBJECT_Z),
-			Vector3(cx - half, y + half, SUBJECT_Z),
-		], Vector3.BACK, Color(0.0, 0.0, 0.0))
-		var m := ShaderMaterial.new()
-		m.shader = uni_shader
-		m.set_shader_parameter("test_color", Color(v, v, v))
-		q.mesh.surface_set_material(0, m)
-		holder.add_child(q)
-		probes.append({"v": v, "uniform": true,
-			"centre": Vector3(cx, y, SUBJECT_Z)})
-
-	# A third row, UNSHADED: ALBEDO goes straight to the output with no light()
-	# in the way. If this row is clean, the bend lives in the custom light
-	# function on this renderer; if it bends too, it is the output path.
-	var uns := Shader.new()
-	uns.code = """
-shader_type spatial;
-render_mode unshaded;
-uniform vec4 test_color;
-void fragment() { ALBEDO = test_color.rgb; }
-"""
-	for i in n:
-		var v := float(i) / float(n - 1)
-		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
-		var y := SWATCH_SHADE_Y + SWATCH_PITCH * 2.0
-		var q := _swatch_quad([
-			Vector3(cx - half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y + half, SUBJECT_Z),
-			Vector3(cx - half, y + half, SUBJECT_Z),
-		], Vector3.BACK, Color(0.0, 0.0, 0.0), false)
-		var m2 := ShaderMaterial.new()
-		m2.shader = uns
-		m2.set_shader_parameter("test_color", Color(v, v, v))
-		q.mesh.surface_set_material(0, m2)
-		holder.add_child(q)
-		probes.append({"v": v, "unshaded": true,
-			"centre": Vector3(cx, y, SUBJECT_Z)})
-
-	# A fourth row that answers the mechanism outright. ALBEDO is the swatch
-	# value; light() writes a flat vec3(1.0) and nothing else. If the engine
-	# re-applies ALBEDO after light(), the row reads back as the value pushed;
-	# if it does not, every quad is white.
-	var probe_shader := Shader.new()
-	probe_shader.code = """
-shader_type spatial;
-render_mode ambient_light_disabled, specular_disabled;
-uniform vec4 test_color;
-void fragment() { ALBEDO = test_color.rgb; ROUGHNESS = 1.0; SPECULAR = 0.0; }
-void light() { DIFFUSE_LIGHT += vec3(1.0); }
-"""
-	for i in n:
-		var v := float(i) / float(n - 1)
-		var cx := (float(i) - float(n - 1) * 0.5) * SWATCH_PITCH
-		var y := SWATCH_SHADE_Y + SWATCH_PITCH * 3.0
-		var q := _swatch_quad([
-			Vector3(cx - half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y - half, SUBJECT_Z),
-			Vector3(cx + half, y + half, SUBJECT_Z),
-			Vector3(cx - half, y + half, SUBJECT_Z),
-		], Vector3.BACK, Color(0.0, 0.0, 0.0), false)
-		var m3 := ShaderMaterial.new()
-		m3.shader = probe_shader
-		m3.set_shader_parameter("test_color", Color(v, v, v))
-		q.mesh.surface_set_material(0, m3)
-		holder.add_child(q)
-		probes.append({"v": v, "flatlight": true,
-			"centre": Vector3(cx, y, SUBJECT_Z)})
-
-	var image := await _capture()
-	_save_image(image, "swatch-ramp")
-
-	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
-	var shade_linear: Color = SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)["shade"]
-	print("[Ramp] shade linear r=%.5f g=%.5f b=%.5f" % [
-		shade_linear.r, shade_linear.g, shade_linear.b])
-	print("[Ramp] %-7s %-8s %-10s %-10s %-10s %-10s" % [
-		"path", "pushed", "measured", "E(v)=lin/sh", "srgb2lin(v)", "sq"])
-	for probe in probes:
-		var m := _sample_at(image, _camera.unproject_position(probe["centre"]))
-		var e := Color(m.r, m.g, m.b).srgb_to_linear()
-		var v: float = probe["v"]
-		var lin := Color(v, v, v).srgb_to_linear().r
-		print("[Ramp] %-7s %-8.4f %-10s %-10.5f %-10.5f %-10.5f" % [
-			"flatlight" if probe.has("flatlight") else "unshaded" if probe.has("unshaded") else ("uniform" if probe.has("uniform") else "vertex"),
-			v, m.to_html(false), e.r / shade_linear.r, lin, lin * lin])
-
-
-func _sheet_swatches() -> void:
+## THE SHADE ROW FACES THE CAMERA, and under real light that is what a shadow
+## IS. The sun's z is negative at every hour, so a +Z normal never has the sun
+## on it: the quad receives sky ambient alone, which is exactly the condition
+## D8 describes - "shadows are never black outdoors; they take the sky colour".
+## No caster is needed to produce it and none is built. Recorded in the status
+## doc under "Questions taken alone": the plan asked for a wall, and a wall
+## would measure the same sky-lit surface with a wall's own occlusion added.
+func _build_swatch_rows(material: Material) -> void:
 	for child in _subjects_root.get_children():
 		child.free()
 	_swatch_probes.clear()
@@ -424,51 +327,181 @@ func _sheet_swatches() -> void:
 
 		# The lit row: flat on the pad, normal up.
 		var lit_c := Vector3(cx, 0.02, SUBJECT_Z)
-		holder.add_child(_swatch_quad([
+		var lit_q := _swatch_quad([
 			Vector3(cx - half, 0.02, SUBJECT_Z - half),
 			Vector3(cx - half, 0.02, SUBJECT_Z + half),
 			Vector3(cx + half, 0.02, SUBJECT_Z + half),
 			Vector3(cx + half, 0.02, SUBJECT_Z - half),
-		], Vector3.UP, linear))
-		_swatch_probes.append({
-			"name": "%s lit" % SWATCHES[i], "authored": SWATCHES[i],
-			"linear": linear, "lit": true, "centre": lit_c})
+		], Vector3.UP, linear)
+		lit_q.mesh.surface_set_material(0, material)
+		holder.add_child(lit_q)
 
-		# The shade row: standing, normal at the camera. The sun's z is
-		# negative at every hour, so a +Z normal is always in the shade band.
+		# The shade row: standing, normal at the camera, sky-lit only.
 		var sh_c := Vector3(cx, SWATCH_SHADE_Y, SUBJECT_Z)
-		holder.add_child(_swatch_quad([
+		var sh_q := _swatch_quad([
 			Vector3(cx - half, SWATCH_SHADE_Y - half, SUBJECT_Z),
 			Vector3(cx + half, SWATCH_SHADE_Y - half, SUBJECT_Z),
 			Vector3(cx + half, SWATCH_SHADE_Y + half, SUBJECT_Z),
 			Vector3(cx - half, SWATCH_SHADE_Y + half, SUBJECT_Z),
-		], Vector3.BACK, linear))
-		_swatch_probes.append({
-			"name": "%s shade" % SWATCHES[i], "authored": SWATCHES[i],
-			"linear": linear, "lit": false, "centre": sh_c})
+		], Vector3.BACK, linear)
+		sh_q.mesh.surface_set_material(0, material)
+		holder.add_child(sh_q)
 
-	# GRAIN OFF, FOR THIS SHEET ONLY. The grain is +-6.5% of value per half-metre
-	# cell, and a 1.2 m swatch is two cells across - so with it on, a 9x9 sample
-	# of a flat quad measures whichever cell it landed in and misses the
-	# prediction by more than the tolerance for reasons that have nothing to do
-	# with the transfer. Restored afterwards so any later sheet sees the real
-	# ground. Recorded in swatches.json as `grain_forced_off`.
-	var mat := Look.opaque_material()
-	mat.set_shader_parameter("grain_amount", 0.0)
-	mat.set_shader_parameter("grain_hue", 0.0)
+		_swatch_probes.append({
+			"name": SWATCHES[i], "authored": SWATCHES[i], "linear": linear,
+			"lit_centre": lit_c, "shade_centre": sh_c})
+
+
+## THE TRANSFER GATE. One conversion between `push_back` and the frame.
+##
+## The material is private to this sheet and `unshaded`: it does the same
+## decode the real material does and then hands the value straight to ALBEDO,
+## so no light, no ambient and no SSAO touch it. The tonemap is forced to
+## LINEAR and glow and the adjustments off FOR THIS SHEET ONLY and restored
+## afterwards, because AgX reshapes a highlight by design and would be measured
+## here as a transfer error.
+func _sheet_transfer() -> void:
+	var shader := Shader.new()
+	shader.code = """
+shader_type spatial;
+render_mode unshaded, cull_back;
+
+vec3 kubik_to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+void fragment() {
+	ALBEDO = kubik_to_linear(COLOR.rgb);
+}
+"""
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	_build_swatch_rows(mat)
+
+	var env := _env_node.environment
+	var tonemap := env.tonemap_mode
+	var exposure := env.tonemap_exposure
+	var glow := env.glow_enabled
+	var adjust := env.adjustment_enabled
+	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.tonemap_exposure = 1.0
+	env.glow_enabled = false
+	env.adjustment_enabled = false
 
 	_aim_at_swatches()
 	var image := await _capture()
-	_save_image(image, "swatches")
-	_report_swatches(image)
+	_save_image(image, "transfer")
+	_report_transfer(image)
 
+	env.tonemap_mode = tonemap
+	env.tonemap_exposure = exposure
+	env.glow_enabled = glow
+	env.adjustment_enabled = adjust
+
+
+func _report_transfer(image: Image) -> void:
+	print("[Transfer] the one conversion, unshaded, tonemap LINEAR")
+	print("[Transfer] %-10s %-9s %-9s %s" % [
+		"name", "authored", "measured", "delta r,g,b"])
+	var rows := []
+	var worst := 0
+	for probe in _swatch_probes:
+		# The lit quad alone: unshaded, both rows are the same value, and one
+		# row is one measurement rather than two of the same thing.
+		var measured := _sample_at(image,
+			_camera.unproject_position(probe["lit_centre"]))
+		var authored: Color = Color.html(probe["authored"])
+		var dr := int(round(measured.r * 255.0)) - int(round(authored.r * 255.0))
+		var dg := int(round(measured.g * 255.0)) - int(round(authored.g * 255.0))
+		var db := int(round(measured.b * 255.0)) - int(round(authored.b * 255.0))
+		var delta := maxi(absi(dr), maxi(absi(dg), absi(db)))
+		worst = maxi(worst, delta)
+		print("[Transfer] %-10s %-9s #%-8s %+4d %+4d %+4d%s" % [
+			probe["name"], probe["authored"], measured.to_html(false),
+			dr, dg, db, "   MISS" if delta > SWATCH_TOLERANCE else ""])
+		rows.append({
+			"name": probe["name"], "authored": probe["authored"],
+			"measured": measured.to_html(false),
+			"delta": [dr, dg, db], "worst": delta})
+
+	var report := {
+		"renderer": RenderingServer.get_video_adapter_name(),
+		"driver": ProjectSettings.get_setting("rendering/renderer/rendering_method", ""),
+		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
+	}
+	_write_json(report, "transfer")
+	print("[Transfer] worst channel delta %d (tolerance %d): %s" % [
+		worst, SWATCH_TOLERANCE, "PASS" if worst <= SWATCH_TOLERANCE else "FAIL"])
+	if worst > SWATCH_TOLERANCE and _strict():
+		push_error("[Transfer] --strict: worst delta %d over tolerance %d" % [
+			worst, SWATCH_TOLERANCE])
+		get_tree().quit(1)
+
+
+## THE LIGHT SHEET. Where real light lands, at four hours, lit and in shadow.
+##
+## No pass and no fail: the bible's hexes are starting points and this is the
+## measurement the round 3 report is built from. The grain is forced off for
+## the sheet - a 1.2 m swatch is two half-metre cells across, so with it on a
+## 9x9 sample measures whichever cell it landed in.
+func _sheet_light() -> void:
+	_build_swatch_rows(Look.opaque_material())
+	var mat := Look.opaque_material()
+	mat.set_shader_parameter("grain_sparse", 0.0)
+	_aim_at_swatches()
+
+	var hours := []
+	for hour in LIGHT_HOURS:
+		_set_time(hour["t"])
+		var image := await _capture()
+		_save_image(image, "light-%s" % hour["name"])
+		hours.append(_report_light(image, hour))
+	_set_time(-1.0)
+
+	_write_json({
+		"renderer": RenderingServer.get_video_adapter_name(),
+		"grain_forced_off": true, "hours": hours,
+	}, "light")
 	Look.apply_local_knobs(config)
 
 
-## One swatch quad: the poster material, and nothing thrown on its neighbours.
-func _swatch_quad(points: Array, normal: Vector3, linear: Color,
-		wire := true) -> MeshInstance3D:
-	var mi := _flat_mesh(points, normal, linear, wire)
+func _report_light(image: Image, hour: Dictionary) -> Dictionary:
+	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
+	var kf := SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)
+	print("[Light] %s - t %.3f, elevation %+.3f, sun %s, energy %.2f" % [
+		hour["name"], _sky.time_of_day, elevation,
+		(kf["sun"] as Color).linear_to_srgb().to_html(false), kf["energy"]])
+	print("[Light] %-10s %-9s %-9s %s" % ["name", "authored", "lit", "shadow"])
+	var rows := []
+	for probe in _swatch_probes:
+		var lit := _sample_at(image, _camera.unproject_position(probe["lit_centre"]))
+		var shade := _sample_at(image, _camera.unproject_position(probe["shade_centre"]))
+		print("[Light] %-10s %-9s #%-8s #%-8s" % [
+			probe["name"], probe["authored"],
+			lit.to_html(false), shade.to_html(false)])
+		rows.append({
+			"name": probe["name"], "authored": probe["authored"],
+			"lit": lit.to_html(false), "shadow": shade.to_html(false)})
+	return {
+		"hour": hour["name"], "time_of_day": _sky.time_of_day,
+		"elevation": elevation, "energy": kf["energy"],
+		"sun": (kf["sun"] as Color).linear_to_srgb().to_html(false),
+		"swatches": rows,
+	}
+
+
+func _write_json(report: Dictionary, json_name: String) -> void:
+	var path := "%s/%s.json" % [_out_dir, json_name]
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify(report, "  "))
+		f.close()
+		print("[Gallery]   -> %s" % path)
+
+
+## One swatch quad: nothing thrown on its neighbours.
+func _swatch_quad(points: Array, normal: Vector3, linear: Color) -> MeshInstance3D:
+	var mi := _flat_mesh(points, normal, linear)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
 
@@ -487,75 +520,6 @@ func _aim_at_swatches() -> void:
 	var look_at := Vector3(0.0, 1.6, SUBJECT_Z)
 	_camera.global_position = look_at + Vector3(0.0, sin(pitch), cos(pitch)) * distance
 	_camera.look_at(look_at, Vector3.UP)
-
-
-## Sample every quad out of the frame and hold it against the ramp.
-##
-## The sun state comes from SkyCycle's own pure functions at the frozen time,
-## converted exactly as apply() converts them before publishing - so the sheet
-## predicts from the same numbers the shader was handed, and a disagreement is
-## the TRANSFER and never a stale uniform.
-func _report_swatches(image: Image, json_name := "swatches") -> void:
-	# STRAIGHT FROM THE KEYFRAME, not from the wrappers: this is the same
-	# Dictionary apply() published, so a disagreement is the transfer and never
-	# a value that was converted twice on its way to the prediction.
-	var elevation := SkyCycle.sun_position(_sky.time_of_day).y
-	var kf := SkyCycle.keyframe_at(elevation, _sky.time_of_day < 0.5)
-	var sun_linear: Color = kf["sun"]
-	var energy: float = kf["energy"]
-	var shade_linear: Color = kf["shade"]
-	var shade_desat: float = kf["shade_desat"]
-	var lit_bleach := Look.LIT_BLEACH
-
-	print("[Swatches] time %.3f, elevation %.3f, energy %.3f" % [
-		_sky.time_of_day, elevation, energy])
-	print("[Swatches] sun %s  shade %s  desat %.2f  bleach %.2f" % [
-		sun_linear.linear_to_srgb().to_html(false),
-		shade_linear.linear_to_srgb().to_html(false), shade_desat, lit_bleach])
-	print("[Swatches] %-16s %-9s %-9s %-9s %s" % [
-		"name", "authored", "predicted", "measured", "delta r,g,b"])
-
-	var rows := []
-	var worst := 0
-	for probe in _swatch_probes:
-		var predicted: Color = Look.predict(probe["linear"], probe["lit"],
-			sun_linear, energy, shade_linear, shade_desat, lit_bleach)
-		var measured := _sample_at(image, _camera.unproject_position(probe["centre"]))
-		var dr := int(round(measured.r * 255.0)) - int(round(predicted.r * 255.0))
-		var dg := int(round(measured.g * 255.0)) - int(round(predicted.g * 255.0))
-		var db := int(round(measured.b * 255.0)) - int(round(predicted.b * 255.0))
-		var delta := maxi(absi(dr), maxi(absi(dg), absi(db)))
-		worst = maxi(worst, delta)
-		print("[Swatches] %-16s #%-8s #%-8s #%-8s %+4d %+4d %+4d%s" % [
-			probe["name"], probe["authored"], predicted.to_html(false),
-			measured.to_html(false), dr, dg, db,
-			"   MISS" if delta > SWATCH_TOLERANCE else ""])
-		rows.append({
-			"name": probe["name"], "authored": probe["authored"],
-			"lit": probe["lit"], "predicted": predicted.to_html(false),
-			"measured": measured.to_html(false),
-			"delta": [dr, dg, db], "worst": delta})
-
-	var report := {
-		"time_of_day": _sky.time_of_day, "elevation": elevation,
-		"energy": energy, "shade_desat": shade_desat, "lit_bleach": lit_bleach,
-		"renderer": RenderingServer.get_video_adapter_name(),
-		"driver": ProjectSettings.get_setting("rendering/renderer/rendering_method", ""),
-		"tolerance": SWATCH_TOLERANCE, "worst": worst, "swatches": rows,
-		"grain_forced_off": true,
-	}
-	var path := "%s/%s.json" % [_out_dir, json_name]
-	var f := FileAccess.open(path, FileAccess.WRITE)
-	if f != null:
-		f.store_string(JSON.stringify(report, "  "))
-		f.close()
-		print("[Swatches]   -> %s" % path)
-	print("[Swatches] worst channel delta %d (tolerance %d): %s" % [
-		worst, SWATCH_TOLERANCE, "PASS" if worst <= SWATCH_TOLERANCE else "FAIL"])
-	if worst > SWATCH_TOLERANCE and _strict():
-		push_error("[Swatches] --strict: worst delta %d over tolerance %d" % [
-			worst, SWATCH_TOLERANCE])
-		get_tree().quit(1)
 
 
 ## A 9x9 mean around a point, in sRGB as the frame stores it.
@@ -1367,8 +1331,8 @@ func _sheet_palette_tiers() -> void:
 	var holder := Node3D.new()
 	_subjects_root.add_child(holder)
 	var half := SWATCH_SIZE * 0.5
-	# One row per race, five tiers across. Laid out in the same frame the
-	# swatch sheet uses so the sampler and the tolerance are the same ones.
+	# One row per race, five tiers across. Laid out in the same frame the light
+	# sheet uses so the sampler is the same one.
 	var rows := Races.RACE_COUNT
 	for race in rows:
 		for t in Races.TIER_NAMES.size():
@@ -1384,35 +1348,54 @@ func _sheet_palette_tiers() -> void:
 			], Vector3.BACK, linear))
 			_swatch_probes.append({
 				"name": "%s %s" % [Races.name_of(race), Races.TIER_NAMES[t]],
-				"authored": hex, "linear": linear, "lit": false,
-				"centre": Vector3(cx, cy, SUBJECT_Z)})
+				"authored": hex, "linear": linear,
+				"shade_centre": Vector3(cx, cy, SUBJECT_Z)})
 
-	# GRAIN OFF for the reason the swatch sheet turns it off, and CONTACT BAND
-	# off for a reason that is this sheet's alone.
+	# GRAIN OFF for the reason the light sheet turns it off: a 1.2 m swatch is
+	# two half-metre cells across, so with the material noise on, a 9x9 sample
+	# measures whichever cell it landed in.
 	#
-	# The contact band darkens the bottom half of every half-metre cell of a
-	# VERTICAL face, which is what puts a printed line where a block meets the
-	# ground. These swatches are vertical faces stacked four rows high, so each
-	# row lands at a different point inside its half-metre cell and is darkened
-	# by a different amount - measured, before this line existed, as a clean
-	# gradient down the sheet: the bottom race off by 0, the top race off by 11
-	# against a tolerance of 6, with the misses in a perfect vertical order.
-	# That is the sheet measuring its own Y coordinate, not the palette.
-	#
-	# The one-row swatch sheet never hit it because a single row at y = 3.2
-	# happens to sit in the light half of its cell. That is luck, and it is
-	# worth knowing it was luck.
+	# THE CONTACT BAND IS GONE and so is the artefact it caused here. It
+	# darkened the bottom half of every half-metre cell of a vertical face, and
+	# these swatches are vertical faces stacked four rows high, so each row
+	# landed at a different point inside its cell and was darkened by a
+	# different amount - measured, before it was switched off for this sheet, as
+	# a clean gradient down the page: the bottom race off by 0, the top race off
+	# by 11, the misses in perfect vertical order. That was the sheet measuring
+	# its own Y coordinate. Light v1 Stage 0 deleted the band outright.
 	var mat := Look.opaque_material()
-	mat.set_shader_parameter("grain_amount", 0.0)
-	mat.set_shader_parameter("grain_hue", 0.0)
-	mat.set_shader_parameter("contact_band", 1.0)
+	mat.set_shader_parameter("grain_sparse", 0.0)
 	_aim_at_swatches()
 	var image := await _capture()
 	_save_image(image, "palette-tiers")
-	_report_swatches(image, "palette-tiers")
+	_report_palette_tiers(image)
 	Look.apply_local_knobs(config)
 
 	_report_value_tiers()
+
+
+## A MEASUREMENT, like the light sheet, and for the same reason.
+##
+## This sheet held every race's five tiers against `Look.predict()` at a
+## tolerance of 6 until light v1. There is no prediction under real light, so
+## what it reports now is where each authored tier lands on a sky-lit vertical
+## face at the frozen hour - the same shape the light sheet uses. The gate that
+## still matters for these colours is the transfer sheet, which measures the
+## conversion they travel through; the value ladder below is judged by
+## arithmetic on the authored hexes and never needed a frame at all.
+func _report_palette_tiers(image: Image) -> void:
+	print("[Tiers] authored against measured, sky-lit vertical face")
+	print("[Tiers] %-22s %-9s %s" % ["name", "authored", "measured"])
+	var rows := []
+	for probe in _swatch_probes:
+		var measured := _sample_at(image,
+			_camera.unproject_position(probe["shade_centre"]))
+		print("[Tiers] %-22s %-9s #%-8s" % [
+			probe["name"], probe["authored"], measured.to_html(false)])
+		rows.append({"name": probe["name"], "authored": probe["authored"],
+			"measured": measured.to_html(false)})
+	_write_json({"time_of_day": _sky.time_of_day, "tiers": rows},
+		"palette-tiers")
 
 
 ## The arithmetic the palette has to satisfy, printed and judged.
@@ -1930,10 +1913,6 @@ func _build_wall() -> void:
 ## The winding identity is the mesher's: (p1 - p0) x (p2 - p0) == -normal is
 ## "clockwise seen from outside", which is the face Godot draws. Points are
 ## reversed rather than eyeballed if the quad comes out invisible.
-## `wire` false pushes the colour RAW, skipping Look.to_wire. Only the ramp
-## sheet does that, and only because its whole job is to measure what the
-## renderer does to a value between push_back and the screen - a measurement
-## that our own conversion would sit in the middle of.
 func _flat_mesh(points: Array, normal: Vector3, color: Color,
 		wire := true) -> MeshInstance3D:
 	var verts := PackedVector3Array()
@@ -1960,11 +1939,11 @@ func _flat_mesh(points: Array, normal: Vector3, color: Color,
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
-	# THE POSTER MATERIAL, not a StandardMaterial3D (look v2 Stage 0, Q8). The
-	# pad, the wall and the swatch quads are the ground the characters stand on
-	# and the field a colour is judged against; drawn through anything but the
-	# ramp they are a different world, and Look.predict() would not apply to
-	# them.
+	# THE WORLD'S MATERIAL, not a StandardMaterial3D. The pad, the wall and the
+	# swatch quads are the ground the characters stand on and the field a
+	# colour is judged against; drawn through anything else they are a
+	# different world. The transfer sheet overrides it on its own quads, which
+	# is the one place a private material is the point.
 	mesh.surface_set_material(0, Look.opaque_material())
 
 	var mi := MeshInstance3D.new()

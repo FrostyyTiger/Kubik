@@ -375,19 +375,30 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 
 	var bs: float = config.block_size
 	var step: int = config.coarse_step
-	# THE COLOUR IS THE HOUR'S, NOT THIS FILE'S (look v2 Stage 4, Q10). Water
-	# is published by SkyCycle as the global kubik_water - a grey dawn, a deep
-	# noon blue, a violet dusk - and the vertex colour carries only a
-	# DARKENING FACTOR, so the mesh does not have to be rebuilt when the sun
-	# moves. The published colour is the RIM's, the lightest of the three, so
-	# no factor here is above 1.0 and nothing clips in eight bits.
+	# THE COLOUR IS THIS FILE'S AGAIN, and it is the bible's (light v1 Stage 0).
 	#
-	# Three rings and one flat colour per quad: a drawn rim one cell wide, a
-	# shallows ring, and the body. That is how a poster draws a lake - an
-	# outline and two fills - and it is why look v1's single flat sheet read
-	# as a hole rather than as water.
-	const RING_FACTOR := [1.0, 0.915, 0.847]
+	# Until light v1 the vertex colour was a DARKENING FACTOR - a grey - and
+	# the colour itself arrived as the global `kubik_water`, published per hour
+	# by SkyCycle so the mesh never had to be rebuilt when the sun moved. Under
+	# real light that global is gone with the rest of the poster's publish
+	# path, and the hour tints the water by LIGHTING it rather than by
+	# repainting it (pillar 2: mood "never from repainting a thing"). A factor
+	# with no colour behind it draws a white sheet, which is what the first
+	# Stage 0 postcard came back with.
+	#
+	# So the rings carry the bible's two lake hexes directly
+	# (`10-color-and-light.md`: Lake #265f6e / #42c1c9). The mapping is the one
+	# the bible implies: the rim is the SHALLOWS and takes the light teal, the
+	# body is DEEP and takes the dark one, the shelf sits between them. That is
+	# the same fact Stage 5 will compute per pixel from the depth buffer, and
+	# these three rings are what it replaces.
+	const WATER_SHALLOW := "#42c1c9"
+	const WATER_DEEP := "#265f6e"
+	## Rim, shelf, body: how far each ring sits from shallow toward deep.
+	const RING_DEPTH := [0.0, 0.55, 1.0]
 	const WATER_ALPHA := 0.92
+	var water_shallow := Color.html(WATER_SHALLOW).srgb_to_linear()
+	var water_deep := Color.html(WATER_DEEP).srgb_to_linear()
 	# The plan's rim and shelf are 2 and 8 BLOCKS; the lake grid is in cells of
 	# `step` blocks, so they are rounded to whole cells here and the status doc
 	# records what they landed on.
@@ -425,8 +436,9 @@ func build_water_arrays(heightmap: Heightmap, config: WorldgenConfig) -> Array:
 			]:
 				verts.push_back(p)
 				normals.push_back(Vector3.UP)
-				var f: float = RING_FACTOR[ring]
-				colors.push_back(Look.to_wire(Color(f, f, f, WATER_ALPHA)))
+				var c := water_shallow.lerp(water_deep, RING_DEPTH[ring])
+				c.a = WATER_ALPHA
+				colors.push_back(Look.to_wire(c))
 			indices.push_back(first)
 			indices.push_back(first + 1)
 			indices.push_back(first + 2)

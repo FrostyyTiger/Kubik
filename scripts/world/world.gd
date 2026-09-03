@@ -719,10 +719,6 @@ func _submit_column(col: Vector2i) -> void:
 	job.config = config
 	job.world_seed = world_seed
 	job.neighbours = _column_neighbour_chunks(col)
-	# Read on the MAIN THREAD, here, because it is a global shader parameter
-	# and a worker may not call RenderingServer. See
-	# ChunkMesher._under_canopy().
-	job.shade_ink = Look.shade_ink()
 	# A column wanted only by a peer's collision ring is built without a mesh.
 	# The arrays are still produced - the faces come from them - but nothing is
 	# uploaded to the rendering server. See ChunkNode.apply_arrays().

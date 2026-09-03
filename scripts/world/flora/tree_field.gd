@@ -420,10 +420,22 @@ func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 	var node := MultiMeshInstance3D.new()
 	node.name = key
 	node.multimesh = mm
-	# NO SHADOWS FROM THE RING. A cone's shadow is not a tree's shadow, and at
-	# 200 m nobody can tell there is one - but the shadow map pays for every
-	# triangle in it as if it were in front of the camera.
-	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# LOD0 CASTS, THE OTHER THREE RUNGS DO NOT (light v1 Stage 0, Q10).
+	#
+	# Until light v1 no tree cast a shadow at any distance, and the ground
+	# under a wood was darkened by a painted canopy ink instead. Under real
+	# light that is paint doing what light does, so the nearest rung casts and
+	# `canopy_shade` goes to 0.
+	#
+	# ONLY THE NEAREST RUNG, and the old note's argument is why: the shadow map
+	# pays for every triangle in it as if it were in front of the camera, and a
+	# proxy lump's shadow at 400 m is not a tree's shadow - it is a cost. LOD0
+	# is the rung inside `lod_blocks`, which sits well inside the 250 m shadow
+	# distance, so a rung that casts is always a rung the shadow map already
+	# reaches. The key is `m<variant>|<lod>`; the rung is what follows the bar.
+	var lod := key.get_slice("|", 1).to_int()
+	node.cast_shadow = (GeometryInstance3D.SHADOW_CASTING_SETTING_ON if lod == 0
+		else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 	add_child(node)
 	return node
 

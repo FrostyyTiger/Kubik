@@ -99,7 +99,7 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	# figure_material() and far_tree_material() already pay, and it is measured
 	# rather than assumed in docs/status/distance-v3.md.
 	#
-	# The SOURCE is still the chunks' - Look.far_field_code() splices into
+	# The SOURCE is still the chunks' - far_field_material() is a second
 	# OPAQUE_SHADER rather than editing it - so the near field's shader string is
 	# byte for byte the one main compiles.
 	material_override = Look.far_field_material()
@@ -449,7 +449,7 @@ const FAR_ONLY_PROPERTIES: PackedStringArray = [
 	# exact confusion distance v2 Stage 0 existed to remove. The rebuild it
 	# also triggers is redundant and costs one worker task nobody is
 	# waiting on.
-	"far_fog_start_frac", "far_overdraw", "far_dither_m", "far_tree_grain",
+	"far_fog_start_frac", "far_overdraw", "far_tree_grain",
 	# 2026-08-31, the vertical-step ruling. Redraws the far mesh only.
 	"far_step_y_blocks",
 	# 2026-09-01, the horizontal ladder. Redraws the far mesh and the ring.

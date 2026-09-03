@@ -89,57 +89,19 @@ kubik_night={
 "value": 0.0
 }
 
-; THE POSTER, look v1. The colour of shade, the colour of distance, and where
-; distance begins, ends and how many flat steps it takes - written every frame
-; by SkyCycle.apply() through Look.publish(). The defaults are a clear day, so
-; a scene with no SkyCycle (a self-test, a stray tool) draws sensibly.
+; LIGHT V1 STAGE 0. Where warm light exists: 1 at every hour that has any,
+; 0 under eerie weather, which D7 defines as "the same night desaturated,
+; thick fog hiding tops, warm lights off". Read by the figure's rune band, the
+; glowing mushrooms and the fireflies, so one write turns the life of a scene
+; off and nothing has to be handed a reference to the weather.
 ;
-; vec4 AND LINEAR, NOT color. The Compatibility renderer ignores colour-space
-; hints, and every palette in the game is stored linear for that reason - so
-; these are too, and SkyCycle converts before it publishes.
-kubik_shade={
-"type": "vec4",
-"value": Vector4(0.25, 0.29, 0.55, 1.0)
-}
-kubik_fog_color={
-"type": "vec4",
-"value": Vector4(0.46, 0.60, 0.77, 1.0)
-}
-kubik_fog_start={
+; The eight poster globals that stood here - kubik_shade, kubik_fog_color,
+; kubik_fog_start, kubik_fog_end, kubik_fog_bands, kubik_shade_desat,
+; kubik_fog_dark and kubik_water - are gone with the ramp and the banded fog
+; that read them. The engine lights and fogs the world now; see look.gd.
+kubik_warm={
 "type": "float",
-"value": 360.0
-}
-kubik_fog_end={
-"type": "float",
-"value": 600.0
-}
-kubik_fog_bands={
-"type": "float",
-"value": 6.0
-}
-
-; LOOK V2. How far the shade side is desaturated toward its own luminance
-; before the ink colours it (rule 1, sharpened): the shade band keeps the
-; surface's LUMINANCE and takes the ink's HUE, which a multiply cannot do.
-; Per keyframe - 0.55 by day, 0.75 at night - so the night is greyer.
-kubik_shade_desat={
-"type": "float",
-"value": 0.55
-}
-
-; The fog colour one band darker. Figures fog toward this and terrain toward
-; kubik_fog_color, so a character at distance stays a step darker than the
-; ground behind it instead of dissolving into it.
-kubik_fog_dark={
-"type": "vec4",
-"value": Vector4(0.30, 0.34, 0.42, 1.0)
-}
-
-; The water's colour for the hour, published so lakes.gd does not have to own a
-; time-of-day table of its own. Used from Stage 4.
-kubik_water={
-"type": "vec4",
-"value": Vector4(0.07, 0.15, 0.26, 1.0)
+"value": 1.0
 }
 
 [threading]

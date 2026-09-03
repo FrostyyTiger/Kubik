@@ -128,7 +128,7 @@ const FLOWERS := [FLOWER_WHITE, FLOWER_YELLOW, FLOWER_PURPLE, FLOWER_RED]
 # changed is the last step: each mesh builder calls Look.to_wire() on its final
 # colour at push_back, because the renderer decodes an 8-bit vertex colour on
 # the way to the shader. Push linear and it is decoded twice. The swatch sheet
-# (`--sheet swatches`) proves the round trip every stage.
+# (`--sheet transfer`) proves the round trip every stage.
 
 enum {
 	C_GRASS_BLADE = 0,
@@ -692,10 +692,15 @@ static func _emit_face(pos: Vector3i, face: int, color: Color, unit: float,
 ## do is move the vertices, and grass that does not move is the single thing
 ## that makes a meadow read as painted-on.
 ##
-## MUST COMPILE ON BOTH RENDERERS. The screenshot tour runs on Compatibility
-## under Xvfb here; Marcel plays on Forward+ on a real GPU. Nothing in here is
-## allowed to be Forward+ only, and the tour is the proof it is not - if the
-## shader fails to compile, every plant in every shot turns magenta.
+## FORWARD+ ONLY, from light v1 (grill Q1). Volumetric fog, SSAO, SSR and soft
+## directional shadows do not exist on Compatibility and pillar 2 needs all of
+## them, so the opengl3 runs are dropped and the "must compile on both
+## renderers" rule is retired. The tour is still the proof the shader compiles:
+## if it fails, every plant in every shot turns magenta.
+##
+## THIS IS THIS LANE'S FILE (Q17). The note that called it "another lane's"
+## described a parallel character redesign that no longer exists; the plant and
+## firefly shaders are rebuilt here whenever the shared base moves.
 static func material() -> ShaderMaterial:
 	if _material != null:
 		return _material
@@ -706,10 +711,10 @@ static func material() -> ShaderMaterial:
 		var m := ShaderMaterial.new()
 		m.shader = shader
 		m.set_shader_parameter("wind_strength", 1.0)
-		# A PLANT IS A FIGURE, not the ground. It fogs toward the darker colour
-		# so a meadow at 150 m does not turn into the same flat band as the
-		# hillside behind it (Look.FOG_FN, look v2 Stage 2).
-		m.set_shader_parameter("fog_dark_mix", 1.0)
+		# ONE SURFACE LANGUAGE (Q14). The plant used to fog toward a darker
+		# colour than the ground so a meadow at 150 m would not become the same
+		# flat band as the hillside behind it. The banded fog that needed is
+		# gone; a tuft fogs like the hill it grows on.
 		_material = m
 	_mesh_mutex.unlock()
 	return _material
@@ -730,8 +735,8 @@ static func material_for(model: int) -> ShaderMaterial:
 
 const SHADER := """
 shader_type spatial;
-render_mode cull_back, ambient_light_disabled, specular_disabled;
-""" + Look.HEADER + Look.FOG_FN + """
+render_mode cull_back, diffuse_lambert, specular_schlick_ggx;
+""" + Look.HEADER + """
 uniform float wind_strength = 1.0;
 uniform float night_life = 1.0;
 
@@ -751,26 +756,26 @@ void vertex() {
 }
 
 void fragment() {
-	// The vertex colour IS the albedo, exactly as it is for the terrain.
-	// There are no textures in this world; a plant is its colour. It arrives
-	// sRGB on the wire and goes to light() through v_albedo, with ALBEDO left
-	// white - see the note in Look.HEADER. A plant shader that set ALBEDO and
-	// forgot v_albedo drew every tuft in the world pure black.
-	v_albedo = kubik_to_linear(COLOR.rgb);
-	ALBEDO = vec3(1.0);
+	// The vertex colour IS the albedo, exactly as it is for the terrain, and
+	// it goes straight to ALBEDO now: there is no custom light() any more, so
+	// nothing is applied twice and the v_albedo varying is gone with the ramp.
+	ALBEDO = kubik_to_linear(COLOR.rgb);
 	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
+	SPECULAR = 0.1;
+	METALLIC = 0.0;
 	// GLOWING MUSHROOMS, AND THEY COST ONE LINE. COLOR.a is the model's own
 	// emissive flag, authored per voxel and carried in the vertex colour's
 	// alpha - 1 on a mushroom cap and 0 on everything else in the world. So
 	// this is zero for every plant that is not meant to glow, zero for all of
 	// them by day, and needs no second material, no second mesh and no branch
 	// anywhere in the placement rules.
-	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * kubik_night * night_life * 2.0;
-	// Distance in bands, like everything else - see Look.
-	FOG = poster_fog(VERTEX, v_albedo);
+	//
+	// kubik_warm takes it to nothing under eerie weather, with every other
+	// warm light in the game (D7).
+	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * kubik_night * night_life
+		* 4.0 * kubik_warm;
 }
-""" + Look.RAMP
+"""
 
 
 ## Fireflies get their own material.
@@ -803,6 +808,7 @@ shader_type spatial;
 render_mode cull_back, diffuse_lambert, specular_disabled;
 
 global uniform float kubik_night;
+global uniform float kubik_warm;
 uniform float night_life = 1.0;
 
 varying float v_glow;
@@ -849,8 +855,8 @@ void fragment() {
 	// conversion. EMISSION does decode, on the line below, because it must.
 	ALBEDO = COLOR.rgb * 0.15;
 	ROUGHNESS = 1.0;
-	SPECULAR = 0.0;
-	EMISSION = kubik_to_linear(COLOR.rgb) * v_glow * 3.0;
+	SPECULAR = 0.1;
+	EMISSION = kubik_to_linear(COLOR.rgb) * v_glow * 4.0 * kubik_warm;
 }
 """
 

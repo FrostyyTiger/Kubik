@@ -69,20 +69,15 @@ const TUNING_ROWS := [
 ## them in the .tres.
 const LOCAL_TUNING_ROWS := [
 	["view_distance", "view distance (-1..3)", -1.0, 3.0, 1.0],
-	["ao_strength", "baked AO strength", 0.0, 1.0, 0.05],
+	["ao_strength", "light: baked AO (0 = SSAO)", 0.0, 1.0, 0.05],
 	["msaa_level", "MSAA (0 off, 3 = 8x)", 0.0, 3.0, 1.0],
 	["color_jitter_value", "tint: brightness", 0.0, 0.3, 0.01],
 	["color_jitter_hue", "tint: hue", 0.0, 0.2, 0.005],
 	["color_jitter_blocks", "tint: cell (blk)", 1.0, 64.0, 1.0],
 	["slope_tint", "tint: steep faces", 0.0, 0.5, 0.01],
 	["aspect_tint", "tint: sun aspect", 0.0, 0.3, 0.01],
-	["grain_amount", "poster: grain", 0.0, 0.15, 0.005],
-	["grain_hue", "poster: grain hue", 0.0, 0.08, 0.005],
-	["grain_sparse", "poster: grain sparse", 0.0, 0.5, 0.05],
-	["contact_band", "poster: contact band", 0.5, 1.0, 0.01],
-	["fog_bands", "poster: fog bands", 1.0, 64.0, 1.0],
-	["sky_bands", "poster: sky bands", 1.0, 16.0, 1.0],
-	["cloud_cover", "poster: cloud cover", 0.0, 1.0, 0.05],
+	["grain_sparse", "light: grain sparse", 0.0, 0.5, 0.05],
+	["grain_step", "light: grain step", 0.0, 0.25, 0.01],
 	["far_band_m", "poster: far band (m)", 5.0, 200.0, 5.0],
 	["far_band_step", "poster: far band step", 0.0, 0.3, 0.01],
 	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
@@ -127,7 +122,6 @@ const LOCAL_TUNING_ROWS := [
 	["far_riser_axis", "distance: riser axis (cross)", 0.0, 0.3, 0.01],
 	["far_fog_start_frac", "distance: fog start (x reach)", 0.0, 0.9, 0.05],
 	["far_overdraw", "distance: far starts at (x r)", 0.0, 0.9, 0.05],
-	["far_dither_m", "distance: seam dither (m)", 0.0, 90.0, 5.0],
 	["far_tree_grain", "distance: far tree grain", 0.0, 0.3, 0.01],
 	# DISTANCE V4, appended after distance v3's block. Not a look knob: the two
 	# meshers emit identical arrays, so this moves the rebuild TIME and nothing

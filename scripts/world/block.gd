@@ -95,7 +95,7 @@ enum {
 ## last step: each mesh builder calls Look.to_wire() on its final colour at
 ## push_back, because the renderer decodes an 8-bit vertex colour on the way to
 ## the shader, and a linear value pushed straight in is decoded twice. The
-## swatch sheet (`--sheet swatches`) proves the round trip every stage.
+## transfer sheet (`--sheet transfer`) proves the round trip every stage.
 ##
 ## THE HEXES BELOW WERE RE-AUTHORED in look v2 Stage 4, from
 ## docs/research/art-direction.md section 3, against a colour path that was
