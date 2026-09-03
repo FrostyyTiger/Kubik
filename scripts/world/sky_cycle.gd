@@ -64,6 +64,12 @@ extends Node
 ##   fog_height_offset   metres above the valley floor the height fog sits
 ##   fog_height_density  the valley-bottom term (Stage 2)
 ##   vol_density         the volumetric field's density (Stage 2)
+##   band_scale          the valley bands ALONE, against the field they sit in
+##                       (Q25). Day and evening are notched to 0.6 because the
+##                       lakeside postcard was still hazy at those two hours
+##                       after the fog pass, and the bible's day fog is "thin,
+##                       valley bottoms only". Dusk and night keep 1.0: those
+##                       are the hours the bands are FOR.
 ##   warm                1 where warm light exists, 0 where it does not
 ##   saturation          the grade's saturation. 1.0 everywhere but eerie.
 const KEYFRAMES := {
@@ -85,7 +91,7 @@ const KEYFRAMES := {
 		# starting row, both inside the tunable table's x0.5, because at the
 		# plan's numbers a midday postcard came back as haze with no lake in it.
 		"fog_height_offset": 40.0, "fog_height_density": 0.0005,
-		"vol_density": 0.005,
+		"vol_density": 0.005, "band_scale": 0.6,
 		"warm": 0.0, "saturation": 1.0,
 	},
 	# EVENING, THE PINK HALF (D6). The whole world is tinted, and the shadow
@@ -101,7 +107,7 @@ const KEYFRAMES := {
 		"fog_sky_affect": 0.60,
 		"fog": "#E8AFC9", "fog_density": 0.00045,
 		"fog_height_offset": 40.0, "fog_height_density": 0.001,
-		"vol_density": 0.005,
+		"vol_density": 0.005, "band_scale": 0.6,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# DUSK, THE VIOLET HALF. The bible's table says of the sun here: "none; fire
@@ -120,7 +126,7 @@ const KEYFRAMES := {
 		"fog_sky_affect": 0.60,
 		"fog": "#736EB7", "fog_density": 0.0006,
 		"fog_height_offset": 40.0, "fog_height_density": 0.0015,
-		"vol_density": 0.006,
+		"vol_density": 0.006, "band_scale": 1.0,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# NIGHT IS SLATE, NOT COBALT (D7). Cobalt is the desert's night (D26) and
@@ -149,7 +155,7 @@ const KEYFRAMES := {
 		# and it is night two's: ambient energy and the ambient inject both
 		# move the fog and the ground together. Recorded in the status doc.
 		"fog_height_offset": 40.0, "fog_height_density": 0.002,
-		"vol_density": 0.006,
+		"vol_density": 0.006, "band_scale": 1.0,
 		"warm": 1.0, "saturation": 1.0,
 	},
 }
@@ -169,6 +175,10 @@ const EERIE := {
 	"sky_rayleigh": "#C3DCE8", "sky_mie": "#E1F2F8",
 	"sky_turbidity": 24.0, "sky_ground": "#8E9CA4",
 	"fog": "#97B4C7", "fog_sky_affect": 1.0,
+	# EERIE KEEPS ITS BANDS AT FULL. Q25's notch is for the two clear hours
+	# whose colour the fog was burying; eerie is the one hour whose whole point
+	# is that the fog wins, and Marcel's night-one review said it reads right.
+	"band_scale": 1.0,
 	"warm": 0.0, "saturation": 0.55,
 	"fog_density_scale": 4.0, "vol_density_scale": 4.0,
 	"fog_height_density": -0.004,
@@ -690,7 +700,7 @@ func apply() -> void:
 		# `vol_density` against the day's is the scale, so night doubles the
 		# stack and eerie quadruples it without a second table.
 		valley_fog.place(world.fog_floor_m, world.fog_floor_at,
-			kf["vol_density"] / ValleyFog.VOL_DENSITY_BASE,
+			kf["vol_density"] / ValleyFog.VOL_DENSITY_BASE * kf["band_scale"],
 			(kf["fog"] as Color).linear_to_srgb(),
 			night_amount(elevation), weather() == "eerie")
 

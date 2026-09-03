@@ -618,6 +618,39 @@ The night pool (gate 3) is 4.2 V under its target after the pass against 3.4 V
 under before - marginally worse on that one gate, and it is the gate whose
 lever is light in the fog rather than fog, as the table above it records.
 
+### The Q25 notch, and what it taught (night two, before Stage 4)
+
+Q25 binds "the day and evening band densities at 0.6 of the fog-pass values,
+kept if gate 1a still passes and the mountains and the sky read in
+`20-hour-day`". Implemented as a per-hour **`band_scale`** row so the notch
+touches the VALLEY BANDS alone and not the ambient volumetric field they sit in
+- which is the literal reading and the smaller change. Day and evening 0.6;
+dusk and night keep 1.0, because those are the hours the bands are for; eerie
+keeps 1.0, because Marcel's night-one review said eerie reads right.
+
+**Kept - and it changed almost nothing, which is the finding.**
+
+| | before (`light-3`) | after (`light-3b`) |
+| --- | --- | --- |
+| `20-hour-day` far range `(700,70)` | H 39.8 S 9.9 **V 47.0** | H 39.9 S 9.9 **V 47.0** |
+| `20-hour-day` sky above it `(700,12)` | H 46.0 S 3.5 **V 47.5** | H 46.0 S 3.5 **V 47.5** |
+| `20-hour-day` near range `(1180,160)` | H 32.1 S 11.4 V 41.3 | H 32.0 S 11.4 V 41.3 |
+| `20-hour-day` midground `(640,300)` | H 45.9 S 10.7 **V 37.9** | H 45.0 S 10.7 **V 37.9** |
+| `21-hour-evening` midground `(640,300)` | H 16.1 S 12.6 **V 28.3** | H 16.3 S 12.6 **V 28.2** |
+
+Gate 1a still passes - the farthest range sits **0.5 V** from the sky directly
+above it against an allowance of 12, and its saturation is 9.9 against a
+ceiling of 25 - and the mountains and the sky read. So the notch is kept.
+
+**But the lakeside haze is not the bands.** Halving the bands again moved every
+sampled window by under one unit, because a band is a 600 x 12 x 600 m box
+sitting at the tracked valley floor, and what hazes the postcard vantage is the
+**ambient volumetric field** over 1,200 m plus the exponential far term - two
+knobs Q25 does not name. That is worth knowing before anyone spends another
+pass on the bands: they are doing very little at any vantage that is not
+standing in one. Left as a finding rather than widened into a change Q25 did
+not authorise.
+
 ### The hour hue windows, re-measured with fog on
 
 Stage 1's windows were measured before there was fog in front of them. The
