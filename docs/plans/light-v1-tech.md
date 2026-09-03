@@ -43,7 +43,9 @@ Q1):
 
 - **ganymede** (Ubuntu 24.04, RTX 3070 Ti 8 GB, NVIDIA driver 595.84), the
   box every overnight run since distance v4 has used. `~/bin/godot`
-  (4.7.2), `~/Kubik`, `~/godot-cpp`; the tour and the sheets run under
+  (4.7.2), `~/Kubik`, `~/godot-cpp` (pinned `26fb7ab`, API dumped),
+  `~/bin/scons` (a venv at `~/.venvs/scons`; neither is on a
+  non-interactive PATH); the tour and the sheets run under
   `xvfb-run -a -s "-screen 0 1280x720x24"` with `XDG_RUNTIME_DIR` set to
   a writable directory. Verified 2026-09-03: Godot starts as `Vulkan 1.4 -
   Forward+ - Using Device #0: NVIDIA GeForce RTX 3070 Ti` under Xvfb. The
@@ -74,9 +76,10 @@ record); tour and gallery sets per stage; comparison strips in
 
 **Never.** No new textures (a code-generated night-sky image is not a texture
 asset and is the one exception, Q6). No worldgen change: the probe proves it
-after every stage. No tree re-bake. No edit to `gdext/`: the far field's
-paint is switched off by its knobs, not by C++. No campfire, no window, no
-building, no character work. No Compatibility branch in any shader. No
+after every stage. No tree re-bake. The only edit under `gdext/` is Stage
+3's far-paint strip (Q15); the heightmap tiles, the far geometry and the
+seam discipline do not move. No campfire, no window, no building, no
+character work. No Compatibility branch in any shader. No
 palette hex changed away from section 3's values. No bible file edited. No
 question left unrecorded.
 
@@ -93,9 +96,11 @@ swatch sheets), `tools/screenshot_tour.gd`, `tools/selftest.gd`
 `scenes/game.tscn`, `project.godot`.
 
 **Time budget** (wall clock, guidance): setup 0.5 h; Stage 0 3 h; Stage 1
-2.5 h; Stage 2 3 h; Stage 3 2 h; Stage 4 2 h; Stage 5 2 h; Stage 6 1 h.
-Sixteen hours: **two nights** (grill Q3). Night one is setup and stages 0 to
-3; night two is stages 4 to 6, after Marcel has looked at night one's strips.
+2.5 h; Stage 2 3 h; Stage 3 4 h (two of them the C++ strip and rebuild);
+Stage 4 2 h; Stage 5 2 h; Stage 6 1 h. Eighteen hours: **two nights** (grill
+Q3). Night one is setup and stages 0 to 3; night two is stages 4 to 6, after
+Marcel has looked at night one's strips. If night one wraps inside Stage 3,
+night two begins by finishing it.
 A stage that runs past 1.5x its budget is wrapped at its last green commit
 and the next stage starts; what was left undone goes in the status doc.
 **Stage 0 is the exception**: it is never wrapped early, and if it cannot be
@@ -105,9 +110,11 @@ made green the run stops there (section 5).
 
 ## 1. The grill - questions asked before the run, answers taken
 
-STATUS: **PROPOSED, NOT YET BINDING.** Each answer below is the plan's
-recommendation. Marcel confirms or changes each one before the run starts;
-the confirmed column then binds, exactly as look v2's did.
+STATUS: **BOUND, 2026-09-03.** Marcel answered all twenty-two one by one.
+Twenty as recommended; Q15 (strip the far paint from the C++ now, not by
+knob) and Q18 (a hand-off brief for the document rewrites) differ from the
+recommendation and the plan below follows the answers. **An answer here is
+binding.**
 
 | # | question | proposed answer | binds |
 | --- | --- | --- | --- |
@@ -125,10 +132,10 @@ the confirmed column then binds, exactly as look v2's did.
 | 12 | Water? | **Still, clear, reflective.** Colour from depth: the lake's own depth read from the depth texture tints from shallow `#42c1c9` to deep `#265f6e`; the sky reflects through the sky radiance with a Fresnel term; SSR on for the lit shore and, later, the walls; roughness near zero; no waves, no normal map. The three drawn rings (rim / shelf / body) go; the lake mesh's shape does not change. | Stage 5 |
 | 13 | Eerie is weather, and there is no weather system. | **A flag.** `WorldgenConfig.weather` (`"clear"` or `"eerie"`), local and unhashed, on F4, and `--weather eerie` for the tour. It is a modifier on the hour: saturation down, fog thick and inverted, every warm light off through a `kubik_warm` global that the flora, the fireflies and the figure emissive read. No transitions, no rain, no snowfall: that is the weather epic. | Stage 1, Stage 2 |
 | 14 | Figures fog darker than the ground today so a character does not dissolve at distance. Keep? | **No.** One surface language; a character fogs like the hill it stands on. `figure_material()` keeps only its emissive uniform. If the tour's `1-spawn` character at 40 m vanishes into the ground, that is a finding for the report, not a special case. | Stage 0 |
-| 15 | The far field's paint - altitude bands, riser shade, aspect tint, jitter - lives in `far_build.cpp` as well as in its GDScript twin. Edit the C++? | **No. Knobs to identity.** Every one of those is a `WorldgenConfig` knob the C++ reads; the plan sets them to their identity values by default and proves identity with the far probe's colour output. The C++ and the twin are deleted or rewritten in phase 1b, not here. | Stage 3 |
+| 15 | The far field's paint - altitude bands, riser shade, aspect tint, jitter - lives in `far_build.cpp` as well as in its GDScript twin. Edit the C++? | **Yes: strip the C++ now** (Marcel, against the recommendation of knobs-to-identity). `far_build.cpp`, `far_world.h` and `far_mesher.cpp` lose the paint; the GDScript twin loses it in step; the paint knobs are deleted rather than parked; the Linux library is rebuilt on ganymede inside the run and the Windows one by Marcel in the morning. Stage 3 grows by two hours. | Stage 3 |
 | 16 | The moon: the sun's antipode, one directional light that never goes out. The bible says "cool grey moonlight" and nothing about mechanism. | **Keep the antipode**, colour `#b9c2cf`, energy 0.12 (tunable). Recorded for the bible as the repo's choice (audit candidate D48). | Stage 1 |
 | 17 | `flora_models.gd` builds its shader from `Look.HEADER + FOG_FN + RAMP` and calls itself "another lane's file". | **It is this lane's file now.** No parallel lane exists in this repo; the plant and firefly shaders are rebuilt on the new base in Stage 0 so nothing draws magenta. | Stage 0 |
-| 18 | Which documents does phase 1 rewrite? | **Only its own.** `docs/status/light-v1.md`, `STATUS.md`, `README.md`'s run lines (Forward+ only, the two sheets), and `docs/DESIGN.md`'s colour-pipeline paragraph. The pending rewrites listed in `CLAUDE.md` § Where things live stay pending. | Stage 6 |
+| 18 | Which documents does phase 1 rewrite? | **Only its own**, and the pending rewrites get a hand-off brief: `docs/plans/docs-reconciliation.md`, written 2026-09-03, which a separate docs-only session can be pointed at now (Marcel's ask). It reserves two spots for this run: `README.md` § Where it is shot and `docs/DESIGN.md`'s colour-pipeline paragraph, which Stage 6 writes. | Stage 6 |
 | 19 | The Windows self-test reports 15 last-bit colour parity misses between the C++ far mesher and its twin (jitter and tint maths). With the paint knobs at identity, do they vanish? | **Measure and record.** If the misses go to zero at identity knobs, say so: it means the hazard was the paint. If not, nothing is relaxed; the ruling stays Marcel's. | Stage 3 |
 | 20 | What is "judging by eye" for an agent? | As look v2: every eye check is a binary sentence about a named shot, and wherever possible a sampled 9x9 window (H in degrees, S and V in percent) the agent measures with PIL and names by pixel coordinates in the status doc. The agent reads every PNG it shoots. | all stages |
 | 21 | Commit hygiene? | `feat(light):`, `fix(light):`, `docs:`; body says what changed and what shot judged it; the trailers this session's harness prescribes. Every commit passes both self-tests and the probe. | all |
@@ -675,21 +682,57 @@ before and after). When `ao_strength == 0.0` the mask carries `AO_OPEN`
 without sampling the corners; the merge is then by id alone. `ao_strength`
 itself stays a knob so the old look can be photographed for the report.
 
-`WorldgenConfig`: `color_jitter_value`, `color_jitter_hue`,
-`color_jitter_blocks`, `slope_tint`, `aspect_tint`, `canopy_shade` deleted
-with their F4 rows once no GDScript reads them; the far knobs `far_band_step`
-0.0, `far_riser_axis` 0.0, `far_riser_shade` and `far_riser_lift` at the
-values that make `band_color` and the riser branch the identity (read
-`far_build.cpp:132-166` and the riser block at `far_field_job.gd:1040-1125`
-to find them; prove identity by the far probe's colour output equalling the
-zone colour to the bit). `far_normal_m` stays: a flank-averaged normal is a
-coarse mesh's correct normal under real light.
+### 3.3 The far field's paint, stripped from both legs (Q15)
 
-### 3.3 Checks
+The far vertex colour becomes `to_wire(zone colour)` and nothing else, on
+both legs, in one commit, so the parity tests never see them disagree.
 
-- Transfer green. Both self-tests green: the far parity tests compare the
-  twin and the C++ at identity knobs. **Q19**: count the Windows last-bit
-  colour misses before and after; record both.
+- `gdext/src/far_build.cpp`: delete `aspect_curve`, `aspect_shade`,
+  `block_jitter`, `treeline_band`, `band_m_at` and `band_color` (the block
+  at lines 85-166), the calls at 529 and 548-556 (the vertex colour is the
+  zone colour through the one conversion), 718-721 (no band), the riser
+  factor at 776-778 (a riser takes its top's colour), and 819.
+  `far_world.h`: `far_band_m`, `far_band_step`, `far_riser_shade`,
+  `far_riser_lift`, `far_riser_axis`, `slope_tint`, `aspect_tint` and the
+  `color_jitter_*` fields leave `Config` and its marshalling; `SUN_ASPECT_*`
+  and the two tint salts go. `far_mesher.cpp` / `.h`: the `c_treeline_band`,
+  `c_band_color`, `c_aspect_shade` bindings and the jitter helper (104-131)
+  go.
+- `scripts/world/far_field_job.gd`, in step: `_band_treeline` (625, 639),
+  the band call (1013-1016), the riser factor (1108-1125), `_band_color`
+  (1382), `treeline_band` and `band_m_at` (1776-1830), the vertex push at
+  1703-1710 becomes `Look.to_wire(color)`. `far_mesher.gd` loses the
+  matching wrapper methods.
+- `scripts/world/block.gd`: `jitter`, `aspect_shade`, `aspect_curve`,
+  `SUN_ASPECT` and the two salts go. `flora_models.gd:437` keeps the boulder
+  lit-side plane with its own local constant `Vector2(0.0, -1.0)`.
+- `WorldgenConfig`: `far_band_m`, `far_band_step`, `far_riser_shade`,
+  `far_riser_lift`, `far_riser_axis`, `slope_tint`, `aspect_tint`,
+  `color_jitter_value`, `color_jitter_hue`, `color_jitter_blocks`,
+  `canopy_shade` deleted with their F4 rows and their `to_dict` entries
+  (all local; the config hash must not move). `far_normal_m` stays: a
+  flank-averaged normal is a coarse mesh's correct normal under real light.
+- `selftest.gd`: `_test_far_zone_parity` (2180-2260) drops its `band_color`,
+  `aspect_shade` and jitter rows and compares `Look.to_wire(Block.color_of())`
+  against the C++ vertex colour; `_test_far_terrace_knob` (1618) loses any
+  band reading; every other far parity test stays as it is and must stay
+  green.
+- Rebuild the Linux library inside the run:
+  `cd ~/Kubik/gdext && ~/bin/scons platform=linux target=editor custom_api_file=../../godot-cpp/extension_api.json -j$(nproc)`;
+  the self-test's `far dispatch` line must say the C++ path was taken. **The
+  Windows library is not rebuilt by the run**: it is the first "For Marcel"
+  item of the morning (recipe: `docs/plans/distance-v4.md` § environment,
+  Windows notes in the memory of this box), needed before the 5080 cost line
+  and before Q19's Windows re-count. CI's `selftest.yml` builds Linux on the
+  branch push and is the second proof.
+
+### 3.4 Checks
+
+- Transfer green. Both self-tests green on ganymede with the rebuilt
+  library: the far parity tests compare the stripped twin against the
+  stripped C++. **Q19**: the Windows last-bit colour misses are counted by
+  Marcel after the Windows rebuild (baseline 15); the status doc carries
+  the ganymede count and the request.
 - Probe: the four numbers and the config hash unchanged (the deleted knobs
   were local; if the hash moves, a knob was not).
 - GATE column job: mean ms per column from the load log, before (trees v3:
@@ -704,7 +747,8 @@ coarse mesh's correct normal under real light.
   `9-treeline` - the far flank has no contour stripes. `7` - the conifers
   are the bible's grey-green, neither the old near-black nor a lime.
 - Gates, status, commit `feat(light): the bible palette; the mesher emits one
-  flat colour per material and the far paint is switched off`, push.
+  flat colour per material, near and far, and the far paint is gone from
+  both legs`, push.
 
 **End of night one.** Status doc up to here, the final message of section
 6 for night one, and stop. Night two begins after Marcel's review, from
@@ -801,9 +845,10 @@ deleted; `make_material()` unchanged.
 
 `docs/status/light-v1.md` finalised (section 6's shape); `STATUS.md`
 replaced by the light v1 status with trees v3's moved under `docs/status/`
-if it is not already there; `README.md` run lines (Forward+ only, the two
-sheets, `--lens off`, `--weather eerie`); `docs/DESIGN.md` colour-pipeline
-paragraph (the engine lights, sRGB on the wire, the two sheets, the step
+if it is not already there; `README.md` § Where it is shot (Forward+ only,
+the two sheets, `--lens off`, `--weather eerie`); `docs/DESIGN.md`
+colour-pipeline paragraph - these two are the spots
+`docs/plans/docs-reconciliation.md` reserves for this run -  (the engine lights, sRGB on the wire, the two sheets, the step
 grain, where the hour table lives; the three-band ramp and "distance is
 bands" sentences removed); `docs/plans/look-v1.md`, `look-v2.md`,
 `look-v2-tech.md` get one line at the top: superseded by this plan. Commit
@@ -827,7 +872,8 @@ top, before anything: any BLOCKING finding.
 The final message to Marcel, in this order and nothing else first:
 
 1. `feat/light-v1`'s last commit; which stages are green, which were
-   wrapped early, which reverted.
+   wrapped early, which reverted. After night one: the Windows library
+   needs rebuilding before anything is judged on the 5080 (Q15).
 2. The three comparison strips to open first (paths), and the five hour
    shots side by side.
 3. The BLOCKING findings, if any.
