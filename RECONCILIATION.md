@@ -14,7 +14,7 @@ Not a full redo. Not "keep it because it is there" either. The repo splits clean
 
 **Redo.** The renderer, whole. The character body pipeline. The UI ornament layer. The journal store. Buildings, of which nothing exists.
 
-**Rip.** The four-race table and the lizardfolk. The generated-parts authoring kit. The armour tier ladder. The toon ramp, the banded fog, the poster sky, flat water, the dither, the linear tonemapper. The rule that the game must run without the compiled library. Fire and frost bolts. Campfire raids. The "Second Age" framing of the sea. The art-direction sections of the design docs.
+**Rip.** The four-race table and the lizardfolk. The generated-parts authoring kit. The armour tier ladder. The toon ramp, the banded fog, the poster sky, flat water, the dither, the linear tonemapper. The rule that the game must run without the compiled library. Campfire raids. The "Second Age" framing of the sea. The art-direction sections of the design docs.
 
 **Adapt.** The block palette, the snow rule, the zones, the wildness axis, the sky cycle table, the heightmap store, the creation screen, the animator, the ground-cover grain, the forest-animal scale, the knight template, the weapons bake, and most of the documents.
 
@@ -81,7 +81,7 @@ The full candidate lists, about seventy items across the four audits, are in the
 | Locomotion, physics, push, bodies | `scripts/physics/` | One shared step on host and client. The boulder that says "not on your own" is the tone as physics. |
 | Camera | `player.gd:7-10` | Third person only, for the bible's reason. |
 | UI behaviour | `hud.gd`, `compass.gd`, `party_icons.gd`, `character_screen.gd` | No minimap, a HUD that vanishes, health only when hurt, a read-only sheet. |
-| `stats.gd` | `scripts/game/stats.gd` | No hunger, no thirst, nothing drains. The tone's anti-survival rule passes. Delete `mp`. |
+| `stats.gd` | `scripts/game/stats.gd` | No hunger, no thirst, nothing drains. The tone's anti-survival rule passes. `mp` stays with the bolts (D54). |
 | `purchased_view.gd` | `scripts/character/purchased_view.gd` | The only bible-shaped character path in the repo. Promote it. |
 | Probes, galleries, the swatch gate | `scripts/tools/`, `look.gd:predict()` | The instruments round 3 is graded with. The gallery already has a campfire sheet. |
 | Fonts, the template `.vox` files, the animal warriors | `assets/fonts/`, `Kubik-assets/game/` | The warriors are the Perchten at the character grain with 181 clips. |
@@ -102,7 +102,6 @@ The full candidate lists, about seventy items across the four audits, are in the
 | The linear tonemapper and the empty environment | `sky_cycle.gd:362-372`, `scenes/game.tscn:19-24` | D40 needs roll-off, glow, a LUT. | S |
 | `world_scale := 4.0` and every reader that needs a map edge | `worldgen_config.gd:50, 106-113`, `lakes.gd:16-17`, `wildness_at` | Decisions A and B above. | L |
 | Hard rule one and the GDScript twins | `far_field_job.gd` (1,951 lines), the parity harness | Decision F. | S to retire, then savings |
-| Fire bolt and frost bolt, the `mp` stat | `DESIGN.md:289-297`, `stats.gd:34-38` | Lore, "nobody throws lightning". | S |
 | Campfire raids, the blood-moon dial | `DESIGN.md:728-732`, `IDEAS.md:345-347` | The fire is where dread ends. | S |
 | The "Second Age" sea framing, island kingdoms, the lizardfolk homeland | `IDEAS.md:366-401` | D26, the sea is rings two to four of the one world. | S |
 | The UV-atlas roadmap item | `chunk_mesher.gd:10-13` | Pillar 2. Park the 560-byte file. | S |
@@ -148,7 +147,7 @@ The full candidate lists, about seventy items across the four audits, are in the
 ## 8. The documents
 
 - **`README.md`, `CLAUDE.md`.** Keep the architecture, the probes, the build notes, the three habits. The four pillars become gameplay pillars under `00-TONE.md`, beside the bible's five art pillars. Pillar three's citation points at the bible. The worldgen guidance is rewritten per decision A. The pitch loses "cozy" as the world's register and keeps it for the fire.
-- **`docs/DESIGN.md`.** Split. It survives as the game's technical truth: the parts-as-data and `.vox` drop-in rule, the colour pipeline, the resolution ladder as engine grains, the frontier rule, physics, traversal, multiplayer, camera, saves, placeables, the creature behaviour stance. Its setting, races, magic, scale ratio, unbounded ruling, art rules and fantastic roster go, replaced by pointers to `lore/` and `style-bible/`.
+- **`docs/DESIGN.md`.** Split. It survives as the game's technical truth: the parts-as-data and `.vox` drop-in rule, the colour pipeline, the resolution ladder as engine grains, the frontier rule, physics, traversal, multiplayer, camera, saves, placeables, the creature behaviour stance. Its setting, races, scale ratio, unbounded ruling, art rules and fantastic roster go, replaced by pointers to `lore/` and `style-bible/`. Its magic section stays, amended to D54: the bolts are a spark and a chill that obey altitude.
 - **`docs/DIRECTOR.md`.** A thin pointer to `director/`. The verb table is ripped: every signature is the free-text, no-ID shape D34 forbids. The eight hardening rules, D35 and D36 are added. The storm-scholar goes; the bible's stranger is a masked figure whose people is open.
 - **`docs/IDEAS.md`, `docs/ROADMAP.md`, `TODO.md`.** Keep the structure. Look v3 "the painted world" is replaced by the round 3 test scene. Sites v1 inherits the four building families and the rings. Fog, the lens and the far view become engine work items.
 - **`docs/research/art-direction.md`.** Evidence, not authority. Its colour-transfer finding and its measurement method are the bible's own method.
