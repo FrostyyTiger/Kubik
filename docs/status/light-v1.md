@@ -577,6 +577,47 @@ vantage that looks ACROSS at a summit would test this properly and none exists.
 | dusk `vol_density` | 0.018 | **0.008** | `22-hour-dusk`: midground V 10.2 to 19.1 |
 | night `vol_density` | 0.020 | **0.009** | `23-hour-night`: see the table under gate 3 |
 
+### The fog pass (after Stage 3, on Marcel's judgement of the Stage 2 shots)
+
+**The call:** from the postcard vantage the fog was too thick at day, evening,
+dusk and night - the ranges and the sky drowned and the hours lost the colour
+Stage 1 had given them. The bible agrees: day fog is "thin, valley bottoms only,
+mornings", and D40's fence says the lens never flattens the decided hours. Eerie
+was right and is untouched.
+
+One pass, everything toward the low end of its own range:
+
+| knob | Stage 2 | after the pass |
+| --- | --- | --- |
+| far `fog_density`, day / evening / dusk / night | 0.0006 / 0.0009 / 0.0012 / 0.0009 | **0.0003 / 0.00045 / 0.0006 / 0.00045** (x0.5, the low end) |
+| `fog_height_density`, day / evening / dusk / night | 0.001 / 0.002 / 0.003 / 0.004 | **0.0005 / 0.001 / 0.0015 / 0.002** (halved) |
+| `vol_density`, day / evening / dusk / night | 0.005 / 0.007 / 0.008 / 0.009 | **0.005 / 0.005 / 0.006 / 0.006** |
+| `ValleyFog.BAND_DENSITY` | 0.0020 / 0.00125 / 0.00075 | **0.0010 / 0.000625 / 0.000375** (halved) |
+| `volumetric_fog_length` | 1,500 m | **1,200 m** |
+
+**Measured, before and after, on the five hour shots.** The midground at
+`(640,300)` is the number that says how much of the frame the fog has eaten:
+
+| hour | midground V before | after | sky hue before | after |
+| --- | --- | --- | --- | --- |
+| day | 38.3 | **37.9** | H 43.5 S 4.1 | H 43.1 S 4.3 |
+| evening | 27.9 | **28.3** | H 355.3 | **H 357.9** |
+| dusk | 19.1 | **19.7** | H 224.6 | **H 225.3** |
+| night | 15.6 | **17.9** | H 205.3 | **H 204.9** |
+| eerie | 38.6 | **39.0** | S 8.9 | S 8.9 |
+
+**Gate count is unchanged** - 1a passes before and after (far range within 0.5 V
+of the sky above it, against an allowance of 12), 1b and 3 fail before and
+after for the reasons already written up - so the tie is broken on the eye, and
+on the eye the thinner set is plainly the one: at day the ranges have their
+shape back and the lake is teal rather than a brown wash; at evening the whole
+frame is pink again with the peaks legible behind it, which is what Stage 1
+measured and Stage 2 had buried. Kept.
+
+The night pool (gate 3) is 4.2 V under its target after the pass against 3.4 V
+under before - marginally worse on that one gate, and it is the gate whose
+lever is light in the fog rather than fog, as the table above it records.
+
 ### The hour hue windows, re-measured with fog on
 
 Stage 1's windows were measured before there was fog in front of them. The

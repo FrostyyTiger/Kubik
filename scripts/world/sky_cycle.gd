@@ -78,13 +78,13 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#B3E4EF", "sky_mie": "#D3C2BB",
 		"sky_turbidity": 10.0, "sky_energy": 1.00, "sky_ground": "#6B6659",
 		"fog_sky_affect": 0.30,
-		"fog": "#C6C6C4", "fog_density": 0.0006,
+		"fog": "#C6C6C4", "fog_density": 0.0003,
 		# THIN, AND IN THE VALLEY BOTTOMS ONLY. The bible's day fog is the one
 		# hour that is explicitly not a fog bank: "thin, valley bottoms only,
 		# mornings". Half the height term and half the volumetric of the plan's
 		# starting row, both inside the tunable table's x0.5, because at the
 		# plan's numbers a midday postcard came back as haze with no lake in it.
-		"fog_height_offset": 40.0, "fog_height_density": 0.001,
+		"fog_height_offset": 40.0, "fog_height_density": 0.0005,
 		"vol_density": 0.005,
 		"warm": 0.0, "saturation": 1.0,
 	},
@@ -99,9 +99,9 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#CCA8EB", "sky_mie": "#F0D2EC",
 		"sky_turbidity": 14.0, "sky_energy": 1.00, "sky_ground": "#5A4650",
 		"fog_sky_affect": 0.60,
-		"fog": "#E8AFC9", "fog_density": 0.0009,
-		"fog_height_offset": 40.0, "fog_height_density": 0.002,
-		"vol_density": 0.007,
+		"fog": "#E8AFC9", "fog_density": 0.00045,
+		"fog_height_offset": 40.0, "fog_height_density": 0.001,
+		"vol_density": 0.005,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# DUSK, THE VIOLET HALF. The bible's table says of the sun here: "none; fire
@@ -118,9 +118,9 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#63559E", "sky_mie": "#A281C3",
 		"sky_turbidity": 26.0, "sky_energy": 0.45, "sky_ground": "#2A2438",
 		"fog_sky_affect": 0.60,
-		"fog": "#736EB7", "fog_density": 0.0012,
-		"fog_height_offset": 40.0, "fog_height_density": 0.003,
-		"vol_density": 0.008,
+		"fog": "#736EB7", "fog_density": 0.0006,
+		"fog_height_offset": 40.0, "fog_height_density": 0.0015,
+		"vol_density": 0.006,
 		"warm": 1.0, "saturation": 1.0,
 	},
 	# NIGHT IS SLATE, NOT COBALT (D7). Cobalt is the desert's night (D26) and
@@ -135,7 +135,7 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#213147", "sky_mie": "#0C1722",
 		"sky_turbidity": 6.0, "sky_energy": 0.35, "sky_ground": "#121A24",
 		"fog_sky_affect": 0.50,
-		"fog": "#466477", "fog_density": 0.0009,
+		"fog": "#466477", "fog_density": 0.00045,
 		# MEASURED, AND THE OBVIOUS LEVER RUNS BACKWARDS AT THIS HOUR. Fog's
 		# second job is pooling that is VISIBLE against dark ground, so the
 		# first instinct is more of it. Three values were shot: at the plan's
@@ -148,8 +148,8 @@ const KEYFRAMES := {
 		# Lighting the fog rather than thickening it is the lever this wants,
 		# and it is night two's: ambient energy and the ambient inject both
 		# move the fog and the ground together. Recorded in the status doc.
-		"fog_height_offset": 40.0, "fog_height_density": 0.004,
-		"vol_density": 0.009,
+		"fog_height_offset": 40.0, "fog_height_density": 0.002,
+		"vol_density": 0.006,
 		"warm": 1.0, "saturation": 1.0,
 	},
 }

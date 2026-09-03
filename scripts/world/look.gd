@@ -217,7 +217,7 @@ const FOG_SKY_AFFECT := 0.3
 ## it is the second cost knob of this phase after the shadow distance: the field
 ## is a fixed froxel grid, so doubling the length halves its depth resolution
 ## rather than doubling its cost.
-const VOLUMETRIC_LENGTH_M := 1500.0
+const VOLUMETRIC_LENGTH_M := 1200.0
 ## The ambient density of the field, before any FogVolume is added to it.
 ## Range x0.5-x2, judged on the hour shots and shot 6.
 const VOLUMETRIC_DENSITY := 0.01

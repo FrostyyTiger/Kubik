@@ -54,7 +54,7 @@ const BAND_HEIGHT_M := 12.0
 ## through lengthwise, thin enough to stand in and still see the valley wall.
 ## Recorded in docs/status/light-v1.md as a plan number that did not survive
 ## measurement; the ratio between the three is the plan's and is untouched.
-const BAND_DENSITY := [0.0020, 0.00125, 0.00075]
+const BAND_DENSITY := [0.0010, 0.000625, 0.000375]
 
 ## The day hour's `vol_density`, which the band densities above are quoted
 ## against. Everything else is a ratio to it.
