@@ -901,6 +901,27 @@ material, which pillar 2 forbids - and there is no mechanism in phase 1 that
 could apply it without becoming exactly the kind of paint this phase removed.
 Recorded as unbuilt.
 
+**B5. A closed spruce interior at real tree size may simply be a dark place.**
+The plan gates the shaded side of a spruce crown at V >= 8, "never black". On
+the poster's near-black canopy it measured V 1.6 to 2.5; on the bible's own
+conifer ramp the same three pixels measure **V 8.7 / 4.3 / 7.1** - three to four
+times better, with hues that went from noise to the conifer's grey-green - and
+one of the three clears the gate while two do not. Sky ambient is demonstrably
+working: the same test on open ground passes at V 17.6 with the shadow's hue 8
+degrees off the sky's. What is left is geometry: a closed canopy of 25 m trees
+occludes the sky, and SSAO deepens it. Either the rule is "no shadow is black
+where the sky can reach it" - which is what D8 actually says - or a forest
+interior needs its own light, which is a design decision and not a rendering
+one.
+
+**B6. Seven of the palette's rows are silences the bible has not filled.**
+`10-color-and-light.md` names Rock, Snow and Conifer, and this repo now carries
+all three. It says nothing about dirt, meadow grass, sand, forest floor, wet
+gravel shore, alpine turf or heath beyond "meadow green", "greens, grey rock"
+and "natural by default". Those seven keep look v2's hexes, each marked in
+`block.gd` as a silence rather than as a decision. They are most of what the
+ground of this world is made of.
+
 **B4. A day's night is half of it, not fifteen minutes.** The plan's prose says
 "night is about 15 minutes" of a forty-minute day. A circular sun arc is
 symmetric by construction, so with `day_seconds` 2400 and the warp the sun is
@@ -908,3 +929,108 @@ below the horizon for **1,236 s, about 20.6 minutes**. Getting to 15 would need
 an asymmetric arc, which nothing decides. The bible's own rule - "the night
 long enough to want the fire" - is satisfied either way; the 15-minute figure
 should be dropped or the arc should be decided.
+
+---
+
+## Night one - morning message
+
+**1. Where it is.** `feat/light-v1`, last commit `be9cd2c`, pushed. Five
+commits: Stage 0 `1ef52a6`, Stage 1 `fd7d525`, Stage 2 `14bec13`, Stage 3
+`294000e`, the fog pass `be9cd2c`.
+
+**Stages 0, 1, 2 and 3 are all green and none was wrapped early or reverted.**
+Every stage's self-tests, character self-tests, worldgen probe and transfer gate
+passed. Four sampled gates across the four stages fail and are recorded with
+their numbers rather than chased: the forest interior's V floor (Stage 0,
+improved 3-4x by Stage 3's palette and re-measured there), the dusk sky's hue
+(Stage 1), and two of Stage 2's fog gates. No visual edit was reverted.
+
+**The Windows library needs rebuilding before anything is judged on the 5080**
+(Q15). The Linux one was rebuilt inside the run and the self-test's `far
+dispatch` line confirms the C++ path is the one being tested; the Windows `.so`
+on your box is still the one with the paint in it, and the far parity tests will
+disagree until it is rebuilt. Recipe: `docs/plans/distance-v4.md` § environment.
+
+**2. What to open first.**
+
+Three strips, in `build/tour/compare/`, all five labels side by side:
+
+- `6-postcard-light-base-vs-light-0-vs-light-1-vs-light-2-vs-light-3.png` - the
+  whole arc in one frame: the poster's banded violet mountains and painted sky,
+  then real light, then the hours, then fog, then the palette.
+- `5-lake-light-base-vs-light-0-vs-light-1-vs-light-2-vs-light-3.png` - the
+  water going from a flat blue sheet to the bible's teal, and the valley fog
+  arriving.
+- `7-forest-interior-light-base-vs-light-0-vs-light-1-vs-light-2-vs-light-3.png`
+  - the near-black canopy becoming the conifer ramp.
+
+Then the five hours, in `build/tour/light-3/`: `20-hour-day`,
+`21-hour-evening`, `22-hour-dusk`, `23-hour-night`, `24-hour-eerie` - all five
+from one vantage, so the only thing that differs between them is the light. The
+eerie pair to look at together is `20-hour-day` and `24-hour-eerie`. A whole
+eerie tour is in `build/tour/light-2-eerie/`.
+
+**3. BLOCKING findings.** None. One gap, and it is the thing to read first:
+**there is no cost line for night one.** The stream probe did not complete in
+three attempts - 45, 68 and 52 minutes on an idle box, progressing throughout at
+80% CPU and 65% GPU, output buffered to file until an exit that never came. Its
+own note records a 25-minute run. So the plan's rule 6 (worst frame under 45 ms)
+and its Q10 gate on tree shadows are **unmeasured**.
+
+**4. For Marcel.**
+
+1. **The stream probe needs to finish, or the cost gate needs a cheaper
+   instrument.** Nothing after this is judgeable on cost until it does, and
+   night two turns on glow and SSR.
+2. **Rebuild the Windows library**, then re-count Q19's 15 last-bit colour
+   parity misses. On ganymede, stripped, the count is **zero**.
+3. **The plan's baseline table is one epic stale**: it asks for 28,383 trees and
+   `main` produces 15,218, because trees v4's crown-separation ruling landed
+   after trees v3. Heightmap, spawn and lakes all match.
+4. **The plan's stream-probe command does not exist** as written; it is
+   `--path . -- --stream-probe`, not `--script`.
+5. **The dusk sky is the one Stage 1 gate that cannot be fixed with anything the
+   plan permits** - H 221 against a window of 235-285. Your ruling: widen the
+   window, move the bible's dusk sky hex, or allow a painted term over the
+   physical sky, which pillar 2 currently forbids.
+6. **Two Stage 2 fog gates are written against assumptions this world does not
+   meet** - one wants 10 points of saturation to lose from a palette authored at
+   S 10, the other wants a night pool that gets darker the more fog you add.
+   Both are written up with their measurements.
+7. **`5-lake` at the tour's default mid-morning hour is greyer than it was at
+   Stage 1**, because a lakeside vantage is inside the valley fog by
+   construction. Defensible under "fog sits in the valleys in the morning", but
+   it is the remaining open judgement on fog and it is yours.
+
+**5. For the bible.** Six findings, numbered in the shape the round 3 brief
+asks for, written up in full above: **B1** a physical sky cannot be made violet
+at dusk; **B2** the bible gives dawn no hour; **B3** eerie's "base of things
+#101f26" is not reproducible without repainting a material; **B4** a circular
+sun arc makes the night half the day, not 15 minutes; **B5** a closed spruce
+interior at real tree size may simply be a dark place; **B6** seven of the
+palette's rows are silences the bible has not filled.
+
+**6. Tunables moved off their start.** Stage 0: none. Stage 1:
+`fog_sky_affect` became per hour (0.30 / 0.60 / 0.60 / 0.50, eerie 1.00), dusk
+turbidity 18 to 26, dusk sky energy 0.80 to 0.45. Stage 2 and the fog pass:
+the three band densities from the plan's 0.08 / 0.05 / 0.03 to 0.0010 /
+0.000625 / 0.000375 (the plan's numbers are an optical depth near fifty across
+a 600 m box), the eerie lid 0.06 to 0.007, `volumetric_fog_ambient_inject` 0.2
+to 0.5, the far fog density halved at all four hours, the height density
+halved, `vol_density` to 0.005-0.006, and the froxel field 1,500 m to 1,200 m.
+Every one has its before, its after and the shot that decided it in the section
+above.
+
+**7. The cost line.** Not measured - see 3. What exists: the tour's own load
+line reads **3.06 ms gen per chunk on workers** and **0.10 ms main-thread
+upload per chunk** over 2,222 chunks at spawn, against trees v3's 9.51 and 0.23
+- but on a different config and a different preset, so it is not a controlled
+comparison and is not offered as one. The self-test's controlled `ao cost` line
+reads **3,973 to 3,973 quads, +0.0%**: dropping baked AO did not widen the
+merge, against the plan's expectation that it would.
+
+**8. What is left.** Night two, from this head: Stage 4 the film lens (AgX
+grade, glow gated to emissives, grain and vignette, `--lens off`), Stage 5
+water that reflects (depth tint, Fresnel, SSR), Stage 6 the documents. Before
+they start: the cost instrument, the Windows rebuild, and your rulings on items
+5 and 6 above, which the plan says are appended to section 1 as bound answers.
