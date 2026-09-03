@@ -337,6 +337,12 @@ const ARC_TILT := 0.35
 
 var config: WorldgenConfig = null
 
+## Whether the film lens is on (D40, Stage 4). The hour owns the grade's VALUE
+## and the lens owns its switch, so the two have to meet somewhere and this is
+## it. Set by `Game.set_lens()`; true everywhere else, including the gallery,
+## whose sheets switch the grade off for themselves when they need it off.
+var lens_on := true
+
 ## The world, for the one thing the sky needs from it: where the valley floor
 ## is, so the height fog and the fog bands have somewhere to sit (Stage 2).
 ## Null in the gallery and in the self-tests, and the fog terms switch off when
@@ -686,14 +692,22 @@ func apply() -> void:
 		# and the distance behind it are the same fog.
 		_env.volumetric_fog_density = kf["vol_density"]
 		_env.volumetric_fog_albedo = (kf["fog"] as Color).linear_to_srgb()
-		# THE GRADE IS STAGE 4'S, with one exception that cannot wait for it:
-		# eerie is defined by saturation coming down (D7), so the adjustment is
-		# switched on only where this hour asks for less than full colour. At
-		# every clear hour it stays off and the frame is exactly Stage 0's.
-		var sat: float = kf["saturation"]
-		_env.adjustment_enabled = sat < 0.999
-		if _env.adjustment_enabled:
-			_env.adjustment_saturation = sat
+		# THE GRADE: THE HOUR OWNS THE VALUE, THE LENS OWNS THE SWITCH.
+		#
+		# D40 is explicit that the lens is "applied after the hour and region
+		# grading, never instead of it", so the two multiply: the lens mutes
+		# the midtones by `Look.ADJUST_SATURATION`, and the hour multiplies its
+		# own on top - 1.0 everywhere but eerie, which asks for 0.55 (D7).
+		#
+		# IT IS ON WHEN EITHER WANTS IT. With the lens off the frame is
+		# ungraded, EXCEPT under eerie: eerie's desaturation is a fact about
+		# the weather and not about the lens, so `--lens off` must not turn the
+		# life back on in a frame whose whole point is that it is gone.
+		var hour_sat: float = kf["saturation"]
+		var lens_sat := Look.ADJUST_SATURATION if lens_on else 1.0
+		_env.adjustment_enabled = lens_on or hour_sat < 0.999
+		_env.adjustment_saturation = lens_sat * hour_sat
+		_env.adjustment_contrast = Look.ADJUST_CONTRAST if lens_on else 1.0
 
 	if valley_fog != null and world != null:
 		# THE BANDS LIE IN THE VALLEY, and the hour decides how thick they are.

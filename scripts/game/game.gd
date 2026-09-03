@@ -154,11 +154,20 @@ func _ready() -> void:
 	# THE SKY NEEDS THE WORLD FOR ONE THING (Stage 2): where the valley floor
 	# is, so the height fog and the fog bands sit in the valley rather than
 	# around the camera. Wired before setup(), which applies the hour once.
+	# THE FILM PASS (D40, Stage 4). Added from code rather than as a scene node
+	# so `Lens.LAYER` is the single place the ordering against the HUD is
+	# decided. `--lens off` and the F4 toggle hide it and switch the
+	# environment's glow and grade off with it, so "lens off" is ONE state.
+	var lens := Lens.new()
+	lens.name = "Lens"
+	add_child(lens)
+
 	_sky.world = _world
 	_sky.valley_fog = ValleyFog.new()
 	_sky.valley_fog.name = "ValleyFog"
 	_world.add_child(_sky.valley_fog)
 	_sky.setup(config, $Sun, $WorldEnvironment)
+	_apply_lens_arg()
 	_debug.setup(config, _world, _player, _sky)
 	# THE PLAY HUD (ui v1 Stage 4). Same shape as the line above it: this
 	# node asks these four for numbers and never tells them anything.
@@ -455,7 +464,7 @@ func _start_tour() -> void:
 	var tour := ScreenshotTour.new()
 	tour.name = "ScreenshotTour"
 	add_child(tour)
-	tour.run(_world, _player, _sky)
+	tour.run(_world, _player, _sky, self)
 
 
 ## Walk the player from one corner of the world to the other and time it.
@@ -1353,6 +1362,34 @@ func _adopt_host_config(config_data: Dictionary) -> void:
 ## runs - the plan asks for chunk and vertex counts per preset, and a
 ## measurement you have to hand-edit the config for is a measurement nobody
 ## repeats. Also the fastest way to answer "is it my machine or the settings".
+## `--lens off` (D40, Q11). The brief's comparison shot is a comparison of ONE
+## thing, so this switch owns the whole lens: the film pass, the glow and the
+## grade go together.
+var lens_on := true
+
+func _apply_lens_arg() -> void:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--lens")
+	if i < 0 or i + 1 >= argv.size():
+		return
+	var want := argv[i + 1]
+	if want != "on" and want != "off":
+		push_warning("[Game] --lens %s: expected 'on' or 'off'" % want)
+		return
+	set_lens(want == "on")
+	print("[Game] lens %s" % want)
+
+
+## Turn the whole lens on or off. The F4 row and the tour's fence shots use it.
+func set_lens(on: bool) -> void:
+	lens_on = on
+	_sky.lens_on = on
+	Lens.set_enabled(self, $WorldEnvironment.environment, on)
+	# The hour owns the saturation under eerie, so re-apply it: with the lens
+	# back on, the grade's value is the keyframe's and not the constant.
+	_sky.apply()
+
+
 ## `--weather eerie` (Q13). A modifier on the hour, not a fifth hour.
 ##
 ## Its own flag rather than `--set weather=eerie` because the tour and the

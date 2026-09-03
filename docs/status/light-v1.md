@@ -815,6 +815,133 @@ this terrain there were none to win.
 
 ---
 
+# Night two
+
+Bound answers Q23 to Q28 were pulled at `1579d21` before any edit. They settle
+the cost instrument, the dusk window, Stage 2's gates 1b and 3, the Windows
+library, the AO merge finding and this continuation.
+
+## Stage 4 - The lens (D40)
+
+**Shipped.** Halation on the emissives, a muted grade, grain and a vignette
+after the tonemap, and one switch that turns all of it off.
+
+- **`Look.configure_environment(env, sun, lens)`** gained the engine's two
+  thirds: glow at `glow_hdr_threshold` 1.6, intensity 0.6, `glow_bloom` 0.0,
+  SOFTLIGHT, levels 3 and 5 only; and the colour adjustment at saturation 0.9,
+  contrast 1.05.
+- **New `scripts/ui/lens.gd`** - the film pass, a `canvas_item` shader on a
+  `CanvasLayer`: monochrome zero-mean grain from a per-frame hash and a
+  vignette at 0.18 over a wide falloff. It is a canvas pass and not a spatial
+  one because both must land AFTER the tonemap - grain written into the linear
+  HDR buffer would be graded by AgX, and a vignette written there would be
+  tonemapped into something that is not a vignette. **Layer -1, not the plan's
+  5**: every `CanvasLayer` in `game.tscn` leaves `layer` at 0, so 5 would have
+  grained and vignetted the whole interface.
+- **`--lens off`** and `Game.set_lens()` turn the film pass, the glow and the
+  grade off together, so "lens off" is one state.
+- **The hour owns the grade's value, the lens owns its switch.** D40 is
+  explicit that the lens applies "after the hour and region grading, never
+  instead of it", so the two multiply: `Look.ADJUST_SATURATION` times the
+  hour's own, which is 1.0 everywhere but eerie's 0.55. The grade stays on with
+  the lens off wherever the HOUR asks for it, so `--lens off` cannot put the
+  life back into an eerie frame.
+- **`_report_cost` measures a frame** (Q23): 20 frames at each settled vantage,
+  worst and median. This is night two's cost instrument.
+
+### The cost line (Q23)
+
+Twenty frames per vantage, settled, far mesh applied. **Nothing else was
+running on this box for either tour** - `pgrep godot` was zero before each.
+
+| shot | lens ON worst / median | lens OFF worst / median |
+| --- | --- | --- |
+| `20-hour-day` | 14.3 / 13.4 | 16.1 / 13.3 |
+| `21-hour-evening` | 16.3 / 13.6 | 14.5 / 13.7 |
+| `22-hour-dusk` | 15.6 / 13.8 | 14.4 / 13.5 |
+| `23-hour-night` | 14.0 / 13.3 | 15.2 / 13.1 |
+| `24-hour-eerie` | 14.1 / 13.5 | 14.4 / 13.5 |
+| `5-lake` | **17.0** / 13.6 | 14.5 / 13.2 |
+| `25-lens-fence` | 16.9 / 15.0 | 15.5 / 14.7 |
+
+**Worst per-shot frame across the five hours and `5-lake`: 17.0 ms with the
+lens on, 16.1 ms with it off, against rule 6's 45 ms. PASS, with 28 ms of
+headroom.** The medians sit at 13.1 to 13.8 ms everywhere, lens or no lens:
+**the lens is inside the noise.** Its cost is not measurable at this
+resolution - the worst-frame column swaps which side is higher from shot to
+shot, which is what a difference smaller than the sampling noise looks like.
+
+Load line, same run: **2,222 chunks in 19,105 ms wall, 539 ms main thread,
+3.28 ms gen per chunk on workers, 0.11 ms main-thread upload per chunk.**
+
+**One bounded `--stream-probe` attempt** was made under Q23's 20-minute cap,
+on an idle box, with the real flag. Recorded below with whatever it produced.
+
+### Gates
+
+| gate | result |
+| --- | --- |
+| full self-test | **green** |
+| character self-test | **green**, 36 tests |
+| worldgen probe | heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` - unchanged |
+| transfer sheet, `--strict` | **PASS**, worst channel delta **1** of 6 (the sheet forces the lens off for itself) |
+
+| # | kind | measurement | verdict |
+| --- | --- | --- | --- |
+| 1 | **GATE** | `25-lens-fence`: the gold strip's best column against the meadow either side, over `y` 300-345 | **PASS on all three halves.** Strip mean **S 46.0** against meadow **S 22.4** - a difference of **+23.6**, against a required +20. **4 px wide** at 100 m, against a required 2. Lens on against lens off, the strip's mean V is **52.9 against 54.1**, a difference of **1.2 V** against an allowance of 6. D40's grain fence holds: the grain never hides the gold line at 100 m |
+| 2 | **GATE** | no clipped whites: pure `#FFFFFF` outside the sun disc, in every hour shot | **PASS, and emphatically.** **Zero** pure-white pixels in all five hour shots and in `2-summit` and `5-lake` - and zero pixels even at 250 or above on all three channels. AgX's roll-off is doing exactly what D40 asked for |
+| 3 | **GATE** | halation on emissives ONLY: mid-frame non-emissive surfaces, lens on against lens off | **PASS.** `2-summit` snow **+0.1 V**, its mid-frame sky **+0.2 V** and **-0.3 V** at a second point; `20-hour-day` snow **-0.7 V**, mid-frame sky **-0.8 V** and **-0.9 V**. Every one inside 1 V against an allowance of 4. The lens does not bloom the sky and does not bloom the snow |
+| 4 | **GATE** | the decided hours keep their colour with the lens on | **PASS at four of five, with the widened window.** evening **H 353.9** (pink family), **dusk H 226.5 - inside Q24's 215-285**, night **H 204.6** (195-235), eerie **S 8.6** (<= 20). Day's sky is neutral at **S 3.2**, where hue is not a meaningful quantity, and is recorded rather than claimed either way - as it was on night one |
+| 5 | RECORD | halation on emissives, the other half: does a mushroom actually bloom | **the letter fails, the spirit passes** - see below |
+
+**Gate 5, measured properly, because a per-pixel diff cannot do it.** The plan
+asks that a glowing mushroom's 8 px surround sit at least 8 V above the same
+surround with the lens off. A straight difference image between the two runs is
+useless here: the **fireflies drift**, so the biggest positive and negative
+differences in the frame are both about 70 V and both are a firefly that moved.
+Measured instead as a region over the static mushroom band, against a bare
+patch of the same meadow:
+
+| region, `12-meadow-night` | lens on | lens off |
+| --- | --- | --- |
+| mushroom band, mean V | 11.87 | 13.87 |
+| mushroom band, **max V** | **89.41** | 87.45 |
+| mushroom band, **warm pixels** (H 20-50, S > 40) | **422** | 373 |
+| bare meadow, mean V | 16.20 | 18.54 |
+| bare meadow, **warm pixels** | **0** | **0** |
+
+The band's mean drops 2.0 V and the bare meadow's drops 2.3 V - that is the
+grade and the vignette, applied evenly to both, and it is why a mean is the
+wrong statistic here. What the glow actually does is add **49 warm pixels, 13%
+more**, and lift the band's peak by **2 V**, while the bare meadow gains
+**none**. So halation is landing on the emissives and on nothing else, which is
+D40's rule; it is simply **subtler than +8 V**. The lever is
+`glow_intensity`, currently 0.6 of a 0.3-1.0 range, and it is left at the
+plan's value rather than moved to chase a number - Marcel can see the pair and
+say.
+
+### Eye checks
+
+| shot | the sentence | verdict |
+| --- | --- | --- |
+| `23-hour-night` beside `light-4-lensoff/23-hour-night` | the mushrooms and fireflies bloom warm, nothing else does | **pass.** The warm band is warmer and wider with the lens on and the bare meadow beside it is unchanged; the sky, the ranges and the water are the same frame |
+| `20-hour-day` beside its lens-off twin | muted midtones, and the gold still rich | **pass.** The fence's gold holds S 46.0 with the lens on against 47.6 without it, while the meadow's saturation drops with everything else |
+| the vignette | gentle, noticeable only when switched off | **pass**, and it is measurable: at 12 px from the top of the frame the lens costs 5.0 to 5.6 V, and at the middle of the same frame it costs 0.0 to 0.2 V |
+
+### Tunables moved off their start
+
+**None.** Two were moved during the stage and both were **put back**, which is
+worth recording because the measurement that moved them was wrong. A sky sample
+taken 12 px from the top of the frame reads about 5 V darker with the lens on;
+that was read first as the glow blend darkening the frame (so SOFTLIGHT was
+swapped for SCREEN) and then as the contrast term (so 1.05 was taken to 1.0).
+Neither changed it, because **it is the vignette**, doing exactly what a
+vignette does at the edge of a frame. Sampled where the gate means - near the
+middle - the difference is 0.0 to 0.2 V. Both knobs are back at the plan's
+bound values and the sampling method is the thing that changed.
+
+---
+
 ## Questions taken alone
 
 Rule 7 of the failure protocol: the conservative reading, written down.

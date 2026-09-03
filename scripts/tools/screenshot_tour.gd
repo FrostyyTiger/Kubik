@@ -64,16 +64,20 @@ const DEFAULT_TOUR_TIME := -1.0
 var _world: World = null
 var _player: Player = null
 var _sky: SkyCycle = null
+var _game: Node = null
 var _camera: Camera3D = null
 
 ## Resolved from --label at run(). Empty means write straight into OUT_DIR.
 var _out_dir := OUT_DIR
 
 
-func run(world: World, player: Player, sky: SkyCycle = null) -> void:
+func run(world: World, player: Player, sky: SkyCycle = null,
+		game: Node = null) -> void:
 	_world = world
 	_player = player
 	_sky = sky
+	# The lens lives on Game, and two shots switch it off for one frame.
+	_game = game
 
 	_freeze_time()
 	_out_dir = _resolve_out_dir()
@@ -352,6 +356,30 @@ func _choose_vantages() -> Array:
 		"eye_cell": postcard["eye"],
 		"distance": 0.0, "height": 15.0,
 		"hour": "day", "weather": "eerie",
+	})
+
+	# THE LENS FENCE (D40, Stage 4). "Subtle film grain, fine and even, never
+	# heavy. Test: a 1-cube gold line on a landmark still reads at 100 m."
+	#
+	# THE LENS-OFF HALF OF EVERY COMPARISON COMES FROM A `--lens off` TOUR, not
+	# from a per-shot toggle. The first version of this had shots that switched
+	# the lens off for one frame, and it produced two artefacts rather than a
+	# comparison: a frame shot after the fences had the world streamed to the
+	# spawn meadow instead of the postcard, and a frame shot after the eerie
+	# hour carried some of its state. A whole tour at `--lens off` gives every
+	# shot its own honest twin, with the same neighbours and the same world.
+	#
+	# There is no landmark yet - buildings are phase 3 - so the fence builds its
+	# own: a 0.5 m x 0.5 m x 10 m strip of the bible's gold standing in the
+	# spawn meadow, photographed from exactly 100 m, with the lens on and with
+	# it off. It is placed for the shot and removed after, so nothing about the
+	# world changes and no other shot sees it.
+	shots.append({
+		"name": "25-lens-fence",
+		"note": "a 1-cube gold line at 100 m, lens on - D40's grain fence",
+		"target": _to_metres(spawn, gen.surface_at(float(spawn.x), float(spawn.y)), cfg),
+		"distance": 100.0, "height": 3.0,
+		"gold_fence": true,
 	})
 
 	# --- Foliage v1 Stage 1: four vantage points about what grows -----------
@@ -1102,6 +1130,11 @@ func _capture(index: int, shot: Dictionary) -> void:
 	# for this frame and put back afterwards. Restoring matters: leaving it
 	# would silently relight every shot after it, and the tour would stop being
 	# a comparison harness halfway through its own run.
+	# THE GOLD FENCE, built for this shot and freed after it.
+	var fence: MeshInstance3D = null
+	if shot.get("gold_fence", false):
+		fence = _build_gold_fence(target)
+
 	var restore := -1.0
 	var restore_weather := ""
 	if (shot.has("time") or shot.has("hour") or shot.has("weather")) and _sky != null:
@@ -1132,7 +1165,11 @@ func _capture(index: int, shot: Dictionary) -> void:
 		push_warning("[Tour] could not write %s: %s" % [path, error_string(err)])
 	else:
 		print("[Tour]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
-	_report_cost(shot["name"])
+	var cost := await _measure_frame_ms()
+	_report_cost(shot["name"], cost[0], cost[1])
+
+	if fence != null:
+		fence.queue_free()
 
 	if restore >= 0.0 and _sky != null:
 		if restore_weather != "" and _sky.config != null:
@@ -1154,11 +1191,92 @@ func _capture(index: int, shot: Dictionary) -> void:
 ## flora together - so the flora share is the difference against a run with
 ## flora_radius_m at 0. Both numbers go in STATUS.md rather than a subtraction
 ## nobody can check.
-func _report_cost(shot_name: String) -> void:
+## HOW MANY FRAMES A COST SAMPLE IS. Twenty at a settled vantage: long enough
+## that one stray frame does not decide the worst, short enough that twenty-three
+## shots do not add a minute to the tour.
+const COST_FRAMES := 20
+
+
+## THE FRAME COST AT THIS VANTAGE, measured rather than inferred.
+##
+## LIGHT V1 NIGHT TWO, Q23. The stream probe - which is what every cost line in
+## this project has come from since world feel v1 - did not exit in three
+## attempts on an idle box, at 45, 68 and 52 minutes, so night one shipped with
+## no cost line at all. Q23 makes the tour the instrument instead, and this is
+## the half of it that did not exist: `_report_cost` printed primitives, flora
+## and chunks, and no time.
+##
+## WHY THE TOUR IS A GOOD INSTRUMENT AND THE PROBE IS A DIFFERENT ONE. The probe
+## answers "did this build ever drop a frame or leave a hole while streaming",
+## which is a question about MOTION. This answers "what does a frame cost at a
+## place the art is judged at", which is the question rule 6's 45 ms is actually
+## about - and it is measured at exactly the vantages the pictures come from,
+## standing still, with the world settled and the far mesh applied. It cannot
+## see a streaming hitch. Both are wanted; only one of them runs.
+##
+## THE WORST AND THE MEDIAN, because a single worst frame at a settled vantage
+## is usually the shot before it still finishing something, and the median says
+## what the vantage actually costs.
+func _measure_frame_ms() -> Array:
+	var samples: Array[float] = []
+	for i in COST_FRAMES:
+		var t0 := Time.get_ticks_usec()
+		await RenderingServer.frame_post_draw
+		samples.append(float(Time.get_ticks_usec() - t0) / 1000.0)
+	samples.sort()
+	return [samples[samples.size() - 1], samples[samples.size() / 2]]
+
+
+## D40'S GRAIN FENCE, BUILT FOR ONE SHOT.
+##
+## "A 1-cube gold line on a landmark still reads at 100 m." There is no landmark
+## yet - buildings are phase 3 - so the fence brings its own: a line one world
+## cube square (0.5 m) and twenty cubes tall, standing in the meadow at the
+## shot's target, in the bible's gold `#c9a24a` ("the same gold everywhere;
+## never a second gold").
+##
+## THROUGH THE WORLD'S OWN MATERIAL, with the colour on its VERTICES, because
+## that is the only way the test means anything: the strip is then lit, fogged,
+## grained and vignetted by exactly what the terrain beside it is, and the
+## question "does the line still read" is a question about the lens rather than
+## about a material nothing else uses. A `BoxMesh` carries no vertex colours, so
+## its arrays are taken and a colour array pushed alongside them.
+func _build_gold_fence(at: Vector3) -> MeshInstance3D:
+	const GOLD := "#c9a24a"
+	const CUBE_M := 0.5
+	const HEIGHT_M := 10.0
+
+	var box := BoxMesh.new()
+	box.size = Vector3(CUBE_M, HEIGHT_M, CUBE_M)
+	var arrays := box.surface_get_arrays(0)
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var colors := PackedColorArray()
+	# sRGB on the wire, exactly as every mesh builder in the game does it.
+	var wire := Look.to_wire(Color.html(GOLD).srgb_to_linear())
+	for i in verts.size():
+		colors.push_back(wire)
+	arrays[Mesh.ARRAY_COLOR] = colors
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, Look.opaque_material())
+
+	var mi := MeshInstance3D.new()
+	mi.name = "GoldFence"
+	mi.mesh = mesh
+	_world.add_child(mi)
+	mi.global_position = at + Vector3(0.0, HEIGHT_M * 0.5, 0.0)
+	return mi
+
+
+func _report_cost(shot_name: String, worst_ms := -1.0, median_ms := -1.0) -> void:
 	var prims := int(Performance.get_monitor(
 		Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME))
 	var line := "[Tour]      %s: %.2f M primitives in frame" % [
 		shot_name, float(prims) / 1000000.0]
+	if worst_ms >= 0.0:
+		line += ", frame %.1f ms worst / %.1f ms median over %d" % [
+			worst_ms, median_ms, COST_FRAMES]
 	if _world != null and _world.has_method("flora_stats"):
 		var f: Dictionary = _world.flora_stats()
 		line += ", flora %d inst / %.2f M tris in %d cols" % [

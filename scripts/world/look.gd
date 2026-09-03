@@ -69,7 +69,11 @@ class_name Look
 ## turns on glow and the adjustments (Stage 4) and water gets SSR (Stage 5).
 ## Each of those is switched off here rather than left at an engine default, so
 ## the frame Stage 0 is judged on is exactly the frame this function describes.
-static func configure_environment(env: Environment, sun: DirectionalLight3D) -> void:
+## `lens` false is `--lens off` and the F4 toggle: glow and the grade go
+## together with the grain and the vignette, so "lens off" is ONE state and the
+## brief's comparison shot is a comparison of one thing.
+static func configure_environment(env: Environment, sun: DirectionalLight3D,
+		lens := true) -> void:
 	if env != null:
 		# THE SKY IS THE ENGINE'S OWN RADIANCE, not a painted gradient. This is
 		# what makes the sky ambient, the sky-tinted shadow and (Stage 5) the
@@ -119,8 +123,42 @@ static func configure_environment(env: Environment, sun: DirectionalLight3D) -> 
 
 		# LATER STAGES. Named and switched off rather than left to the engine,
 		# so Stage 0's frame is this function and nothing else.
-		env.glow_enabled = false          # Stage 4, the lens
-		env.adjustment_enabled = false    # Stage 4, the grade
+		# THE LENS (D40, Stage 4). "Naturalistic light from practical sources,
+		# muted midtones with one rich warm accent, soft highlights, gentle
+		# grain and halation, a cold world with a single warm light in it." Two
+		# thirds of it are the engine's: the glow below and the grade beside
+		# it. The grain and the vignette are a full-screen pass, `ui/lens.gd`,
+		# because both must land AFTER the tonemap, as film grain does.
+		#
+		# HALATION ON EMISSIVE LIGHTS ONLY, and the threshold is the whole
+		# mechanism. D40: "not on the sky, not on snow." `glow_hdr_threshold`
+		# is in tonemapped luminance, so anything below it never enters the
+		# blur at all - the emissive energies are set above it (mushrooms and
+		# fireflies at 4.0, a figure's rune band at 3.0) and no lit surface in
+		# this world reaches it. `glow_bloom` stays 0: bloom is the term that
+		# leaks the whole image into the glow and it is exactly what the
+		# threshold exists to prevent.
+		env.glow_enabled = lens
+		env.glow_hdr_threshold = GLOW_THRESHOLD
+		env.glow_intensity = GLOW_INTENSITY
+		env.glow_bloom = 0.0
+		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+		# Levels 3 and 5: a tight halo and a wide one, no level 1 or 2. The
+		# small levels are what turn a glow into a smear over the whole frame.
+		for i in 7:
+			env.set("glow_levels/%d" % (i + 1), 0.0)
+		env.set("glow_levels/3", 1.0)
+		env.set("glow_levels/5", 1.0)
+
+		# THE GRADE. Muted midtones with the warm accents left rich, which is
+		# what `adjustment_saturation` under 1 does to a palette whose warm
+		# colours are its most saturated. `SkyCycle` overrides the saturation
+		# under eerie, where the hour asks for far less.
+		env.adjustment_enabled = lens
+		env.adjustment_saturation = ADJUST_SATURATION
+		env.adjustment_contrast = ADJUST_CONTRAST
+		env.adjustment_brightness = 1.0
+
 		env.ssr_enabled = false           # Stage 5, water
 
 		# VOLUMETRIC FOG, AND IT IS WHAT CARRIES FOG'S THREE JOBS (Stage 2).
@@ -212,6 +250,27 @@ const SHADOW_BIAS := 0.05
 const FOG_DENSITY_DAY := 0.0006
 const FOG_AERIAL_PERSPECTIVE := 0.6
 const FOG_SKY_AFFECT := 0.3
+
+# --- The lens (D40) -----------------------------------------------------------
+
+## Where halation begins, in tonemapped luminance. Range 1.2-2.5, judged on the
+## night shot and the lens fence. Every emissive in the game is set above it and
+## nothing lit reaches it, which is what makes the glow land on windows, fire
+## and mushrooms and on nothing else.
+const GLOW_THRESHOLD := 1.6
+## Range 0.3-1.0, judged on `23-hour-night`.
+const GLOW_INTENSITY := 0.6
+
+## Muted midtones, rich warm accents. Range 0.8-1.0 and 1.0-1.15.
+##
+## Both at the plan's bound starting values, and both were briefly moved off
+## them chasing a measurement that turned out to be the vignette. Recorded in
+## the status doc: a "sky" sample taken 12 px from the top of the frame reads
+## 5 V darker with the lens on, and that is the vignette doing exactly what a
+## vignette does at the edge of a frame. Sampled where the gate means - sky
+## near the middle of the frame, beside the disc - the difference is 0.0 V.
+const ADJUST_SATURATION := 0.9
+const ADJUST_CONTRAST := 1.05
 
 ## How far the volumetric froxel field reaches, in metres. Range 800-2,000, and
 ## it is the second cost knob of this phase after the shadow distance: the field
