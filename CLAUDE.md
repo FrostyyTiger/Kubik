@@ -140,6 +140,27 @@ the queue.
   and testing run on machines that mount all three repos. CI without assets
   builds the extension and runs the asset-free self-tests.
 
+## Where work runs
+
+- **Implement and check on ganymede.** The server (Ubuntu 24.04, RTX 3070 Ti,
+  NVIDIA driver 595, `~/bin/godot` 4.7.2, `~/Kubik`, `~/godot-cpp`) renders
+  **Vulkan Forward+ on the GPU** under `xvfb-run -a -s "-screen 0 1280x720x24"`;
+  export `XDG_RUNTIME_DIR` to a writable directory first. It has done since
+  2026-08-27 (`STATUS.md` item 6: the compute-only driver was the only thing
+  missing). Every overnight run, every tour, every gallery sheet and every
+  probe is taken there, and anything visual is judged from a shot taken there,
+  never guessed from numbers. Any document that says ganymede is llvmpipe,
+  Compatibility or "no Vulkan" describes the box before that date.
+- **The first console line of a run must read** `Vulkan 1.4 - Forward+ -
+  Using Device #0: NVIDIA GeForce RTX 3070 Ti`. Anything else is a
+  stop-and-record before the first stage. The ALSA errors under it are the
+  missing sound card and mean nothing.
+- **Pull before you start.** Ganymede's checkout lags `main` between runs;
+  `git pull --ff-only` and `--import` come before the baseline.
+- **Marcel's Windows box (RTX 5080)** is where the game is played, where the
+  final cost line of a phase is re-measured, and where Marcel looks at things
+  with an agent in the loop. Overnight work does not run there.
+
 ## Character and asset rules
 
 - **Templates as they are (D1).** Characters are the bought viking, dwarf and

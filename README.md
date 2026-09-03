@@ -257,11 +257,26 @@ ships without the library and uses the GDScript fallback. CI does build it -
 runs the whole self-test against it, so the port cannot rot silently; it is the
 EXPORT that does not have it.
 
-### Both renderers
+### Where it is shot
 
-The game is played on **Forward+** and shot on **Compatibility**, and the two
-have been found to disagree about colour more than once. Anything that touches
-a colour path is checked on both:
+The game is played **and shot on Forward+, on a GPU**. The overnight box,
+ganymede, has an RTX 3070 Ti and renders Vulkan Forward+ under a virtual
+display; every tour and gallery sheet since distance v1 was taken there, and
+that is where anything visual is checked (`CLAUDE.md` § Where work runs):
+
+```
+export XDG_RUNTIME_DIR=/tmp/xdg-$USER && mkdir -p $XDG_RUNTIME_DIR
+xvfb-run -a -s "-screen 0 1280x720x24" ~/bin/godot --path . -- --tour --seed 42 --label <name>
+```
+
+The first console line must say `Vulkan 1.4 - Forward+ - Using Device #0:
+NVIDIA`. Status docs from before 2026-08-27 (world feel v1, look v2) were
+rendered on Mesa llvmpipe in Compatibility because the box had no Vulkan driver
+then; their frames and numbers are history, not references.
+
+Compatibility is no longer where anything is shot. The second set below is
+kept only for the day a colour path needs checking on it, and light v1
+proposes retiring it altogether:
 
 ```
 godot --path . -- --tour --seed 42 --label <name>

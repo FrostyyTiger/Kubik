@@ -7,6 +7,12 @@ Branch `feat/look-v2`. Updated at the end of every stage.
 
 ## BLOCKING - for Marcel, before anything else
 
+> **Stale since 2026-08-27.** Ganymede acquired its NVIDIA Vulkan driver the
+> day after this run (`STATUS.md` item 6) and has rendered Forward+ on its
+> RTX 3070 Ti for every run since. Finding 1 below describes the box before
+> that; findings 2 and 3 were checked on Forward+ by later runs. See
+> `CLAUDE.md` § Where work runs.
+
 **1. This run never rendered a Forward+ frame.**
 
 The plan and the tech plan are written for the Windows box (RTX 5080, Forward+,

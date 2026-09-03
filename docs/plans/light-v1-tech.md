@@ -47,9 +47,10 @@ Q1):
   `xvfb-run -a -s "-screen 0 1280x720x24"` with `XDG_RUNTIME_DIR` set to
   a writable directory. Verified 2026-09-03: Godot starts as `Vulkan 1.4 -
   Forward+ - Using Device #0: NVIDIA GeForce RTX 3070 Ti` under Xvfb. The
-  look v2 status's "ganymede has no Vulkan" was true the night it was
-  written and is not true now. The audio errors it prints are the missing
-  sound card and mean nothing.
+  look v2 status's "ganymede has no Vulkan" describes the box before
+  2026-08-27, when `libnvidia-gl-595` was installed beside the compute-only
+  driver (`STATUS.md` item 6); every run since has been Forward+ there. The
+  audio errors it prints are the missing sound card and mean nothing.
 - **Marcel's Windows 11 box** (RTX 5080), Godot 4.7.2 at
   `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\Godot_v4.7.2-stable_win64_console.exe`,
   where the brief's cost line is finally measured.
