@@ -846,3 +846,24 @@ Nothing was changed because of it.
   unmoved: `heightmap 4782edac`, `spawn (-44, -124)`, 53 lakes, 15,218 trees,
   `config 1d7c18c7`, after every stage.
 - The sprint probe run, and the Windows parity count.
+
+---
+
+## Addendum - the Windows count (2026-09-04, Fable on Marcel's RTX 5080 box)
+
+Q9 answered, on MSVC 2022 Build Tools, godot-cpp `26fb7ab`, the DLL rebuilt
+from `2e4cd2f` with `python -m SCons platform=windows target=editor
+custom_api_file=../../godot-cpp/extension_api.json -j8`, then `--import`, then
+`scenes/selftest.tscn`.
+
+```
+chunk parity: 158 chunks, 35561 quads, max diff pos 0.000000000 normal 0.000000000 colour 0.000000000, 0 indices differ (this run dispatches to cpp)
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, c++ builder, 3651 ms
+canonical world: seed 42, heightmap 4782edac, spawn (-44, -124), 53 lakes, gdscript builder, 13235 ms
+SELFTEST: 1 FAILED
+```
+
+**The chunk mesher is exact zero on Windows, colour included** - the wire
+table did what Q3 bought it for. **The one failure is the far pyramid's slope
+at 3.55e-15**, the double-ULP survivor of distance v4's addendum, present on
+`main` before this branch and unrelated to it. Today's 1 stayed 1.
