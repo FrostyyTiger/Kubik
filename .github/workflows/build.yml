@@ -160,7 +160,10 @@ jobs:
 
           # entry_symbol in kubik.gdextension. Godot looks it up by name and
           # refuses the library with a one-line error if it is not there.
-          if ! echo "$info" | grep -q "kubik_library_init"; then
+          # (here-string, not a pipe: grep -q exits on the first match and
+          # leaves echo writing into a closed pipe, which prints a broken-pipe
+          # line that reads exactly like a failure and is not one.)
+          if ! grep -q "kubik_library_init" <<< "$info"; then
             echo "::error::$want does not export kubik_library_init"
             exit 1
           fi
@@ -168,8 +171,9 @@ jobs:
           # use_static_cpp is godot-cpp's default and this depends on it: a
           # player has no libstdc++-6.dll, and Windows fails the load with a
           # dialog box that names no cause.
-          echo "$info" | grep -E "^\s*DLL Name:" || true
-          if echo "$info" | grep -E "^\s*DLL Name:" | grep -qiE "libstdc\+\+|libgcc_s|libwinpthread"; then
+          deps=$(grep -E "^\s*DLL Name:" <<< "$info" || true)
+          echo "$deps"
+          if grep -qiE "libstdc\+\+|libgcc_s|libwinpthread" <<< "$deps"; then
             echo "::error::the library wants a MinGW runtime .dll no player has"
             exit 1
           fi
