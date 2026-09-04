@@ -136,6 +136,9 @@ var _models := 0
 var _triangles := 0
 var _last_ms := 0
 
+## Rebuilds completed this session - see rebuild_count().
+var _rebuilds := 0
+
 
 func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 	_generator = generator
@@ -394,6 +397,7 @@ func _apply_tail(job: TreeFieldJob) -> void:
 	# nothing in the project reported the numerator.
 	print("[TreeField] %d triangles over %d slots (%d model instances of %d), %d trunk colliders" % [
 		_triangles, _slots.size(), _models, _count, _collider_count])
+	_rebuilds += 1
 	rebuilt.emit(job.count, _last_ms)
 
 
@@ -444,7 +448,18 @@ func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 ## for STATUS.md.
 func stats() -> Dictionary:
 	return {"impostors": _count, "rebuild_ms": _last_ms, "triangles": _triangles,
-		"models": _models, "colliders": _collider_count}
+		"models": _models, "colliders": _collider_count, "rebuilds": _rebuilds}
+
+
+## HOW MANY TIMES THE RING HAS BEEN REBUILT THIS SESSION. Horizon v1 Stage 0.
+##
+## The sprint probe reports it beside the far field's, and the pair answers a
+## question a frame time on its own cannot: whether a run was slow because the
+## frame is slow or because that run happened to rebuild the forest four more
+## times than the one it is being compared against. A count survives a drifting
+## box; a millisecond does not.
+func rebuild_count() -> int:
+	return _rebuilds
 
 
 ## FORGET WHERE THE LAST RING WAS BUILT, so the next update() rebuilds it even

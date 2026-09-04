@@ -188,6 +188,17 @@ func _ready() -> void:
 	# that function pushes to and folding it in would make a knob that moves
 	# the WIND look like a knob that moves the terrain's grain.
 	Look.apply_tree_knobs(config)
+	# HORIZON V1 STAGE 0. The noclip speed is a static on Locomotion - see the
+	# note there - written on the main thread here and again from
+	# `_on_config_changed`, which is every place the knob can move.
+	Locomotion.fly_speed = config.fly_speed_mps
+	# AND THE FOG SWITCH, before the sky applies its first hour. `--fog off`
+	# is what every colour measurement in this plan is taken through: a
+	# 9 x 9 window on a hillside at 8 km is measuring the fog and not the
+	# hillside otherwise, and the handover gate is about the hillside.
+	SkyCycle.fog_off = "off" == _arg_value("--fog", "")
+	if SkyCycle.fog_off:
+		print("[Game] --fog off: every fog term zero for this run")
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -254,6 +265,9 @@ func _ready() -> void:
 	# DISTANCE V1 STAGE 0, appended at the end of the chain.
 	elif "--far-probe" in OS.get_cmdline_user_args():
 		_start_far_probe.call_deferred()
+	# HORIZON V1 STAGE 0, appended after it.
+	elif "--sprint-probe" in OS.get_cmdline_user_args():
+		_start_sprint_probe.call_deferred()
 	# UI V1 STAGE 4, appended after it.
 	elif UiShot.hud_wanted():
 		_start_hud_shots.call_deferred()
@@ -273,6 +287,11 @@ func _ready() -> void:
 		# know when the frontier moves (world feel v1 Stage 3).
 		_world.frontier_moved.connect(_on_frontier_moved)
 		_spawn_player()
+		# HORIZON V1 STAGE 0. After the spawn, so it overrides it; before the
+		# first frame, so the world's first refresh is already centred where
+		# the run wants to be rather than loading 3,000 chunks at spawn and
+		# throwing them away.
+		_apply_tp_arg()
 	else:
 		# Clients generate NOTHING until the host tells them the seed. This
 		# request plus the reply is the entire world transfer: one integer and
@@ -435,14 +454,24 @@ func _spawn_player() -> void:
 func _release_player_when_ground_exists() -> void:
 	if not _awaiting_ground:
 		return
-	var spawn := _world.generator.spawn_block
-	var spawn_block := Vector3i(
-		spawn.x, _world.find_surface_y(spawn.x, spawn.y), spawn.y)
-	if not _world.is_chunk_collidable(Chunk.world_to_chunk(spawn_block)):
+	# THE COLUMN THE PLAYER IS STANDING OVER, not the generator's spawn.
+	#
+	# The two were the same thing until horizon v1's `--tp` (grill Q10): the
+	# world loads chunks around the PLAYER, so a session that teleported to
+	# (20000, 0) at launch would wait forever for a chunk 20 km behind it -
+	# which is the exact failure this function's own comment records from
+	# terrain v2, arrived at from the other direction. Reading the player's own
+	# position asks the question that was always meant: is there ground under
+	# the body about to be dropped?
+	var at := _player.global_position / config.block_size
+	var bx := int(floor(at.x))
+	var bz := int(floor(at.z))
+	var ground := Vector3i(bx, _world.find_surface_y(bx, bz), bz)
+	if not _world.is_chunk_collidable(Chunk.world_to_chunk(ground)):
 		return
 	_awaiting_ground = false
 	_player.set_physics_process(true)
-	print("[Game] spawn chunk ready, player released at %.1f m" % _player.global_position.y)
+	print("[Game] ground chunk ready, player released at %.1f m" % _player.global_position.y)
 
 
 ## Seed for a new world: --seed N if given, otherwise a fresh random one.
@@ -543,6 +572,25 @@ func _start_far_probe() -> void:
 	probe.name = "FarProbe"
 	add_child(probe)
 	probe.run(_world)
+
+
+## Hand the session to the sprint probe - see scripts/tools/sprint_probe.gd.
+##
+## THE ONE PROBE THAT NEEDS A RENDERER. Every other entry in this chain is
+## geometry or arithmetic and runs headless; this one is measuring the FRAME,
+## so it is run under xvfb with the GPU underneath it and its first console
+## line has to say Forward+ on the 3070 Ti or the number means nothing.
+##
+## It gets `self` as well as the world and the player, because the impostor
+## ring is Game's child rather than World's and the probe reports its rebuild
+## count beside the far field's.
+func _start_sprint_probe() -> void:
+	$HUD.visible = false
+	_debug.visible = false
+	var probe := SprintProbe.new()
+	probe.name = "SprintProbe"
+	add_child(probe)
+	probe.run(_world, _player, self)
 
 
 ## The loaded frontier moved: hand the impostor ring the new one. The ring
@@ -1408,6 +1456,69 @@ func _apply_weather_arg() -> void:
 	print("[Game] weather %s" % want)
 
 
+# --- HORIZON V1: getting anywhere ------------------------------------------
+#
+# GRILL Q10: "a developer teleport and a fast fly". The world is unbounded from
+# Stage 2 and the view reaches 32 km from Stage 3, and neither is judgeable on
+# foot at 13 m/s. Two tools, both HOST ONLY and both debug allowances in the
+# sense noclip already is - they change where a developer is, never what the
+# world contains.
+
+## `--tp X Z`, in WORLD METRES, applied once at launch.
+##
+## After `_spawn_player`, so it overrides the spawn the world chose rather than
+## racing it, and through `teleport_to` so the world's centre, the frontier and
+## the far field all learn about it in the one place that knows how.
+func _apply_tp_arg() -> void:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--tp")
+	if i < 0 or i + 2 >= argv.size():
+		return
+	teleport_to(Vector2(argv[i + 1].to_float(), argv[i + 2].to_float()))
+
+
+## Put the player at a world position, in metres, and tell the world.
+##
+## THREE THINGS IN ORDER, and leaving any of them out is a hang or a hole:
+##
+##   1. The body moves, and its Y is the surface there plus a clearance - a
+##      body dropped at the old altitude 20 km away is either underground or
+##      falling for a minute.
+##   2. `set_center_from_position` so the chunk queue, the frontier and the far
+##      field re-centre. Without it the player stands over a world that is
+##      still loaded around where they were.
+##   3. The ground wait is re-armed, because the chunks under the new position
+##      do not exist yet and a body released into nothing falls out of the
+##      world - which is what `_spawn_player`'s own note is about.
+##
+## Host only: a client's position is the host's to decide, and `--tp` on a
+## client would be a client reporting where it likes, which is the one thing
+## world feel v1 Stage 10 exists to have removed.
+func teleport_to(xz_m: Vector2) -> void:
+	if not Net.is_host():
+		push_warning("[Game] teleport is host only")
+		return
+	var bx := int(floor(xz_m.x / config.block_size))
+	var bz := int(floor(xz_m.y / config.block_size))
+	var y := _world.surface_height_m(bx, bz) + SPAWN_CLEARANCE
+	_player.global_position = Vector3(xz_m.x, y, xz_m.y)
+	_player.velocity = Vector3.ZERO
+	_player.set_physics_process(false)
+	_awaiting_ground = true
+	_world.set_center_from_position(_player.global_position)
+	print("[Game] teleport to (%.0f, %.0f) m, ground %.1f m" % [
+		xz_m.x, xz_m.y, y])
+
+
+## One `--flag value` from the command line, or a fallback.
+static func _arg_value(name: String, fallback: String) -> String:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find(name)
+	if i >= 0 and i + 1 < argv.size():
+		return argv[i + 1]
+	return fallback
+
+
 func _apply_view_arg() -> void:
 	var argv := OS.get_cmdline_user_args()
 	var i := argv.find("--view")
@@ -1468,6 +1579,9 @@ func _on_config_changed() -> void:
 	# that function pushes to and folding it in would make a knob that moves
 	# the WIND look like a knob that moves the terrain's grain.
 	Look.apply_tree_knobs(config)
+	# HORIZON V1 STAGE 0 - see _ready. Main thread, and the only two places
+	# this static is ever written.
+	Locomotion.fly_speed = config.fly_speed_mps
 	_status.text = "config changed - press F7 to rebuild terrain"
 	# DISTANCE V2 STAGE 0, AND THIS IS THE ONE LINE THIS EPIC SPENDS HERE.
 	# far_terrace, far_riser_shade and distance v1's four geometry knobs change

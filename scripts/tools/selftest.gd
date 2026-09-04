@@ -87,6 +87,10 @@ func _ready() -> void:
 		"tree spacing": _test_tree_spacing,
 		# TREES V3 STAGE 8.
 		"tree swatches": _test_tree_swatches,
+		# HORIZON V1. One line, by agreement between the two lanes running this
+		# fortnight - see scripts/tools/selftest_horizon.gd for why that lane's
+		# tests are a second file rather than more entries here.
+		"horizon": SelftestHorizon.run,
 	}
 	var failures := 0
 	for name in tests:

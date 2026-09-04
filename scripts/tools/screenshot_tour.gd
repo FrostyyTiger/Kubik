@@ -449,7 +449,76 @@ func _choose_vantages() -> Array:
 		"eye_m": rim_eye,
 		"distance": 0.0, "height": 0.0,
 	})
+
+	# --- Horizon v1 Stage 0: three vantages about the REACH -----------------
+	#
+	# APPENDED, and nothing above this line is touched - the eighteen shots
+	# before it are the eighteen that were there, which is what keeps every
+	# earlier label comparable across nine stages.
+	#
+	# `17-rim` was distance v3's answer to "this tour has never stood on high
+	# ground and looked out", and it is still the right shot for the home
+	# region. It cannot answer this plan's question, for one structural reason:
+	# it looks toward the ORIGIN, across 3 km, which is a sightline that ends
+	# inside the region the world already draws well. The north star asks about
+	# 32 km, and 32 km is somewhere no vantage in this file has ever been.
+	#
+	# So: the same summit looking OUT rather than in, a vantage 20 km away
+	# looking back, and the sprint line's midpoint. The three are the ones the
+	# morning message tells Marcel to open first.
+	shots.append(_horizon_peak(hm, summit, cfg))
+	shots.append({
+		"name": "31-horizon-far",
+		"note": "twenty kilometres out, looking back at the home region",
+		"target": Vector3(0.0, 0.0, 0.0),
+		"eye_m": Vector3(20000.0, 0.0, 0.0),
+		"tp": Vector2(20000.0, 0.0),
+		"look_home": true,
+		"distance": 0.0, "height": 0.0,
+	})
+	# THE SPRINT LINE'S MIDPOINT, looking along it. The frame gate is measured
+	# on this walk and nothing else in the tour photographs it, so a frame
+	# number and a picture of the same ground can finally sit side by side.
+	# Sixty seconds at WALK_SPEED x SPRINT_MULTIPLIER is about 780 m from
+	# spawn along +X; the midpoint is half of that.
+	var sprint_mid := _to_metres(spawn,
+		gen.surface_at(float(spawn.x), float(spawn.y)), cfg)
+	var mid_x := sprint_mid.x + 390.0
+	shots.append({
+		"name": "32-horizon-walk",
+		"note": "the sprint line's midpoint, looking along it",
+		"target": Vector3(mid_x + 2000.0, sprint_mid.y, sprint_mid.z),
+		"eye_m": Vector3(mid_x, 0.0, sprint_mid.z),
+		"ground_eye": true,
+		"distance": 0.0, "height": 0.0,
+	})
 	return shots
+
+
+## `30-horizon-peak`: the highest summit in the home region, camera LEVEL,
+## looking +X.
+##
+## LEVEL IS THE POINT, and it is what makes this different from `17-rim`. A
+## camera pitched down photographs the ground in front of it, however far the
+## far field reaches; a camera pitched level puts the horizon across the middle
+## of the frame, which is where "the mesh reaches the frame's horizon in every
+## direction, no edge, no hole, no crack" can be judged at all. Looking +X
+## rather than at the origin for the same reason: +X from the summit leaves the
+## home region and keeps going, and what this shot is for is what is out there.
+func _horizon_peak(hm: Heightmap, summit: Vector2i,
+		cfg: WorldgenConfig) -> Dictionary:
+	var eye := _cell_to_metres(hm, summit, cfg)
+	eye.y += EYE_LEVEL_M
+	return {
+		"name": "30-horizon-peak",
+		"note": "the home region's highest summit, camera level, looking +X",
+		# The target is level with the eye, so `look_at` produces a pitch of
+		# exactly zero. Ten kilometres out so a rounding in the eye's altitude
+		# cannot tilt it.
+		"target": Vector3(eye.x + 10000.0, eye.y, eye.z),
+		"eye_m": eye,
+		"distance": 0.0, "height": 0.0,
+	}
 
 
 ## The nearest promoted boulder_l to spawn, in metres, or ZERO if the search
@@ -1112,6 +1181,23 @@ func _capture(index: int, shot: Dictionary) -> void:
 		eye = target + Vector3(cos(angle), 0.0, sin(angle)) * shot["distance"]
 		eye.y = _world.surface_height_m(
 			int(eye.x / cfg.block_size), int(eye.z / cfg.block_size)) + shot["height"]
+
+	# HORIZON V1 STAGE 0. A vantage may name a place the world has to be
+	# GENERATED at rather than merely looked at: `31-horizon-far` stands 20 km
+	# out, where no chunk exists until something asks. Resolving the altitude
+	# here rather than in `_choose_vantages` is deliberate - the heightmap
+	# outside the home region is built on demand from Stage 1 on, and the
+	# vantage list is chosen before the world has been asked for anything.
+	if shot.get("ground_eye", false) or shot.has("tp"):
+		var bx := int(floor(eye.x / cfg.block_size))
+		var bz := int(floor(eye.z / cfg.block_size))
+		eye.y = _world.surface_height_m(bx, bz) + EYE_LEVEL_M
+		if shot.get("look_home", false):
+			# Level, looking at the origin: the home region seen as a range
+			# rather than as ground in front of the camera.
+			target = Vector3(0.0, eye.y, 0.0)
+		elif shot.has("ground_eye"):
+			target.y = eye.y
 
 	# Voxels exist near the PLAYER, so the player is what has to move.
 	_player.global_position = eye

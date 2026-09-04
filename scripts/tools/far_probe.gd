@@ -155,6 +155,45 @@ const BOUNDARY_HALF_M := 25.0
 ## added and taken away again, not for arithmetic that nearly quantises.
 const TERRACE_EPS_BLOCKS := 0.002
 
+# --- HORIZON V1 STAGE 0: THE HANDOVER ----------------------------------------
+#
+# "NOTHING POPS IN", AS A NUMBER (grill Q20). Fizz already answers "does the far
+# country change shape when I WALK"; this answers the other half - "does the
+# ground step when the drawing of it is handed from one ring to the next", which
+# is the artefact a player walking toward a mountain sees at a fixed distance
+# from themselves rather than at a fixed place in the world.
+#
+# HOW IT IS MEASURED, and the shape of it is the whole content.
+#
+# The naive form - read the drawn height just inside the boundary and just
+# outside it and subtract - measures the real slope of the hill between the two
+# samples far more than it measures the seam. So both sides are measured
+# AGAINST ONE COMMON TRUTH instead:
+#
+#     e_in  = drawn(r - d) - true(r - d)
+#     e_out = drawn(r + d) - true(r + d)
+#     step  = e_out - e_in
+#
+# `true` is `Heightmap.height_at` - level 0, the surface the voxels are built
+# from, the one thing both rings are approximations OF. The terrain's own slope
+# is in both residuals and cancels; what is left is the disagreement between the
+# two rings, which is exactly the step the eye catches.
+#
+# `d` is half the OUTER ring's cell, so each sample sits solidly inside its own
+# ring rather than in the overlap where quad membership is decided by a centre
+# test.
+#
+# THE VOXEL SEAM IS MEASURED THE SAME WAY and is the most important row of the
+# table: it is the boundary the player is always standing next to.
+
+## How far along the arc, in metres, and the spacing. The plan's numbers.
+const HANDOVER_ARC_M := 200.0
+const HANDOVER_STEP_M := 1.0
+
+## How few usable pairs make a bearing not worth reporting. A boundary measured
+## over a handful of samples is not a measurement.
+const HANDOVER_MIN_SAMPLES := 20
+
 ## THE TWO ROW BANDS EVERY PER-PIXEL NUMBER IN THIS EPIC IS TAKEN OVER.
 ## Distance v3 Stage 0, and they are constants here because they are a finding
 ## rather than a preference.
@@ -204,20 +243,59 @@ func _go() -> void:
 	print("[FarProbe] seed %d, view %s, fog_end %.0f m, far_step %d blocks" % [
 		_world.world_seed, _config.view_distance_name(), _config.fog_end_m,
 		_config.far_step])
-	# DISTANCE V2 STAGE 0. Every number below is a function of these two, and a
+	# DISTANCE V2 STAGE 0. Every number below is a function of these, and a
 	# table without them in its header is a table nobody can place afterwards.
-	print("[FarProbe] far_terrace %.2f, far_riser_shade %.2f, far_band_m %.1f, far_band_step %.3f" % [
-		_config.far_terrace, _config.far_riser_shade,
-		_config.far_band_m, _config.far_band_step])
+	#
+	# THREE OF THE ORIGINAL FOUR ARE GONE, and this line was still asking for
+	# them: light v1 Stage 3 deleted `far_riser_shade`, `far_band_m`,
+	# `far_band_step`, `far_riser_lift` and `far_riser_axis` from the config
+	# with the paint path they belonged to, and left this print reaching for
+	# three of them. **The far probe has therefore crashed on its own header
+	# since light v1 merged** - "Invalid access to property or key
+	# 'far_riser_shade'" - which is why no run since carries a fizz table.
+	# Found by horizon v1 Stage 0's first gate run and fixed here, because the
+	# far probe is the instrument three of this plan's stages are judged on.
+	#
+	# What replaces them is what a horizon-era table has to be placed by: the
+	# geometry knobs that survived.
+	print("[FarProbe] far_terrace %.2f, far_step_y %.1f, far_ring_div %.0f, far_peak_gain %.2f, far_geomorph %.1f, far_detail %.1f" % [
+		_config.far_terrace, _config.far_step_y_blocks, _config.far_ring_div,
+		_config.far_peak_gain, _config.far_geomorph_cells, _config.far_detail])
 
-	# DISTANCE V4 STAGE 7. Take every mesh below through the C++ mesher.
-	if "--cpp" in OS.get_cmdline_user_args():
+	# DISTANCE V4 STAGE 7 asked for `--cpp`. HORIZON V1 STAGE 0 MAKES IT THE
+	# DEFAULT, and the reason is a wall clock rather than a preference.
+	#
+	# This probe was written when `fog_end_m` was 600 m and `far_ring_div` was
+	# 2 - a far mesh of about 100k vertices, a second to build in GDScript. It
+	# is now 3,200 m at div 4, which is 3.5 M vertices and most of a minute,
+	# and the probe builds forty-nine of them per run and runs twice. That is
+	# an hour and a half for an instrument whose whole argument is that it can
+	# be run after every stage; Stage 3 takes the reach to 38.4 km and would
+	# make it a day.
+	#
+	# THE RUNTIME PATH IS C++. `far_cpp` defaults to 1, so what the game draws
+	# is the C++ mesher's mesh, and a probe measuring the GDScript one is
+	# measuring a leg nobody looks at. That the two are the same mesh is not
+	# assumed here: `selftest.gd`'s far parity, slice parity and layer parity
+	# compare the two legs' arrays directly, and `--gdscript` below takes this
+	# whole table through the reference leg so the two tables can be diffed
+	# character for character - a stronger statement than an array comparison,
+	# because these rows are read off the TRIANGLES.
+	#
+	# `--cpp` still works and now means "the default, said out loud".
+	var argv := OS.get_cmdline_user_args()
+	if not ("--gdscript" in argv) and FarMesher.available():
 		var m := FarMesher.new()
-		if not FarMesher.available() or not m.setup(_heightmap, _generator, _config):
-			print("[FarProbe] --cpp asked for, and there is no C++ mesher to ask")
+		if m.setup(_heightmap, _generator, _config):
+			_cpp_mesher = m
+		elif "--cpp" in argv:
+			print("[FarProbe] --cpp asked for, and the C++ mesher would not take this world")
 			get_tree().quit(1)
 			return
-		_cpp_mesher = m
+	elif "--cpp" in argv:
+		print("[FarProbe] --cpp asked for, and there is no C++ mesher to ask")
+		get_tree().quit(1)
+		return
 	print("[FarProbe] mesher: %s" % ["c++" if _cpp_mesher != null else "gdscript"])
 
 	# THE COST TABLE, distance v3 Stage 0. See _cost_table().
@@ -419,6 +497,7 @@ func _measure() -> PackedStringArray:
 	var terrace := PackedStringArray()
 	var shelf_rows := PackedStringArray()
 	var seam_rows := PackedStringArray()
+	var hand_rows := PackedStringArray()
 
 	for v in vantages:
 		var centre: Vector2i = v["centre"]
@@ -449,6 +528,11 @@ func _measure() -> PackedStringArray:
 			fizz["bands"]])
 		terrace.append("[FarProbe] %-14s %s" % [v["name"], _terrace_row(a)])
 		seam_rows.append("[FarProbe] %-14s %s" % [v["name"], _seam_row(a, centre)])
+		# THE HANDOVER, horizon v1 Stage 0 - off the surface this loop has
+		# already built. Its own loop over the vantages would have doubled the
+		# probe's build count, and one far mesh is most of a minute.
+		hand_rows.append("[FarProbe] %-14s %s" % [
+			v["name"], _handover_row_set(a, centre)])
 
 	print("[FarProbe]   ... %d meshes built so far" % _builds)
 	var total_rms := sqrt(fizz_sq / maxf(float(fizz_n), 1.0))
@@ -461,7 +545,11 @@ func _measure() -> PackedStringArray:
 	# and that question needs the boundary measured over a window that
 	# straddles it rather than read off whichever 100 m bin it fell in.
 	var edge_parts := PackedStringArray()
-	for i in FarFieldJob.RING_OUTER_M.size():
+	# `--rings a-b` narrows what is PRINTED and nothing else - see _ring_range.
+	# Every ring is still measured, so the determinism gate compares the same
+	# work whichever rows a run asked to see.
+	var rings := _ring_range()
+	for i in range(rings.x, mini(rings.y + 1, FarFieldJob.RING_OUTER_M.size())):
 		edge_parts.append("%.0f m: max %.2f rms %.3f over %d" % [
 			FarFieldJob.RING_OUTER_M[i], edge_max[i],
 			sqrt(edge_sum[i] / maxf(float(edge_count[i]), 1.0)), edge_count[i]])
@@ -483,12 +571,150 @@ func _measure() -> PackedStringArray:
 		int(float(SHELF_OFFSET_BLOCKS) * _config.block_size)])
 	out.append_array(shelf_rows)
 
+	# --- THE HANDOVER, horizon v1 Stage 0 -------------------------------------
+	out.append("[FarProbe] handover: the step across a boundary, blocks - "
+		+ "gate rms <= 0.5 x the inner cell, max <= 1.0 x, ! marks a fail")
+	out.append_array(hand_rows)
+
 	# --- PEAK LOSS, and its mirror --------------------------------------------
 	out.append_array(await _extrema_rows(1, "peak loss",
 		"positive = the drawn summit is LOWER than the truth"))
 	out.append_array(await _extrema_rows(-1, "valley gain",
 		"positive = the drawn valley floor is HIGHER than the truth"))
 	return out
+
+
+## `--rings a-b` restricts every per-ring table to that inclusive range.
+##
+## THE TABLE GOES FROM SIX ROWS TO TEN in Stage 3 and will grow again the day a
+## preset reaches further. A stage that has just moved ring 7 wants ring 7's
+## numbers on one screen, not ten rows of which nine are unchanged - and the
+## rows it drops are still MEASURED and still identical between the two runs,
+## so the determinism gate is unaffected by which of them are printed.
+##
+## Defaults to every ring the config actually defines, which is the plan's
+## "over every ring the config defines, not the six it hard-codes": the loops
+## read `FarFieldJob.RING_OUTER_M.size()` and nothing here knows a number.
+func _ring_range() -> Vector2i:
+	var n := FarFieldJob.RING_OUTER_M.size()
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--rings")
+	if i < 0 or i + 1 >= argv.size():
+		return Vector2i(0, n - 1)
+	var parts := argv[i + 1].split("-", false)
+	if parts.size() != 2:
+		push_warning("[FarProbe] --rings %s: expected a-b" % argv[i + 1])
+		return Vector2i(0, n - 1)
+	return Vector2i(clampi(parts[0].to_int(), 0, n - 1),
+		clampi(parts[1].to_int(), 0, n - 1))
+
+
+## Every boundary on one vantage, as one line. See the block comment by
+## HANDOVER_ARC_M for what the number is and why it is that number.
+##
+## OFF A SURFACE THE CALLER ALREADY BUILT. The probe builds forty-nine far
+## meshes per run already; a handover loop with its own builds would have made
+## the instrument cost more than the stage it measures.
+func _handover_row_set(s: Surface, centre: Vector2i) -> String:
+	var bs: float = _config.block_size
+	var base := FarFieldJob.base_step_blocks(_config)
+	var rings := _ring_range()
+	var rows := PackedStringArray()
+	# THE VOXEL SEAM FIRST. It is the boundary the player stands next to, and
+	# its inner cell is ring 0's.
+	var seam := maxf(float(_config.voxel_radius_chunks * Chunk.SIZE)
+		- float(2 * base), 0.0)
+	rows.append(_handover_row(s, centre, "seam", seam, base, base))
+	var reach := _config.fog_end_m / bs * FarFieldJob.FOG_MARGIN
+	for r in range(rings.x, mini(rings.y + 1, FarFieldJob.RING_OUTER_M.size())):
+		var radius: float = FarFieldJob.RING_OUTER_M[r] / bs
+		if radius >= reach:
+			continue  # this ring's outer edge is the disc's end, not a handover
+		var inner: int = base * FarFieldJob.RING_STEP_MULTIPLE[r]
+		var outer: int = base * FarFieldJob.RING_STEP_MULTIPLE[
+			mini(r + 1, FarFieldJob.RING_STEP_MULTIPLE.size() - 1)]
+		rows.append(_handover_row(s, centre, "%d/%d" % [r, r + 1],
+			radius, inner, outer))
+	return String("  ").join(rows)
+
+
+## One boundary, as `label@bearing rms max/cell`.
+##
+## THE ARC IS TRIED IN FOUR DIRECTIONS AND THE FIRST ONE WITH GROUND IN IT
+## WINS, which is not a refinement - it is what makes the row exist at all at
+## the summit vantage. The summit is the highest cell in the world and
+## `wildness_relief` puts the highest ground near the region's edge, so an arc
+## fixed at +X from there runs straight off the heightmap: every quad past the
+## edge is culled by `in_bounds`, both samples come back NAN, and every
+## boundary on that vantage reads "no samples" - which is what the first run of
+## this measurement did.
+##
+## Deterministic: 0, 90, 180, 270 degrees in that order, first with at least
+## HANDOVER_MIN_SAMPLES usable pairs. The bearing is printed, because a row
+## measured to the north and one measured to the east are two facts and the
+## table should not pretend they are one.
+func _handover_row(s: Surface, centre: Vector2i, label: String,
+		radius_blocks: float, inner_step: int, outer_step: int) -> String:
+	if radius_blocks <= 1.0:
+		return "%s -" % label
+	for turn in 4:
+		var got := _handover_arc(s, centre, radius_blocks, outer_step,
+			float(turn) * PI * 0.5)
+		if int(got["n"]) < HANDOVER_MIN_SAMPLES:
+			continue
+		var rms := float(got["rms"])
+		var worst := float(got["max"])
+		# THE GATE IS RELATIVE TO THE INNER CELL because that is the step the eye
+		# compares against: half a block of disagreement is invisible at ring 8's
+		# 512 m cell and a cliff at ring 0's 2 m one.
+		var flag := ""
+		if rms > 0.5 * float(inner_step) or worst > 1.0 * float(inner_step):
+			flag = "!"
+		return "%s@%d rms %.2f max %.2f/%d%s" % [
+			label, turn * 90, rms, worst, inner_step, flag]
+	return "%s no samples" % label
+
+
+## One arc: the RMS, the max and the count of the step across the boundary.
+##
+## Samples where either side has no mesh - inside the voxel hole, past the
+## disc's edge, or in a sector the frontier has excluded - are skipped.
+func _handover_arc(s: Surface, centre: Vector2i, radius_blocks: float,
+		outer_step: int, bearing: float) -> Dictionary:
+	var bs: float = _config.block_size
+	var d := float(outer_step) * 0.5
+	var n := int(HANDOVER_ARC_M / HANDOVER_STEP_M)
+	# The arc's angular extent: 200 m of arc at this radius.
+	var span := HANDOVER_ARC_M / bs / radius_blocks
+	var sum_sq := 0.0
+	var worst := 0.0
+	var used := 0
+	for k in n:
+		var theta := bearing - span * 0.5 + span * float(k) / float(maxi(n - 1, 1))
+		var ux := cos(theta)
+		var uz := sin(theta)
+		var bx_in := float(centre.x) + ux * (radius_blocks - d)
+		var bz_in := float(centre.y) + uz * (radius_blocks - d)
+		var bx_out := float(centre.x) + ux * (radius_blocks + d)
+		var bz_out := float(centre.y) + uz * (radius_blocks + d)
+		var h_in := s.height_at(bx_in, bz_in)
+		var h_out := s.height_at(bx_out, bz_out)
+		if is_nan(h_in) or is_nan(h_out):
+			continue
+		# THE ONE COMMON TRUTH. Level 0 - what the voxels are built from - so the
+		# hill's own slope is in both residuals and cancels, and what is left is
+		# the two rings disagreeing with each other.
+		var e_in := h_in - s.y_off_blocks - _heightmap.height_at(bx_in, bz_in)
+		var e_out := h_out - s.y_off_blocks - _heightmap.height_at(bx_out, bz_out)
+		var step := e_out - e_in
+		sum_sq += step * step
+		worst = maxf(worst, absf(step))
+		used += 1
+	return {
+		"rms": sqrt(sum_sq / maxf(float(used), 1.0)),
+		"max": worst,
+		"n": used,
+	}
 
 
 ## One extremum table: twenty peaks, or twenty basins.
@@ -917,6 +1143,31 @@ class Surface extends RefCounted:
 	var g_min_bz := 0
 	var g_cols := 0
 
+	# THE FINE QUADS, KEYED EXACTLY. Horizon v1 Stage 0.
+	#
+	# THE FLAT GRID CANNOT SEE THE INNER RINGS AND NEVER COULD. Its cell is
+	# LOOKUP_CELL_BLOCKS - 8 - and that constant's own comment says "far_step
+	# is the finest ring's step, so one cell is covered by at most one quad of
+	# every ring". That was true at `far_step` 8 with no ring divisor. Since
+	# 2026-09-01 `far_ring_div` is 4, so ring 0's quad is 2 blocks and ring 1's
+	# is 4: sixteen ring-0 quads share one lookup cell, the claim loop below
+	# writes whichever it reaches last, and `height_at` then rejects every
+	# sample that is not inside that one quad - fifteen sixteenths of them.
+	#
+	# It went unnoticed because every measurement this probe had was either a
+	# sparse lattice over the whole disc (fizz, roughness), where the coarse
+	# rings carry the sample count, or a summit at 600 m, which is ring 3. The
+	# handover measurement is the first one that asks about the SEAM, and the
+	# seam is ring 0 - where the answer came back "no samples".
+	#
+	# So quads finer than the lookup cell are keyed exactly instead, by their
+	# own low corner at their own step. `_build_ring` snaps a ring's centre to
+	# a multiple of that ring's step, so every quad corner is a multiple of the
+	# step and `floor_div(b, step) * step` is the corner of the quad containing
+	# a point - an exact index, not a search.
+	var fine := {}                        # Vector2i(corner) -> quad index
+	var fine_steps := PackedInt32Array()  # ascending, so the finest wins
+
 	## `job` is a FarFieldJob or a FarMesher - both present `center` and
 	## `arrays`, which is all this reads, and distance v4 Stage 7 needs the
 	## whole table taken through either mesher. Untyped for that reason and no
@@ -966,6 +1217,14 @@ class Surface extends RefCounted:
 			qy.push_back(p1.y * inv)
 			qy.push_back(p2.y * inv)
 			qy.push_back(p3.y * inv)
+			# Finer than the lookup cell: keyed exactly - see `fine` above.
+			# Still claimed in the grid below as well, so a query that lands
+			# here through the grid behaves exactly as it did before.
+			if step < FarProbe.LOOKUP_CELL_BLOCKS:
+				fine[Vector2i(bx, bz)] = idx
+				if not fine_steps.has(step):
+					fine_steps.push_back(step)
+					fine_steps.sort()
 			# Claim every lookup cell the quad covers. THE FINER QUAD WINS
 			# where two rings overlap: it is the one nearer the player and the
 			# one drawn in front.
@@ -990,11 +1249,29 @@ class Surface extends RefCounted:
 	## in, split along p0-p2 exactly as the index buffer splits it. Bilinear
 	## would be smoother and would not be what is on screen.
 	func height_at(bx: float, bz: float) -> float:
-		var gi := int(floor((bx - float(g_min_bx)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
-		var gj := int(floor((bz - float(g_min_bz)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
-		if gi < 0 or gj < 0 or gi >= g_cols or gj >= g_cols:
-			return NAN
-		var idx := grid[gi + gj * g_cols]
+		# THE FINEST RING FIRST, exactly keyed - see `fine`. `fine_steps` is
+		# ascending, so this is "the finer quad wins" written as a lookup
+		# rather than as a comparison, which is the same rule the grid below
+		# applies to the coarse rings.
+		var idx := -1
+		var fbx := int(floor(bx))
+		var fbz := int(floor(bz))
+		for st in fine_steps:
+			# Chunk.floor_div inlined: this runs a few million times a run and
+			# a GDScript static call is most of its cost. Same expression.
+			var mx := fbx % st
+			var mz := fbz % st
+			var hit = fine.get(Vector2i(fbx - (mx + st if mx < 0 else mx),
+				fbz - (mz + st if mz < 0 else mz)))
+			if hit != null:
+				idx = hit
+				break
+		if idx < 0:
+			var gi := int(floor((bx - float(g_min_bx)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
+			var gj := int(floor((bz - float(g_min_bz)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
+			if gi < 0 or gj < 0 or gi >= g_cols or gj >= g_cols:
+				return NAN
+			idx = grid[gi + gj * g_cols]
 		if idx < 0:
 			return NAN
 		var step := float(qstep[idx])

@@ -47,6 +47,26 @@ const MAX_STEP := 0.55
 ## than walking.
 const FLY_SPEED := 18.0
 
+## THE SAME NUMBER, AS A KNOB. Horizon v1 Stage 0, grill Q10.
+##
+## The world stopped being 3 km wide and the view reaches 32 km, so crossing
+## the drawn country at 18 m/s is half an hour of holding W. `fly_speed_mps`
+## on F4 moves this between 18 and 500, and `--tp X Z` gets there in one frame
+## for anything a probe or a tour needs.
+##
+## A `static var` rather than a config read inside `_fly`, for the reason
+## `FarFieldJob.FRONTIER_OVERLAP_CELLS` is one: this file is static and
+## stateless on purpose - "everything that persists between ticks lives on the
+## body" - and threading a config through `Locomotion.step` would put a knob in
+## the one signature the host and the client have to agree about. Written on
+## the MAIN THREAD only, from `Game._on_config_changed` and `Game._ready`, and
+## read on both legs of the prediction, so the host and the client are in step
+## by construction whatever either machine has it set to.
+##
+## LOCAL AND A DEBUG ALLOWANCE, like noclip itself: it changes how fast a
+## developer crosses the world and nothing about what the world contains.
+static var fly_speed := FLY_SPEED
+
 # --- Momentum (world feel v1 Stage 12) ---------------------------------------
 #
 # WHY A BODY THAT USED TO SNAP TO ITS WISH NOW TAKES A MOMENT.
@@ -397,5 +417,5 @@ static func _fly(body: CharacterBody3D, input: Intent, delta: float) -> void:
 		dir -= Vector3.UP
 	if dir != Vector3.ZERO:
 		dir = dir.normalized()
-	body.velocity = dir * FLY_SPEED * speed_multiplier(input)
+	body.velocity = dir * fly_speed * speed_multiplier(input)
 	body.global_position += body.velocity * delta

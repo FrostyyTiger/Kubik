@@ -189,6 +189,24 @@ const EERIE := {
 	"fog_height_density": -0.004,
 }
 
+## EVERY FOG TERM ZERO, FOR A MEASUREMENT. Horizon v1 Stage 0, `--fog off`.
+##
+## Not a keyframe and not a knob: a RUN-WIDE switch that this file honours in
+## the four places fog is written - the exponential far term, the height term,
+## the volumetric field's density and the valley bands. Stage 5 adds the far
+## material's own ramp to that list, which is the point of having one switch
+## rather than four flags.
+##
+## WHY IT HAS TO EXIST. Every colour gate in this plan is a 9 x 9 window on a
+## hillside, and past Stage 5 the hillside at 8 km is 20% haze by design. A
+## window measured through it is measuring the fog. The handover gate asks
+## whether two rings paint the same rock the same colour, and the only way to
+## ask that is with nothing in front of the rock.
+##
+## A `static var` rather than an instance field because `Look`, the tour and
+## the probes all need the same answer and none of them holds this node.
+static var fog_off := false
+
 ## THE HOUR ANCHORS, as sun elevations. The tour and the gallery ask for an hour
 ## by NAME and `time_for_elevation()` answers with a time, so a shot called
 ## "evening" and the keyframe called "evening" cannot drift apart.
@@ -670,7 +688,7 @@ func apply() -> void:
 		# height term is Stage 2's and stays at nothing until it has a valley
 		# floor to sit on.
 		_env.fog_light_color = (kf["fog"] as Color).linear_to_srgb()
-		_env.fog_density = kf["fog_density"]
+		_env.fog_density = 0.0 if fog_off else kf["fog_density"]
 		# HOW MUCH OF THE SKY THE FOG OWNS. The bible's rule is "fog always
 		# fades to the current sky colour"; this is the other half of the same
 		# fact - a thick evening air tints the sky it is suspended in. It rises
@@ -685,7 +703,9 @@ func apply() -> void:
 		# gallery sheet, a self-test) there is no floor and the term stays off,
 		# which is right: a swatch pad has no valley.
 		var floor_m := world.fog_floor_m if world != null else INF
-		if is_finite(floor_m):
+		if fog_off:
+			_env.fog_height_density = 0.0
+		elif is_finite(floor_m):
 			_env.fog_height = floor_m + kf["fog_height_offset"]
 			# EERIE INVERTS IT. A negative height density thickens the fog
 			# UPWARD, so what disappears is the top of a thing rather than its
@@ -695,7 +715,7 @@ func apply() -> void:
 			_env.fog_height_density = 0.0
 		# The volumetric field takes the hour's colour, so a band in the valley
 		# and the distance behind it are the same fog.
-		_env.volumetric_fog_density = kf["vol_density"]
+		_env.volumetric_fog_density = 0.0 if fog_off else kf["vol_density"]
 		_env.volumetric_fog_albedo = (kf["fog"] as Color).linear_to_srgb()
 		# THE GRADE: THE HOUR OWNS THE VALUE, THE LENS OWNS THE SWITCH.
 		#
@@ -714,7 +734,14 @@ func apply() -> void:
 		_env.adjustment_saturation = lens_sat * hour_sat
 		_env.adjustment_contrast = Look.ADJUST_CONTRAST if lens_on else 1.0
 
-	if valley_fog != null and world != null:
+	if valley_fog != null and world != null and fog_off:
+		# NO BANDS EITHER. A FogVolume is a density field in a place and
+		# `--fog off` means every fog term is zero, not most of them - a band
+		# left standing in the valley would sit across exactly the hillside a
+		# handover window is being measured on.
+		valley_fog.place(world.fog_floor_m, world.fog_floor_at, 0.0,
+			(kf["fog"] as Color).linear_to_srgb(), 0.0, false)
+	elif valley_fog != null and world != null:
 		# THE BANDS LIE IN THE VALLEY, and the hour decides how thick they are.
 		# `vol_density` against the day's is the scale, so night doubles the
 		# stack and eerie quadruples it without a second table.

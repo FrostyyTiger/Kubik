@@ -1693,6 +1693,64 @@ const PROPERTIES: PackedStringArray = [
 @export var night_life := 1.0
 
 
+# --- HORIZON V1 --------------------------------------------------------------
+#
+# Every knob in this block is LOCAL and UNHASHED. None of them changes what a
+# seed produces: they change how far the machine looks, how a developer gets
+# there, and how the far country is cut. The canonical world line is reprinted
+# after every stage of horizon v1 and one changed character is a red gate, so
+# a knob that belonged in PROPERTIES would fail that gate on the day it was
+# added rather than on the day it was wrong.
+
+## HOW FAR THE VIEW REACHES, in metres. The north star's second sentence, as a
+## number: R.
+##
+## THIS IS THE ONE THE FOG RAMP IS NORMALISED TO. The far material fades toward
+## the hour's fog colour over `0.4 R` to `R`, so the haze is a fixed shape on
+## whatever distance the machine is drawing rather than a density that has to
+## be retuned every time the reach moves. `fog_end_m` is kept equal to it by
+## `apply_view_preset()`, because the far radius, the camera's far plane and
+## the tour's own far plane are all derived from `fog_end_m` and have been
+## since terrain v1; the two names are one number and this is the one with the
+## meaning in it.
+##
+## Set by the preset (VIEW_PRESETS): 8 km at Low, 16 at Medium, 32 at High and
+## Ultra. D84's "32 km on a clear day" is the top two.
+@export var far_reach_m := 32000.0
+
+## HOW FAR THE ORIGIN IS ALLOWED TO DRIFT before the world is rebased, in
+## metres. Stage 6. See World.origin_offset_tiles.
+@export var far_origin_rebase_m := 2048.0
+
+## NOCLIP SPEED, in metres per second. Host only, developer only.
+##
+## `Locomotion.FLY_SPEED` was 18 because the world was 3 km across. It is
+## unbounded now and the far view reaches 32 km, so crossing it at 18 m/s is
+## half an hour. The constant stays as the default and this is what
+## `Locomotion.fly_speed` is set from on the main thread.
+@export var fly_speed_mps := 18.0
+
+## HOW MUCH OF A FAR CELL'S COLOUR COMES FROM THE FOREST STANDING ON IT.
+## Stage 4, and inert before it.
+@export var far_forest_blend := 0.7
+
+## SAMPLES PER AXIS INSIDE ONE COARSE TILE CELL, 1, 2 or 4. Stage 1.
+##
+## A level-L cell is the mean of `far_supersample^2` samples of `raw_height` at
+## the sub-cell centres. 1 is one sample at the cell's own corner, which is
+## exactly what the home region's level 0 is built with and is why the home
+## region cannot move: `build_tile` at supersample 1 is byte for byte the
+## function distance v5 shipped.
+@export var far_supersample := 2.0
+
+## HOW FAR A FAR RING MAY DRIFT FROM ITS ANCHOR before it is rebuilt, as a
+## fraction of its INNER radius. Stage 3.
+@export var far_ring_recenter_frac := 0.25
+
+## TILES OF APRON kept beyond each ring's outer radius. Stage 1.
+@export var far_tile_apron := 1.0
+
+
 const LOCAL_PROPERTIES: PackedStringArray = [
 	"flora_radius_m", "flora_far_m", "flora_far_fraction", "flora_draw_fraction", "far_tree_m",
 	"wind_strength", "night_life", "far_tree_tint",
@@ -1724,6 +1782,12 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"tree_sway",
 	# TREES V3 STAGE 6. The trunk collider ring.
 	"tree_colliders",
+	# HORIZON V1. LOCAL and unhashed, every one - see the block by
+	# `far_reach_m`. On this list rather than only in the @export block because
+	# World.setup() clones the config through these two lists and a knob that
+	# is on neither is silently dropped on the way into the world.
+	"far_reach_m", "far_origin_rebase_m", "fly_speed_mps", "far_forest_blend",
+	"far_supersample", "far_ring_recenter_frac", "far_tile_apron",
 	"ao_strength", "msaa_level",
 	"grain_sparse", "grain_step",
 	# LIGHT V1 STAGE 1. The eerie flag (Q13): a modifier on the hour.

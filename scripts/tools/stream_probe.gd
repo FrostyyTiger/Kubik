@@ -1,5 +1,26 @@
 class_name StreamProbe
 
+## RETIRED, 2026-09-04, horizon v1 grill Q22. SUPERSEDED BY `sprint_probe.gd`.
+##
+## WHY IT IS RETIRED AND NOT FIXED. This probe waits on a WORLD CONDITION - the
+## sprint has covered its distance, the frontier has caught up - and a world
+## condition that never arrives is a probe that never returns. It has hung on
+## this box, and the plan's time budget will not spend a night finding out why
+## when the thing it was for now exists in a form that cannot hang: the sprint
+## probe is bounded by FRAMES, carries a watchdog, and flushes its progress to
+## disk every second (see its header for all three).
+##
+## The sprint probe reports what this one did - frames, the long ones, chunks,
+## far rebuilds - plus a median, a p99 and the memory line, from a run that
+## exits with a code. The one thing it does NOT carry across is this file's
+## HOLE COUNT, and that is deliberate rather than lost: "never a hole" is the
+## far field's own gate and horizon v1 measures it on the tour's shots and in
+## `far_probe.gd`'s handover rows, where a hole is a picture rather than a
+## counter.
+##
+## LEFT IN THE TREE, unchanged below this note, and `--stream-probe` still
+## runs. Nothing has been deleted; nothing new should be built on it.
+##
 ## TODO(marcel): THIS PROBE CAN COMPARE TWO COMMITS - ON A DEDICATED BOX,
 ## INTERLEAVED, REPORTING MEDIANS. Everything below was written when the only
 ## comparative data came from a contended desktop, and it concluded the probe

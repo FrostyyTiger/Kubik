@@ -118,6 +118,21 @@ const LOCAL_TUNING_ROWS := [
 	# a picture can see. It is here so "identical" is something Marcel can turn
 	# off standing still rather than take from a gate.
 	["far_cpp", "distance: c++ mesher (0/1)", 0.0, 1.0, 1.0],
+	# HORIZON V1, appended after distance v4's block. Every one of these is
+	# LOCAL and unhashed - see the block by `far_reach_m` in worldgen_config.gd
+	# - and every one that redraws only the far mesh reaches
+	# `FarField.request_rebuild` through `apply_far_knobs` rather than F7.
+	#
+	# `horizon:` rather than `distance:` because they are a different question.
+	# The distance knobs are about how the far country is CUT; these are about
+	# how far it goes, how it is stored and how a developer gets there.
+	["far_reach_m", "horizon: reach R (m)", 1000.0, 40000.0, 1000.0],
+	["far_supersample", "horizon: tile supersample", 1.0, 4.0, 1.0],
+	["far_ring_recenter_frac", "horizon: ring recentre (x r)", 0.05, 0.5, 0.05],
+	["far_tile_apron", "horizon: tile apron", 0.0, 3.0, 1.0],
+	["far_forest_blend", "horizon: far forest blend", 0.0, 1.0, 0.05],
+	["far_origin_rebase_m", "horizon: rebase at (m)", 512.0, 8192.0, 256.0],
+	["fly_speed_mps", "horizon: fly speed (m/s)", 18.0, 500.0, 1.0],
 ]
 
 var config: WorldgenConfig = null
@@ -482,6 +497,9 @@ func _build_panel() -> void:
 		box.add_child(_spin_row(row[0], row[1], row[2], row[3], row[4]))
 
 	box.add_child(HSeparator.new())
+	box.add_child(_teleport_row())
+
+	box.add_child(HSeparator.new())
 	var save := Button.new()
 	save.text = "save to user://worldgen.tres"
 	save.pressed.connect(_on_save_pressed)
@@ -491,6 +509,63 @@ func _build_panel() -> void:
 	note.text = "changes apply on reroll [F7]"
 	note.add_theme_font_size_override("font_size", 11)
 	box.add_child(note)
+
+
+## THE DEVELOPER TELEPORT (horizon v1 Stage 0, grill Q10).
+##
+## Two numbers and a button rather than three spinboxes, and it is worth a
+## sentence: `go` is an ACTION, and an action expressed as a config knob is a
+## value that gets saved to `user://worldgen.tres` and then teleports somebody
+## on the next launch. Nothing in `WorldgenConfig` moves for this row - it
+## carries its own two fields and calls `Game.teleport_to`, which is the one
+## place that knows how to move a player and re-centre a world together.
+##
+## HOST ONLY, enforced in `teleport_to` rather than here: a greyed-out button
+## explains less than a warning that says why.
+func _teleport_row() -> Control:
+	var box := VBoxContainer.new()
+	var label := Label.new()
+	label.text = "teleport (world metres, host only)"
+	label.add_theme_font_size_override("font_size", 12)
+	box.add_child(label)
+
+	var row := HBoxContainer.new()
+	_tp_x = SpinBox.new()
+	_tp_x.min_value = -100000.0
+	_tp_x.max_value = 100000.0
+	_tp_x.step = 100.0
+	_tp_x.prefix = "x "
+	_tp_x.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_tp_x)
+
+	_tp_z = SpinBox.new()
+	_tp_z.min_value = -100000.0
+	_tp_z.max_value = 100000.0
+	_tp_z.step = 100.0
+	_tp_z.prefix = "z "
+	_tp_z.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_tp_z)
+
+	var go := Button.new()
+	go.text = "go"
+	go.pressed.connect(_on_teleport_pressed)
+	row.add_child(go)
+	box.add_child(row)
+	return box
+
+
+var _tp_x: SpinBox = null
+var _tp_z: SpinBox = null
+
+
+func _on_teleport_pressed() -> void:
+	# `game` is reached the way every other cross-node call in this panel is:
+	# by looking for the method rather than by holding a typed reference, so a
+	# HUD built without one is a HUD with a button that does nothing rather
+	# than a crash.
+	var g := get_parent()
+	if g != null and g.has_method("teleport_to") and _tp_x != null:
+		g.teleport_to(Vector2(_tp_x.value, _tp_z.value))
 
 
 func _seed_row() -> Control:
