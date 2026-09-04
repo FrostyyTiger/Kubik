@@ -339,11 +339,21 @@ godot --headless --path . -s gdext/check.gd     # "class exists: true"
 **The API file must come from the pinned binary.** godot-cpp built against a
 different 4.x dumps no error and produces a library that loads and misbehaves.
 
-`gdext/bin/` is gitignored, so the Windows artifact under **Builds** below
-ships without the library and uses the GDScript fallback. CI does build it -
-`.github/workflows/selftest.yml`, on `main` and on every `feat/**` branch - and
-runs the whole self-test against it, so the port cannot rot silently; it is the
-EXPORT that does not have it.
+`gdext/bin/` is gitignored, so a fresh clone has no library - and the export
+does not shrug that off. Godot copies every library named in
+`kubik.gdextension` next to the exe and **fails the export** when one is
+missing, which is why the Windows build was red from the day that file was
+added until 2026-09-04. Both workflows build it now.
+`.github/workflows/selftest.yml` builds the Linux editor library on `main` and
+every `feat/**` branch and runs the whole self-test against it, so the port
+cannot rot silently. `.github/workflows/build.yml` cross-compiles the Windows
+`template_release` library with mingw-w64 on the same Linux runner, against the
+same pinned godot-cpp commit and the same API dumped from the same 4.7.2
+binary, and gates the export on it: the `.dll` is a 64-bit PE that exports
+`kubik_library_init` and imports nothing but `KERNEL32` and `msvcrt`, it lands
+beside `Kubik.exe` in the artifact, and `kubik.gdextension` is in the pck. So
+the Windows artifact under **Builds** below ships **with** the compiled
+extension - all three classes - not the GDScript fallbacks.
 
 ### Where it is shot
 
