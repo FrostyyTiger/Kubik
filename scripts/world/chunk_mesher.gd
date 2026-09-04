@@ -83,6 +83,369 @@ const AO_CORNER_U1V0 := 1
 const AO_CORNER_U0V1 := 2
 const AO_CORNER_U1V1 := 3
 
+# --- The backend, and the seam it crosses (mesher v1) -------------------------
+#
+# THE MESHER DECIDES HOW A CHUNK LOOKS, NEVER WHAT IT IS (CLAUDE.md, engine
+# rules). That sentence is what makes this crossing cheap where the height
+# map's was expensive: a disagreement between the two meshers draws a slightly
+# different face, and it cannot move the ground, the spawn or a lake. The
+# parity gate is still exact - see Q8 - but it is exact because it can be, not
+# because two players would otherwise walk in different worlds.
+#
+# DATA IN, ARRAYS OUT (Q1). `KubikChunkMesher` never sees a Chunk, a
+# TerrainGenerator, a WorldgenConfig or a Look. It is handed 4,096 voxel bytes,
+# whatever the six faces need to answer for the blocks just outside them, and
+# a palette; it hands back four packed arrays. It never calls back into
+# GDScript during a build.
+#
+# COLOUR CROSSES AS A TABLE, NOT AS ARITHMETIC (Q3). Every Windows parity
+# failure this project has had - 15, then 7, then today's 1 - was gcc and MSVC
+# rounding the last bit of a colour differently. So GDScript computes every
+# colour the mesher can ever emit, once per world, and the C++ colour path is
+# an INDEX. There is no float arithmetic on a colour on the other side of the
+# seam and therefore nothing for two compilers to disagree about.
+
+const CPP_CLASS := "KubikChunkMesher"
+
+## "cpp", "gdscript", or "" before the question has been asked.
+##
+## A STATIC AND NOT A CONFIG FIELD (Q6). `worldgen_config.gd` belongs to the
+## other lane this month, and a mesher switch has no business on the wire in
+## any case: it changes how long a chunk takes to build and never what is in
+## it, so two machines at different settings still build the same world.
+static var backend := ""
+
+## Why the twin is running, when it is. Shown on the F3 line so "the C++ is off"
+## and "the C++ is not there" are never the same message.
+static var _backend_note := ""
+
+## The setup arguments, computed once per (block_size, ao_strength) pair and
+## shared by every worker. Guarded because column jobs run on the pool and the
+## first one to arrive builds the table.
+static var _setup_key := ""
+static var _setup_args := {}
+static var _backend_lock := Mutex.new()
+
+
+## Is the compiled class there, loadable, AND does it actually mesh?
+##
+## THREE QUESTIONS AND NOT ONE. `ClassDB.class_exists` is true for a stub, and
+## through Stage 2 of mesher v1 this class WAS a stub that returned an empty
+## Dictionary - so a check that stopped at the name would have switched the
+## whole streaming path onto a mesher that draws nothing. The probe below meshes
+## one solid block in an otherwise empty chunk and insists on getting a cube
+## back, which is the smallest thing that cannot pass by accident.
+static func class_present() -> bool:
+	if not ClassDB.class_exists(CPP_CLASS):
+		return false
+	if not ClassDB.class_has_method(CPP_CLASS, "build"):
+		return false
+	var impl: Object = ClassDB.instantiate(CPP_CLASS)
+	if impl == null:
+		return false
+	if String(impl.ping()) == "":
+		return false
+	impl.setup({
+		"block_size": 1.0,
+		"ao_strength": 0.0,
+		"palette": wire_palette(0.0),
+	})
+	if not bool(impl.is_ready()):
+		return false
+	var voxels := PackedByteArray()
+	voxels.resize(Chunk.VOLUME)
+	voxels[Chunk.index(8, 8, 8)] = Block.STONE
+	# Nothing solid anywhere outside: every strip says the ground stops far
+	# below this chunk, so the single block is a free-standing cube.
+	var empty_col := PackedInt32Array()
+	empty_col.resize(Chunk.SIZE_SQ)
+	empty_col.fill(-1_000_000)
+	var empty_row := PackedInt32Array()
+	empty_row.resize(Chunk.SIZE)
+	empty_row.fill(-1_000_000)
+	var got = impl.build({
+		"voxels": voxels,
+		"origin_y": 0,
+		"has_solid": true,
+		"has_air": true,
+		"top_col": empty_col,
+		"top_px": empty_row, "top_nx": empty_row,
+		"top_pz": empty_row, "top_nz": empty_row,
+	})
+	if not (got is Dictionary):
+		return false
+	return int((got as Dictionary).get("quads", 0)) == 6
+
+
+## `cpp` or `gdscript`, decided once and remembered.
+static func resolve_backend() -> String:
+	if backend != "":
+		return backend
+	_backend_lock.lock()
+	if backend == "":
+		if "gdscript" in _mesher_override():
+			backend = "gdscript"
+			_backend_note = "forced by --mesher gdscript"
+		elif class_present():
+			backend = "cpp"
+			_backend_note = ""
+		else:
+			backend = "gdscript"
+			# TWO DIFFERENT FACTS AND THE F3 LINE SAYS WHICH. A checkout with
+			# no compiler has no class at all; a checkout mid-port has one that
+			# does not mesh yet. Reading "no c++ library" on the second would
+			# send somebody to rebuild a library that is already there.
+			_backend_note = "c++ mesher present but not meshing" \
+				if ClassDB.class_exists(CPP_CLASS) else "no c++ library"
+	_backend_lock.unlock()
+	return backend
+
+
+## `--mesher gdscript` on the command line, after the `--`. Q6: no config knob,
+## no F4 row, nothing saved to `user://` - a switch that exists to take one
+## measurement should not be able to survive the run that took it.
+static func _mesher_override() -> String:
+	var argv := OS.get_cmdline_user_args()
+	var i := argv.find("--mesher")
+	if i < 0 or i + 1 >= argv.size():
+		return ""
+	return String(argv[i + 1]).strip_edges().to_lower()
+
+
+## What the F3 line says.
+static func backend_name() -> String:
+	var name := resolve_backend()
+	if _backend_note != "":
+		return "%s (%s)" % [name, _backend_note]
+	return name
+
+
+## The self-test and the bench flip this directly; nothing else may.
+static func force_backend(name: String) -> void:
+	_backend_lock.lock()
+	backend = name
+	_backend_note = "forced by the test harness" if name == "gdscript" else ""
+	_backend_lock.unlock()
+
+
+## EVERY COLOUR THE MESHER CAN EVER EMIT, computed once, in GDScript (Q3).
+##
+## `palette[id * 4 + level]` is `Look.to_wire(Block.color_of(id) * shade)` with
+## `shade = 1.0 - ao_strength * (1.0 - level / 3.0)` - the twin's own
+## expression, lifted out of `_emit_quad` unchanged, so both meshers push the
+## identical float.
+##
+## 256 IDS AND NOT 24. The plan's table was the palette's own length; this is
+## the whole byte range, because `Block.color_of()` answers MAGENTA outside the
+## palette and magenta in a screenshot is the gate that catches an index bug in
+## the port. A table that stopped at 24 would have made that case an
+## out-of-range read on the other side of the seam instead of the loud pink
+## face it is supposed to be. The extra 928 entries cost one loop, once.
+const PALETTE_IDS := 256
+const PALETTE_LEVELS := 4
+
+
+static func wire_palette(ao_strength: float) -> PackedColorArray:
+	var out := PackedColorArray()
+	out.resize(PALETTE_IDS * PALETTE_LEVELS)
+	for id in PALETTE_IDS:
+		var color := Block.color_of(id)
+		for level in PALETTE_LEVELS:
+			var shade := 1.0 - ao_strength * (1.0 - _ao_curve(level))
+			out[id * PALETTE_LEVELS + level] = Look.to_wire(Color(
+				color.r * shade, color.g * shade, color.b * shade, color.a))
+	return out
+
+
+## What `setup()` is given, once per world. Cached on the two values it depends
+## on, so the self-test moving `ao_strength` rebuilds the table and the
+## streaming path never does.
+static func setup_args(config: WorldgenConfig) -> Dictionary:
+	var key := "%.9f|%.9f" % [config.block_size, config.ao_strength]
+	_backend_lock.lock()
+	if key != _setup_key:
+		_setup_args = {
+			"block_size": config.block_size,
+			"ao_strength": config.ao_strength,
+			"palette": wire_palette(config.ao_strength),
+		}
+		_setup_key = key
+	var out: Dictionary = _setup_args
+	_backend_lock.unlock()
+	return out
+
+
+## A configured C++ mesher, or null.
+##
+## ONE PER COLUMN JOB, AND THAT IS DELIBERATE. Sharing a single instance across
+## the pool would be sharing a GDExtension object between threads for no gain:
+## `setup()` stores three values and takes a REFERENCE to the palette - a
+## PackedColorArray is copy-on-write - so a fresh instance per job costs one
+## small allocation and copies nothing. The alternative is a lock on the hot
+## path, or a race nobody would reproduce.
+static func new_cpp_mesher(config: WorldgenConfig) -> Object:
+	if resolve_backend() != "cpp":
+		return null
+	var impl: Object = ClassDB.instantiate(CPP_CLASS)
+	if impl == null:
+		return null
+	impl.setup(setup_args(config))
+	if not bool(impl.is_ready()):
+		return null
+	return impl
+
+
+## The AO shell is the chunk plus one block on every side: 18 x 18 x 18 = 5,832
+## solidity bytes. Every coordinate either mesher ever reads is inside it - the
+## mask asks one step outside a face, and a corner asks one step diagonally -
+## so a build handed a shell needs nothing else.
+const SHELL := Chunk.SIZE + 2
+const SHELL_SQ := SHELL * SHELL
+const SHELL_VOLUME := SHELL * SHELL * SHELL
+
+
+static func shell_index(x: int, y: int, z: int) -> int:
+	return (x + 1) + (z + 1) * SHELL + (y + 1) * SHELL_SQ
+
+
+## THE BORDER FORM THE CALLABLE PATH PRODUCES: one shell, and nothing else.
+##
+## The Callable answers "is this world block solid" and cannot be asked for a
+## surface altitude, so the compact strips `ColumnJob` hands over are not
+## available here. A shell is the honest translation - it is exactly the set of
+## blocks a build may read - and it costs 1,736 Callable invocations for the
+## rim, the interior coming straight off the chunk's own bytes.
+##
+## THIS IS A COLD PATH AND IS MEANT TO BE. The edit path meshes one chunk per
+## broken block, and the self-test meshes a few dozen; the streaming path goes
+## through `ColumnJob.borders_for()` instead, which reads a neighbour chunk's
+## bytes by reference and answers the rest with one integer per column.
+static func borders_from_callable(chunk: Chunk, solid_outside: Callable) -> Dictionary:
+	var origin := chunk.origin()
+	var shell := PackedByteArray()
+	shell.resize(SHELL_VOLUME)
+	for y in range(-1, Chunk.SIZE + 1):
+		for z in range(-1, Chunk.SIZE + 1):
+			for x in range(-1, Chunk.SIZE + 1):
+				var solid := false
+				if Chunk.in_bounds(x, y, z):
+					solid = chunk.voxels[Chunk.index(x, y, z)] != Block.AIR
+				else:
+					solid = solid_outside.call(
+						origin.x + x, origin.y + y, origin.z + z)
+				shell[shell_index(x, y, z)] = 1 if solid else 0
+	return {
+		"voxels": chunk.voxels,
+		"origin_y": origin.y,
+		"has_solid": chunk.has_solid,
+		"has_air": chunk.has_air,
+		"shell": shell,
+	}
+
+
+## The reverse trip: a Callable over a border Dictionary, so the twin can be
+## driven from borders somebody else built and its signature never has to change
+## (Stage 3.1). Only ever used where a caller has borders and no Callable.
+static func solid_from_borders(chunk: Chunk, borders: Dictionary) -> Callable:
+	var origin := chunk.origin()
+	return func(wx: int, wy: int, wz: int) -> bool:
+		var x := wx - origin.x
+		var y := wy - origin.y
+		var z := wz - origin.z
+		if borders.has("shell"):
+			var shell: PackedByteArray = borders["shell"]
+			return shell[shell_index(x, y, z)] != 0
+		var face := ""
+		var ni := 0
+		if x >= Chunk.SIZE:
+			face = "px"
+			ni = Chunk.index(0, y, z)
+		elif x < 0:
+			face = "nx"
+			ni = Chunk.index(Chunk.SIZE - 1, y, z)
+		elif y >= Chunk.SIZE:
+			face = "py"
+			ni = Chunk.index(x, 0, z)
+		elif y < 0:
+			face = "ny"
+			ni = Chunk.index(x, Chunk.SIZE - 1, z)
+		elif z >= Chunk.SIZE:
+			face = "pz"
+			ni = Chunk.index(x, y, 0)
+		elif z < 0:
+			face = "nz"
+			ni = Chunk.index(x, y, Chunk.SIZE - 1)
+		else:
+			return chunk.voxels[Chunk.index(x, y, z)] != Block.AIR
+		if borders.has("n_" + face):
+			var n: PackedByteArray = borders["n_" + face]
+			return n[ni] != 0
+		if wy < 0:
+			return true
+		var top := -1_000_000
+		match face:
+			"px": top = (borders["top_px"] as PackedInt32Array)[z]
+			"nx": top = (borders["top_nx"] as PackedInt32Array)[z]
+			"pz": top = (borders["top_pz"] as PackedInt32Array)[x]
+			"nz": top = (borders["top_nz"] as PackedInt32Array)[x]
+			_: top = (borders["top_col"] as PackedInt32Array)[x + z * Chunk.SIZE]
+		return wy <= top
+
+
+## The C++ Dictionary, in the Array shape `ChunkNode.apply_arrays()` has always
+## been handed. An empty Dictionary is a chunk with nothing to draw, exactly
+## where the twin returns `[]`.
+static func arrays_from_cpp(got: Dictionary) -> Array:
+	if got.is_empty():
+		return []
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = got["verts"]
+	arrays[Mesh.ARRAY_NORMAL] = got["normals"]
+	arrays[Mesh.ARRAY_COLOR] = got["colors"]
+	arrays[Mesh.ARRAY_INDEX] = got["indices"]
+	return arrays
+
+
+## Mesh one chunk from borders somebody else built - the entry the column job
+## uses, because a worker already knows its neighbours and should not have to
+## discover them through a Callable one block at a time.
+##
+## `cpp` is the job's own configured mesher, or null. `solid_outside` is the
+## job's own Callable, passed so the GDScript leg costs nothing to reach; where
+## it is absent one is rebuilt from the borders.
+static func build_arrays_from(chunk: Chunk, borders: Dictionary,
+		config: WorldgenConfig, world_seed: int,
+		cpp: Object = null, solid_outside := Callable()) -> Array:
+	if cpp != null and resolve_backend() == "cpp":
+		return arrays_from_cpp(cpp.build(borders))
+	var callable := solid_outside if solid_outside.is_valid() \
+		else solid_from_borders(chunk, borders)
+	return build_arrays_gd(chunk, callable, config, world_seed)
+
+
+## THE DISPATCHER. Mesher v1 Stage 3.
+##
+## Through Stage 2 this went straight to the twin whatever the backend said,
+## because the C++ class was a stub and then a mesher that painted every quad
+## white: the parity harness drove it directly and the game never saw it.
+##
+## THE CALLABLE FORM IS THE COLD ONE. A worker that already knows its
+## neighbours goes through `build_arrays_from()` with borders it built once per
+## column; this entry has only a Callable, so it pays for a shell. Everything
+## still in the tree that reaches for it - the model gallery through `build()`,
+## the edit path through `build()` - is one chunk at a time and stays on the
+## twin by name, so in practice this is the API and not a hot path.
+static func build_arrays(chunk: Chunk, solid_outside: Callable,
+		config: WorldgenConfig, world_seed: int) -> Array:
+	if resolve_backend() == "cpp":
+		var impl := new_cpp_mesher(config)
+		if impl != null:
+			return arrays_from_cpp(impl.build(
+				borders_from_callable(chunk, solid_outside)))
+	return build_arrays_gd(chunk, solid_outside, config, world_seed)
+
+
 ## Build the surface arrays for `chunk`.
 ##
 ## `solid_outside` is called as solid_outside.call(wx, wy, wz) -> bool and ONLY
@@ -100,7 +463,13 @@ const AO_CORNER_U1V1 := 3
 ## setup and never writes to it again - so reading it from a worker thread is
 ## safe and needs no copying. It replaced a growing list of loose float
 ## parameters at Stage 10, when per-vertex tinting added five more.
-static func build_arrays(chunk: Chunk, solid_outside: Callable,
+##
+## MESHER V1 STAGE 0 RENAMED IT. This body is now the REFERENCE TWIN and the
+## dispatcher above carries its old name. Not one expression in it moved; the
+## C++ port is asserted against it array for array by the self-test's
+## `chunk parity` gate, and an improvement made here without one made there is
+## how two meshers start drawing two worlds.
+static func build_arrays_gd(chunk: Chunk, solid_outside: Callable,
 		config: WorldgenConfig, world_seed: int) -> Array:
 	var block_size: float = config.block_size
 	var ao_strength: float = config.ao_strength
@@ -382,9 +751,16 @@ static func arrays_to_mesh(arrays: Array) -> ArrayMesh:
 
 ## Synchronous build, for the one chunk changed by an edit. Bulk loading goes
 ## through build_arrays() on a worker thread instead.
+##
+## STAYS ON THE TWIN UNTIL MARCEL RETIRES IT (mesher v1 Q7). One chunk per
+## broken block, on the main thread, is not a hot path, and until the parity
+## gate has been green on BOTH boxes across two merges there is no reason for
+## the one path a player can trigger by hand to be the one with the newer
+## mesher under it. `build_arrays_gd` and not `build_arrays`, so that stays true
+## when the dispatcher starts choosing.
 static func build(chunk: Chunk, world_solid: Callable,
 		config: WorldgenConfig, world_seed: int) -> ArrayMesh:
-	return arrays_to_mesh(build_arrays(chunk, world_solid, config, world_seed))
+	return arrays_to_mesh(build_arrays_gd(chunk, world_solid, config, world_seed))
 
 
 ## One shared material for every chunk. Sharing it means the renderer can batch

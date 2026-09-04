@@ -4,6 +4,7 @@
 #include <godot_cpp/core/defs.hpp>
 #include <godot_cpp/godot.hpp>
 
+#include "chunk_mesher.h"
 #include "far_mesher.h"
 #include "height_tiles.h"
 
@@ -17,6 +18,10 @@ void initialize_kubik_module(ModuleInitializationLevel p_level) {
 	// DISTANCE V5 STAGE 4. The height map's tile builder - world truth, hence
 	// its own class rather than more methods on the look-only far mesher.
 	GDREGISTER_CLASS(KubikHeightTiles);
+	// MESHER V1 STAGE 0. The chunk mesher - how a chunk LOOKS, never what it
+	// is, so it is its own class beside the far mesher rather than more
+	// methods on the world-truth tile builder.
+	GDREGISTER_CLASS(KubikChunkMesher);
 }
 
 void uninitialize_kubik_module(ModuleInitializationLevel p_level) {
