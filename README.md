@@ -284,8 +284,8 @@ same pinned godot-cpp commit and the same API dumped from the same 4.7.2
 binary, and gates the export on it: the `.dll` is a 64-bit PE that exports
 `kubik_library_init` and imports nothing but `KERNEL32` and `msvcrt`, it lands
 beside `Kubik.exe` in the artifact, and `kubik.gdextension` is in the pck. So
-the Windows artifact under **Builds** below ships **with** the C++ mesher, not
-the fallback.
+the Windows artifact under **Builds** below ships **with** the compiled
+extension - all three classes - not the GDScript fallbacks.
 
 ### Where it is shot
 
