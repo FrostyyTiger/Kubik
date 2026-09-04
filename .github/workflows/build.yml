@@ -136,7 +136,14 @@ jobs:
       # and godot-cpp's suffix (".windows.template_release.x86_64") plus scons'
       # mingw .dll suffix are what produce it. If a godot-cpp bump ever renames
       # it, the export failure downstream is a mile of log; this is one line.
-      - name: The library is named what the .gdextension asks for
+      #
+      # The other three checks are about a .dll that SHIPS BUT WILL NOT LOAD -
+      # the one failure this whole job cannot otherwise see. Nothing on a Linux
+      # runner ever executes this library, so a missing entry symbol or a
+      # dangling MinGW runtime dependency would sail past every gate below and
+      # land on the player's machine as a silent fall back to the GDScript
+      # mesher. objdump is the only witness available here, so use it.
+      - name: The library is named, exports and depends on what it must
         run: |
           want=gdext/bin/libkubik.windows.template_release.x86_64.dll
           test -f "$want" || {
@@ -148,6 +155,24 @@ jobs:
             *PE32+*DLL*|*PE32+*dynamically*) ;;
             *) echo "::error::$want is not a 64-bit Windows DLL"; exit 1 ;;
           esac
+
+          info=$(x86_64-w64-mingw32-objdump -p "$want")
+
+          # entry_symbol in kubik.gdextension. Godot looks it up by name and
+          # refuses the library with a one-line error if it is not there.
+          if ! echo "$info" | grep -q "kubik_library_init"; then
+            echo "::error::$want does not export kubik_library_init"
+            exit 1
+          fi
+
+          # use_static_cpp is godot-cpp's default and this depends on it: a
+          # player has no libstdc++-6.dll, and Windows fails the load with a
+          # dialog box that names no cause.
+          echo "$info" | grep -E "^\s*DLL Name:" || true
+          if echo "$info" | grep -E "^\s*DLL Name:" | grep -qiE "libstdc\+\+|libgcc_s|libwinpthread"; then
+            echo "::error::the library wants a MinGW runtime .dll no player has"
+            exit 1
+          fi
 
       # ---------------------------------------------------------------- export
 
