@@ -175,7 +175,14 @@ func run() -> void:
 		if (_chunks[cy] as Chunk).has_solid:
 			ceiling = maxi(ceiling, cy)
 
-	build_strips()
+	# ONE C++ MESHER PER JOB, or null when the twin is running - and the strips
+	# are built only for a job that is going to hand them over, so
+	# `--mesher gdscript` costs exactly what it cost before this stage and the
+	# A/B is honest.
+	if build_meshes:
+		_cpp = ChunkMesher.new_cpp_mesher(config)
+	if _cpp != null or not build_meshes:
+		build_strips()
 	if not build_meshes:
 		mesh_usec = Time.get_ticks_usec() - t2 - border_usec
 		return
@@ -184,8 +191,16 @@ func run() -> void:
 		if cy > ceiling:
 			continue
 		var chunk: Chunk = _chunks[cy]
-		var arrays := ChunkMesher.build_arrays(
-			chunk, _solid_at, config, world_seed)
+		var arrays: Array
+		if _cpp != null:
+			var t_b := Time.get_ticks_usec()
+			var borders := borders_for(cy)
+			border_usec += Time.get_ticks_usec() - t_b
+			arrays = ChunkMesher.build_arrays_from(
+				chunk, borders, config, world_seed, _cpp, _solid_at)
+		else:
+			arrays = ChunkMesher.build_arrays_gd(
+				chunk, _solid_at, config, world_seed)
 		built[cy] = {
 			"chunk": chunk,
 			"arrays": arrays,

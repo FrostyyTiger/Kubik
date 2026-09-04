@@ -921,7 +921,13 @@ func _measure_ao_cost():
 		var quads := 0
 		var started := Time.get_ticks_usec()
 		for c in chunks:
-			var arrays := ChunkMesher.build_arrays(c, solid, cfg, 31337)
+			# THE TWIN BY NAME (mesher v1 Stage 3). This line is the AO
+			# cost OF THE GDSCRIPT MESHER and is quoted against `mesh_bench`'s
+			# C++ column; once `build_arrays()` started dispatching it would
+			# otherwise have quietly become a measurement of the port plus a
+			# shell built per chunk through a Callable, which is a different
+			# question with a very different answer.
+			var arrays := ChunkMesher.build_arrays_gd(c, solid, cfg, 31337)
 			if not arrays.is_empty():
 				quads += (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 4
 		results.append({
@@ -3772,11 +3778,12 @@ func _test_chunk_parity():
 	if worst_pos > 0.0 or worst_normal > 0.0 or worst_colour > 0.0 or index_diffs > 0:
 		bad += 1
 
-	print("chunk parity: %d chunks, %d quads, max diff pos %.9f normal %.9f colour %s, %d indices differ%s" % [
+	print("chunk parity: %d chunks, %d quads, max diff pos %.9f normal %.9f colour %s, %d indices differ%s (this run dispatches to %s)" % [
 		checked, quads, worst_pos, worst_normal,
 		("%.9f" % worst_colour) if compare_colours else "skipped (stage 1)",
 		index_diffs,
-		"" if count_diffs == 0 else ", %d chunks differ in COUNT" % count_diffs])
+		"" if count_diffs == 0 else ", %d chunks differ in COUNT" % count_diffs,
+		ChunkMesher.backend_name()])
 	return 1 if bad > 0 else 0
 
 

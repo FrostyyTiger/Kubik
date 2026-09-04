@@ -424,14 +424,25 @@ static func build_arrays_from(chunk: Chunk, borders: Dictionary,
 	return build_arrays_gd(chunk, callable, config, world_seed)
 
 
-## THE DISPATCHER. Mesher v1 Stage 0.
+## THE DISPATCHER. Mesher v1 Stage 3.
 ##
 ## Through Stage 2 this went straight to the twin whatever the backend said,
 ## because the C++ class was a stub and then a mesher that painted every quad
-## white: the parity harness drove it directly and the game never saw it. Stage
-## 3 is where it starts choosing.
+## white: the parity harness drove it directly and the game never saw it.
+##
+## THE CALLABLE FORM IS THE COLD ONE. A worker that already knows its
+## neighbours goes through `build_arrays_from()` with borders it built once per
+## column; this entry has only a Callable, so it pays for a shell. Everything
+## still in the tree that reaches for it - the model gallery through `build()`,
+## the edit path through `build()` - is one chunk at a time and stays on the
+## twin by name, so in practice this is the API and not a hot path.
 static func build_arrays(chunk: Chunk, solid_outside: Callable,
 		config: WorldgenConfig, world_seed: int) -> Array:
+	if resolve_backend() == "cpp":
+		var impl := new_cpp_mesher(config)
+		if impl != null:
+			return arrays_from_cpp(impl.build(
+				borders_from_callable(chunk, solid_outside)))
 	return build_arrays_gd(chunk, solid_outside, config, world_seed)
 
 

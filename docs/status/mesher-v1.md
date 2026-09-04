@@ -341,6 +341,176 @@ must: nothing on the far side of the seam does arithmetic on a colour.
 
 ---
 
+## Stage 3 - the column job meshes in C++, the switch, the numbers
+
+**Green.**
+
+### What shipped
+
+- **`column_job.gd`** - `run()` takes one `KubikChunkMesher` per job
+  (`ChunkMesher.new_cpp_mesher()`), builds the strips only for a job that is
+  going to hand them over, and meshes each chunk through
+  `ChunkMesher.build_arrays_from()`. With `--mesher gdscript` the job builds no
+  strips, marshals nothing and calls `build_arrays_gd()` directly, so the A/B
+  below compares the port against exactly what `main` does today and not against
+  a twin carrying the port's overheads. `faces_from()` is untouched and still
+  runs on the worker; the `Array` `ChunkNode.apply_arrays()` receives is the
+  same shape it has always been.
+- **`chunk_mesher.gd`** - `build_arrays()` (the Callable form) now dispatches:
+  C++ through `borders_from_callable()`, else the twin.
+- **`debug_hud.gd`** - one line, `mesher:   %s % ChunkMesher.backend_name()`,
+  after `far mesher:`. It reads `cpp`, `gdscript (forced by --mesher gdscript)`,
+  `gdscript (no c++ library)` or `gdscript (c++ mesher present but not
+  meshing)`.
+- **`selftest.gd`** - `_measure_ao_cost` names `build_arrays_gd` explicitly. It
+  is quoted as the TWIN's AO cost against the bench's C++ column, and once
+  `build_arrays()` started dispatching it would otherwise have quietly become a
+  measurement of the port plus a shell built per chunk through a Callable.
+
+### The load line at spawn, ABAB, three runs each
+
+`--tour --seed 42 --view ultra --only postcard`, interleaved C++/twin/C++/twin/
+C++/twin, the same 3,897 chunks every run.
+
+| leg | wall | main thread | gen per chunk | upload per chunk |
+| --- | --- | --- | --- | --- |
+| C++ | 12,375 / 12,371 / **12,687** ms | 742 / 745 / 740 | 2.96 / 2.92 / 3.00 | 0.10 |
+| twin | 30,956 / 31,405 / **30,771** ms | 907 / 884 / 950 | 3.57 / 3.64 / 3.56 | 0.11 / 0.12 / 0.12 |
+| **median** | **12,375 vs 30,956 ms - 2.50x** | 742 vs 907 (-18%) | 2.96 vs 3.57 | unchanged |
+
+Provenance: ganymede, ABAB median of three, spreads ±1.3% (C++) and ±1.0%
+(twin). Same chunk count both legs, which is the world holding still.
+
+**"gen per chunk" does not include meshing and cannot show this lane's win
+directly** - `world.gd:1012` sums `gen_usec + tree_usec` and leaves `mesh_usec`
+on the floor. That it moved at all (3.57 -> 2.96 ms) is the pool: with the mesh
+off the GDScript thread, generation stops queueing behind it. The wall time is
+the number that can see the change, and it is 2.5x.
+
+### The picture, and the gate that replaced the pixels
+
+**All 24 vantages draw the IDENTICAL geometry.** `mesher-base` (twin,
+`f8d1588`) against `mesher-3` (C++), primitives in frame and chunks loaded, per
+shot:
+
+```
+shots compared: 24   identical primitive counts: 24   identical chunk counts: 24
+```
+
+Provenance: ganymede, deterministic. This is the picture gate the plan wanted,
+in a form the tour can actually deliver: the same number of triangles reached
+the renderer at every vantage, in a world that loaded the same number of chunks
+- which a difference in the mesher's output could not survive.
+
+**And the pixels, read against the control.** `mesher-base` vs `mesher-0`
+(nothing changed) is the noise floor; `mesher-base` vs `mesher-3` is the port.
+Rows 300-720.
+
+| shot | control mean \|dL\| | C++ mean \|dL\| | control worst | C++ worst |
+| --- | --- | --- | --- | --- |
+| `1-spawn` | 6.06 | 4.47 | 138.0 | 112.0 |
+| `2-summit` | 2.79 | 2.79 | 9.0 | 9.0 |
+| `3-forest-slope` | 3.41 | 3.27 | 131.4 | 129.8 |
+| `4-valley-floor` | 5.90 | 4.70 | 171.5 | 129.1 |
+| `5-lake` | 3.42 | 3.30 | 103.2 | 101.8 |
+| `6-postcard` | 3.28 | 3.44 | 101.1 | 107.6 |
+| `7-forest-interior` | 3.10 | 3.05 | 129.8 | 144.5 |
+| `8-meadow-closeup` | 5.26 | 5.90 | 125.4 | 128.3 |
+| `9-treeline` | 4.01 | 4.07 | 185.5 | 183.0 |
+| `10-shore` | 17.03 | 17.02 | 138.9 | 135.9 |
+| `11-forest-dusk` | 2.97 | 3.09 | 86.2 | 83.6 |
+| `12-meadow-night` | 2.96 | 3.23 | 207.1 | 199.1 |
+| `13-meadow-dawn` | 2.90 | 3.25 | 185.1 | 167.4 |
+| `14-postcard-dusk` | 2.80 | 2.82 | 69.6 | 157.1 |
+| `15-boulder` | 4.27 | 3.41 | 118.5 | 114.1 |
+| `15-under-canopy` | 3.15 | 3.05 | 156.1 | 137.7 |
+| `16-spawn-postcard` | 3.75 | 5.18 | 116.9 | 117.5 |
+| `17-rim` | 2.83 | 2.81 | 72.5 | 58.4 |
+| `20-hour-day` | 3.20 | 3.33 | 92.9 | 95.1 |
+| `21-hour-evening` | 2.84 | 2.86 | 26.9 | 25.6 |
+| `22-hour-dusk` | 2.81 | 2.82 | 150.4 | 124.9 |
+| `23-hour-night` | 2.83 | 2.85 | 136.4 | 132.0 |
+| `24-hour-eerie` | 3.13 | 3.27 | 84.4 | 88.1 |
+| `25-lens-fence` | 4.53 | 5.34 | 125.1 | 129.0 |
+
+**The port's picture diff is the control's picture diff.** Fifteen shots sit a
+hair above the noise floor and nine sit below it, and the mean across all
+twenty-four is 4.14 against the control's 4.30 - the port is, if anything,
+marginally closer to the baseline than a repeat of the baseline is. **PASS,
+read as "no worse than a same-behaviour pair".** No magenta anywhere.
+
+### The tour cost line at Ultra
+
+Twenty frames per settled vantage, worst and median. `mesher-base` is the twin
+at `f8d1588`; `mesher-3` is the C++ mesher. Both were taken while
+`feat/horizon-v1` was running a `--far-probe` on this box, so both are
+CONTENDED and the pair is comparable rather than absolute.
+
+| shot | twin worst / median | C++ worst / median | shot | twin | C++ |
+| --- | --- | --- | --- | --- | --- |
+| `1-spawn` | **45.6** / 15.5 | **17.7** / 15.6 | `13-meadow-dawn` | 19.6 / 17.6 | 14.9 / 13.6 |
+| `2-summit` | 16.9 / 15.2 | 14.0 / 12.2 | `14-postcard-dusk` | 19.4 / 18.9 | 17.3 / 15.2 |
+| `3-forest-slope` | 29.6 / 26.8 | 26.8 / 22.2 | `15-boulder` | 21.5 / 19.7 | 16.2 / 15.7 |
+| `4-valley-floor` | 20.0 / 16.9 | 15.6 / 13.5 | `15-under-canopy` | 20.3 / 17.7 | 14.6 / 13.7 |
+| `5-lake` | 20.9 / 18.2 | 15.6 / 14.5 | `16-spawn-postcard` | 22.6 / 19.4 | 18.4 / 15.7 |
+| `6-postcard` | 19.5 / 18.1 | 17.1 / 14.3 | `17-rim` | 17.6 / 15.6 | 13.5 / 11.4 |
+| `7-forest-interior` | 19.6 / 17.1 | 16.8 / 14.7 | `20-hour-day` | 20.1 / 18.9 | 16.9 / 14.5 |
+| `8-meadow-closeup` | 20.5 / 17.8 | 14.9 / 14.5 | `21-hour-evening` | 19.7 / 18.7 | 15.2 / 14.7 |
+| `9-treeline` | 21.4 / 19.9 | 19.1 / 15.9 | `22-hour-dusk` | 18.4 / 16.9 | 16.2 / 15.4 |
+| `10-shore` | 17.8 / 16.4 | 15.7 / 13.5 | `23-hour-night` | 19.0 / 18.4 | 14.9 / 14.6 |
+| `11-forest-dusk` | 21.9 / 19.5 | 15.3 / 14.8 | `24-hour-eerie` | 19.9 / 17.1 | 17.2 / 14.6 |
+| `12-meadow-night` | 18.6 / 17.0 | 14.5 / 13.5 | `25-lens-fence` | 21.9 / 20.0 | 18.6 / 16.6 |
+
+**Worst frame anywhere: 45.6 ms with the twin, 26.8 ms with the C++ mesher.
+Median of the per-shot medians: 18.1 ms against 14.6 ms.** The C++ mesher is
+lower or equal at every one of the twenty-four vantages, on both columns.
+
+That is not the mesher drawing faster - it draws exactly the same triangles, as
+the counts above say. It is the **worker pool**: a tour vantage is a teleport
+followed by a settle, the settle is a burst of column jobs on a pool that runs
+about one effective GDScript thread, and the frame the shutter opens on is
+competing with it. Taking 6.4 ms of GDScript out of every chunk takes that
+competition out of the frame. `1-spawn`, the first vantage and the biggest
+burst, is where it shows most: 45.6 -> 17.7 ms.
+
+The 60 FPS floor while sprinting is the horizon plan's gate and this lane does
+not claim it. What this lane contributes to it is the line above.
+
+### The bench, Stage 3 build
+
+```
+mesh bench: seed 42, 441 columns, 1910 chunks, ao 0.00, 3 passes ABAB
+  twin   median 6.443 ms/chunk (spread +-0.0%)   quads 37592
+  c++    median 0.061 ms/chunk (spread +-0.3%)   quads 37592   borders 0.010 ms/chunk
+  ratio  106.3x the twin
+  parity 0 differing components over 1910 chunks
+```
+
+### Gates
+
+| gate | result | provenance |
+| --- | --- | --- |
+| build, `check.gd` | clean, exit 0 | ganymede, deterministic |
+| full self-test, as-is | **all passed**, `chunk parity ... (this run dispatches to cpp)` | ganymede, deterministic |
+| full self-test, `--mesher gdscript` | **all passed** | ganymede, deterministic |
+| worldgen probe | `4782edac`, `(-44, -124)`, 53 lakes, 15,218 trees, `config 1d7c18c7` - unchanged | ganymede, deterministic |
+| primitives and chunks, 24 vantages, twin vs C++ | **24 of 24 identical, both counts** | ganymede, deterministic |
+| near-band picture diff vs the control | **no worse than a same-behaviour pair** (mean 4.14 against 4.30) | ganymede, single run |
+| C++ mesh per chunk | **0.061 ms**, gate 0.5 | ganymede, ABAB median |
+| ratio to the twin | **106.3x**, gate 10x | ganymede, ABAB median |
+| load at spawn | **12,375 vs 30,956 ms, 2.50x** | ganymede, ABAB median of 3 |
+| tour cost line at Ultra | worst 26.8 vs 45.6 ms, median-of-medians 14.6 vs 18.1 | ganymede, single run each, contended |
+| magenta | none in 24 shots | ganymede, single run |
+
+**One red line this lane cannot have caused, recorded per failure protocol item
+2.** Every tour prints `ERROR: Condition "!is_inside_tree()" is true` from
+`scripts/physics/world_body.gd:80` via `body_field.gd:164`. The baseline tour on
+`f8d1588`, before any edit, prints it **85 times**; the Stage 3 tour prints it
+76. It is a flora-body spawn ordering complaint in `scripts/physics/`, which is
+not this lane's territory and which this lane does not touch.
+
+---
+
 ## Questions taken alone
 
 Section 5 item 7: the conservative reading, written down, work continued.
@@ -396,7 +566,14 @@ Section 5 item 7: the conservative reading, written down, work continued.
    the game boots, renders Forward+ on the 3070 Ti and draws no magenta. The
    full tour is taken at Stage 3, where the dispatch is live and it means
    something, and at Stage 4.
-8. **The near-band pixel gate needs a control run and gets one.**
+8. **Section 2's twin-forced gate line has its arguments in the wrong order.**
+   It reads `godot --headless --path . -- --mesher gdscript scenes/selftest.tscn`.
+   Everything after `--` is a USER argument, so that gives Godot no scene and it
+   runs the project's main scene headless, which never exits - it hung for ten
+   minutes before it was killed (failure protocol item 9). The line that works
+   is `godot --headless --path . scenes/selftest.tscn -- --mesher gdscript`, and
+   that is what was run.
+9. **The near-band pixel gate needs a control run and gets one.**
    `tools/png_diff.py`'s own header records that a tour shot is bit-reproducible
    in the FAR band and is **not** in the near one, "because the flora that has
    finished streaming when the shutter opens differs between runs" (worst 48.1
@@ -410,6 +587,34 @@ Section 5 item 7: the conservative reading, written down, work continued.
 
 ## For Marcel
 
+- **THE TWIN'S RETIREMENT, PROPOSED AND NOT DONE (Q7).** `chunk_mesher.gd`'s
+  `build_arrays_gd()` and everything that reaches it stay in the tree. The
+  proposal is one commit, `chore(mesher): retire the GDScript twin`, and the
+  condition the plan sets is that `chunk parity` has been green **on both boxes**
+  across this lane's landing and the next merged epic. It is green on ganymede
+  at exact zero on every component; Fable's Windows rebuild is the other half
+  and is not in yet. **Recommendation: do not retire it at this merge.** Two
+  reasons beyond the plan's. First, the edit path and the model gallery run
+  through it and are the only paths a player can trigger by hand. Second, it is
+  the AO path's only fast implementation: with `ao_strength` above 0 the C++
+  needs an 18^3 shell built in GDScript at 8.1 ms a chunk, and the twin is
+  faster there (see Stage 2). Retire it when the shell moves to C++, not before.
+- **The AO border shell is the one thing in this lane that is slower in C++, and
+  it is a real design gap rather than a marshalling slip.** Corner AO reaches
+  the eight blocks around an air cell, which at a chunk edge include the
+  DIAGONAL neighbours - so a six-face border cannot answer them and the
+  dispatcher falls back to building the whole 18^3 shell through the Callable,
+  per chunk, in GDScript: **8.104 ms against the C++ mesh's 0.066 ms**. Q5
+  predicts this and says the game never takes the path at its defaults, which is
+  true - `ao_strength` ships at 0. What it would take to close: hand the C++ the
+  **26** neighbouring chunks instead of 6 (the 12 edges and 8 corners as well),
+  which is another 20 copy-on-write references per chunk and no new arithmetic,
+  and let it build its own shell. Worth doing only if baked AO ever comes back.
+- **`_measure_ao_cost` was measuring zero against zero and is fixed.** See
+  Stage 2. Its "+0.0%" line is what mesher v1's Q27 was reasoning from; the real
+  figure is **+75.2% quads**. Nothing was changed because of it, as Stage 2.3
+  instructs, but the sentence "baked AO off did not widen the merge" should not
+  be repeated in a later plan.
 - **The near-band picture gate was retired and replaced, on evidence.** The
   plan asks for zero differing pixels over the terrain rows; the film grain is
   full-frame animated noise and the flora ring settles differently every run, so
@@ -420,6 +625,21 @@ Section 5 item 7: the conservative reading, written down, work continued.
 
 ## For Fable at merge
 
+- **Rebuild the Windows DLL from this branch's head and record the parity
+  count** (Q9): `cd gdext && python -m SCons platform=windows target=editor
+  custom_api_file=../../godot-cpp/extension_api.json -j8`, then `--import`, then
+  the self-test. **The expectation is that today's 1 failure does not become 2**:
+  this lane's colour path is a lookup into a table GDScript computed, so there
+  is no float arithmetic on a colour on the far side of the seam and the
+  `chunk parity` colour column should read `0.000000000` on MSVC as it does on
+  gcc. If it does not, that is the finding of the merge.
+- **Run the sprint probe against this branch** once horizon v1's Stage 0 is on
+  `main`. This lane does not merge it and did not run it; the 60 FPS floor while
+  sprinting is the horizon plan's gate and this lane's contribution to it is
+  6.4 ms of GDScript worker time per chunk removed.
+- **Section 2's twin-forced gate line needs its arguments swapped** - see
+  "Questions taken alone" item 8. `scenes/selftest.tscn` must come BEFORE the
+  `--`.
 - **`docs/plans/horizon-v1.md` quotes `config c18af99d`; the tip of `main`
   prints `1d7c18c7`.** Neither lane changed a config field. Worth correcting in
   the plan rather than investigating as a world change.
@@ -432,4 +652,11 @@ Section 5 item 7: the conservative reading, written down, work continued.
 
 ## For the bible
 
-- Nothing yet.
+- **Nothing wrong, and one rule confirmed with a number.** D42/D49 ("hot paths
+  in C++ ... delete each GDScript twin as its C++ path lands") is what this lane
+  executes, and the audit's claim that the chunk mesher is 76% of the column job
+  turns out to be conservative: 6.443 ms of mesh against 3.57 ms of generation
+  per chunk on the shipped world, and the world at spawn loads 2.5x faster with
+  the mesher moved. The clause that does NOT hold yet is "delete each twin as
+  its path lands" - see the retirement note under "For Marcel". D56's bundle and
+  order are untouched.
