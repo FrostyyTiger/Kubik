@@ -46,7 +46,7 @@ sprinting, which the project has never had.
 lakes outside the home region, no zone re-derivation, no C++ chunk mesher
 (that is `docs/plans/mesher-v1.md`, the parallel lane), no buildings, no
 weather. The home 3 km keeps every one of its numbers: heightmap `4782edac`,
-spawn `(-44, -124)`, 53 lakes, config hash `c18af99d` at the tip of `main`
+spawn `(-44, -124)`, 53 lakes, config hash `1d7c18c7` at the tip of `main`
 (`f8ef45c`), reprinted after every stage. **What a seed produces inside the
 home region does not move by one bit.** Everything that changes a seed's
 truth is the next lane, the world-truth break, and it starts the day this
@@ -210,7 +210,7 @@ cd gdext && scons platform=linux target=editor custom_api_file=../../godot-cpp/e
 
 The probe's numbers are copied into the status doc as **the baseline** and
 must match `main`'s: heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes,
-15,218 trees, config `c18af99d`. Every knob this plan adds is LOCAL and
+15,218 trees, config `1d7c18c7`. Every knob this plan adds is LOCAL and
 unhashed by its own comment; a config hash that moves is a stage that went
 red. There is no frame baseline until Stage 0 builds the instrument; Stage
 0's first act after building it is to run it on the unmodified tree (a
@@ -223,7 +223,7 @@ throwaway `git stash`) so night one has a "before".
 <godot> --headless --path . scenes/selftest_horizon.tscn                          # this lane's own tests, from Stage 0
 <godot> --headless --path . scenes/character/selftest_character.tscn
 <godot> --headless --path . --script scripts/tools/worldgen_probe.gd -- --seed 42
-   # heightmap 4782edac, spawn (-44, -124), 53 lakes, 15218 trees, config c18af99d - every character
+   # heightmap 4782edac, spawn (-44, -124), 53 lakes, 15218 trees, config 1d7c18c7 - every character
 <godot> --headless --path . -- --host --seed 42 --far-probe                        # run twice; identical or red
 <godot> --headless --path . -- --host --seed 42 --sprint-probe --label horizon-<n>  # from Stage 0
 <godot> --path . -- --tour --seed 42 --label horizon-<n>
