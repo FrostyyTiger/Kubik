@@ -241,6 +241,13 @@ func _start_if_idle() -> void:
 	if _task != -1 or not _has_pending or _generator == null:
 		return
 	_has_pending = false
+	# THE TILE STORE IS FROZEN FOR THIS BUILD, horizon v1 Stage 1. Main thread,
+	# here, immediately before the job is submitted - see
+	# `Heightmap._far_tiles`. Both legs then read the same set: the GDScript
+	# one through the published view, the C++ one through the marshal that
+	# reads the same published view. A tile that appears on a chunk worker
+	# while this build runs arrives in the NEXT one, on both legs together.
+	_heightmap.publish_far_view()
 	# THE DISPATCH. The C++ mesher when there is one and the knob has not turned
 	# it off; GDScript otherwise, on exactly the same three lines - both objects
 	# present the same five members, so nothing below this branch knows which

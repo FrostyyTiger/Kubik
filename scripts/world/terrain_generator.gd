@@ -275,6 +275,19 @@ func build_heightmap() -> int:
 				continue
 			_build_tile(r)
 			tile_ms.append(Time.get_ticks_msec() - t0)
+	# THE TILE STORE GETS ITS BUILDER, horizon v1 Stage 1. After the region and
+	# before anything can ask for ground outside it.
+	#
+	# The same two legs `_build_tile` above has: the C++ builder when there is
+	# one, `height_at_block` when there is not, with the quantisation inside
+	# both. The generator is handed over WEAKLY - it holds the heightmap, so a
+	# strong reference back would be a RefCounted cycle and a leaked eight
+	# megabytes per reroll.
+	heightmap.set_tile_source(self, _tiles, int(config.far_supersample))
+	# AND THE RIM IS BUILT NOW, not on demand. See `Heightmap.ensure_region_rim`
+	# for why: the far mesh has two legs, one of them cannot build a tile, and
+	# the quads at the region's edge sample past it.
+	var rim := heightmap.ensure_region_rim()
 	# The zones are percentiles of THIS world's altitudes, so they cannot be
 	# known until the altitudes are. Everything downstream - voxels, the far
 	# mesh, trees, the probe - reads them from here.
@@ -634,11 +647,16 @@ func _terrace(h: float) -> float:
 ## The damp keys on the COARSE map's slope, so it cannot react to the bumps
 ## it is itself removing, and past detail_full_deg it does nothing at all -
 ## a mountain face keeps every bit of its texture.
-func detail_at(bx: float, bz: float) -> float:
+## `far` picks the height door, horizon v1 Stage 1 - see
+## `Heightmap.slope_deg_at`. The far mesh reads the frozen view all the way
+## down or its two legs disagree; everything else reads the store and gets
+## ground wherever it asks. Defaulted false: every caller from before this line
+## is unchanged.
+func detail_at(bx: float, bz: float, far := false) -> float:
 	var d := _detail.get_noise_2d(bx, bz) * config.detail_amp
 	if config.detail_flat_damp > 0.0 and heightmap != null:
 		var on_slope := smoothstep(config.detail_flat_deg, config.detail_full_deg,
-			heightmap.slope_deg_at(bx, bz))
+			heightmap.slope_deg_at(bx, bz, far))
 		d *= lerpf(1.0, on_slope, clampf(config.detail_flat_damp, 0.0, 1.0))
 	if lakes == null or config.shore_flat_blocks <= 0.0:
 		return d
@@ -648,7 +666,8 @@ func detail_at(bx: float, bz: float) -> float:
 	# 0 at the water line, 1 a full band away from it - so the fade covers the
 	# ground just above the water AND the lake bed just below, and the shore
 	# has no step in it at the point where the two meet.
-	var t := clampf(absf(heightmap.height_at(bx, bz) - level)
+	var t := clampf(absf((heightmap.far_height_at(bx, bz) if far
+			else heightmap.height_at(bx, bz)) - level)
 		/ config.shore_flat_blocks, 0.0, 1.0)
 	return d * t
 
@@ -784,7 +803,8 @@ func zone_band(zone: int) -> Vector2:
 
 
 ## Zone of the surface at one block column.
-func surface_zone_at(bx: int, bz: int, altitude: float) -> int:
+## `far` picks the height door - see `detail_at`.
+func surface_zone_at(bx: int, bz: int, altitude: float, far := false) -> int:
 	# Hashed on a coarser grid than the blocks themselves, so the interleave at
 	# a zone boundary happens in patches rather than per block. See
 	# zone_dither_blocks: per-block dither reads as a gradient on a hillside and
@@ -795,7 +815,7 @@ func surface_zone_at(bx: int, bz: int, altitude: float) -> int:
 		zone_jitter_at(float(bx), float(bz)),
 		WorldHash.hash01(Chunk.floor_div(bx, patch), Chunk.floor_div(bz, patch),
 			world_seed, SALT_ZONE_DITHER))
-	return _slope_zone(bx, bz, zone)
+	return _slope_zone(bx, bz, zone, far)
 
 
 ## Let the STEEPNESS of the ground override what its altitude said.
@@ -815,11 +835,12 @@ func surface_zone_at(bx: int, bz: int, altitude: float) -> int:
 ## Off by default. Both thresholds are in degrees because that is the unit the
 ## slope histogram is reported in, so a value here can be read straight off the
 ## probe rather than converted.
-func _slope_zone(bx: int, bz: int, zone: int) -> int:
+## `far` picks the height door - see `detail_at`.
+func _slope_zone(bx: int, bz: int, zone: int, far := false) -> int:
 	if config.slope_zone_strength <= 0.0 or heightmap == null:
 		return zone
 
-	var slope := heightmap.slope_deg_at(float(bx), float(bz))
+	var slope := heightmap.slope_deg_at(float(bx), float(bz), far)
 
 	# The strength knob is a probability rather than a blend, because a zone is
 	# an integer and there is no half-way between rock and snow. Hashed from

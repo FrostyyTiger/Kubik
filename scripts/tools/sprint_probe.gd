@@ -395,11 +395,13 @@ func _summary() -> void:
 	var mem := float(Performance.get_monitor(Performance.MEMORY_STATIC)) / 1048576.0
 	_say(("SPRINT label=%s seconds=%.0f frames=%d median_ms=%.2f p99_ms=%.2f "
 		+ "worst_ms=%.2f over25=%d chunks=%d far_rebuilds=%d far_ms_median=%d "
-		+ "tree_rebuilds=%d mem_mb=%.0f moved_m=%.0f jumps=%d") % [
+		+ "tree_rebuilds=%d mem_mb=%.0f moved_m=%.0f jumps=%d "
+		+ "tiles=%d tile_mb=%.0f") % [
 		_label, _seconds, n, med, p99, worst, over,
 		_world.built_chunk_count() - _base_chunks,
 		_far_rebuilds() - _base_far, far_med,
-		_tree_rebuilds() - _base_tree, mem, _moved(), _jumps])
+		_tree_rebuilds() - _base_tree, mem, _moved(), _jumps,
+		_tile_stat("tiles"), float(_tile_stat("bytes")) / 1048576.0])
 	# A RUN THAT DID NOT GO ANYWHERE IS NOT A SPRINT, and it is the one way
 	# this instrument can look green while measuring nothing: a player wedged
 	# against a rise builds no chunks, rebuilds no far country and holds a
@@ -447,6 +449,17 @@ func _say(line: String) -> void:
 	if _file != null:
 		_file.store_line(line)
 		_file.flush()
+
+
+## THE TILE STORE'S SIZE, horizon v1 Stage 1. Failure protocol item 12 is a
+## memory rule with a number on it, and this is where that number comes from:
+## a store whose eviction is wrong grows for the whole sprint and says so here
+## rather than in a swap storm forty minutes later.
+func _tile_stat(key: String) -> int:
+	if _world == null or _world.generator == null \
+			or _world.generator.heightmap == null:
+		return 0
+	return int(_world.generator.heightmap.tile_stats().get(key, 0))
 
 
 ## How far the player actually got, in metres, on the flat.

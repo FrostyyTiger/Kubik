@@ -297,6 +297,14 @@ func _go() -> void:
 		get_tree().quit(1)
 		return
 	print("[FarProbe] mesher: %s" % ["c++" if _cpp_mesher != null else "gdscript"])
+	# THE TILE STORE, horizon v1 Stage 1. Printed here because this probe is
+	# the one thing that runs at `--tp 20000 0`, where the store is the only
+	# reason there is any ground at all - and because failure protocol item 12
+	# is a memory rule that needs a number somewhere a run leaves behind.
+	var ts: Dictionary = _heightmap.tile_stats()
+	print("[FarProbe] height tiles: %d held, %.1f MB, %d built in %d ms" % [
+		int(ts["tiles"]), float(ts["bytes"]) / 1048576.0,
+		int(ts["built"]), int(ts["build_ms"])])
 
 	# THE COST TABLE, distance v3 Stage 0. See _cost_table().
 	if "--cost" in OS.get_cmdline_user_args():

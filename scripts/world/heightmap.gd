@@ -129,6 +129,33 @@ func cell_height(i: int, j: int) -> float:
 ## visible 4-block terraces, and no amount of detail noise hides a staircase
 ## that big.
 func height_at(bx: float, bz: float) -> float:
+	# OUTSIDE THE HOME REGION THIS NO LONGER CLAMPS. Horizon v1 Stage 1, D44.
+	#
+	# Everything below this line is untouched and answers for every position
+	# inside the region, bit for bit, which is what the canonical world line
+	# proves after every stage. What changed is that a position OUTSIDE it used
+	# to be dragged onto the region's rim - `clampf` - and read the edge cell's
+	# altitude, so the world had a wall of extruded rim at 3 km whichever way
+	# you walked. It now reads the tile store, which builds that ground from
+	# the seed on demand.
+	#
+	# THE TWO GRIDS LINE UP AND THAT IS NOT LUCK. A level-0 tile's cells sit at
+	# multiples of `step` anchored to the ORIGIN; the region's sit at
+	# `min_block + i * step`, and `min_block` is `-world_blocks_xz / 2`, which
+	# is a multiple of `step` for every world this config can describe. So the
+	# cell at block -3000 is the same cell in both, the bilinear is continuous
+	# across the boundary, and there is no seam to hide.
+	if bx < float(min_block) or bx > float(_max_block) \
+			or bz < float(min_block) or bz > float(_max_block):
+		return _tile_bilinear(0, bx, bz, false, true)
+	return _region_bilinear(bx, bz)
+
+
+## The region's own bilinear, exactly as it has read since terrain v1 -
+## clamping and all. Lifted out of `height_at` unchanged so that the far mesh's
+## own door (`far_height_at`) and the rim fallback read the SAME expression
+## rather than a second copy of it that could drift.
+func _region_bilinear(bx: float, bz: float) -> float:
 	var fx := (clampf(bx, float(min_block), float(_max_block)) - min_block) / float(step)
 	var fz := (clampf(bz, float(min_block), float(_max_block)) - min_block) / float(step)
 
@@ -157,15 +184,33 @@ func height_at(bx: float, bz: float) -> float:
 ## Reads the interpolated surface rather than the raw cells, which means it is
 ## defined between cells too and gives the same answer to the zone code, the
 ## probe and anything else that asks.
-func slope_deg_at(bx: float, bz: float) -> float:
+## `far` picks the door - horizon v1 Stage 1. The far mesh must never reach a
+## door that BUILDS a tile: it has a second leg in C++ that cannot build one,
+## and a slope read that quietly conjured ground on this side and not on that
+## one is two different mountains. See the note by `_far_tiles`. Defaulted
+## false, so every caller that was here before this line is unchanged.
+func slope_deg_at(bx: float, bz: float, far := false) -> float:
 	var d := float(step)
+	if far:
+		var fgx := (far_height_at(bx + d, bz) - far_height_at(bx - d, bz)) / (2.0 * d)
+		var fgz := (far_height_at(bx, bz + d) - far_height_at(bx, bz - d)) / (2.0 * d)
+		return rad_to_deg(atan(sqrt(fgx * fgx + fgz * fgz)))
 	var gx := (height_at(bx + d, bz) - height_at(bx - d, bz)) / (2.0 * d)
 	var gz := (height_at(bx, bz + d) - height_at(bx, bz - d)) / (2.0 * d)
 	return rad_to_deg(atan(sqrt(gx * gx + gz * gz)))
 
 
-## Is this block position inside the world footprint at all?
-func in_bounds(bx: int, bz: int) -> bool:
+## Is this block position inside the HOME REGION - the 3 km the lakes, the
+## spawn and the zone thresholds are computed over?
+##
+## RENAMED FROM `in_bounds`, horizon v1 Stage 1, and the rename is the point.
+## "In bounds" was a statement about the WORLD and it stopped being true the
+## moment `height_at` answered everywhere: there is no out of bounds now, and a
+## caller asking this question is asking about the region's bookkeeping - the
+## lakes, the spawn, the zone histogram - and not about whether ground exists.
+## Every remaining caller is one of those, or the far mesh's own quad cull,
+## which Stage 3 replaces with a ring test.
+func in_home_region(bx: int, bz: int) -> bool:
 	return bx >= min_block and bz >= min_block \
 		and bx <= _max_block + step - 1 and bz <= _max_block + step - 1
 
@@ -369,9 +414,33 @@ func height_max_at_level(bx: float, bz: float, level: int) -> float:
 func _bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
 	if level <= 0:
 		return height_at(bx, bz)
+	# OUTSIDE THE REGION THE PYRAMID DOES NOT REACH, so the level-L tile
+	# answers - see the tile store below. Inside, everything from here down is
+	# the pyramid this project has read since distance v1, untouched.
+	#
+	# AND IT READS THE FROZEN VIEW, not the store, which makes this function
+	# and `_far_bilinear` the same function above level 0. That is not a
+	# compromise: the pyramid EXISTS for the far mesh - grep says
+	# `height_filtered`, `height_max_filtered`, `height_at_level` and
+	# `height_max_at_level` have exactly one caller between them outside this
+	# file, and it is `selftest.gd`'s parity harness - so a "near" door onto it
+	# would be a door nothing walks through that could still disagree with the
+	# C++ leg. Level 0 is different and keeps its building door, because the
+	# VOXEL world reads it and the ground has to follow the player.
+	if bx < float(min_block) or bx > float(_max_block) \
+			or bz < float(min_block) or bz > float(_max_block):
+		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, false)
 	if not _pyramid_ready:
 		build_pyramid()
-	var l := mini(level, MAX_LEVEL)
+	return _pyramid_bilinear(bx, bz, mini(level, MAX_LEVEL), use_max)
+
+
+## One level of the pyramid, exactly as `_bilinear` has read it since distance
+## v1. Lifted out unchanged, for the reason `_region_bilinear` was: the far
+## mesh's own door and the rim fallback read this expression rather than a
+## copy. `level` is already clamped to MAX_LEVEL and is at least 1; the
+## pyramid is already built.
+func _pyramid_bilinear(bx: float, bz: float, l: int, use_max: bool) -> float:
 	var n := _level_cols[l - 1]
 	var data: PackedFloat32Array = _max_levels[l - 1] if use_max else _levels[l - 1]
 	var lstep := float(step << l)
@@ -447,6 +516,575 @@ func level_weighted_mean(level: int) -> float:
 			total += data[i + j * n] * w
 			weight += w
 	return total / weight
+
+
+# --- THE TILE STORE, horizon v1 Stage 1 --------------------------------------
+#
+# THE HEIGHT MAP STOPS BEING ONE ARRAY WITH AN EDGE. D44: "the terrain is
+# seeded and has no wall and no edge; no system may bake in a world edge, a
+# global heightmap or a global-extent assumption". Distance v5 Stage 4 moved
+# the BUILDER onto tiles and said so in as many words at the top of this file -
+# "the global-extent assumption has moved out of the BUILDER and not yet out of
+# the STORE". This is the store.
+#
+# WHAT A TILE IS. `TILE_CELLS + 1` squared heights covering `tile_blocks << L`
+# blocks of world, anchored to the ORIGIN, keyed `(level, tx, tz)`, built on
+# demand from the seed and thrown away when the player walks far enough from
+# it. Two arrays per tile: the MEAN of the cell, which is what the ground is,
+# and the MAX, which is what `far_peak_gain` pulls a summit back towards.
+#
+# THE +1 IS AN APRON AND IT IS ONE COLUMN WIDE. A bilinear read at the last
+# cell of a tile needs the first cell of the next one. Fetching the neighbour
+# on the hot path would double the lookups and put a tile build inside a
+# bilinear; storing the shared edge twice costs 1.6% of the memory and makes a
+# tile a self-contained answer. It is not a copy of the neighbour's data - it
+# is the same pure function of the same position, quantised the same way, so
+# the two agree bit for bit and the seam is not a seam.
+#
+# LEVEL 0 IS NEVER SUPERSAMPLED, and that is a ruling rather than a detail.
+# The plan says a level-L cell is the mean of a `far_supersample` square of
+# `raw_height`, and applied to level 0 that would make the ground OUTSIDE the
+# region a filtered version of the ground INSIDE it - a step at the region's
+# rim of however much a 2 m box filter removes, which on a steep flank is a
+# metre. Level 0 is the surface the voxels are built from and it must be one
+# function everywhere, so it is one sample per cell: `build_tile` at
+# supersample 1 is `height_at_block`, exactly, which is the plan's own
+# "supersample = 1 is bit-identical to today". Supersampling is a FILTER and
+# belongs to the levels that are filters, which is 1 and up. Recorded under
+# "Questions taken alone" in docs/status/horizon-v1.md.
+#
+# WHAT IT IS NOT: it is not a cache with a truth behind it. Determinism makes
+# the cache a convenience - a tile thrown away and rebuilt is the same bytes -
+# and that is what lets eviction be a memory decision rather than a correctness
+# one.
+
+## Cells per tile side. The plan's number, at every level.
+const TILE_CELLS := 128
+
+## What a far-mesh read does when the tile it wants is not in the store.
+##
+## IT DOES NOT BUILD ONE, and the reason is parity rather than cost. The far
+## mesh has two legs - `FarFieldJob` here and `far_build.cpp` across the seam -
+## and the C++ leg cannot build a tile: it is handed a map of them once per
+## build and has no generator. So if the GDScript leg built on a miss and the
+## C++ leg fell back, the two would draw different mountains and the far parity
+## gate would fail for a reason that is nothing to do with the mesher.
+##
+## One rule, both legs: **a far-mesh read never builds a tile, and a missing
+## tile reads the region's clamped rim** - which is exactly what this file did
+## everywhere before tonight, so a far mesh with nothing prepared is the far
+## mesh this project shipped. `FarField` prepares what a build will read
+## through `ensure_disc`, on the main thread, before the job is submitted.
+##
+## The VOXEL world has no such constraint - there is one leg and it is this one
+## - so `height_at` builds on demand and the ground follows the player.
+
+## The store. `Vector3i(level, tx, tz)` -> the cell heights, row-major over
+## `TILE_CELLS + 1` columns.
+var _tiles := {}
+var _tiles_max := {}
+
+## THE FAR MESH'S VIEW OF THE STORE, AND WHY IT IS A SECOND DICTIONARY.
+##
+## The far mesh has two legs and they must read the SAME tiles. The C++ leg is
+## handed its tiles when the build is submitted; the GDScript leg reads this
+## file live. So a tile that appears WHILE a build is running - and one will,
+## because every chunk column job outside the region builds tiles as the player
+## walks - would be read by the GDScript leg and not by the C++ one, and the
+## far parity gate would fail on a race that reproduces once a night.
+##
+## So the far mesh reads a PUBLISHED view: a shallow copy of the store taken on
+## the main thread by `publish_far_view()` immediately before a build is
+## submitted, and marshalled to C++ in the same breath. Shallow is enough - a
+## `PackedFloat32Array` is copy-on-write and nothing ever writes into a
+## published tile - so the copy is a few dozen references and costs nothing.
+##
+## Read under the same mutex the store is, because a GDScript Dictionary
+## assignment is not documented as atomic and the alternative is a race that
+## would show up as a far mesh with one wrong quad.
+var _far_tiles := {}
+var _far_tiles_max := {}
+
+## THE LOCK, AND WHAT IT DOES NOT COVER. Workers read this store - every chunk
+## column job calls `height_at` - and the main thread writes it. The mutex
+## guards the DICTIONARY and nothing else: a tile is built outside the lock,
+## from a pure function of its own position, and published under it.
+##
+## Two threads can therefore build the same tile at once. That is wasteful
+## exactly once per tile and it is never wrong, because both produce the same
+## bytes; holding the lock across a build instead would put a forty-millisecond
+## stall in front of every other worker and, on the main thread, in front of a
+## frame. The plan's failure protocol item 3 - "a thread wrote into a shared
+## tile or the cache returned a half-built tile" - is answered by the publish
+## being a single dictionary assignment of a finished array.
+var _tiles_mutex := Mutex.new()
+
+## The C++ tile builder, when there is one. Held directly because it is a
+## RefCounted carrying the engine noise objects and the config and NOTHING that
+## points back here - see `height_tiles.gd`.
+var _tile_builder: HeightTiles = null
+
+## The generator, weakly, for the GDScript leg of a tile build.
+##
+## WEAK, and it has to be: the generator holds this heightmap, so a strong
+## reference here would be a RefCounted cycle and a leaked 8 MB array per
+## reroll. Nothing in a tile build needs the generator to be alive - if it has
+## gone, so has the world.
+var _generator_ref: WeakRef = null
+
+## TILES THAT ARE NEVER EVICTED. The region's rim, and nothing else yet.
+##
+## `ensure_region_rim` builds them at load because both legs of the far mesher
+## need real ground just past the region's edge; `World._evict_height_tiles`
+## would then throw them away on the player's first chunk crossing, because
+## they are three kilometres from spawn and the eviction radius is a thousand
+## blocks. The far mesh would go back to reading the clamped rim there - not
+## WRONG, both legs still agree, but the half second spent building them at
+## load would buy exactly one frame of correct edge.
+##
+## Forty-four tiles, 5.9 MB, fixed for the life of a world. Stage 3 takes the
+## pin over as the ring table starts deciding what the far mesh reads.
+var _pinned := {}
+
+## Samples per axis inside one cell at level >= 1. `far_supersample`.
+var _supersample := 2
+
+## How many tiles have been built this session, and how long they took. For the
+## probe line and the memory gate.
+var tiles_built := 0
+var tile_build_ms := 0
+
+
+## Hand the store what it needs to build. Called once per world by
+## `TerrainGenerator.build_heightmap`, on the main thread, after the region.
+func set_tile_source(generator: TerrainGenerator, builder: HeightTiles,
+		supersample: int) -> void:
+	_generator_ref = weakref(generator)
+	_tile_builder = builder
+	_supersample = clampi(supersample, 1, 4)
+
+
+## Blocks across one tile at this level. 512 at level 0, doubling per level, so
+## a level-L tile covers 256 x 2^L metres at the half-metre block.
+func tile_span_blocks(level: int) -> int:
+	return tile_blocks << level
+
+
+## Blocks between two cells at this level. 4 at level 0, and `TILE_CELLS` of
+## them span the tile exactly.
+func cell_step_blocks(level: int) -> int:
+	return step << level
+
+
+## The tile a block position falls in, at this level.
+func tile_of(level: int, bx: int, bz: int) -> Vector2i:
+	var span := tile_span_blocks(level)
+	return Vector2i(Chunk.floor_div(bx, span), Chunk.floor_div(bz, span))
+
+
+## Is this whole tile inside the home region?
+##
+## Such a tile is never read: the region answers first for every position
+## inside itself. `ensure_disc` skips them rather than spending forty
+## milliseconds building ground nothing will look at.
+func tile_inside_region(level: int, tx: int, tz: int) -> bool:
+	var span := tile_span_blocks(level)
+	return tx * span >= min_block and tz * span >= min_block \
+		and (tx + 1) * span <= _max_block and (tz + 1) * span <= _max_block
+
+
+## Build the tile if it is not there, and return whether the store has it.
+##
+## MAIN THREAD OR WORKER, either. See `_tiles_mutex` for the two-phase rule and
+## why building the same tile twice is cheaper than the alternative.
+func ensure_tile(level: int, tx: int, tz: int) -> bool:
+	var key := Vector3i(level, tx, tz)
+	_tiles_mutex.lock()
+	var have: bool = _tiles.has(key)
+	_tiles_mutex.unlock()
+	if have:
+		return true
+	var built := _build_tile_cells(level, tx, tz)
+	if built.is_empty():
+		return false
+	_tiles_mutex.lock()
+	# Checked again under the lock: another thread may have published the same
+	# tile while this one was building it. Whichever lands first wins, and the
+	# two are the same bytes, so there is nothing to choose between them.
+	if not _tiles.has(key):
+		_tiles[key] = built[0]
+		_tiles_max[key] = built[1]
+		tiles_built += 1
+		tile_build_ms += built[2]
+	_tiles_mutex.unlock()
+	return true
+
+
+## Build one tile's two arrays. Pure: the same key gives the same bytes on any
+## thread, on any machine, in any order. Returns `[mean, max, ms]`, or empty if
+## there is nothing to build with.
+func _build_tile_cells(level: int, tx: int, tz: int) -> Array:
+	var t0 := Time.get_ticks_msec()
+	var n := TILE_CELLS + 1
+	var cstep := cell_step_blocks(level)
+	var span := tile_span_blocks(level)
+	var bx0 := tx * span
+	var bz0 := tz * span
+	# LEVEL 0 IS ONE SAMPLE PER CELL - see the block comment above. Above it,
+	# `_supersample` samples per axis at the sub-cell centres, which is the
+	# plan's "half-cell offsets" for s = 2 and generalises to 4.
+	var s := 1 if level <= 0 else _supersample
+	var mean := PackedFloat32Array()
+	var high := PackedFloat32Array()
+	var count := n * n
+	mean.resize(count)
+	high.resize(count)
+	var inv := 1.0 / float(s * s)
+	for kz in s:
+		for kx in s:
+			# The sub-sample's offset, in whole blocks. `cstep` is 4 << level
+			# and the offsets are `cstep * (2k + 1) / (2s)`, so at s = 2 they
+			# are a quarter and three quarters of a cell and land on whole
+			# blocks for every level; at s = 4 they need `cstep` divisible by
+			# 8, which is every level from 1 up, and level 0 never uses s > 1.
+			var ox := cstep * (2 * kx + 1) / (2 * s) if s > 1 else 0
+			var oz := cstep * (2 * kz + 1) / (2 * s) if s > 1 else 0
+			var part := _raw_tile(bx0 + ox, bz0 + oz, n, cstep)
+			if part.size() != count:
+				return []
+			if kx == 0 and kz == 0:
+				for i in count:
+					mean[i] = part[i] * inv
+					high[i] = part[i]
+			else:
+				for i in count:
+					mean[i] += part[i] * inv
+					high[i] = maxf(high[i], part[i])
+	# QUANTISED LAST, exactly as `height_at_block` quantises last and for the
+	# same reason: 1/1024 of a block is half a millimetre of world and fifteen
+	# orders of magnitude larger than the ULP two compilers can differ by, so
+	# gcc and MSVC cannot round a mean to two different multiples. At s = 1 the
+	# value is already a multiple of the quantum and this is a no-op, which is
+	# what makes level 0 bit-identical to `height_at_block`.
+	if s > 1:
+		for i in count:
+			mean[i] = TerrainGenerator.quantise_height(mean[i])
+	return [mean, high, Time.get_ticks_msec() - t0]
+
+
+## `n` x `n` raw heights from a block corner, `cstep` apart. The C++ builder
+## when there is one, the generator's own function when there is not - the same
+## two legs `TerrainGenerator._build_tile` has had since distance v5, and the
+## quantisation inside both is what makes them the same numbers.
+func _raw_tile(bx0: int, bz0: int, n: int, cstep: int) -> PackedFloat32Array:
+	if _tile_builder != null:
+		var got := _tile_builder.build_tile(bx0, bz0, n, n, cstep)
+		if got.size() == n * n:
+			return got
+	var gen: TerrainGenerator = _generator_ref.get_ref() if _generator_ref != null else null
+	if gen == null:
+		return PackedFloat32Array()
+	var out := PackedFloat32Array()
+	out.resize(n * n)
+	for j in n:
+		var bz := float(bz0 + j * cstep)
+		var row := j * n
+		for i in n:
+			out[row + i] = gen.height_at_block(float(bx0 + i * cstep), bz)
+	return out
+
+
+## Bilinear inside one level-L tile.
+##
+## `prepared_only` is the far mesh's rule - see the note by `_tiles`: it reads
+## what is there and falls back to the region's clamped rim rather than
+## building, so both legs of the mesher read the same store. `height_at` and
+## the voxel world pass false and get ground wherever they ask.
+func _tile_bilinear(level: int, bx: float, bz: float, use_max: bool,
+		may_build: bool) -> float:
+	var span := tile_span_blocks(level)
+	var cstep := cell_step_blocks(level)
+	var fbx := int(floor(bx))
+	var fbz := int(floor(bz))
+	var tx := Chunk.floor_div(fbx, span)
+	var tz := Chunk.floor_div(fbz, span)
+	var key := Vector3i(level, tx, tz)
+	# THE FAR MESH READS THE PUBLISHED VIEW, everything else reads the store -
+	# see the note by `_far_tiles`. `may_build` is the same flag: the door that
+	# may build is the door that reads the live store.
+	var data := _tile_lookup(key, use_max, may_build)
+	if data.is_empty():
+		if not may_build:
+			return _region_clamped(bx, bz, level, use_max)
+		if not ensure_tile(level, tx, tz):
+			return _region_clamped(bx, bz, level, use_max)
+		data = _tile_lookup(key, use_max, true)
+		if data.is_empty():
+			return _region_clamped(bx, bz, level, use_max)
+
+	var n := TILE_CELLS + 1
+	var fx := (bx - float(tx * span)) / float(cstep)
+	var fz := (bz - float(tz * span)) / float(cstep)
+	var i0 := clampi(int(floor(fx)), 0, TILE_CELLS - 1)
+	var j0 := clampi(int(floor(fz)), 0, TILE_CELLS - 1)
+	var u := clampf(fx - float(i0), 0.0, 1.0)
+	var v := clampf(fz - float(j0), 0.0, 1.0)
+	# i0 + 1 is at most TILE_CELLS, which is the apron column - see the block
+	# comment. No neighbour tile is fetched and none is needed.
+	var h00 := data[i0 + j0 * n]
+	var h10 := data[i0 + 1 + j0 * n]
+	var h01 := data[i0 + (j0 + 1) * n]
+	var h11 := data[i0 + 1 + (j0 + 1) * n]
+	return lerpf(lerpf(h00, h10, u), lerpf(h01, h11, u), v)
+
+
+## One tile's array, from the live store or from the published view.
+func _tile_lookup(key: Vector3i, use_max: bool, live: bool) -> PackedFloat32Array:
+	_tiles_mutex.lock()
+	var from: Dictionary
+	if live:
+		from = _tiles_max if use_max else _tiles
+	else:
+		from = _far_tiles_max if use_max else _far_tiles
+	var out: PackedFloat32Array = from.get(key, PackedFloat32Array())
+	_tiles_mutex.unlock()
+	return out
+
+
+## Freeze what the far mesh may read. MAIN THREAD, immediately before a far
+## build is submitted - see the note by `_far_tiles`.
+func publish_far_view() -> void:
+	_tiles_mutex.lock()
+	_far_tiles = _tiles.duplicate()
+	_far_tiles_max = _tiles_max.duplicate()
+	_tiles_mutex.unlock()
+
+
+## Every key in the PUBLISHED view, for the marshal across the seam. The
+## published view and not the store, so the two legs of the mesher are handed
+## the same set.
+func far_view_keys() -> Array:
+	_tiles_mutex.lock()
+	var out := _far_tiles.keys()
+	_tiles_mutex.unlock()
+	return out
+
+
+## One published tile's two arrays, or empty. For the marshal.
+func far_view_arrays(key: Vector3i) -> Array:
+	_tiles_mutex.lock()
+	var a: PackedFloat32Array = _far_tiles.get(key, PackedFloat32Array())
+	var b: PackedFloat32Array = _far_tiles_max.get(key, PackedFloat32Array())
+	_tiles_mutex.unlock()
+	if a.is_empty():
+		return []
+	return [a, b]
+
+
+## The rim, as this file read it before tonight. What a far-mesh read gets when
+## its tile was not prepared, and what any read gets when there is nothing to
+## build with at all.
+func _region_clamped(bx: float, bz: float, level: int, use_max: bool) -> float:
+	var cx := clampf(bx, float(min_block), float(_max_block))
+	var cz := clampf(bz, float(min_block), float(_max_block))
+	if level <= 0:
+		return _region_bilinear(cx, cz)
+	if not _pyramid_ready:
+		build_pyramid()
+	return _pyramid_bilinear(cx, cz, mini(level, MAX_LEVEL), use_max)
+
+
+# --- THE FAR MESH'S READS, horizon v1 Stage 1 --------------------------------
+#
+# The same four questions the far mesh has always asked, through a door that
+# never builds a tile. See the note by `_tiles` for why the two legs of the
+# mesher must agree about what is in the store, and `ensure_disc` for who fills
+# it. In Stage 1 nothing is prepared, so every one of these is the region read
+# this project shipped, byte for byte, and the far parity gate says so.
+
+func far_height_at(bx: float, bz: float) -> float:
+	if bx < float(min_block) or bx > float(_max_block) \
+			or bz < float(min_block) or bz > float(_max_block):
+		return _tile_bilinear(0, bx, bz, false, false)
+	return _region_bilinear(bx, bz)
+
+
+func far_height_filtered(bx: float, bz: float, level: float) -> float:
+	return _far_trilinear(bx, bz, level, false)
+
+
+func far_height_max_filtered(bx: float, bz: float, level: float) -> float:
+	return _far_trilinear(bx, bz, level, true)
+
+
+func far_height_at_level(bx: float, bz: float, level: int) -> float:
+	return _far_bilinear(bx, bz, level, false)
+
+
+func far_height_max_at_level(bx: float, bz: float, level: int) -> float:
+	return _far_bilinear(bx, bz, level, true)
+
+
+func _far_bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
+	if level <= 0:
+		return far_height_at(bx, bz)
+	if bx < float(min_block) or bx > float(_max_block) \
+			or bz < float(min_block) or bz > float(_max_block):
+		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, false)
+	if not _pyramid_ready:
+		build_pyramid()
+	return _pyramid_bilinear(bx, bz, mini(level, MAX_LEVEL), use_max)
+
+
+func _far_trilinear(bx: float, bz: float, level: float, use_max: bool) -> float:
+	var l := clampf(level, 0.0, float(MAX_LEVEL))
+	var lo := int(floor(l))
+	var f := l - float(lo)
+	if f <= 0.0001 or lo >= MAX_LEVEL:
+		return _far_bilinear(bx, bz, lo, use_max)
+	return lerpf(_far_bilinear(bx, bz, lo, use_max),
+		_far_bilinear(bx, bz, lo + 1, use_max), f)
+
+
+# --- Keeping the store the right size ----------------------------------------
+
+## Build every tile at `level` that a disc of `radius_blocks` around
+## `centre_block` touches, skipping the ones the region already answers for.
+##
+## MAIN THREAD, before a far build is submitted. This is the whole of "what the
+## far mesh is allowed to read": the two legs then see the same store, and a
+## position outside it reads the rim rather than disagreeing.
+##
+## Returns how many tiles it built.
+func ensure_disc(level: int, centre_block: Vector2i, radius_blocks: float) -> int:
+	var span := tile_span_blocks(level)
+	var lo_x := Chunk.floor_div(int(floor(float(centre_block.x) - radius_blocks)), span)
+	var hi_x := Chunk.floor_div(int(ceil(float(centre_block.x) + radius_blocks)), span)
+	var lo_z := Chunk.floor_div(int(floor(float(centre_block.y) - radius_blocks)), span)
+	var hi_z := Chunk.floor_div(int(ceil(float(centre_block.y) + radius_blocks)), span)
+	var built := 0
+	for tz in range(lo_z, hi_z + 1):
+		for tx in range(lo_x, hi_x + 1):
+			if tile_inside_region(level, tx, tz):
+				continue
+			var before := tiles_built
+			if ensure_tile(level, tx, tz):
+				built += tiles_built - before
+	return built
+
+
+## Build the level-0 tiles that straddle the home region's rim, and publish
+## them. Once per world, at load, from `TerrainGenerator.build_heightmap`.
+##
+## WHY THE RIM IS PREPARED EAGERLY AND NOTHING ELSE IS. The far mesh reads up
+## to `RIDGE_SPAN_BLOCKS` past a quad, so a quad at the region's edge samples
+## ground the region does not have; its two legs must get the same answer
+## there, and the C++ leg can only be handed tiles. Without this the GDScript
+## leg builds one on demand through `detail_at`'s shore fade and `_slope_zone`'s
+## slope while C++ reads the rim, and the far parity gate finds it - four quads
+## at `far_ring_div` 4 and one zone sample in ten thousand, which is exactly
+## what the first Stage 1 run of the suite reported.
+##
+## LEVEL 0 ONLY, and that is not a shortcut. Above level 0 the far mesh reads
+## the region's PYRAMID, and outside the region both legs fall back to the same
+## clamped pyramid read whether or not a tile exists - so levels 1 and up agree
+## by construction and preparing them would cost two seconds a world load to
+## change nothing. They are prepared per the ring table from Stage 3, where the
+## far mesh actually reaches out.
+##
+## Cost, seed 42: forty-four tiles of about ten milliseconds, so under half a
+## second on a load that already takes twenty-five.
+func ensure_region_rim() -> int:
+	var span := tile_span_blocks(0)
+	var lo_x := Chunk.floor_div(min_block, span)
+	var hi_x := Chunk.floor_div(_max_block, span)
+	var lo_z := lo_x
+	var hi_z := hi_x
+	var built := 0
+	for tz in range(lo_z, hi_z + 1):
+		for tx in range(lo_x, hi_x + 1):
+			# Wholly inside means the region answers for every position in it and
+			# nothing will ever read the tile.
+			if tile_inside_region(0, tx, tz):
+				continue
+			var before := tiles_built
+			if ensure_tile(0, tx, tz):
+				built += tiles_built - before
+				_pinned[Vector3i(0, tx, tz)] = true
+	publish_far_view()
+	return built
+
+
+## Drop every tile at `level` whose centre is further than `radius_blocks` from
+## `centre_block`.
+##
+## A MEMORY DECISION AND NOT A CORRECTNESS ONE. A tile is a pure function of
+## its key, so throwing one away costs a rebuild and nothing else - which is
+## what makes it safe to be aggressive here and what failure protocol item 12
+## is about.
+func evict_beyond(level: int, centre_block: Vector2i, radius_blocks: float) -> int:
+	var span := tile_span_blocks(level)
+	var half := float(span) * 0.5
+	var r2 := radius_blocks * radius_blocks
+	var doomed: Array[Vector3i] = []
+	_tiles_mutex.lock()
+	for key in _tiles:
+		var k: Vector3i = key
+		if k.x != level:
+			continue
+		var dx := float(k.y) * float(span) + half - float(centre_block.x)
+		var dz := float(k.z) * float(span) + half - float(centre_block.y)
+		if _pinned.has(k):
+			continue
+		if dx * dx + dz * dz > r2:
+			doomed.append(k)
+	for k in doomed:
+		_tiles.erase(k)
+		_tiles_max.erase(k)
+		# AND OUT OF THE PUBLISHED VIEW, or the far mesh would keep drawing
+		# ground the store has forgotten and the C++ side would keep its copy
+		# of it forever. The next `publish_far_view` would do this anyway;
+		# doing it here means eviction frees the memory now rather than at the
+		# next rebuild.
+		_far_tiles.erase(k)
+		_far_tiles_max.erase(k)
+	_tiles_mutex.unlock()
+	return doomed.size()
+
+
+## How many tiles are held, and how much they weigh. The sprint probe's memory
+## line and the plan's 300 MB gate are read off this.
+func tile_stats() -> Dictionary:
+	_tiles_mutex.lock()
+	var n := _tiles.size()
+	_tiles_mutex.unlock()
+	var per := (TILE_CELLS + 1) * (TILE_CELLS + 1) * 4
+	return {
+		"tiles": n,
+		# Two arrays per tile - the mean and the max.
+		"bytes": n * per * 2,
+		"built": tiles_built,
+		"build_ms": tile_build_ms,
+	}
+
+
+## Every tile key the store holds, for the marshal across the GDExtension seam.
+func tile_keys() -> Array:
+	_tiles_mutex.lock()
+	var out := _tiles.keys()
+	_tiles_mutex.unlock()
+	return out
+
+
+## One tile's two arrays, or empty. For the marshal.
+func tile_arrays(key: Vector3i) -> Array:
+	_tiles_mutex.lock()
+	var a: PackedFloat32Array = _tiles.get(key, PackedFloat32Array())
+	var b: PackedFloat32Array = _tiles_max.get(key, PackedFloat32Array())
+	_tiles_mutex.unlock()
+	if a.is_empty():
+		return []
+	return [a, b]
 
 
 # --- The determinism guard --------------------------------------------------

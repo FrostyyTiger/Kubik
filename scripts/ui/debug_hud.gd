@@ -271,6 +271,15 @@ func _compose_readout() -> String:
 				lines.append("cache     %d chunks" % t.get("cached_chunks", 0))
 		if world.has_method("far_field_vertices"):
 			lines.append("far field %d verts" % world.far_field_vertices())
+		# THE TILE STORE, horizon v1 Stage 1. On the F3 readout beside the far
+		# field's vertex count because the two are the same question asked
+		# twice: how much world is being held, and how much of it is being
+		# drawn.
+		if world.generator != null and world.generator.heightmap != null:
+			var ts: Dictionary = world.generator.heightmap.tile_stats()
+			lines.append("tiles %d, %.0f MB (%d built, %d ms)" % [
+				int(ts["tiles"]), float(ts["bytes"]) / 1048576.0,
+				int(ts["built"]), int(ts["build_ms"])])
 		if world.has_method("flora_stats"):
 			var f: Dictionary = world.flora_stats()
 			lines.append("flora     %d inst, %.2f M tris, %d cols, %d pending, %d cached" % [

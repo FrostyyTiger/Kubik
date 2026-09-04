@@ -24,6 +24,7 @@
 
 #include <godot_cpp/classes/fast_noise_lite.hpp>
 #include <godot_cpp/core/math.hpp>
+#include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
@@ -32,6 +33,8 @@
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 
+#include <limits>
+#include <unordered_map>
 #include <vector>
 
 namespace kubik {
@@ -149,6 +152,63 @@ struct Config {
 
 // --- The world ------------------------------------------------------------
 
+// --- THE TILE STORE, horizon v1 Stage 1 --------------------------------------
+//
+// THE HEIGHT MAP STOPS BEING ONE ARRAY WITH AN EDGE, on this side of the seam
+// too. `scripts/world/heightmap.gd` carries the whole argument; what this side
+// owes is that it reads the SAME numbers, and the far parity gate is what says
+// whether it does.
+//
+// IT NEVER BUILDS ONE. This side has no generator - it is handed noise objects
+// and arrays, decision 2 - so a tile that was not marshalled cannot be made
+// here. That is not a limitation to work around: it is the rule BOTH legs
+// obey. `Heightmap.far_height_at` and friends do not build either, and a
+// missing tile reads the region's clamped rim on both sides, so the two
+// meshers cannot disagree about ground neither of them has.
+//
+// `FarField` prepares what a build will read - `Heightmap.ensure_disc`, on the
+// main thread - and `FarMesher.build` marshals the new ones. Marshal once per
+// TILE rather than once per world: a tile is 66 KB and a build that re-sent
+// every one of them would spend the whole speedup on the seam.
+
+// A tile's identity. Origin-anchored, so it means the same square of world
+// whatever region is loaded - which is the property D44 asks for and a
+// region-relative grid cannot have.
+struct TileKey {
+	int level = 0;
+	int tx = 0;
+	int tz = 0;
+	bool operator==(const TileKey &o) const {
+		return level == o.level && tx == o.tx && tz == o.tz;
+	}
+};
+
+struct TileKeyHash {
+	size_t operator()(const TileKey &k) const {
+		// Three small ints into one size_t. The multipliers are odd and
+		// coprime; this is a hash table key and not a world hash, so nothing
+		// downstream depends on the exact bits.
+		uint64_t h = (uint64_t)(uint32_t)k.tx * 0x9E3779B185EBCA87ull;
+		h ^= (uint64_t)(uint32_t)k.tz * 0xC2B2AE3D27D4EB4Full;
+		h ^= (uint64_t)(uint32_t)k.level * 0x165667B19E3779F9ull;
+		h ^= h >> 29;
+		return (size_t)h;
+	}
+};
+
+// One tile's two arrays: the cell mean, which is where the ground is, and the
+// cell max, which is what far_peak_gain pulls a summit towards. Both are
+// (TILE_CELLS + 1) squared - the apron column is the shared edge, stored twice
+// so a bilinear at the last cell needs no neighbour.
+struct Tile {
+	std::vector<float> mean;
+	std::vector<float> high;
+};
+
+// Heightmap.TILE_CELLS. The apron makes the stored side one longer.
+constexpr int TILE_CELLS = 128;
+constexpr int TILE_STRIDE = TILE_CELLS + 1;
+
 struct World {
 	// Heightmap level 0, and its dimensions.
 	std::vector<float> cells;
@@ -156,6 +216,69 @@ struct World {
 	int hm_step = 4;
 	int min_block = 0;
 	int max_block = 0;
+
+	// The tile store - see the note above. `tile_blocks` is the level-0 tile's
+	// side in blocks; a level-L tile is `tile_blocks << L`.
+	std::unordered_map<TileKey, Tile, TileKeyHash> tiles;
+	int tile_blocks = 512;
+
+	// MATERIAL TILES, Stage 4. Named here and empty until then, so the struct
+	// the marshal fills has one shape for the whole lane.
+	std::unordered_map<TileKey, std::vector<uint8_t>, TileKeyHash> material_tiles;
+
+	// Take one tile off the wire. Called from setup() and from build().
+	void add_tile(int level, int tx, int tz, const PackedFloat32Array &mean,
+			const PackedFloat32Array &high);
+
+	// The wire form: [level, tx, tz, mean, high, ...], flat.
+	void add_tiles(const Array &p_tiles);
+
+	// Heightmap.tile_of / Chunk.floor_div, for a tile index.
+	static inline int64_t tile_index(int64_t b, int64_t span) {
+		return floor_div(b, span);
+	}
+
+	// Heightmap._tile_bilinear, with `may_build` false - which is the only
+	// mode this side has. Returns NAN when the tile is absent, and every
+	// caller falls back to the region's clamped rim, exactly as the GDScript
+	// does.
+	double tile_bilinear(int level, double bx, double bz, bool use_max) const {
+		int64_t span = (int64_t)tile_blocks << level;
+		int64_t cstep = (int64_t)hm_step << level;
+		TileKey key;
+		key.level = level;
+		key.tx = (int)tile_index((int64_t)Math::floor(bx), span);
+		key.tz = (int)tile_index((int64_t)Math::floor(bz), span);
+		auto hit = tiles.find(key);
+		if (hit == tiles.end()) {
+			return std::numeric_limits<double>::quiet_NaN();
+		}
+		const std::vector<float> &data = use_max ? hit->second.high : hit->second.mean;
+		if (data.size() != (size_t)TILE_STRIDE * (size_t)TILE_STRIDE) {
+			return std::numeric_limits<double>::quiet_NaN();
+		}
+		double fx = (bx - (double)(key.tx * span)) / (double)cstep;
+		double fz = (bz - (double)(key.tz * span)) / (double)cstep;
+		int i0 = (int)Math::floor(fx);
+		int j0 = (int)Math::floor(fz);
+		i0 = i0 < 0 ? 0 : (i0 > TILE_CELLS - 1 ? TILE_CELLS - 1 : i0);
+		j0 = j0 < 0 ? 0 : (j0 > TILE_CELLS - 1 ? TILE_CELLS - 1 : j0);
+		double u = Math::clamp(fx - (double)i0, 0.0, 1.0);
+		double v = Math::clamp(fz - (double)j0, 0.0, 1.0);
+		double h00 = data[(size_t)(i0 + j0 * TILE_STRIDE)];
+		double h10 = data[(size_t)(i0 + 1 + j0 * TILE_STRIDE)];
+		double h01 = data[(size_t)(i0 + (j0 + 1) * TILE_STRIDE)];
+		double h11 = data[(size_t)(i0 + 1 + (j0 + 1) * TILE_STRIDE)];
+		return Math::lerp(Math::lerp(h00, h10, u), Math::lerp(h01, h11, u), v);
+	}
+
+	// Is this position outside the home region - the 3 km the lakes, the spawn
+	// and the zone thresholds are computed over? Heightmap's own test, and the
+	// one that decides which source answers.
+	inline bool outside_region(double bx, double bz) const {
+		return bx < (double)min_block || bx > (double)max_block ||
+				bz < (double)min_block || bz > (double)max_block;
+	}
 
 	// Levels 1..max_level of the mean pyramid and of the max pyramid, plus
 	// each level's side length. Level 0 is `cells` and is never copied, exactly
@@ -191,8 +314,21 @@ struct World {
 		return cells[(size_t)i + (size_t)j * (size_t)cols];
 	}
 
-	// Heightmap.height_at
+	// Heightmap.far_height_at - the far mesh's door, which never builds a tile.
+	// Outside the region: the level-0 tile if it was marshalled, the region's
+	// clamped rim if it was not.
 	double height_at(double bx, double bz) const {
+		if (outside_region(bx, bz)) {
+			double h = tile_bilinear(0, bx, bz, false);
+			if (!Math::is_nan(h)) {
+				return h;
+			}
+		}
+		return region_bilinear(bx, bz);
+	}
+
+	// Heightmap._region_bilinear
+	double region_bilinear(double bx, double bz) const {
 		const double lo = (double)min_block;
 		const double hi = (double)max_block;
 		double fx = (Math::clamp(bx, lo, hi) - (double)min_block) / (double)hm_step;
@@ -218,19 +354,30 @@ struct World {
 		return Math::rad_to_deg(Math::atan(Math::sqrt(gx * gx + gz * gz)));
 	}
 
-	// Heightmap.in_bounds
+	// Heightmap.in_home_region (renamed from in_bounds, horizon v1 Stage 1 -
+	// there is no out of bounds any more; this is the region's bookkeeping).
 	bool in_bounds(int64_t bx, int64_t bz) const {
 		return bx >= min_block && bz >= min_block &&
 				bx <= (int64_t)max_block + hm_step - 1 &&
 				bz <= (int64_t)max_block + hm_step - 1;
 	}
 
-	// Heightmap._bilinear
+	// Heightmap._far_bilinear
 	double bilinear(double bx, double bz, int level, bool use_max) const {
 		if (level <= 0) {
 			return height_at(bx, bz);
 		}
 		int l = level < max_level ? level : max_level;
+		if (outside_region(bx, bz)) {
+			double h = tile_bilinear(l, bx, bz, use_max);
+			if (!Math::is_nan(h)) {
+				return h;
+			}
+			// The rim, at this level, exactly as the pyramid read it before
+			// tonight - which is what Heightmap._region_clamped does.
+			bx = Math::clamp(bx, (double)min_block, (double)max_block);
+			bz = Math::clamp(bz, (double)min_block, (double)max_block);
+		}
 		int n = level_cols[l - 1];
 		const std::vector<float> &data = use_max ? max_levels[l - 1] : levels[l - 1];
 		double lstep = (double)((int64_t)hm_step << l);

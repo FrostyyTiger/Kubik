@@ -819,6 +819,16 @@ Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 		p_world.config.read(cfg);
 	}
 
+	// THE TILES THIS SIDE HAS NOT SEEN YET, horizon v1 Stage 1. Marshal once
+	// per TILE, not once per world and not once per build: `FarField` prepares
+	// what a build will read on the main thread and sends only the difference,
+	// so the seam carries 66 KB per new tile and nothing for the ones already
+	// here. A build with no new tiles sends an empty Array.
+	Variant tiles = p_args.get("tiles", Variant());
+	if (tiles.get_type() == Variant::ARRAY) {
+		p_world.add_tiles(tiles);
+	}
+
 	Mesher m(p_world);
 	m.run(p_args);
 

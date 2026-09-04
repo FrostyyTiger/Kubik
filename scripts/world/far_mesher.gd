@@ -93,9 +93,25 @@ func setup(heightmap: Heightmap, generator: TerrainGenerator,
 	# inside its own elapsed_ms. Here it has to exist before it can be
 	# marshalled, and it is idempotent and behind a mutex either way.
 	heightmap.build_pyramid()
+	# WITH THE WORLD. See `_sent_tiles`: the C++ side empties its tile map in
+	# setup(), so this has to empty with it.
+	_sent_tiles.clear()
 	if _impl == null:
 		_impl = ClassDB.instantiate(CLASS_NAME)
-	_impl.setup(_world_data(heightmap, generator, config))
+	# THE TILES THE STORE ALREADY HAS, with the world. The rim is prepared at
+	# load (`Heightmap.ensure_region_rim`), so a mesher set up before any far
+	# build has run - the self-test's parity harness, the far probe - starts
+	# with the same ground the GDScript leg reads rather than with an empty map
+	# and the region's clamped edge.
+	var data := _world_data(heightmap, generator, config)
+	# THE PARAMETER, NOT THE MEMBER. `setup`'s first argument shadows the
+	# `heightmap` member, and the member is not assigned until `far_field.gd`
+	# submits a build - so a `_new_tiles()` that read the member would send
+	# nothing here and the C++ leg would start a world with an empty tile map
+	# while the GDScript leg read the rim tiles. That is exactly what the far
+	# parity gate reported: 391,840 vertices against 391,640.
+	data["tiles"] = _new_tiles(heightmap)
+	_impl.setup(data)
 	# THE MESHER SAYS WHETHER IT GOT A WORLD IT CAN USE. `bilinear()` indexes
 	# the pyramid without a bounds check tens of millions of times a build, so
 	# a short marshal is a crash rather than a wrong mesh - and the answer to
@@ -113,6 +129,11 @@ static func _world_data(heightmap: Heightmap, generator: TerrainGenerator,
 		"cols": heightmap.cols,
 		"hm_step": heightmap.step,
 		"min_block": heightmap.min_block,
+		# THE TILE STORE'S GEOMETRY. The tiles themselves are marshalled
+		# incrementally by `build()`, not here: at setup nothing is prepared
+		# yet, and a world that sent every tile it might ever need would send
+		# an unbounded number of them.
+		"tile_blocks": heightmap.tile_blocks,
 		"levels": heightmap.pyramid_levels(),
 		"max_levels": heightmap.pyramid_max_levels(),
 		"level_cols": heightmap.pyramid_level_cols(),
@@ -225,6 +246,8 @@ func build(config: WorldgenConfig, center: Vector2i,
 	var out: Dictionary = _impl.build({
 		"center_x": center.x,
 		"center_z": center.y,
+		# ONLY THE TILES THIS MESHER HAS NOT SEEN. See `_sent_tiles`.
+		"tiles": _new_tiles(heightmap),
 		"frontier": frontier,
 		"overlap_cells": FarFieldJob.FRONTIER_OVERLAP_CELLS,
 		# ONE SET OF ARRAYS PER SECTOR INSTEAD OF ONE FOR THE WHOLE DISC.
@@ -243,6 +266,55 @@ func build(config: WorldgenConfig, center: Vector2i,
 	vertex_count = int(out.get("vertex_count", 0))
 	elapsed_ms = int(out.get("elapsed_ms", 0))
 	return true
+
+
+# --- THE TILE MARSHAL, horizon v1 Stage 1 ------------------------------------
+#
+# MARSHAL ONCE PER TILE. Decision 2 is "data in, arrays out, marshalled once
+# per world", and the tile store is the first thing in this seam that a world
+# does not have all of at load: tiles are built on demand as the player and the
+# far view ask for ground, so "once per world" becomes "once per tile" and the
+# rule it was protecting - never re-send what the other side already holds - is
+# unchanged.
+#
+# WHAT THAT COSTS IF IT IS WRONG. A tile is 129 x 129 x 4 bytes twice, 133 KB.
+# Re-sending the whole store every build would be tens of megabytes across the
+# seam per rebuild, which is the cost the "once per world" rule exists to
+# avoid; forgetting to send one is a far mesh that reads the region's rim
+# there, which looks like the world before tonight rather than like a bug.
+# Hence the set below is kept by KEY and the C++ side stores by the same key.
+#
+# CLEARED WITH THE WORLD. `setup()` is called once per world and the C++ side
+# empties its own map there, so this must empty with it or the second world of
+# a session would be missing every tile the first one had sent.
+
+## Every tile key already across the seam.
+var _sent_tiles := {}
+
+## The flat wire form of everything the store holds that has not been sent:
+## `[level, tx, tz, mean, high, ...]`. Empty when there is nothing new, which
+## is most builds.
+## Takes the heightmap EXPLICITLY. `setup`'s parameter shadows the member of
+## the same name and the member is null until a build is submitted, so a
+## caller that let this reach for the member would silently send nothing.
+func _new_tiles(hm: Heightmap) -> Array:
+	if hm == null:
+		return []
+	var out := []
+	for key in hm.far_view_keys():
+		if _sent_tiles.has(key):
+			continue
+		var arrays := hm.far_view_arrays(key)
+		if arrays.is_empty():
+			continue
+		var k: Vector3i = key
+		out.append(k.x)
+		out.append(k.y)
+		out.append(k.z)
+		out.append(arrays[0])
+		out.append(arrays[1])
+		_sent_tiles[key] = true
+	return out
 
 
 # --- Stage 2's micro-gate ----------------------------------------------------

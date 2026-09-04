@@ -1369,6 +1369,7 @@ func refresh_region() -> void:
 
 	_free_distant_chunks(radius + UNLOAD_MARGIN_CHUNKS, -1, spare)
 	_refresh_flora()
+	_evict_height_tiles()
 
 	# Nearest-first, so the world grows outward from the player rather than
 	# popping in in some arbitrary order.
@@ -1378,6 +1379,35 @@ func refresh_region() -> void:
 	# has to bring both of these down; this is where they are measured.
 	_freed_last_crossing = maxi(_freed_before - _chunk_nodes.size(), 0)
 	_refresh_ms = float(Time.get_ticks_usec() - _refresh_t0) / 1000.0
+
+
+## HOOK 4 OF 4, horizon v1 Stage 1: the height tiles the player has walked away
+## from.
+##
+## THE VOXEL WORLD IS LEVEL 0'S ONLY CONSUMER UNTIL STAGE 3. Every column job
+## outside the home region asks `height_at` for ground, which builds the
+## level-0 tile it lands in; walking thirty kilometres therefore leaves a
+## hundred and twenty tiles behind it at 133 KB each. Nothing here is a
+## correctness question - a tile is a pure function of its key, so a tile
+## thrown away and asked for again is the same bytes - which is why the radius
+## can be generous and the pass can be this cheap.
+##
+## TWICE THE RADIUS THAT BUILT THEM, plus a tile: the voxel disc plus its
+## unload margin is what asks for level-0 ground, and doubling it means a
+## player walking back and forth across one boundary is not rebuilding the same
+## tile every crossing. Failure protocol item 12 is the number this exists for.
+##
+## Levels 1 and up are not evicted here and hold nothing yet: their consumer is
+## the far field, which prepares and evicts its own per the ring table from
+## Stage 3.
+func _evict_height_tiles() -> void:
+	if generator == null or generator.heightmap == null:
+		return
+	var hm: Heightmap = generator.heightmap
+	var centre := _center * Chunk.SIZE
+	var keep := 2.0 * (float((config.voxel_radius_chunks + UNLOAD_MARGIN_CHUNKS)
+		* Chunk.SIZE) + float(hm.tile_span_blocks(0)))
+	hm.evict_beyond(0, centre, keep)
 
 
 ## HOOK 3 OF 4: free, and queue. Bring the flora columns in line with where the

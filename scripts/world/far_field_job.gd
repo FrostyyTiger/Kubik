@@ -842,7 +842,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var bz0 := cz + j * step
 			if not _in_ring(bx0, bz0, step, inner, outer):
 				continue
-			if not heightmap.in_bounds(bx0, bz0):
+			if not heightmap.in_home_region(bx0, bz0):
 				continue
 
 			var bx1 := bx0 + step
@@ -1059,7 +1059,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 				# so there is no shelf for a riser to stand against. Left exactly
 				# as it was before this epic: hard rule 1 is about every edge,
 				# including the ones at the edge of the world.
-				if not heightmap.in_bounds(nbx, nbz):
+				if not heightmap.in_home_region(nbx, nbz):
 					continue
 				var nat := _cell(i + e[4], j + e[5])
 				var nt: float = _t_t[nat]
@@ -1130,7 +1130,7 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 ## by anything that decides what the world is.
 func _far_zone(bx: int, bz: int, altitude: float, ring: int, cell: int) -> int:
 	if ring == 0:
-		return generator.surface_zone_at(bx, bz, altitude)
+		return generator.surface_zone_at(bx, bz, altitude, true)
 	if not _voting:
 		return backdrop_zone(generator, bx, bz, altitude)
 	return _zone_vote(bx, bz, cell)
@@ -1215,14 +1215,14 @@ func _zone_vote(cx: int, cz: int, cell: int) -> int:
 		for dx in [-q, q]:
 			var bx: int = cx + dx
 			var bz: int = cz + dz
-			var h := heightmap.height_at_level(float(bx), float(bz), level)
+			var h := heightmap.far_height_at_level(float(bx), float(bz), level)
 			if gain > 0.0:
 				# THE PEAK GAIN IS IN THE VOTE, for the reason the zone reads a
 				# filtered height at all: the snow line has to sit where the
 				# DRAWN summit is, and the drawn summit is the mean pyramid
 				# pulled towards the maxima. A vote off the mean alone would
 				# paint the snow line tens of blocks below the ridge it is on.
-				h = lerpf(h, heightmap.height_max_at_level(
+				h = lerpf(h, heightmap.far_height_max_at_level(
 					float(bx), float(bz), level), gain)
 			zones[k] = backdrop_zone(generator, bx, bz, h)
 			k += 1
@@ -1318,13 +1318,13 @@ func _level_at(bx: int, bz: int, band: float) -> float:
 func _filtered(bx: int, bz: int, band: float) -> float:
 	var level := _level_at(bx, bz, band)
 	if level <= 0.0:
-		return heightmap.height_at(float(bx), float(bz))
-	var mean := heightmap.height_filtered(float(bx), float(bz), level)
+		return heightmap.far_height_at(float(bx), float(bz))
+	var mean := heightmap.far_height_filtered(float(bx), float(bz), level)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return mean
 	return lerpf(mean,
-		heightmap.height_max_filtered(float(bx), float(bz), level), gain)
+		heightmap.far_height_max_filtered(float(bx), float(bz), level), gain)
 
 
 
@@ -1377,7 +1377,7 @@ func _corner_y(bx: int, bz: int, coarse: float, band: float, y_offset: float) ->
 	var blend := clampf(1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / band, 0.0, 1.0)
 	if blend <= 0.0:
 		return coarse * bs + y_offset
-	var h := coarse + (generator.detail_at(float(bx), float(bz))
+	var h := coarse + (generator.detail_at(float(bx), float(bz), true)
 		+ VOXEL_TOP_BIAS_BLOCKS) * blend
 	# The offset exists to keep the far mesh UNDER voxels whose detail it does
 	# not know about. Where it does know about it, there is nothing to hide
@@ -1493,10 +1493,10 @@ func _cell_h(i: int, j: int) -> float:
 				+ Chunk.floor_div(int(bz) - ccz, coarse) * coarse + chalf)
 			bx = lerpf(bx, cbx, w)
 			bz = lerpf(bz, cbz, w)
-	v = heightmap.height_filtered(bx, bz, _t_level)
+	v = heightmap.far_height_filtered(bx, bz, _t_level)
 	var gain: float = config.far_peak_gain
 	if gain > 0.0:
-		v = lerpf(v, heightmap.height_max_filtered(bx, bz, _t_level), gain)
+		v = lerpf(v, heightmap.far_height_max_filtered(bx, bz, _t_level), gain)
 	# THE DETAIL LAYER - see the note by _t_detail. At the cell's own position,
 	# which is the geomorphed one, so the layer is boundary-stable for exactly
 	# the reason the height is.
@@ -1694,12 +1694,12 @@ static func level_at_distance(config: WorldgenConfig, d_m: float) -> float:
 static func filtered_height(heightmap: Heightmap, config: WorldgenConfig,
 		bx: float, bz: float, level: float) -> float:
 	if level <= 0.0:
-		return heightmap.height_at(bx, bz)
-	var mean := heightmap.height_filtered(bx, bz, level)
+		return heightmap.far_height_at(bx, bz)
+	var mean := heightmap.far_height_filtered(bx, bz, level)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return mean
-	return lerpf(mean, heightmap.height_max_filtered(bx, bz, level), gain)
+	return lerpf(mean, heightmap.far_height_max_filtered(bx, bz, level), gain)
 
 
 ## The zone the far mesh paints past ring 0: altitude alone, no jitter and a
@@ -1707,7 +1707,7 @@ static func filtered_height(heightmap: Heightmap, config: WorldgenConfig,
 ## which carries the reasoning.
 static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 		altitude: float) -> int:
-	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5))
+	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5), true)
 
 
 ## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
@@ -1817,8 +1817,8 @@ static func terrace_offset(heightmap: Heightmap, config: WorldgenConfig,
 ## twin of _cell_h().
 static func _cell_height_at(heightmap: Heightmap, config: WorldgenConfig,
 		bx: int, bz: int, level: float) -> float:
-	var h := heightmap.height_filtered(float(bx), float(bz), level)
+	var h := heightmap.far_height_filtered(float(bx), float(bz), level)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return h
-	return lerpf(h, heightmap.height_max_filtered(float(bx), float(bz), level), gain)
+	return lerpf(h, heightmap.far_height_max_filtered(float(bx), float(bz), level), gain)

@@ -50,6 +50,9 @@ static func run() -> int:
 		"fly speed knob": _test_fly_speed,
 		"fog switch": _test_fog_switch,
 		"teleport arithmetic": _test_teleport,
+		# STAGE 1.
+		"tile store": _test_tile_store,
+		"tile threads": _test_tile_threads,
 	}
 	var failures := 0
 	for name in tests:
@@ -81,13 +84,14 @@ static func _test_sprint_summary():
 	var bad := 0
 	var line := ("SPRINT label=x seconds=60 frames=3607 median_ms=14.25 "
 		+ "p99_ms=22.10 worst_ms=31.40 over25=3 chunks=812 far_rebuilds=9 "
-		+ "far_ms_median=214 tree_rebuilds=4 mem_mb=1180 moved_m=771 jumps=12")
+		+ "far_ms_median=214 tree_rebuilds=4 mem_mb=1180 moved_m=771 jumps=12 "
+		+ "tiles=48 tile_mb=6")
 	var got := _parse_kv(line)
 	var want := {
 		"label": "x", "seconds": "60", "frames": "3607",
 		"median_ms": "14.25", "p99_ms": "22.10", "worst_ms": "31.40",
 		"over25": "3", "chunks": "812", "far_rebuilds": "9",
-		"far_ms_median": "214", "tree_rebuilds": "4", "mem_mb": "1180", "jumps": "12",
+		"far_ms_median": "214", "tree_rebuilds": "4", "mem_mb": "1180", "jumps": "12", "tiles": "48", "tile_mb": "6",
 		"moved_m": "771",
 	}
 	for key in want:
@@ -222,6 +226,170 @@ static func _test_teleport():
 	print("teleport arithmetic: 11 positions to +/-40 km, worst %.4f m (one block is %.2f m)" % [
 		worst, bs])
 	return bad
+
+
+# --- Stage 1 ------------------------------------------------------------------
+
+## THE HEIGHT MAP HAS NO EDGE.
+##
+## Four questions, and each is a different way the store can be wrong.
+##
+##   1. GROUND EXISTS AT TEN KILOMETRES, and it is the ground the generator
+##      would make. `height_at` there must equal `height_at_block` at the same
+##      cell - because level-0 tiles are one sample per cell and their grid is
+##      the region's grid continued, so a cell-aligned read is the raw function
+##      exactly. This is the plan's own gate.
+##   2. IT IS NO LONGER THE RIM. Before tonight every position past 3 km read
+##      the nearest edge cell, so `height_at(10000, 10000)` and
+##      `height_at(20000, 20000)` were the same number. They must not be.
+##   3. A THOUSAND POSITIONS IN A FORTY-KILOMETRE DISC are finite and inside
+##      the world's altitude range. Not a spot check: a store that returns NAN
+##      for one tile in a hundred is a hole in the world that would be found by
+##      a player and not by a gate.
+##   4. THE SAME CALL TWICE IS THE SAME FLOAT. Determinism is the whole terrain
+##      contract - both machines regenerate from the seed and only edits travel
+##      - and a store whose second answer differs is two players in different
+##      worlds with neither machine reporting an error.
+static func _test_tile_store():
+	var bad := 0
+	var cfg := _canonical_config()
+	var gen := TerrainGenerator.new(SEED, cfg)
+	gen.build_heightmap()
+	var hm: Heightmap = gen.heightmap
+
+	# 1. The tile is the generator's own function, at a cell.
+	var probes: Array[Vector2] = [Vector2(10000.0, 10000.0),
+		Vector2(-12000.0, 3000.0), Vector2(20000.0, 0.0),
+		Vector2(-40000.0, 40000.0)]
+	var worst := 0.0
+	for at: Vector2 in probes:
+		# Snapped to the level-0 cell grid, which is anchored to the ORIGIN at
+		# multiples of `step` - so this position is a cell of some tile and the
+		# bilinear returns that cell exactly.
+		var bx: float = floor(at.x / float(hm.step)) * float(hm.step)
+		var bz: float = floor(at.y / float(hm.step)) * float(hm.step)
+		var got := hm.height_at(bx, bz)
+		var want := gen.height_at_block(bx, bz)
+		worst = maxf(worst, absf(got - want))
+		if absf(got - want) > 0.001:
+			print("  tile store: height_at(%.0f, %.0f) = %.5f, height_at_block = %.5f" % [
+				bx, bz, got, want])
+			bad += 1
+
+	# 2. It is not the rim any more. Two far-apart positions that used to
+	# share a clamped edge cell.
+	var a := hm.height_at(10000.0, 10000.0)
+	var b := hm.height_at(20000.0, 20000.0)
+	if is_equal_approx(a, b):
+		print("  tile store: 10 km and 20 km both read %.3f - still clamping" % a)
+		bad += 1
+
+	# 3. A thousand positions in a 40 km disc.
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 424242
+	var lo := cfg.min_altitude
+	var hi := cfg.max_altitude
+	var bad_h := 0
+	for i in 1000:
+		var ang := rng.randf() * TAU
+		var r := sqrt(rng.randf()) * 40000.0 / cfg.block_size
+		var h := hm.height_at(cos(ang) * r, sin(ang) * r)
+		if not is_finite(h) or h < lo - 0.01 or h > hi + 0.01:
+			bad_h += 1
+	if bad_h > 0:
+		print("  tile store: %d of 1000 positions in a 40 km disc are not a height" % bad_h)
+		bad += 1
+
+	# 4. Twice is the same float.
+	var repeats := 0
+	for at: Vector2 in probes:
+		if hm.height_at(at.x, at.y) != hm.height_at(at.x, at.y):
+			repeats += 1
+	if repeats > 0:
+		print("  tile store: %d positions answered differently on the second call" % repeats)
+		bad += 1
+
+	var st := hm.tile_stats()
+	print(("tile store: %d cell probes worst %.6f, 10 km %.1f vs 20 km %.1f, "
+		+ "1000 disc samples ok, %d tiles / %.1f MB built in %d ms") % [
+		probes.size(), worst, a, b, int(st["tiles"]),
+		float(st["bytes"]) / 1048576.0, int(st["build_ms"])])
+	return bad
+
+
+## A TILE BUILT ON A WORKER AND ON THE MAIN THREAD ARE THE SAME BYTES.
+##
+## The store's whole thread rule is that a tile is built OUTSIDE the lock and
+## published under it, which allows two threads to build the same tile at once
+## - harmless only if a build is a pure function of its key. This asserts that
+## it is, by building the same tile on four workers and on this thread and
+## comparing every one of the 66,564 floats.
+##
+## It also asserts what the rule is FOR: that `height_at` can be called from a
+## worker at all. Every chunk column job does, from Stage 2 on, and a store
+## that needed the main thread would deadlock the world rather than merely be
+## slow.
+static func _test_tile_threads():
+	var bad := 0
+	var cfg := _canonical_config()
+	var gen := TerrainGenerator.new(SEED, cfg)
+	gen.build_heightmap()
+	var hm: Heightmap = gen.heightmap
+
+	# The reference, on this thread.
+	hm.ensure_tile(0, 40, 40)
+	var want := hm.tile_arrays(Vector3i(0, 40, 40))
+	if want.is_empty():
+		print("  tile threads: the reference tile did not build")
+		return 1
+
+	# The same key from four workers at once, into a second store, so the
+	# comparison is between two independent builds rather than between a build
+	# and a cache hit.
+	var gen2 := TerrainGenerator.new(SEED, cfg)
+	gen2.build_heightmap()
+	var hm2: Heightmap = gen2.heightmap
+	var tasks := []
+	for i in 4:
+		tasks.append(WorkerThreadPool.add_task(
+			func() -> void: hm2.ensure_tile(0, 40, 40)))
+	for t in tasks:
+		WorkerThreadPool.wait_for_task_completion(t)
+	var got := hm2.tile_arrays(Vector3i(0, 40, 40))
+	if got.is_empty():
+		print("  tile threads: the worker tile did not build")
+		return 1
+
+	var mean_a: PackedFloat32Array = want[0]
+	var mean_b: PackedFloat32Array = got[0]
+	var high_a: PackedFloat32Array = want[1]
+	var high_b: PackedFloat32Array = got[1]
+	if mean_a.size() != mean_b.size() or high_a.size() != high_b.size():
+		print("  tile threads: sizes differ, %d/%d" % [mean_a.size(), mean_b.size()])
+		return 1
+	var differ := 0
+	for i in mean_a.size():
+		if mean_a[i] != mean_b[i] or high_a[i] != high_b[i]:
+			differ += 1
+	if differ > 0:
+		print("  tile threads: %d of %d cells differ between the two builds" % [
+			differ, mean_a.size()])
+		bad += 1
+	# And the store did not build it more than once for the four callers that
+	# arrived together - or if it did, it published one of them and not a mix.
+	print("tile threads: %d cells, %d differing, one tile from four workers" % [
+		mean_a.size(), differ])
+	return bad
+
+
+## The canonical config, as `selftest.gd` builds it. Its own copy rather than a
+## call into that file, because `selftest.gd` belongs to the other lane this
+## fortnight and this suite has to stand on its own.
+static func _canonical_config() -> WorldgenConfig:
+	var cfg := WorldgenConfig.new()
+	cfg.apply_view_preset()
+	cfg.apply_world_scale()
+	return cfg
 
 
 # --- Helpers ------------------------------------------------------------------

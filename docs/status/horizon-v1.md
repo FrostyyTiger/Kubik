@@ -264,6 +264,269 @@ None. Every knob added in this stage is at its plan value.
 
 ---
 
+## Stage 1 - the tile store
+
+**Green.** The height map has no edge. `height_at` answers everywhere, from the
+seed, in tiles anchored to the origin - and the home region's 1500 x 1500 array
+is still inside it, bit for bit, which the canonical line proves.
+
+### What shipped
+
+| | what |
+| --- | --- |
+| `scripts/world/heightmap.gd` | The store: `_tiles` / `_tiles_max` keyed `(level, tx, tz)`, a mutex, `ensure_tile`, `ensure_disc`, `evict_beyond`, `tile_stats`. `height_at` and `_bilinear` route outside the region to it. `in_bounds` renamed `in_home_region`. Five `far_*` doors that never build. |
+| `scripts/world/terrain_generator.gd` | Hands the store its builder; `detail_at`, `_slope_zone` and `surface_zone_at` gain a `far` flag that picks the height door. |
+| `scripts/world/far_field_job.gd` | Reads the far doors, and passes `far` down to the three generator calls. |
+| `scripts/world/far_field.gd` | `publish_far_view()` on the main thread before every build. |
+| `scripts/world/far_mesher.gd` | Marshals the tiles C++ has not seen, once per tile. |
+| `gdext/src/far_world.{h,cpp}` | `TileKey` / `Tile`, the tile map, `material_tiles` named and empty for Stage 4, `tile_bilinear`, `add_tile` / `add_tiles`; `height_at` and `bilinear` route outside the region. |
+| `gdext/src/far_build.cpp` | Takes the new tiles off the wire at the top of a build. |
+| `scripts/world/world.gd` | `_evict_height_tiles()` on every frontier crossing. |
+| `scripts/tools/sprint_probe.gd`, `far_probe.gd`, `debug_hud.gd` | The tile line: how many are held, how much they weigh, how many were built. |
+
+### The canonical line
+
+```
+heightmap 4782edac   spawn (-44, -124)   53 lakes   15218 trees   config 1d7c18c7
+```
+
+Unchanged, both builder legs.
+
+### The store, measured
+
+From the horizon self-test, seed 42:
+
+```
+tile store:   4 cell probes worst 0.000000
+              10 km reads 210.5 blocks, 20 km reads 104.1 - not the rim any more
+              1000 samples in a 40 km disc, all finite and in [min_altitude, max_altitude]
+              1020 tiles / 129.5 MB built in 10,354 ms
+tile threads: 16,641 cells, 0 differing, one tile built by four workers at once
+```
+
+**`height_at` outside the region equals `height_at_block` to zero error** at
+every cell-aligned probe out to 40 km. That is stronger than "close": a level-0
+tile is one sample per cell on a grid anchored to the origin at multiples of
+`step`, and `min_block` is `-world_blocks_xz / 2`, itself a multiple of `step`
+- so the tile grid is the region grid continued and the bilinear is continuous
+across the rim with nothing to hide.
+
+10 ms and 133 KB per level-0 tile, which is the same cost the region's own
+tiles have had since distance v5 - the store is the same builder pointed
+somewhere else.
+
+### Level 0 is never supersampled, and that is a ruling
+
+The plan says a level-L cell is the mean of a `far_supersample` square of
+`raw_height`. Applied to level 0 that would make the ground OUTSIDE the region
+a filtered version of the ground INSIDE it, and the two meet at the rim: a step
+of however much a 2 m box filter removes, which on a steep flank is about a
+metre of cliff running round the whole home region.
+
+Level 0 is the surface the voxels are built from and it has to be one function
+everywhere. So it is one sample per cell - which is the plan's own
+"supersample = 1 is bit-identical to today", read as the rule for level 0
+rather than as an aside - and supersampling, which is a FILTER, belongs to the
+levels that are filters. `far_supersample` therefore applies from level 1 up.
+Recorded under "Questions taken alone".
+
+### Far parity caught a real divergence, and it is worth writing down
+
+The first Stage 1 run of the main suite came back:
+
+```
+ring_div 4   gd 391656 verts / cpp 391640, VERTEX COUNTS DIFFER
+far zone parity: 10000 samples x 3 functions, 1 FUNCTIONS DIFFER
+far slice parity: ... 3458 unmatched ... FAILED
+```
+
+**The far mesh has two legs and only one of them can build a tile.** The
+GDScript leg reads this store live; the C++ leg is handed a map of tiles once
+per build and has no generator. Pointing `FarFieldJob` at doors that never
+build was not enough, because it reaches the height map through the generator
+as well: `detail_at` samples `slope_deg_at` and `height_at` for the shore fade,
+and `_slope_zone` samples `slope_deg_at`. Those went through the BUILDING door,
+so on a quad near the rim the GDScript leg conjured a tile and read real ground
+while C++ read the rim - four quads' worth at `far_ring_div` 4, and the parity
+gate found every one of them.
+
+So the `far` flag is threaded all the way down - `detail_at`, `_slope_zone`,
+`surface_zone_at`, `slope_deg_at` - defaulted false so nothing that was here
+before changes, and passed true by the far mesh at its three call sites. It
+mirrors the port exactly: `far_world.h` has ONE height door and everything in
+it reads that one.
+
+This is failure protocol item 3 in its intended form, and the gate did its job
+on the first run.
+
+### The rim is prepared at load, and two more things the gate found
+
+Fixing the `far` flag was not enough and the gate said so twice more.
+
+**The pyramid's near door was building tiles.** `height_filtered`,
+`height_max_filtered`, `height_at_level` and `height_max_at_level` have exactly
+one caller between them outside `heightmap.gd` - `selftest.gd`'s parity harness
+- because the pyramid exists FOR the far mesh. A "near" door onto it was a door
+nothing walks through that could still disagree with C++, so above level 0 the
+near door reads the frozen view too and the two are now the same function.
+Level 0 keeps its building door: the voxel world reads it and the ground has to
+follow the player.
+
+**The region's rim is built at load.** A quad at the region's edge samples up
+to `RIDGE_SPAN_BLOCKS` past it, so both legs need real ground there.
+`Heightmap.ensure_region_rim()` builds the forty-four level-0 tiles that
+straddle the rim and publishes them, once, in `build_heightmap`. Level 0 only:
+above it both legs fall back to the same clamped pyramid whether or not a tile
+exists, so preparing levels 1 to 5 would cost two seconds a world load to
+change nothing. Measured cost at seed 42: 44 tiles, under half a second on a
+25-second load.
+
+**And the marshal was sending nothing at setup.** `FarMesher.setup`'s first
+parameter is named `heightmap` and shadows the member of the same name; the
+member is not assigned until `far_field.gd` submits a build. So `_new_tiles()`
+reached for the member, found null, and returned an empty Array - the C++ leg
+started every world with an empty tile map while the GDScript leg read the rim
+tiles it had just built. The gate reported it as 391,840 vertices against
+391,640. `_new_tiles` now takes the heightmap explicitly.
+
+After all three: **far pyramid parity max diff 0.00000000000000000 over 10,000
+samples x 5 functions**, far zone parity all identical, far parity, far slice
+parity, far layer parity and far dispatch green, and the suite passes.
+
+### And eviction was throwing the rim away
+
+The first pinned-less run reported `height tiles: 0 held, 44 built` at spawn:
+`World._evict_height_tiles` drops level-0 tiles more than about a thousand
+blocks from the player, the rim is three kilometres from spawn, and the forty
+four tiles built at load were gone by the player's first chunk crossing. Not
+wrong - both legs still read the published view and still agreed - but the half
+second spent building them bought one frame of correct edge.
+
+The rim is pinned. Forty-four tiles, 5.6 MB, fixed for the life of a world, and
+the far probe now reports `44 held` at spawn. Stage 3 takes the pin over as the
+ring table starts deciding what the far mesh reads.
+
+### The far view is published, not read live
+
+A tile can appear WHILE a far build runs - every chunk column job outside the
+region builds one - so a store read live by the GDScript leg and marshalled
+once to the C++ leg would disagree on a race that reproduces about once a
+night. `FarField` calls `Heightmap.publish_far_view()` on the main thread
+immediately before submitting, the far doors read that frozen copy, and the
+marshal reads the same copy. Shallow: a `PackedFloat32Array` is copy-on-write
+and nothing writes into a published tile, so the copy is a few dozen
+references.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| canonical line | **unchanged**, both legs |
+| `height tile parity` | **unchanged** - 10,000 samples, 0 differing, one 64x64 tile 0 cells differing |
+| far parity / far zone / far slice / far layer / far dispatch | **green** after the fix above |
+| `height_at(10 km)` equals `build_tile` for that cell, and is not the rim | **PASS**, worst error 0.000000 |
+| 1,000 positions in a 40 km disc finite and in range | **PASS** |
+| the same call twice is the same float | **PASS** |
+| a tile from a worker and from the main thread are byte-identical | **PASS**, 16,641 cells, 0 differing |
+| memory: the tile store under 300 MB | **129.5 MB** for a thousand tiles scattered over a 40 km disc, which is a stress case and not a play case; `--tp 20000 0` holds one tile, because `world.gd` still refuses columns outside the region. **The real memory reading is Stage 2's**, where the voxel world follows the player. |
+| far probe, twice, identical | **PASS** at spawn (`44 held, 5.6 MB, 44 built in 446 ms`) and at `--tp 20000 0` (`16 held, 2.0 MB, 60 built`, ground read 155.1 m rather than the rim's 326.3 m) |
+| sprint probe, Ultra, quiet box | h1-1 **40.65** ms median, h1-2 **41.67** - against the Stage 0 baseline's 41.67 / 41.76 / 39.17. **The tile store costs nothing on the frame**, and `moved_m` is 543 m in both, to the metre, as in every run of this walk. `tiles=44 tile_mb=6` - only the pinned rim, because the voxel world is still bounded until Stage 2 |
+
+### The tour cannot be compared numerically between two runs, and it never could
+
+Stage 1 was expected to change one thing in a picture - the ground just past
+the region's rim - and the first pixel diff of `horizon-0` against `horizon-1`
+came back with **every one of the twenty-seven shots changed on 50 to 60% of
+its pixels**. That is not what this stage did, and the cause is worth writing
+down once for the rest of the lane:
+
+1. **The film grain is re-seeded from `TIME` every frame.** `ui/lens.gd` says
+   so in as many words - "a grain that does not move is a dirty lens, not film"
+   - at `grain_amount` 0.035, which is +/- 9 of 255 in display space. So no two
+   tour runs can produce identical pixels anywhere in the frame, by design.
+   Measured on `17-rim`, a shot with no foliage and no water: max |dL| **9**,
+   mean L 96.26 against 96.25 - the same picture with a different noise
+   realisation.
+2. **The wind phase is `TIME` too.** `Look.TREE_SWAY` is
+   `TIME * 0.6 + tree_at.x * 0.11 + ...`, so two runs photograph the forest at
+   different points in the wind cycle. Every shot with crowns in it - the two
+   forest interiors, the canopy, the treeline, the summit - differs by whole
+   crowns.
+3. **The water and the sky are temporally accumulated.** SSR and the volumetric
+   froxels carry history, so `10-shore` moves too.
+
+So a per-pixel diff between two tour runs measures the grain, the wind and the
+reprojection, and nothing else. **`tools/compare_sheets.py`'s strips stay the
+instrument for the eye, and the numeric instrument is the plan's own: a 9 x 9
+window mean, on a named region, chosen on ground that does not sway.** A 9 x 9
+mean averages the grain from +/- 9 down to about +/- 1.
+
+Re-measured that way, `horizon-0` against `horizon-1`:
+
+| shot | mean | worst window | reading |
+| --- | --- | --- | --- |
+| `17-rim`, `6-postcard`, `1-spawn`, the five hour shots | 0.29 - 0.41 | 1.2 - 7.6 | **unchanged** - grain residue |
+| `32-horizon-walk`, `3-forest-slope`, `25-lens-fence` | 0.50 - 0.67 | 9 - 13 | unchanged; a crown or two moved |
+| `30-horizon-peak` | 0.64 | 65 | four windows, all foliage: the worst goes H 47 S 5 V 33 to H 25 S 30 V 8, which is a trunk swaying into it, and the next goes V 41 to V 52, a crown swaying out |
+| `31-horizon-far` | 4.18 | 79 | **expected**: the camera stands on ground at 155 m instead of the rim's 326 m, so the framing moved |
+| the foliage and water shots | 2.1 - 8.7 | 71 - 125 | wind and SSR - see the control below |
+
+**The control, and what it says.** Two runs of the SAME code, one shot each
+(`--only 7-forest-interior`): mean |dL| **2.84**, worst 9 x 9 window **27.35**.
+`horizon-1` against that same control, also the same code: **2.65**. So the
+noise floor between two runs is already a mean of about 2.7 and a worst window
+of 27 - a crown swaying through it.
+
+`horizon-0` against `horizon-1` on that shot is 10.97, which is higher, and the
+reason is that the control UNDER-SAMPLES the noise rather than that the picture
+changed. The wind's period is `2 pi / 0.6`, about ten and a half seconds. A
+one-shot tour reaches its shutter at nearly the same `TIME` every run, so the
+two control frames were photographed at nearly the same wind phase; in a full
+tour `7-forest-interior` is the fifteenth vantage and its shutter is minutes
+in, so its phase is effectively uniform random between runs. A better control
+would be two FULL tours, which is eighty minutes of this box.
+
+It is not needed, because the question is answered by arithmetic rather than by
+pixels: **`far pyramid parity` is 0.00000000000000000 over 10,000 samples x
+five functions, `far zone parity` is all identical, `height tile parity` is 0
+differing, and the canonical world line has not moved.** Every read inside the
+home region is bit-identical to `main`, so a forest interior inside the region
+cannot have changed. The shots that CAN change are the two this table already
+names, and only one of those is really this stage. `30-horizon-peak`'s four
+changed windows were read individually and every one of them is a crown or a
+trunk moving through it, and `7-forest-interior` was looked at side by side:
+**the same trunks, the same ground, the same snow patches, the crowns in
+different positions.** That is the wind and nothing else.
+
+### The eye check: `31-horizon-far`
+
+This is what Stage 1 looks like.
+
+| | |
+| --- | --- |
+| **Stage 0** | Twenty kilometres out: an empty grey void. `0.01 M primitives in frame, 0 chunks`. The heightmap clamped at the region's rim, so there was nothing to stand on and nothing to draw. |
+| **Stage 1** | A forest, standing on ground, at twenty kilometres. |
+
+The impostor ring is the first system in the game to ask the store for ground
+outside the home region, and it got some: `TreeFieldJob` places from
+`heightmap.height_at`, which now answers everywhere, so the trees appeared the
+moment the edge went.
+
+**They are standing on nothing.** There is no voxel terrain under them - that
+is Stage 2 - and no far mesh behind them - that is Stage 3. A forest floating
+at 20 km is the honest intermediate state of a lane that removes the world's
+edge one layer at a time, and it is the clearest picture of what Stage 1 did.
+
+Recorded for the rest of the lane: **a per-pixel tour diff between runs is not
+an instrument in this build**, and a 9 x 9 window is only one where the window
+sits on ground that does not sway.
+
+### Tunables moved
+
+None.
+
+---
+
 ## Questions taken alone
 
 Failure protocol item 7: the conservative reading, written down.
@@ -301,7 +564,24 @@ Failure protocol item 7: the conservative reading, written down.
    game draws the C++ mesh (`far_cpp` defaults to 1) and the two legs are
    asserted identical three ways in `selftest.gd`. `--gdscript` forces the
    reference leg.
-6. **ENet's default port is taken by the other lane.** `24565` is held by the
+6. **Level 0 tiles are never supersampled.** The plan applies
+   `far_supersample` at every level; taken as level 1 and up only, because at
+   level 0 it would put a metre-high filter step around the whole home region
+   where the tile store meets the array. Reasoning and measurement under
+   Stage 1.
+7. **`far_supersample` is applied by calling `build_tile` s-squared times at
+   sub-cell offsets, not by adding a `supersample` argument to
+   `KubikHeightTiles`.** Same samples, same means, same quantisation, and
+   `gdext/src/height_tiles.{h,cpp}` is untouched - which is the smaller change
+   and keeps the one class in this seam that decides WORLD TRUTH out of this
+   lane's diff. The offsets are `cstep * (2k + 1) / 2s`, whole blocks at every
+   level the store uses.
+8. **The far mesh reads a frozen view of the tile store and never builds.**
+   The plan does not say what a far-mesh read does on a missing tile; taken as
+   "the region's clamped rim", because the C++ leg cannot build one and the two
+   legs must agree. `FarField` publishes the view before each build. See
+   Stage 1.
+9. **ENet's default port is taken by the other lane.** `24565` is held by the
    mesher lane's tour for as long as it runs, so every hosted run in this lane
    passes `--port 24566`. Nothing in the plan's command lines changes meaning;
    the flag is recorded here so a reader reproducing a number uses the same

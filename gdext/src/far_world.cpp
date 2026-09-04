@@ -83,6 +83,14 @@ void World::setup(const Dictionary &d) {
 	min_block = (int)(int64_t)d.get("min_block", 0);
 	max_block = min_block + (cols - 1) * hm_step;
 	max_level = (int)(int64_t)d.get("max_level", 5);
+	tile_blocks = (int)(int64_t)d.get("tile_blocks", 512);
+	// THE TILE STORE IS EMPTIED, NOT MERGED, on a world load. Tiles are keyed
+	// to the ORIGIN, so two worlds' tiles have the same keys and different
+	// ground; carrying one world's over into the next is the one way this
+	// store can be wrong rather than merely absent.
+	tiles.clear();
+	material_tiles.clear();
+	add_tiles(d.get("tiles", Array()));
 
 	levels.clear();
 	max_levels.clear();
@@ -131,6 +139,48 @@ void World::setup(const Dictionary &d) {
 			(int)max_levels.size() >= max_level &&
 			(int)level_cols.size() >= max_level &&
 			zone_colors.size() >= 7;
+}
+
+// ONE TILE OFF THE WIRE. The two arrays are copied for the reason the pyramid
+// is: `tile_bilinear` indexes them tens of millions of times a build and a
+// PackedFloat32Array read pays a copy-on-write check every time.
+//
+// A SHORT TILE IS DROPPED RATHER THAN STORED. `tile_bilinear` checks the size
+// and answers NAN, and every caller then reads the region's rim, so a
+// marshalling bug is a far mesh that looks like the old one instead of a
+// crash - which is the same trade `is_ready()` makes for the pyramid.
+void World::add_tile(int level, int tx, int tz, const PackedFloat32Array &mean,
+		const PackedFloat32Array &high) {
+	const int64_t want = (int64_t)TILE_STRIDE * (int64_t)TILE_STRIDE;
+	if (mean.size() != want || high.size() != want) {
+		return;
+	}
+	TileKey key;
+	key.level = level;
+	key.tx = tx;
+	key.tz = tz;
+	Tile t;
+	t.mean.resize((size_t)want);
+	t.high.resize((size_t)want);
+	const float *mp = mean.ptr();
+	const float *hp = high.ptr();
+	for (int64_t i = 0; i < want; i++) {
+		t.mean[(size_t)i] = mp[i];
+		t.high[(size_t)i] = hp[i];
+	}
+	tiles[key] = t;
+}
+
+// The wire form: a flat Array of [level, tx, tz, mean, high, ...]. Flat rather
+// than an Array of Dictionaries because a build sends up to a few dozen of
+// these and five Variants each is cheaper than five hash lookups each.
+void World::add_tiles(const Array &p_tiles) {
+	for (int64_t i = 0; i + 4 < p_tiles.size(); i += 5) {
+		add_tile((int)(int64_t)p_tiles[i], (int)(int64_t)p_tiles[i + 1],
+				(int)(int64_t)p_tiles[i + 2],
+				(PackedFloat32Array)p_tiles[i + 3],
+				(PackedFloat32Array)p_tiles[i + 4]);
+	}
 }
 
 } // namespace kubik
