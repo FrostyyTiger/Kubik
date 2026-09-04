@@ -485,8 +485,8 @@ A free-fly / noclip toggle exists behind a debug key. It is a tool, not a mode.
 is very, very big: you stand in a valley, see ranges beyond ranges with no
 fog wall, and you could walk to any of them. No world edge, no "the map ends
 here". The ruling is about the world model, not today's build: generation
-does not have to be infinite yet - the current build still generates one
-fixed 3 x 3 km region, and that is fine as a stage - but **no new system may
+is on demand in origin-anchored tiles since horizon v1 (2026-09-04, D84;
+before it, one fixed 3 x 3 km region was the stage) - and **no system may
 bake in a world edge or a global-extent assumption.** Filling all that space
 so it stays fun is deliberately deferred ("get to filling it with things
 later"); the size is core and comes first.
@@ -567,7 +567,7 @@ small world - it reads as a broken one.
 | Tree | 13 - 21 m (old growth 19.5 - 31.5 m) | 26 - 42 m spruce, beech, larch |
 | Grass tuft, flower | 15 - 55 cm | the same, at 1:1 |
 | Largest lake | ~116 m across | ~400 m tarn |
-| Mountain relief | ~350 m | ~1400 m |
+| Mountain relief | ~350 m until the world-truth break (D45: real relief, the lane after horizon v1) | ~1400 m |
 
 The player is the deliberate exception, at 2 m against a real 1.75 m. A
 quarter-scale player would be 44 cm tall and everything about the camera, the
@@ -674,20 +674,20 @@ does not, and 8.7 million pieces of ground cover at eight times the voxels is
 not a cost worth paying for the tuft. A plant is still read against the
 player, at 1:1, which is the consistency the eye actually checks.
 
-**Full scale was considered and rejected, in writing, so it is not
-relitigated.** A real 1400 m mountain needs roughly a 6 km base, which does not
-fit inside a 3 km world at all; a 15 km world that could hold one has a 21 km
-diagonal, about 35 minutes' sprint corner to corner. That is the failure mode
-that damaged Cube World's 2019 release.
-
-*The 2026-08-31 unbounded ruling does not reopen this. The half of the
-argument that leaned on the world's size is gone; the traversal half - what a
-player can reach on foot in a session - still binds, and 1:4 is still what
-makes a mountain reachable.*
+**Full scale was rejected here on 2026-08-24, and the rejection was
+overturned by the bible on 2026-09-03 (D45: real relief, 1,400 to 2,500 m,
+with the vista rule) and by the north star on 2026-09-04 (D84).** The old
+argument had two halves. The size half - a real mountain does not fit in a
+3 km world - is gone with the world's edge. The traversal half - what a
+player can reach on foot - is answered by the bible and not by a smaller
+world: machines with a range (D73), airships (D24, D81), and a world worth
+crossing. The paragraph that stood here is kept in git history only. Relief
+changes with the world-truth break, the lane after horizon v1.
 
 Rendering was never the constraint. Since terrain v2 the far field is built in
 LOD rings, so its cost is roughly logarithmic in view distance - 80k vertices at
-600 m, 82k at 800 m. **Traversal was the constraint**, and it still is.
+600 m, 82k at 800 m. **Traversal was the constraint**; since D45 and D84 it is the bible's to
+answer with machines and airships, never the world's size.
 
 *Distance v3 (2026-08-31) finally spent that logarithm.* High and Ultra see
 3,200 m of fog over a 3,840 m far radius, which covers the whole region's rim
@@ -698,8 +698,10 @@ ladder promised. The numbers above are the terraced far field's, which is
 
 ### Traversal
 
-The map diagonal is 4243 m and the target is under six minutes at sprint. Walk
-is 5 m/s, sprint is 2.6x that at 13 m/s, Shift held. Alt is a precision crawl
+The home region's diagonal is 4,243 m; the old target of six minutes at
+sprint corner to corner belonged to a bounded map and is retired (2026-09-04,
+D84). Walk is 5 m/s, sprint is 2.6x that at 13 m/s, Shift held; a developer
+teleport and a fast fly exist for testing (horizon v1, Stage 0). Alt is a precision crawl
 for lining up a shot.
 
 A world nobody wants to cross is smaller than a world they do, whatever the map

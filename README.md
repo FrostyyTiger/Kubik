@@ -37,16 +37,17 @@ Four. Every feature serves at least one, and contradicts none.
 Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
 what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
 
-> **Status: early, walkable, and it has a look.** A 3 x 3 km Swiss
-> pre-Alpine landscape at 1:4 scale - the first generated region of a world
-> that is by design unbounded - meadow valleys, seven tree species that
-> clump and leave clearings, bare rock, snow peaks, lakes in real basins, 8.7 M
-> pieces of ground cover, fireflies after dark - drawn today as an Art Deco
-> travel poster (one three-tone lighting ramp under everything, banded fog, a
-> sky with rays), with the direction re-cut 2026-09-01 to **Art Deco
-> fantasy**: one painted-voxel register at every distance, Deco as the
-> grammar of the built world, nature as sculpted-vox naturalism
-> (`docs/DESIGN.md` § Art direction). Four playable races in stocky voxel
+> **Status: early, walkable, lit by the engine, and about to get big.** A
+> Swiss pre-Alpine landscape with no edge - generated on demand in
+> origin-anchored tiles and drawn to the horizon once horizon v1 lands
+> (`docs/plans/horizon-v1.md`, running from 2026-09-04; until then one home
+> 3 x 3 km, and the relief stays 1:4 until the world-truth break) - meadow
+> valleys, seven tree species that clump and leave clearings, bare rock, snow
+> peaks, lakes in real basins, 8.7 M pieces of ground cover, fireflies after
+> dark - lit since light v1 (2026-09-03) by a real sun with soft sky-tinted
+> shadows, a physical sky, four hours plus eerie, volumetric fog and a film
+> lens (`docs/status/light-v1.md`), under the bible's art pillars
+> (`../Kubik-bible/style-bible/00-pillars.md`). Four playable races in stocky voxel
 > bodies with a creation screen, seen
 > by every other player. Nothing lives in the world yet, nothing can be broken
 > or placed, and the director does not exist: the next playtest is the wolf,
@@ -128,9 +129,11 @@ written against the wrapper, and "swap the transport" would quietly become
 ### 5. Chunks and the two-scale world
 
 Voxels exist only in a disc around the player — real, editable, collidable
-terrain. Everything beyond is one low-poly mesh built from a **coarse
-heightmap** at 2 m resolution — today a single global one covering the whole
-3 km region. That coarse heightmap is also what makes lakes possible: a basin
+terrain. Everything beyond is the far field: low-poly meshes built from a
+**coarse heightmap** at 2 m resolution and coarser, kept as origin-anchored
+tiles at every level of detail and generated on demand (horizon v1; until it
+lands, one array covering the home 3 km, and one mesh per ring and sector
+after it). That coarse heightmap is also what makes lakes possible: a basin
 is a depression with a rim all the way round it, and you cannot see one by
 looking at a chunk.
 
@@ -139,8 +142,10 @@ the bounded decision that used to be recorded here — the ruling and the
 constraints it inherits are in `docs/DESIGN.md` § World). What survives of
 the old argument is the mechanism: lakes need a heightmap wider than a basin,
 so an unbounded world gets **regional heightmap tiles**, not no heightmap.
-The current single-region build is a stage, and no new system may assume a
-world edge or a global extent.
+No system may assume a world edge or a global extent; the home 3 km is
+bookkeeping for lakes and spawn until the world-truth break, never an edge.
+The north star (D84, 2026-09-04): the world as big as the view, the view to
+32 km, 60 FPS at max settings on mid hardware.
 
 Chunks are 16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per voxel, one
 contiguous allocation, serialises as-is. Index order is `x + z*16 + y*256`.
@@ -617,11 +622,10 @@ the point where they need replacing.
 
 ## Roadmap
 
-- Block interaction: voxel raycast, break and place, through the existing
-  request path
-- Threaded chunk generation
-- Texture atlas with per-face UVs
-- GodotSteam transport
+The queue is `TODO.md`; the order and the reasons are `RECONCILIATION.md`
+§ 9 and `docs/ROADMAP.md`. Running now (2026-09-04): horizon v1 and mesher
+v1, in parallel. Next: the world-truth break (real relief), then people and
+fire, buildings, the round 3 scene. No texture atlas, ever (pillar 2).
 
 Done in terrain v1: the real player and collision, chunk streaming, greedy
 meshing and threaded mesh building.

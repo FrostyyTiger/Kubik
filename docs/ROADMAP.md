@@ -239,6 +239,8 @@ the campfire exist. v0 1 night; v1 2+ nights and research.
 
 ## 3. Sequence and parallelism
 
+*2026-09-04 (D84): the reconciliation's order is the queue now, and Marcel pulled the horizon to the front. Running: horizon v1 `||` mesher v1 (`docs/plans/horizon-v1.md`, `docs/plans/mesher-v1.md`). Next: the world-truth break (real relief D45, rings from the capital D44, lakes and zones per tile, the generator's truth in C++), then people and fire, buildings, the round 3 scene. The waves below are the queue behind those and their internal order still holds.*
+
 Rule for parallel lanes: zero-overlap file lists, and `game.gd` has ONE owner
 per wave - the other lanes add a new file plus a one-line hook that Marcel
 merges by hand.

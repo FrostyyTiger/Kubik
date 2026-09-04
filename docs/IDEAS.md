@@ -6,6 +6,15 @@ Seeded once from the pillars, then re-ordered when terrain v1 was scoped. From
 here on this list is filled by what a playtest taught us.
 
 
+**Horizon v1 and mesher v1** launched 2026-09-04 in parallel on ganymede, after
+Marcel's north star ruling (D84): the world as big as the view, the view to
+32 km, 60 FPS at max settings on mid hardware. Horizon v1 builds the tile store,
+voxels anywhere, the far field to 32 km in persistent pieces, one colour
+source, the fog ramp, the floating origin and the sprint probe;
+mesher v1 is phase 1b, the chunk mesher in C++. Next after them: the
+world-truth break (real relief D45). [plans/horizon-v1.md](plans/horizon-v1.md),
+[plans/mesher-v1.md](plans/mesher-v1.md).
+
 **Trees v3 - the forest becomes models, the whole way out** ran in one night,
 2026-09-01/02, on `feat/trees-v3`, all eleven stages.
 [plans/trees-v3.md](plans/trees-v3.md), [status/trees-v3.md](status/trees-v3.md).

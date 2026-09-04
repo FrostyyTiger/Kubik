@@ -1,5 +1,13 @@
 # Status
 
+**Running now (launched 2026-09-04):** horizon v1 (`feat/horizon-v1`,
+`docs/plans/horizon-v1.md`) and mesher v1 (`feat/mesher-v1`,
+`docs/plans/mesher-v1.md`), in parallel on ganymede in tmux `horizon-v1` and
+`mesher-v1`; their status docs are `docs/status/horizon-v1.md` and
+`docs/status/mesher-v1.md` once each lane's Stage 0 lands. Marcel's north star
+for them (D84): the world as big as the view, the view to 32 km, 60 FPS at max
+settings on mid hardware. Next after them: the world-truth break.
+
 The latest run is **light v1**, two nights, unattended on ganymede, on
 `feat/light-v1`: `docs/status/light-v1.md`.
 **The engine lights the world, and the poster is gone.**

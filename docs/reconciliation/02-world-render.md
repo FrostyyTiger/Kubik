@@ -128,6 +128,13 @@ Two internal inconsistencies the bible resolves:
   the bible's ~15/block = 3.3 cm from the bought templates, `03-DECISIONS.md:17`) —
   the character audit's problem, but a real conflict.
 
+*Resolved in direction on 2026-09-04 (D84): `docs/plans/horizon-v1.md` builds
+the 32 km far field, the origin-anchored tile store, one colour source, the
+fog ramp and the floating origin without touching what a seed produces; real
+relief follows in the world-truth break, the lane right after it. The caveat
+above - ring 4 nearly free only inside the region - is exactly why the tile
+store comes first.*
+
 ### C3. GDScript worker threads are serialised. This is the fact that decides the C++ question.
 
 Measured, twice, in two epics:
