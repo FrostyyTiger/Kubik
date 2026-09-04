@@ -138,7 +138,7 @@ payload.
 
 **The director is a client too.** Every verb it proposes is validated and
 applied through this exact path, and it never touches state directly. That is
-habit 3 in `CLAUDE.md` and principle 4 in the bible's `director/`.
+habit 3 in `CLAUDE.md` and principle 4 in `../Kubik-bible/director/00-principles.md`.
 
 ### 3. Terrain is never sent, only edits
 
@@ -223,7 +223,7 @@ unattended C++ epic.
 The fourth pillar, as architecture. The game has a **Director**: a model that
 reads what the party's journey means and improvises the path to authored
 stakes - which fragment you find, which rumour points where, how a quest's
-middle unfolds. Its doctrine is the bible's `director/` folder, pointed at by
+middle unfolds. Its doctrine is `../Kubik-bible/director/`, pointed at by
 `docs/DIRECTOR.md`; it arrives late, at phase 6 of `RECONCILIATION.md` § 9.
 What it asks of the code is decided now, because it is cheap now and a rewrite
 later:
