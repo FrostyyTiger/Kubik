@@ -7,6 +7,11 @@
 > own light under bible pillar 2. Kept for its arguments and its
 > measurements, which is why light v1 could be written; not for its numbers,
 > which are dead. The run that replaced it is `docs/status/light-v1.md`.
+>
+> **Its SHAPE is still the work-order template** (`CLAUDE.md` § Working
+> order): contract, binding pre-run answers, tunable versus not, failure
+> protocol, gates. `light-v1-tech.md`, `mesher-v1.md` and `horizon-v1.md`
+> are all written in it.
 
 
 This is the work order for `docs/plans/look-v2.md`, written so that one agent

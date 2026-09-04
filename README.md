@@ -1,62 +1,99 @@
 # Kubik
 
+Rewritten 2026-09-04 against the bible as of D84; where an older document
+disagrees, the bible wins. The § Running it section is owned by the horizon v1
+and mesher v1 lanes and was not touched by that rewrite.
+
 ## What is this
 
-Kubik is a 2-4 player co-op voxel exploration game (designed and tuned for
-pairs) set in a cozy-but-eerie fantasy Alps. An authored world with a
-generative director: the game quietly notices what your party does and
-answers at the campfire. Open source (MIT), Godot 4, built by two friends (and
-playtested by four) as a learning project in both gamedev and AI-native game
+Kubik is a co-op voxel exploration game for two, in a real-sized fantasy Alps
+that fell a long time ago and is still magnificent. You are small, it is huge,
+you will not understand all of it, and you keep walking. An authored world with
+a generative director: the game quietly notices what your party does and
+answers at the campfire. Open source (MIT), Godot 4 with the hot paths in C++,
+built by two friends as a learning project in both gamedev and AI-native game
 design.
 
-**Core loop:** we roam a generated alpine world together, fight what lives in
-it, and grow stronger from what it drops, pushing further from the safety of
-firelight into stranger territory - while the world reads our journey and
-answers: fragments that reflect our deeds, rumours that point somewhere,
+**The world.** Three ages. The Builders, gone, who tried to gather the magic of
+the whole land into one place and broke it - their black-and-gold monuments
+still stand and still run. The mountain folk, fading, who hold the high places
+and treat the crystals as sacred. The Engineers, rising, who hold the one
+valley with coal and iron and have learned to **burn** crystals for power, a
+little, because that is how they see a crystal's use. A burning crystal drives
+an engine and fades as it does, and the magic it held is gone from the world
+for good. The fall is coming again, slowly, and nobody says so. Nobody is the
+villain.
+
+**Core loop:** two people walk out from a campfire into a world that gets
+stranger the further they get from the capital, learn from both peoples what
+neither will finish, and come back to a fire. The world reads the journey and
+answers: fragments that reflect what you did, rumours that point somewhere,
 quests whose middles nobody - including the developers - has seen before.
 
-### Design pillars
+The tone is the thing above everything and it is one file:
+[`../Kubik-bible/00-TONE.md`](../Kubik-bible/00-TONE.md) (D38, D39, D40).
+Warmth and earned humour between the two players are welcome; the world is
+grave, the friendship is not. Nothing cute, no comic relief, no villain with a
+speech, no frantic survival, no graphic violence, no horror dressing.
 
-Four. Every feature serves at least one, and contradicts none.
+### Gameplay pillars
 
-1. **BETTER TOGETHER.** Built for pairs, room for four. Encounters assume two
-   bodies; 3-4 players handled by simple scaling. Cap constant: 4.
-2. **TENSE OUT, COZY IN THE LIGHT.** Danger scales with distance, altitude,
-   and darkness. Firelight and daylight are the warm register. Death costs
-   time, not progress. No base building.
-3. **THE WORLD IS THE CONTENT.** Progression is ranging further. Distance is
-   the difficulty, strangeness, and content axis. The scale register is
-   monumental: an unbounded world of continents, massive factions, and built
-   things that dwarf the player - it must feel huge, and you small in it
-   (`docs/DESIGN.md` § World).
-4. **THE WORLD ANSWERS.** Authored truth, generative direction. A semantic
-   director reads what the journey MEANS and responds through opportunity,
-   never railroading. The tech is invisible: we market the experience, never
-   the AI. Doctrine in [docs/DIRECTOR.md](docs/DIRECTOR.md).
+Four. Every feature serves at least one and contradicts none. They sit under
+the tone and beside the bible's five art pillars
+([`../Kubik-bible/style-bible/00-pillars.md`](../Kubik-bible/style-bible/00-pillars.md)).
 
-Settled details live in [docs/DESIGN.md](docs/DESIGN.md). What is queued and
-what is deferred lives in [docs/IDEAS.md](docs/IDEAS.md).
+1. **BETTER TOGETHER.** Two people who walk between. The game allows four and
+   is designed for two (D46): every encounter, rumour and line of fiction is
+   written for two, and **there is no party frame, ever.** Solo is a dev
+   convenience, never a balanced mode.
+2. **TENSE OUT, WARM AT THE FIRE.** Danger and pacing scale with distance from
+   the current campfire, with eerie weather, and with distance from the
+   capital (D35). Firelight and daylight are the warm register: light, regen,
+   respawn. **Every dread beat ends at a fire.** Death costs time, not
+   progress, and is quiet and remembered (D39). No base building: players place
+   objects, never terrain. No timers, no hunger bars, no alarms.
+3. **THE WORLD IS THE CONTENT.** Progression is ranging further. What the
+   world IS comes from distance from the Engineers' capital, in rings (D44,
+   D26); what it FEELS like right now comes from the current fire (D35). The
+   register is monumental against tiny, in a real-sized Alps (D45), seen to
+   the horizon (D41, D84).
+4. **THE WORLD ANSWERS.** Authored truth, generative direction. The game owns
+   all truth and a structured event log; at campfire rests a model proposes
+   small, validated actions through five verbs, and the game is complete and
+   fun with it off. Doctrine:
+   [`../Kubik-bible/director/`](../Kubik-bible/director/), pointed at by
+   [docs/DIRECTOR.md](docs/DIRECTOR.md).
 
-> **Status: early, walkable, lit by the engine, and about to get big.** A
-> Swiss pre-Alpine landscape with no edge - generated on demand in
-> origin-anchored tiles and drawn to the horizon once horizon v1 lands
+The technical truth - the renderer, the grains, the camera, physics,
+multiplayer - is [docs/DESIGN.md](docs/DESIGN.md). What in this repo stays, is
+adapted or is ripped, and in what order, is
+[RECONCILIATION.md](RECONCILIATION.md). What is queued is [TODO.md](TODO.md)
+and [docs/IDEAS.md](docs/IDEAS.md).
+
+> **Status: walkable, lit by the engine, meshed in C++, and about to get big.**
+> An alpine landscape with no edge - generated on demand in origin-anchored
+> tiles and drawn to the horizon once horizon v1 lands
 > (`docs/plans/horizon-v1.md`, running from 2026-09-04; until then one home
-> 3 x 3 km, and the relief stays 1:4 until the world-truth break) - meadow
-> valleys, seven tree species that clump and leave clearings, bare rock, snow
-> peaks, lakes in real basins, 8.7 M pieces of ground cover, fireflies after
-> dark - lit since light v1 (2026-09-03) by a real sun with soft sky-tinted
-> shadows, a physical sky, four hours plus eerie, volumetric fog and a film
-> lens (`docs/status/light-v1.md`), under the bible's art pillars
-> (`../Kubik-bible/style-bible/00-pillars.md`). Four playable races in stocky voxel
-> bodies with a creation screen, seen
-> by every other player. Nothing lives in the world yet, nothing can be broken
-> or placed, and the director does not exist: the next playtest is the wolf,
-> the marmot and the eagle.
+> 3 x 3 km, and the relief stays a quarter of real until the world-truth
+> break) - meadow valleys, seven tree species that clump and leave clearings,
+> bare rock, snow peaks, lakes in real basins, 8.7 M pieces of ground cover,
+> fireflies after dark. **Lit since light v1** (merged 2026-09-04) by a real
+> sun with soft sky-tinted shadows, a physical sky, four hours plus eerie,
+> volumetric fog, reflective water and a film lens
+> (`docs/status/light-v1.md`), under the bible's art pillars. **Meshed in C++
+> since mesher v1** (merged 2026-09-04, phase 1b, D56):
+> `docs/status/mesher-v1.md`.
+>
+> The character path is the next thing to change. The four playable races and
+> their creation screen still run, and they are on the rip list: under D37 and
+> D70 there is one people, nobody changes, and the characters are the bought
+> viking, dwarf and elf templates used as they are, reskinned clothes only
+> (D1). Nothing lives in the world yet, nothing can be broken or placed, and
+> the director does not exist.
 >
 > Verified on Godot 4.7.2: both peers generate an identical world from the same
-> seed and config (heightmap hash `76cccdb6`, 73,675 trees on seed 42), the
-> world and character self-tests pass, and the world is clean of runtime
-> errors. See `STATUS.md` for the latest run.
+> seed and config, the world and character self-tests pass, and the world is
+> clean of runtime errors. See `STATUS.md` for the latest run.
 
 ---
 
@@ -99,6 +136,10 @@ Identity always comes from `multiplayer.get_remote_sender_id()`, which the
 network layer assigns and a client cannot forge. Never from a peer id in the
 payload.
 
+**The director is a client too.** Every verb it proposes is validated and
+applied through this exact path, and it never touches state directly. That is
+habit 3 in `CLAUDE.md` and principle 4 in `../Kubik-bible/director/00-principles.md`.
+
 ### 3. Terrain is never sent, only edits
 
 Both machines generate identical terrain locally from a shared 64-bit seed **and
@@ -113,6 +154,10 @@ That makes generation determinism a hard requirement. No `randf()` in
 `TerrainGenerator`, no dependence on iteration order, no floats that might round
 differently. Break it and players quietly end up in different worlds.
 
+**Both legs quantise every height to 1/1024 of a block** as their last step, so
+gcc and MSVC cannot produce two worlds. That rule survives every C++ rung and
+is asserted on every self-test run (D42, D56).
+
 ### 4. Networking lives behind a seam
 
 `NetTransport` is an interface with one job: build a configured
@@ -126,71 +171,94 @@ Wrapping RPCs in a custom message layer would mean every gameplay system is
 written against the wrapper, and "swap the transport" would quietly become
 "rewrite the game".
 
-### 5. Chunks and the two-scale world
+### 5. The world is as big as the view
 
-Voxels exist only in a disc around the player — real, editable, collidable
-terrain. Everything beyond is the far field: low-poly meshes built from a
-**coarse heightmap** at 2 m resolution and coarser, kept as origin-anchored
-tiles at every level of detail and generated on demand (horizon v1; until it
-lands, one array covering the home 3 km, and one mesh per ring and sector
-after it). That coarse heightmap is also what makes lakes possible: a basin
-is a depression with a rim all the way round it, and you cannot see one by
-looking at a chunk.
+**The north star (D84, 2026-09-04).** Three things outrank every knob in this
+repo:
 
-The world itself is **unbounded by design** (ruled 2026-08-31, overturning
-the bounded decision that used to be recorded here — the ruling and the
-constraints it inherits are in `docs/DESIGN.md` § World). What survives of
-the old argument is the mechanism: lakes need a heightmap wider than a basin,
-so an unbounded world gets **regional heightmap tiles**, not no heightmap.
-No system may assume a world edge or a global extent; the home 3 km is
-bookkeeping for lakes and spawn until the world-truth break, never an edge.
-The north star (D84, 2026-09-04): the world as big as the view, the view to
-32 km, 60 FPS at max settings on mid hardware.
+1. **The world is as big as the view.** Terrain on demand, no edge, no region.
+2. **The view reaches the horizon.** 32 km on a clear day, fog as a ramp
+   normalised to that distance and never a wall, nothing pops in.
+3. **The frame holds.** 60 FPS at max settings on mid hardware - an RTX
+   3070 Ti - measured while sprinting through forest.
 
-Chunks are 16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per voxel, one
-contiguous allocation, serialises as-is. Index order is `x + z*16 + y*256`.
+**Unbounded terrain, ringed content (D44).** The terrain is seeded and has no
+wall and no edge. **No system may bake in a world edge, a global heightmap or
+a global-extent assumption.** The content is ringed from the Engineers'
+capital and ends at the Builders' city, the last authored place; beyond it the
+seeded terrain goes on as sea and eerie weather with nothing in it. Nothing
+generates "a region". The home 3 km, where lakes, spawn and the zone shares
+are still computed until the world-truth break, is bookkeeping and never an
+edge. Direction treatment stays configurable: never hardcode "far away =
+mountains".
+
+**Two scales, one world.** Voxels exist only in a disc around the player -
+real, editable, collidable terrain. Everything beyond is the far field:
+low-poly meshes built from a coarse heightmap at 2 m resolution and coarser,
+kept as origin-anchored tiles at every level of detail and generated on demand
+(horizon v1; until it lands, one array covering the home 3 km, and one mesh
+per ring and sector after it). That coarse heightmap is also what makes lakes
+possible: a basin is a depression with a rim all the way round it, and you
+cannot see one by looking at a chunk.
+
+**Positions beyond 10 km use a floating origin**, not a double-precision
+engine build (D84). The official Godot binary stays on every machine and in
+CI.
+
+Chunks are 16x16x16 blocks, stored as a flat `PackedByteArray` — one byte per
+voxel, one contiguous allocation, serialises as-is. Index order is
+`x + z*16 + y*256`.
 
 Coordinate conversion floor-divides rather than using integer division.
 Truncation towards zero puts block `-1` in chunk `0` instead of chunk `-1`,
 which corrupts a band of world on the negative side of the origin only, and is
 a miserable thing to debug. See `Chunk.floor_div`.
 
+**The mesher decides how a chunk looks, never what it is** (D56). It can be
+replaced at any time without breaking a world, which is why it was the first
+unattended C++ epic.
+
 ### 6. The world answers: authored truth, generative direction
 
 The fourth pillar, as architecture. The game has a **Director**: a model that
 reads what the party's journey means and improvises the path to authored
 stakes - which fragment you find, which rumour points where, how a quest's
-middle unfolds. Its doctrine is `docs/DIRECTOR.md`; it arrives late, on the
-ladder in `docs/IDEAS.md`. What it asks of the code is decided now, because
-it is cheap now and a rewrite later:
+middle unfolds. Its doctrine is `../Kubik-bible/director/`, pointed at by
+`docs/DIRECTOR.md`; it arrives late, at phase 6 of `RECONCILIATION.md` § 9.
+What it asks of the code is decided now, because it is cheap now and a rewrite
+later:
 
-- **Facts are data.** What exists, what things want, what can happen - tables
-  a program can read, never prose in a script. `Races`, the worldgen config
-  and every character part already are: the parts are 101 entries of ASCII in
-  `assets/characters/parts/*.json`, read by `PartsData`, generated by
-  `tools/parts_author/` and no longer GDScript at all. Creatures, places, lore
-  fragments and quest beats follow.
+- **Facts are data, and the director reads them by ID.** What exists, what
+  things want, what can happen - tables a program can read, never prose in a
+  script. The worldgen config and the body table already are. Creatures,
+  places, lore fragments and quest beats follow. **A deterministic chronicler
+  turns the raw event log into typed facts with IDs, and every verb references
+  IDs, never free text about the world** (D34 rule 1).
 - **The host keeps a journal.** Structured events - edit, death, campfire,
   kill, first sight of a lake - appended as they happen. It is the director's
-  input later and a debugging record today.
-- **The director acts only through verbs.** It runs beside the host as a
-  sidecar process, talks to Godot over local HTTP/WebSocket, and *proposes*
-  through the small verb list in `DIRECTOR.md` (place a fragment, spawn a
-  rumour, mark a site, advance or reroute a beat). The host validates every
-  proposal against the allowed outcomes and applies it through the one
-  mutation path - exactly how a client's block edit is treated. It never
-  touches state directly, never runs inside the engine's loop, and is invoked
-  at campfire rests and session start: state machines own seconds, the
-  director owns minutes. No combat, no physics.
-- **The game is complete without it.** Every beat it can steer has an
-  authored default. Offline, with no key, or in a stranger's build, the
-  defaults play. The host pays for it; clients get it through the host.
+  input later and a debugging record today. Today it is untyped dictionaries
+  held in memory; the typed store with IDs, salience and persistence is on the
+  redo list (`RECONCILIATION.md` § 6).
+- **The director acts only through five verbs.** `place_fragment`,
+  `spawn_rumor`, `mark_site`, `advance_beat`, `reroute_beat`. It runs beside
+  the host as a sidecar process, talks to Godot over local HTTP/WebSocket, and
+  *proposes*; the host validates every proposal against the allowed outcomes
+  and applies it through the one mutation path - exactly how a client's block
+  edit is treated. It never touches state directly, never runs inside the
+  engine's loop, and is invoked at campfire rests and session start: state
+  machines own seconds, the director owns minutes. No combat, no physics.
+  **Any feature that needs the model to invent world-truth or act outside the
+  verbs is rejected and flagged.**
+- **The template path ships first, and the game is complete without the
+  model** (D34 rule 5). A non-model generator fills the same slots from the
+  same log; the model is a better writer of identical structured output.
+  Offline, with no key, or in a stranger's build, the defaults play. The host
+  pays for it; clients get it through the host.
 
 Godot needs nothing added for this. `HTTPRequest` and `WebSocketPeer` are
 built in; the model never runs in-engine.
 
 ---
-
 ## Running it
 
 You need **Godot 4.7.2** (standard build, no C# needed) from
@@ -524,32 +592,45 @@ The camera is **third person only**, by design — see `docs/DESIGN.md`.
 `G` exists to prove the authority chain works before we have block interaction:
 press it on the **client** and the blocks appear on both machines, because the
 client only sent a request and the host broadcast the result back.
-
 ---
 
 ## Builds
 
-Every push to `main` builds a standalone `Kubik.exe` on GitHub Actions. You do
-not need Godot to run it, and you do not need to build it yourself.
+Every push to `main` builds a standalone `Kubik.exe` on GitHub Actions
+(`.github/workflows/build.yml`), and every push to `main` and to every
+`feat/**` branch runs the whole self-test against a freshly built extension
+(`.github/workflows/selftest.yml`), so the C++ port cannot rot silently.
 
-**To get one:** repo -> *Actions* tab -> click the newest `build` run -> download
-the `Kubik-windows-...` artifact at the bottom. Unzip and run `Kubik.exe`.
+**To get one:** repo -> *Actions* tab -> click the newest `build` run ->
+download the `Kubik-windows-...` artifact at the bottom. Unzip and run
+`Kubik.exe`.
 
 - The `.pck` is embedded, so it really is one file.
 - It is unsigned, so Windows shows *"Windows protected your PC"* on first run.
-  *More info -> Run anyway*. Warn whoever you send it to, or they will assume it
-  is broken.
+  *More info -> Run anyway*. Warn whoever you send it to, or they will assume
+  it is broken.
 - `BUILD_INFO.txt` in the zip records the commit the build came from.
 - Downloading an Actions artifact requires a (free) GitHub account. If we ever
   want a plain public link, we add a tag-triggered Release.
 
+### The public checkout is source, not a runnable game (D50)
+
+The bought templates are the only character source and the bought trees are the
+only forest, so a checkout of this public repo has no characters and no forest.
+That is decided, not a gap: **the public repo is code to read.** Development
+and testing run on machines that mount all three repos - this one,
+`Kubik-bible` and the private `Kubik-assets` - and CI without assets builds the
+extension and runs the asset-free self-tests (worldgen, meshing, determinism),
+which it already does. The Windows artifact above is built the same way and
+ships treeless.
+
 ### All players must run the same build
 
-Kubik never sends terrain over the network, only the seed - every machine
-regenerates the world from it. Two builds with even slightly different terrain
-code therefore produce two *different* worlds from the same seed, and neither
-machine reports an error. You would just see the other player's capsule walking
-through solid rock.
+Kubik never sends terrain over the network, only the seed and the worldgen
+config - every machine regenerates the world from them. Two builds with even
+slightly different terrain code therefore produce two *different* worlds from
+the same seed, and neither machine reports an error. You would just see the
+other player's capsule walking through solid rock.
 
 Check `BUILD_INFO.txt` matches before blaming the netcode.
 
@@ -560,17 +641,26 @@ Check `BUILD_INFO.txt` matches before blaming the netcode.
 ```
 assets/textures/     one 16x16 greyscale placeholder, no longer used
 assets/characters/   the character part data, and .vox drop-ins that replace it
+assets/fonts/        the UI faces
+assets/ui/           the UI theme
 assets/purchased/    (git-ignored) paid art mounted from the private
                      Kubik-assets repo by scripts/tools/sync_assets.py
-scenes/              main_menu, game, player, remote_player
+gdext/src/           the C++ GDExtension: far mesher, height tiles, chunk mesher
+scenes/              main_menu, game, player, remote_player, selftest, gallery
 scripts/net/         transport seam, ENet implementation, Net autoload
 scripts/world/       worldgen config, heightmap, terrain generator, lakes,
-                     chunk, greedy mesher, mesh job, far field, sky, world
+                     chunk, greedy mesher, column job, far field, look, sky,
+                     valley fog, flora, world
+scripts/character/   the character view, the purchased-template path
+scripts/physics/     locomotion, bodies, the push
 scripts/player/      player character, remote player capsule
-scripts/ui/          main menu, debug HUD and tuning panel
-scripts/game/        join handshake and player sync
-scripts/tools/       headless self-tests, worldgen probe, screenshot tour
-docs/plans/          implementation plans
+scripts/ui/          main menu, HUD, debug readout, tuning panel, the film lens
+scripts/game/        join handshake, player sync, stats, the journal
+scripts/tools/       headless self-tests, probes, screenshot tour, asset sync
+tools/parts_author/  the generated-parts kit (ripped; parked, not deleted)
+docs/plans/          one work order per epic
+docs/status/         one status doc per run
+docs/reconciliation/ the four audits of this repo against the bible
 ```
 
 ---
@@ -580,14 +670,25 @@ docs/plans/          implementation plans
 Some art is bought, not made: licensed for use and modification in the game,
 not for redistribution as source. That content lives in the **private**
 [Kubik-assets](https://github.com/FrostyyTiger/Kubik-assets) repo - archived
-packs plus a curated `game/` subset - and is mounted into the (public) game
-repo at `assets/purchased/`, which is git-ignored, by
-`scripts/tools/sync_assets.py` (clone Kubik-assets as a sibling directory and
-run it after every pull of that repo). Two rules hold: nothing from the
-private repo is ever committed here, in original or modified form; and the
-game must always run with `assets/purchased/` absent - purchased art is a
-drop-in layer over authored fallbacks, never a dependency. First tenant: the
-Voxel Forest Animals Pack, ten rigged-and-animated species at
+packs plus a curated `game/` subset - and is mounted into this (public) repo at
+`assets/purchased/`, which is git-ignored, by `scripts/tools/sync_assets.py`
+(clone Kubik-assets as a sibling directory and run it after every pull of that
+repo).
+
+Two rules hold:
+
+- **Nothing from the private repo is ever committed here**, in original or
+  modified form, and its colours never leak into this repo either - indices and
+  Kubik family names only (D50).
+- **A checkout without `assets/purchased/` still builds, still passes the
+  asset-free self-tests, and is not a playable game.** The old rule - that the
+  game must always run with the purchased art absent, as a drop-in layer over
+  authored fallbacks - is retired by D50. The bought templates are the
+  character path (D1) and the bought pack is the forest (trees v3); there is no
+  authored fallback behind them and there is not going to be one.
+
+Tenants: the tree library, the viking / dwarf / elf character templates, the
+animal warriors, the weapons pack, and the Voxel Forest Animals Pack at
 `assets/purchased/creatures/<species>/`.
 
 ## Known provisional bits
@@ -617,36 +718,54 @@ the point where they need replacing.
   not worth them until there is something in the world worth being precise
   about — the error it removes is the error a player only notices when
   something is shooting at them.
-- **Worldgen is GDScript, and GDScript is serialised across the worker pool.**
-  Measured in world feel v1: 3,742 chunks × 7.6 ms of worker time, in 29.5 s of
-  wall clock — about **one** effective worker thread whatever the job cap says.
-  So the levers are how much work a chunk costs and how few chunks there are,
-  not parallelism. Moving generation and meshing into a GDExtension is the next
-  one and it is named in `docs/status/world-feel-v1.md` with the per-phase
-  timings that would justify it.
-- **The block texture is unused.** Terrain is flat vertex colour, so
-  `assets/textures/block_placeholder.png` and its committed `.import` settings
-  are not read by anything. Both are kept because a texture atlas with per-face
-  UVs is still on the roadmap and the import settings were the fiddly part.
-- **Water is scenery.** Flat, translucent, no physics, no swimming.
-- **The far field is a separate mesh from the voxels**, so there is a visible
-  seam where one gives way to the other. Since world feel v1 the seam is where
-  the voxels have actually ARRIVED rather than where they are expected — see
-  "the frontier rule" in `docs/DESIGN.md` — so it moves, but there is never a
-  hole in it.
+- **~~Meshing is GDScript.~~ CLOSED in mesher v1** (2026-09-04, phase 1b, D56).
+  **Column GENERATION is still GDScript**, and GDScript is serialised across
+  the worker pool - measured in world feel v1 at about one effective worker
+  thread whatever the job cap says - so the levers there are still how much
+  work a column costs and how few there are, not parallelism. The generator's
+  truth crosses to C++ in the world-truth break, not before, because that is
+  a change to what a seed produces (D56).
+- **The block texture is unused, and it always will be.** Terrain is flat
+  vertex colour, so `assets/textures/block_placeholder.png` and its committed
+  `.import` settings are not read by anything. **The texture atlas that used to
+  be the reason for keeping them is off the roadmap for good**: pillar 2 says
+  no textures, on anything, ever. Both files are kept only because deleting
+  them buys nothing.
+- **Water reflects but is still scenery.** Light v1 made it clear, depth-tinted
+  and reflective with a Fresnel term and SSR. It still has no physics, no
+  wading and no swimming; Water v1 owns those.
+- **The far field is a separate mesh from the voxels**, so there is a boundary
+  where one gives way to the other. Since world feel v1 the seam is where the
+  voxels have actually ARRIVED rather than where they are expected — see "the
+  frontier rule" in `docs/DESIGN.md` — so it moves, but there is never a hole
+  in it. Horizon v1 is the lane that makes the two agree on colour as well as
+  on geometry.
+- **The four-race character path still runs.** `scripts/character/races.gd`,
+  the creation screen's race row and the parts kit's output are all on the rip
+  list under D37, D51 and D70. They are behind nothing yet; they go when the
+  bought templates land in phase 3, people and fire.
 
 ## Roadmap
 
-The queue is `TODO.md`; the order and the reasons are `RECONCILIATION.md`
-§ 9 and `docs/ROADMAP.md`. Running now (2026-09-04): horizon v1 and mesher
-v1, in parallel. Next: the world-truth break (real relief), then people and
-fire, buildings, the round 3 scene. No texture atlas, ever (pillar 2).
+The queue is [TODO.md](TODO.md); the order and the reasons are
+[RECONCILIATION.md](RECONCILIATION.md) § 9 and
+[docs/ROADMAP.md](docs/ROADMAP.md). The phases, from the reconciliation as
+reordered by D84 on 2026-09-04:
 
-Done in terrain v1: the real player and collision, chunk streaming, greedy
-meshing and threaded mesh building.
+| | Phase | State |
+| --- | --- | --- |
+| 0 | Housekeeping: the house generator into `Kubik-assets`, the licence records, the asset mount | in progress |
+| 1 | **Real light** | **done**, merged 2026-09-04 |
+| 1b | **The chunk mesher in C++** (D56) | **done**, merged 2026-09-04 |
+| 1c | **Horizon v1** - the view to the horizon and a world with no edge (D41, D44, D84) | running from 2026-09-04 |
+| 2 | The world-truth break (D56 as amended by D84): real relief (D45), rings from the capital (D44), lakes and zones per tile, the generator's truth in C++ | next, right after 1c |
+| 3 | People and fire: the bought templates as the character path, two players at a campfire | queued |
+| 4 | Buildings: the loader, placement, the landmark gate | queued |
+| 5 | The round 3 scene and its report | queued |
+| 6 | The journal with typed facts and IDs, the nouveau UI, creatures, combat and death | months |
 
-Done in world feel v1: host-authoritative player input — the client sends
-input, the host simulates, the host broadcasts the position.
+**No texture atlas, ever** (pillar 2). **No base building, ever** (pillar 2).
+**No party frame, ever** (D46).
 
 ## Licence
 

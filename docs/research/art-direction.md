@@ -8,17 +8,46 @@ what the posters, the games and the real place say about its *details*, with
 the contradictions between sources resolved and every rule carrying its
 numbers.
 
-> **How to read this document after 2026-09-01.** The direction was re-cut
-> (`DESIGN.md` § Art direction): the poster is retired as a RENDERING
-> register - one painted-voxel surface language now runs at every distance -
-> and the direction is named **Art Deco fantasy**: Deco as the grammar of
-> the built world, nature as sculpted-vox naturalism. This document remains
-> the COLOUR AND LIGHT authority - the sampled palettes, the time-of-day
-> sets, the fog and sky numbers all stand - but §1's two-register frame,
-> and any line prescribing "flat" or one colour per surface, is superseded
-> where it conflicts. §2.5's form language yields to trees v3's sculpted
-> library when it lands; §6's Deco vocabulary gains standing as the source
-> book for the BUILT world (Sites v1 onward).
+> **How to read this document after 2026-09-04. It is EVIDENCE, not
+> authority.** The direction is `../../../Kubik-bible/` and nothing else: art
+> pillar 2 (real light on flat cubes through a film lens; no textures, on
+> anything, ever; one body colour per material in three shades plus per-cube
+> noise; mood from light, fog, the hour and the lens, never from repainting),
+> pillar 5 (deco on the built, never on nature; Art Nouveau on paper only,
+> D2), the palette in `../../../Kubik-bible/style-bible/10-color-and-light.md`, and the hours in
+> D5 to D8. The re-cut this note used to describe - "Art Deco fantasy", the
+> poster retired as a rendering register, one painted-voxel surface language
+> - was this repo's own ruling and it is superseded with the rest of the old
+> art direction; `../DESIGN.md` no longer has an Art direction section to
+> point at.
+>
+> **What still stands, and it is the valuable half:**
+>
+> - **The method.** Six lenses, references downloaded and looked at, colours
+>   sampled from the pixels with PIL, never from memory, with the
+>   contradictions between sources resolved and every rule carrying its
+>   numbers. That is how the style bible was measured too, and it is how the
+>   next colour question should be answered.
+> - **The colour-transfer finding**, which is the single most load-bearing
+>   thing in this document: what is authored has to be what is on screen, and
+>   it was not - the albedo was applied twice and Lambert's PI sat in the lit
+>   band, so every constant tuned before it had been chosen to cancel an error
+>   nobody had written down. The gate that came out of it (`--sheet transfer
+>   --strict`, eight authored colours within 6 units per sRGB channel) still
+>   runs every stage and still passes at a worst delta of 1 to 2 of 6.
+> - **The sampled numbers** - poster palettes, the time-of-day sets, the fog
+>   and sky measurements, the real-place photographs against `Block.COLORS` -
+>   as EVIDENCE a bible hex can be checked against. Where a number here and a
+>   bible hex disagree, the bible wins and the disagreement is a finding
+>   worth logging; light v1 sent seven such findings back that way
+>   (`../status/light-v1.md`).
+>
+> **What does not stand:** any line that prescribes flatness, a lighting
+> ramp, shade as an ink, banded fog, a painted sky or one flat colour per lit
+> surface. Light v1 deleted all of it (`../plans/light-v1-tech.md`). §1's
+> two-register frame is gone with the poster. §2.5's form language yielded to
+> trees v3's sculpted library. §6's Deco vocabulary keeps standing only for
+> the BUILT world, and only under pillar 5.
 
 Six research lenses ran in parallel, each downloading and looking at its
 references and sampling colours from the pixels with PIL (never from memory):
