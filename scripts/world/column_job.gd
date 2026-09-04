@@ -80,7 +80,43 @@ var gen_usec := 0
 var tree_usec := 0
 var mesh_usec := 0
 
+## What the border marshal cost, kept out of `mesh_usec` so the two can be read
+## against each other (mesher v1 Q4). The strips below are built once per
+## COLUMN; `borders_for()` is per chunk and costs a handful of dictionary
+## writes plus a reference to each neighbour's bytes.
+var border_usec := 0
+
+## False for the bench, which generates a disc of columns and then meshes them
+## itself, twice, timing each. Nothing in the game sets it.
+var build_meshes := true
+
 var _chunks := {}
+
+## The generator's answer for the blocks just outside this column, reduced to
+## ONE INTEGER PER BLOCK COLUMN (mesher v1 Q4).
+##
+## WHY AN INTEGER AND NOT THE SURFACE ALTITUDE. `TerrainGenerator.is_solid_at`
+## is `by < 0 or float(by) <= surface_at(bx, bz)`, and `by` is an integer, so
+## that expression is EXACTLY `by <= floor(surface)` - and floor(surface) is an
+## integer that no compiler can round differently. Handing the float across
+## would have put a float32 truncation between the two meshers on a comparison
+## whose two sides are within a ULP of each other several dozen times over a
+## spawn disc; handing the integer removes the question instead of measuring it.
+##
+## The strips are built for the faces that need them and no others: `top_col`
+## is the column's own 16 x 16 footprint and answers both the +Y and the -Y
+## face, and each side row of 16 is built only where the neighbouring column
+## has no chunk at some level this job is meshing.
+var _strips := {}
+
+## This job's own C++ mesher, or null. One per job - see
+## `ChunkMesher.new_cpp_mesher()` for why it is not shared.
+var _cpp: Object = null
+
+## The highest chunk of this column that contains a solid block; everything
+## above it is air and is not built at all. Set by run(), kept so the bench can
+## walk the same set of chunks the streaming path meshes.
+var ceiling := -1
 
 
 func run() -> void:
@@ -134,23 +170,146 @@ func run() -> void:
 
 	# THE CEILING. The highest chunk that actually contains a solid block;
 	# everything above it is air and is not built at all.
-	var ceiling := -1
+	ceiling = -1
 	for cy in cy_range:
 		if (_chunks[cy] as Chunk).has_solid:
 			ceiling = maxi(ceiling, cy)
+
+	# ONE C++ MESHER PER JOB, or null when the twin is running - and the strips
+	# are built only for a job that is going to hand them over, so
+	# `--mesher gdscript` costs exactly what it cost before this stage and the
+	# A/B is honest.
+	if build_meshes:
+		_cpp = ChunkMesher.new_cpp_mesher(config)
+	if _cpp != null or not build_meshes:
+		build_strips()
+	if not build_meshes:
+		mesh_usec = Time.get_ticks_usec() - t2 - border_usec
+		return
 
 	for cy in cy_range:
 		if cy > ceiling:
 			continue
 		var chunk: Chunk = _chunks[cy]
-		var arrays := ChunkMesher.build_arrays(
-			chunk, _solid_at, config, world_seed)
+		var arrays: Array
+		if _cpp != null:
+			var t_b := Time.get_ticks_usec()
+			var borders := borders_for(cy)
+			border_usec += Time.get_ticks_usec() - t_b
+			arrays = ChunkMesher.build_arrays_from(
+				chunk, borders, config, world_seed, _cpp, _solid_at)
+		else:
+			arrays = ChunkMesher.build_arrays_gd(
+				chunk, _solid_at, config, world_seed)
 		built[cy] = {
 			"chunk": chunk,
 			"arrays": arrays,
 			"faces": ChunkMesher.faces_from(arrays),
 		}
-	mesh_usec = Time.get_ticks_usec() - t2
+	mesh_usec = Time.get_ticks_usec() - t2 - border_usec
+
+
+## The strips of `_strips`, once per column, for the faces that need them.
+##
+## ONCE PER COLUMN AND NOT ONCE PER CHUNK, which is the whole reason they are
+## strips rather than a plane of solidity bytes: a column of six chunks asks the
+## generator about the same 16 x 16 footprint six times over, and the answer
+## does not depend on which chunk is asking.
+func build_strips() -> void:
+	var t := Time.get_ticks_usec()
+	_strips.clear()
+	if cy_range.is_empty():
+		border_usec = Time.get_ticks_usec() - t
+		return
+
+	var bx0 := chunk_x * Chunk.SIZE
+	var bz0 := chunk_z * Chunk.SIZE
+
+	# THE COLUMN'S OWN FOOTPRINT, always: the lowest chunk this job meshes has
+	# nothing below it in `_chunks`, so its -Y face always needs the generator.
+	var col := PackedInt32Array()
+	col.resize(Chunk.SIZE_SQ)
+	for lz in Chunk.SIZE:
+		for lx in Chunk.SIZE:
+			col[lx + lz * Chunk.SIZE] = int(floor(
+				generator.surface_at(float(bx0 + lx), float(bz0 + lz))))
+	_strips["top_col"] = col
+
+	# THE FOUR SIDES, only where a neighbouring column is missing a chunk at
+	# some level this job meshes. In the middle of the loaded disc that is none
+	# of them and this loop costs four dictionary lookups per level.
+	var sides := [
+		["top_px", Vector2i(1, 0)], ["top_nx", Vector2i(-1, 0)],
+		["top_pz", Vector2i(0, 1)], ["top_nz", Vector2i(0, -1)],
+	]
+	for side in sides:
+		var key: String = side[0]
+		var d: Vector2i = side[1]
+		var wanted := false
+		for cy in cy_range:
+			if cy > ceiling:
+				continue
+			if not neighbours.has(Vector3i(chunk_x + d.x, cy, chunk_z + d.y)):
+				wanted = true
+				break
+		if not wanted:
+			continue
+		var row := PackedInt32Array()
+		row.resize(Chunk.SIZE)
+		for i in Chunk.SIZE:
+			var bx := bx0 + (Chunk.SIZE if d.x > 0 else (-1 if d.x < 0 else i))
+			var bz := bz0 + (Chunk.SIZE if d.y > 0 else (-1 if d.y < 0 else i))
+			row[i] = int(floor(generator.surface_at(float(bx), float(bz))))
+		_strips[key] = row
+
+	border_usec = Time.get_ticks_usec() - t
+
+
+## One chunk's borders, in the form `KubikChunkMesher.build()` takes.
+##
+## A neighbour chunk crosses as its own 4,096 bytes and that costs a REFERENCE:
+## a PackedByteArray is copy-on-write and neither side writes to it. Where a
+## neighbour chunk does not exist the generator's strip answers instead, exactly
+## as `_solid_at` falls through to `generator.is_solid_at`.
+func borders_for(cy: int) -> Dictionary:
+	var chunk: Chunk = _chunks[cy]
+	# AO ON IS THE PHOTOGRAPH PATH AND PAYS FOR ITSELF (Q5). Corner AO reaches
+	# the eight blocks around an air cell, which at a chunk edge include the
+	# DIAGONAL neighbours a six-face border cannot answer, so the whole 18^3
+	# shell is built through the Callable. `ao_strength` is 0 by default and the
+	# game never takes this path.
+	if config.ao_strength > 0.0:
+		return ChunkMesher.borders_from_callable(chunk, _solid_at)
+
+	var out := {
+		"voxels": chunk.voxels,
+		"origin_y": chunk.origin().y,
+		"has_solid": chunk.has_solid,
+		"has_air": chunk.has_air,
+	}
+	var above: Chunk = _chunks.get(cy + 1)
+	if above != null:
+		out["n_py"] = above.voxels
+	else:
+		out["top_col"] = _strips["top_col"]
+	var below: Chunk = _chunks.get(cy - 1)
+	if below != null:
+		out["n_ny"] = below.voxels
+	else:
+		out["top_col"] = _strips["top_col"]
+
+	var sides := [
+		["n_px", "top_px", Vector2i(1, 0)], ["n_nx", "top_nx", Vector2i(-1, 0)],
+		["n_pz", "top_pz", Vector2i(0, 1)], ["n_nz", "top_nz", Vector2i(0, -1)],
+	]
+	for side in sides:
+		var d: Vector2i = side[2]
+		var n: Chunk = neighbours.get(Vector3i(chunk_x + d.x, cy, chunk_z + d.y))
+		if n != null:
+			out[side[0]] = n.voxels
+		else:
+			out[side[1]] = _strips[side[1]]
+	return out
 
 
 ## Is there a solid block at this WORLD position? Called only for positions
@@ -168,3 +327,16 @@ func _solid_at(wx: int, wy: int, wz: int) -> bool:
 		var l := Chunk.world_to_local(wpos)
 		return Block.is_solid(chunk.voxels[Chunk.index(l.x, l.y, l.z)])
 	return generator.is_solid_at(wx, wy, wz)
+
+
+## The chunks this job generated, by chunk y index. For the bench, which
+## generates a whole spawn disc once and then meshes it twice.
+func chunks() -> Dictionary:
+	return _chunks
+
+
+## This job's neighbour lookup, as a Callable. The twin takes one of these and
+## the bench has to drive the twin with the SAME answers the C++ gets, or it is
+## timing two different meshers on two different worlds.
+func solid_callable() -> Callable:
+	return _solid_at

@@ -276,7 +276,7 @@ a `class_name` - the editor keeps the global class cache in `.godot/`, and a
 game started without it fails to parse the first script that names a new
 class.
 
-### Two things are C++, and you do not need either
+### Three things are C++, and you do not need any of them
 
 Since distance v4 the far-field mesh is built by a GDExtension
 (`gdext/`, class `KubikFarMesher`). It is **37-43x** faster than the GDScript
@@ -291,13 +291,28 @@ height to **1/1024 of a block** as their last step and the self-test's
 the same spawn and the same 53 lakes. Run the self-test on a second machine and
 compare that one line - that is the whole cross-platform procedure.
 
+Since mesher v1 the CHUNK mesher is a third class in the same extension,
+`KubikChunkMesher` - **0.061 ms per chunk against the GDScript twin's 6.443,
+106x, measured over the 1,910 chunks of the seed-42 spawn disc** - and the world
+at spawn loads in **12.4 s against 30.9 s**. It is look-only in the strongest
+sense the project has: the mesher decides how a chunk looks and never what it
+is, so a disagreement could draw a different face and could not move the ground.
+The gate is exact all the same - the self-test's `chunk parity` compares every
+vertex, normal, index and colour component to the bit, at both AO settings, and
+the bench repeats the comparison over the whole spawn disc - because colour
+crosses the seam as a lookup table computed in GDScript rather than as
+arithmetic, which leaves gcc and MSVC nothing to round apart. `--mesher gdscript`
+forces the twin for an A/B; `scripts/world/chunk_mesher.gd` keeps the GDScript
+implementation as the reference until it is deliberately retired.
+
 **You can ignore all of this and the game works.** `scripts/world/far_field.gd`
 and `scripts/world/terrain_generator.gd` each check for their class and fall
 back to the GDScript implementation - which stays in the tree as the reference
 the self-test compares against - so a checkout with no compiler plays fine, and
 gets the same world. The only traces are some
 `ERROR` lines from Godot's extension loader at startup and an F3 line reading
-`far mesher: gdscript (no c++ library)`. The far country then rebuilds in
+`far mesher: gdscript (no c++ library)` beside `mesher: gdscript (no c++
+library)`. The far country then rebuilds in
 seconds rather than milliseconds; if that bothers you, put `far_ring_div` back
 to 2 on F4.
 
