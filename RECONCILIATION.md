@@ -6,6 +6,8 @@ The question Marcel asked: the bible is now the direction and will only be refin
 
 The test applied to every system: would you build it this way today, for the bible?
 
+*Amended 2026-09-04 by the docs-only sync, in place and dated, because this is a record and not a live document. Two things happened after it was written. **The pivot (D60 to D83, logged 2026-09-03, hours after this audit):** magic and machines can be joined and it always costs; the burn; no gunpowder; magic is distance, not altitude (D63 replaces D23); the ranged set; the bolts become runes (D65 amends D54); starting people; nobody changes (D70 amends D37 and D51, so the elf and dwarf LOOK is cut and the packs are lean and stocky human bodies); the Perchten as a rite and the animal warriors as creatures (D71); the knowledge ladder (D74, D80). **The north star (D84, 2026-09-04):** the world as big as the view, the view to 32 km, 60 FPS at max settings on mid hardware, which reordered § 9. Every finding in sections 4 to 8 still holds; the sentences the pivot moved carry a parenthesis where they sit.*
+
 ## 1. The verdict
 
 Not a full redo. Not "keep it because it is there" either. The repo splits cleanly along one line: everything built for the poster look and the four-race character model goes, and everything built for a streaming, deterministic, host-authoritative voxel world stays.
@@ -55,13 +57,13 @@ These are not audit findings. They are places where the bible and Marcel's own e
 
 **G. The public build has no bought art.** The bible makes the bought templates the only character source and the bought trees the only forest. The public MIT build therefore has no characters and no trees. Recommendation: accept it and say so. The public repo is source; the playable build is a binary with the licensed assets inside it. A placeholder capsule keeps the public checkout runnable for engine work.
 
-**H. What replaces race at character creation.** D37 removes the axis the creation screen is built on. Recommendation: a body-type row, viking, stocky and changed, all one people, with no perks attached to any of them.
+**H. What replaces race at character creation.** D37 removes the axis the creation screen is built on. Recommendation: a body-type row, viking, stocky and changed, all one people, with no perks attached to any of them. *(2026-09-04: D51 took it, then D70 amended it the same day. Nobody changes, so "changed" goes and the row is square, lean, stocky; the elf and dwarf look - the ears, the beard-as-identity, the winged helmets - is stripped by script. D66 adds a second row, the starting people, soft: it sets the first fire, the kit and the recipes, never stats and never a lock.)*
 
 **I. Day length.** A full day is eight minutes (`worldgen_config.gd:1570`). The tone wants slowness and an evening that lands like the song's swell. Recommendation: a day in the tens of minutes, and the pink-then-violet evening never shorter than a few minutes.
 
 **J. The forest-animal grain.** The bible contradicts itself: it asks for the forest pack at the character grain and for a bear at 0.7 players at the shoulder. At the character grain the bear is 5.7 m long. Recommendation: give the forest pack its own grain of about 1.9 cm per voxel and accept the finer texture, and fix the sentence in `70-scale-metrics.md`.
 
-**K. A player's magic verb.** Fire and frost bolts are out under the lore's "nobody throws lightning". The bible says what magic is, not what a player does with it. Recommendation: strike the bolts now, keep the co-op glue idea, and decide the verb list later from wards, weather, calming beasts, horns and masks.
+**K. A player's magic verb.** Fire and frost bolts are out under the lore's "nobody throws lightning". The bible says what magic is, not what a player does with it. Recommendation: strike the bolts now, keep the co-op glue idea, and decide the verb list later from wards, weather, calming beasts, horns and masks. *(2026-09-04: the decision above, D54, was amended the same evening it was taken. D65 turns the bolts into a fire rune and a frost rune with the same mechanics, carried as rune stones that dim with use and are recharged at a magic site (D76); and D63 replaces D23, so they obey DISTANCE from the capital, never altitude. The line "a spark and a chill that obey altitude" in the paragraph above, and the same phrase in § 8's DESIGN.md row, are stale in exactly that one word.)*
 
 **L. Sprint speed and field of view.** Sprint is 13 m/s, field of view 75 degrees, neither in the bible, and the sprint sits against the tone's slowness. Recommendation: log both as they are for now and revisit with the real-scale terrain, since traversal changes when the mountains do.
 
@@ -81,7 +83,7 @@ The full candidate lists, about seventy items across the four audits, are in the
 | Locomotion, physics, push, bodies | `scripts/physics/` | One shared step on host and client. The boulder that says "not on your own" is the tone as physics. |
 | Camera | `player.gd:7-10` | Third person only, for the bible's reason. |
 | UI behaviour | `hud.gd`, `compass.gd`, `party_icons.gd`, `character_screen.gd` | No minimap, a HUD that vanishes, health only when hurt, a read-only sheet. |
-| `stats.gd` | `scripts/game/stats.gd` | No hunger, no thirst, nothing drains. The tone's anti-survival rule passes. `mp` stays with the bolts (D54). |
+| `stats.gd` | `scripts/game/stats.gd` | No hunger, no thirst, nothing drains. The tone's anti-survival rule passes. `mp` stays with the bolts (D54) *(the runes, since D65)*. |
 | `purchased_view.gd` | `scripts/character/purchased_view.gd` | The only bible-shaped character path in the repo. Promote it. |
 | Probes, galleries, the swatch gate | `scripts/tools/`, `look.gd:predict()` | The instruments round 3 is graded with. The gallery already has a campfire sheet. |
 | Fonts, the template `.vox` files, the animal warriors | `assets/fonts/`, `Kubik-assets/game/` | The warriors are the Perchten at the character grain with 181 clips. |
@@ -121,7 +123,7 @@ The full candidate lists, about seventy items across the four audits, are in the
 | The journal store | Forty-seven lines of untyped dictionaries, in memory, no schema on purpose. The bible is the second consumer and asks for typed facts with IDs, a chronicler, salience and persistence. Keep the call sites in `world.gd` and `stats.gd`. | M |
 | The UI ornament layer | `deco.gd`, `deco_panel.gd`, `deco_rule.gd`, `poster_backdrop.gd`, `deco_theme.tres` are deco geometry on paper, the exact don't in `80-do-dont.md`. Nouveau frames, tarot cards, halo portraits, a serif body face, no black ink. The behaviour underneath stays. | M |
 | Buildings | Nothing exists in the game. A `BuildingModels` loader as a sibling of `TreeModels`, placement, the landmark generator, the `.ktree` direct bake. | L |
-| Creatures | Nothing is built, so nothing to rip. The design invents fauna where the lore wants changed wolves and the Perchten, and makes the marmot cute. Megafauna witnessed more than fought stays. | L |
+| Creatures | Nothing is built, so nothing to rip. The design invents fauna where the lore wants beasts that were once ordinary, and makes the marmot cute. Megafauna witnessed more than fought stays. *(2026-09-04, D70 and D71: nobody changes, so the Perchten are a WINTER RITE of the mountain folk - masked people, not creatures - and it is the animal-warrior assets that become creatures of the outer rings.)* | L |
 | Combat and death | Designed, unbuilt, silent on D39. Write the restraint rule and "death is remembered" into the journal before the first hit lands. | M, design |
 
 ## 7. What is adapted
@@ -131,7 +133,7 @@ The full candidate lists, about seventy items across the four audits, are in the
 | Block palette | The bible's hexes, one flat colour per material; the three shades come from light. | S |
 | Snow | An altitude line as the primary rule; keep the slope cutoff as the modifier. | M |
 | Zones | The bible's five bands; expose the tree line as a queryable altitude for placement; replace percentiles, which do not survive an unbounded world. | M |
-| Wildness | Distance from the capital in metres, driving the ring table: biome, weather, ruin size, lit windows. The highest-leverage adapt in the world. | M |
+| Wildness | Distance from the capital in metres, driving the ring table: biome, weather, ruin size, lit windows *(and, since D63, how strong the magic is: thin at the centre, stronger with every ring out, with altitude no longer a rule)*. The highest-leverage adapt in the world. | M |
 | Sky cycle | Keep the keyframe machine; re-author to day, pink evening, violet dusk, slate night, plus eerie as a modifier; drop the hour-tinted gold. | M |
 | Heightmap store | Per-tile arrays with an apron; lakes, spawn, zones and the far marshal onto a tile API. Eight files, acceptance a byte-identical world. | L |
 | Far ring table | One more ring and a ten-kilometre preset. Buys nothing until the world is bigger than three kilometres. | S |
@@ -146,12 +148,12 @@ The full candidate lists, about seventy items across the four audits, are in the
 
 ## 8. The documents
 
-- **`README.md`, `CLAUDE.md`.** Keep the architecture, the probes, the build notes, the three habits. The four pillars become gameplay pillars under `00-TONE.md`, beside the bible's five art pillars. Pillar three's citation points at the bible. The worldgen guidance is rewritten per decision A. The pitch loses "cozy" as the world's register and keeps it for the fire.
-- **`docs/DESIGN.md`.** Split. It survives as the game's technical truth: the parts-as-data and `.vox` drop-in rule, the colour pipeline, the resolution ladder as engine grains, the frontier rule, physics, traversal, multiplayer, camera, saves, placeables, the creature behaviour stance. Its setting, races, scale ratio, unbounded ruling, art rules and fantastic roster go, replaced by pointers to `lore/` and `style-bible/`. Its magic section stays, amended to D54: the bolts are a spark and a chill that obey altitude.
-- **`docs/DIRECTOR.md`.** A thin pointer to `director/`. The verb table is ripped: every signature is the free-text, no-ID shape D34 forbids. The eight hardening rules, D35 and D36 are added. The storm-scholar goes; the bible's stranger is a masked figure whose people is open.
-- **`docs/IDEAS.md`, `docs/ROADMAP.md`, `TODO.md`.** Keep the structure. Look v3 "the painted world" is replaced by the round 3 test scene. Sites v1 inherits the four building families and the rings. Fog, the lens and the far view become engine work items.
-- **`docs/research/art-direction.md`.** Evidence, not authority. Its colour-transfer finding and its measurement method are the bible's own method.
-- **The plans and status files.** History. Mark the look plans superseded. `look-v2-tech.md` is the work-order template round 3 should be run in.
+- **`README.md`, `CLAUDE.md`.** *(Done 2026-09-04, except README § Running it, which the horizon v1 and mesher v1 lanes owned that night; the last of hard rule one still stands in it.)* Keep the architecture, the probes, the build notes, the three habits. The four pillars become gameplay pillars under `00-TONE.md`, beside the bible's five art pillars. Pillar three's citation points at the bible. The worldgen guidance is rewritten per decision A. The pitch loses "cozy" as the world's register and keeps it for the fire.
+- **`docs/DESIGN.md`.** Split. *(Done 2026-09-04.)* It survives as the game's technical truth: the parts-as-data and `.vox` drop-in rule, the colour pipeline, the resolution ladder as engine grains, the frontier rule, physics, traversal, multiplayer, camera, saves, placeables, the creature behaviour stance. Its setting, races, scale ratio, unbounded ruling, art rules and fantastic roster go, replaced by pointers to `lore/` and `style-bible/`. Its magic section stays, amended to D54: the bolts are a spark and a chill that obey altitude.
+- **`docs/DIRECTOR.md`.** A thin pointer to `director/`. *(Done 2026-09-04.)* The verb table is ripped: every signature is the free-text, no-ID shape D34 forbids. The eight hardening rules, D35 and D36 are added. The storm-scholar goes; the bible's stranger is a masked figure whose people is open.
+- **`docs/IDEAS.md`, `docs/ROADMAP.md`, `TODO.md`.** *(Done 2026-09-04.)* Keep the structure. Look v3 "the painted world" is replaced by the round 3 test scene. Sites v1 inherits the four building families and the rings. Fog, the lens and the far view become engine work items.
+- **`docs/research/art-direction.md`.** *(Done 2026-09-04.)* Evidence, not authority. Its colour-transfer finding and its measurement method are the bible's own method.
+- **The plans and status files.** History. Mark the look plans superseded. *(Done; and `look-v2-tech.md` now says in its own banner that its shape is the template, so the banner is not read as retiring that too.)* `look-v2-tech.md` is the work-order template round 3 should be run in.
 
 Two things the audit found in the bible itself go back as fixes: the "13 orange variants" is twelve, and the assets plan double-counts the winter animals and the animal warriors, which are one pack. The stale "6 heads" was fixed during the audit.
 
