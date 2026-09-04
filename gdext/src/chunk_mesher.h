@@ -67,6 +67,14 @@ private:
 	// carries when AO is off.
 	static constexpr int AO_OPEN = 0xFF;
 
+	// The palette is indexed `id * PALETTE_LEVELS + level`, id 0-255 and level
+	// 0-3. 256 ids and not the palette's own 24, so that an id outside
+	// `Block.COLORS` comes out MAGENTA - the loud pink face that is how an
+	// index bug in the port is meant to present - instead of reading off the
+	// end of the table. See `chunk_mesher.gd`'s note on `wire_palette`.
+	static constexpr int PALETTE_IDS = 256;
+	static constexpr int PALETTE_LEVELS = 4;
+
 	float block_size = 0.5f;
 	double ao_strength = 0.0;
 	PackedColorArray palette; // 24 ids x 4 AO levels, wire-space, from GDScript

@@ -252,6 +252,95 @@ shortcut that tunable 2 allows stays OFF and the exact path stays.
 
 ---
 
+## Stage 2 - the palette as a table, the corner codes, and Q27 measured
+
+**Green. The colour column reads exact zero, and Q27 turns out to have been
+measuring nothing.**
+
+### What shipped
+
+`emit_quad()` writes `palette[id * 4 + level]`; `has_colors()` answers true and
+the parity gate's comparison is total. The corner codes went across at Stage 1
+with the rest of the sweep, so 2.2 needed no new code - what it needed was for
+the AO path to actually be exercised, which is 2.3's finding.
+
+### THE `ao cost` SELF-TEST HAS BEEN MEASURING ZERO AGAINST ZERO SINCE LIGHT V1
+
+`_measure_ao_cost` read `for ao in [0.0, WorldgenConfig.new().ao_strength]`.
+Light v1 Q9 took the shipped `ao_strength` to **0.0**. From that commit the two
+legs of that test have been the same leg, its "+0.0%" line has been comparing a
+run with itself, and **that line is where Q27's "baked AO off did not widen the
+merge" came from**. The same idiom was copied into this lane's `chunk parity`
+when it was written at Stage 0, so half of Stage 1's 158 chunks were not testing
+the AO path either.
+
+Both now name **0.45** outright, which is the strength `_test_winding` has always
+used and the strength the photograph path wants. Nothing was removed; a constant
+replaced a default that had moved out from under it.
+
+```
+ao cost: 75 chunks, 3973 -> 6962 quads (+75.2%), 730.7 -> 921.8 ms (+26.2%)
+```
+
+**Baked AO widens the merge by 75%, not by 0%.** The two techniques fight
+exactly as `chunk_mesher.gd`'s own header says they do.
+
+### Q27, measured over the spawn disc, both meshers
+
+`mesh_bench.gd --seed 42` and `--seed 42 --ao 0.45`, 441 columns, 1,910 chunks,
+three ABAB passes each.
+
+| `ao_strength` | mesher | ms/chunk | spread | quads | border marshal |
+| --- | --- | --- | --- | --- | --- |
+| 0.00 | twin | 6.431 | ±0.2% | 37,592 | - |
+| 0.00 | **C++** | **0.060** | ±0.7% | 37,592 | 0.009 ms/chunk |
+| 0.45 | twin | 7.353 | ±0.6% | 66,143 | - |
+| 0.45 | **C++** | **0.066** | ±2.1% | 66,143 | **8.104 ms/chunk** |
+
+Provenance: ganymede, ABAB median of three passes each.
+
+Three things it shows, and nothing is changed because of any of them:
+
+1. **AO costs 76% more quads on this world** (37,592 -> 66,143), against Q27's
+   "+0.0%". The self-test's window agreed at +75.2% on 75 chunks. Q27's premise
+   was an artifact of the broken list above.
+2. **AO costs the meshers themselves very little**: the twin +14.3%, the C++
+   +10.0%. Merging less is cheaper per quad, and the two roughly cancel.
+3. **AO costs the BORDER MARSHAL everything.** With AO off a chunk's borders are
+   six references and five integer strips: 0.009 ms. With AO on the dispatcher
+   builds an 18^3 solidity shell through the Callable, per chunk, in GDScript:
+   **8.104 ms - 123 times the C++ mesh it feeds.** Q5 says this path is "slower,
+   correct, ... never [used] by the game at its defaults", and that is exactly
+   what it measures: with AO on, C++ meshing plus its marshal (8.17 ms) is
+   slower than the twin (7.35 ms). `ao_strength` is 0 by default, the streaming
+   path never takes it, and the plan calls this out in advance - so the
+   dispatcher is left simple and the number is written down instead. What it
+   would take to fix is in "For Marcel".
+
+### Gates
+
+```
+chunk parity: 158 chunks, 35561 quads, max diff pos 0.000000000 normal 0.000000000 colour 0.000000000, 0 indices differ
+winding: 98504 triangles checked, 0 wrong, 49252 quads emitted
+  ledge: 10 quads with AO off -> 16 with AO on   (both legs, gdscript and c++)
+```
+
+**Total parity: 0 differing components including colour, at `ao_strength` 0.0
+AND 0.45, over the 5 x 5 x 3 window of seed 31337 and the four winding shapes -
+and 0 over all 1,910 chunks of the spawn disc through the streaming marshal, at
+both AO settings.** The colour column reads `0.000000000` and by construction it
+must: nothing on the far side of the seam does arithmetic on a colour.
+
+| gate | result |
+| --- | --- |
+| build, `check.gd` | clean, exit 0 |
+| full self-test | **all passed** |
+| character self-test | **all passed**, 36 tests |
+| worldgen probe | `4782edac`, `(-44, -124)`, 53 lakes, 15,218 trees, `config 1d7c18c7` - unchanged |
+| tour `mesher-2` (3 vantages) | Forward+ on the 3070 Ti, no magenta |
+
+---
+
 ## Questions taken alone
 
 Section 5 item 7: the conservative reading, written down, work continued.

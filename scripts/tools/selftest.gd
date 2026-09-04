@@ -906,8 +906,17 @@ func _measure_ao_cost():
 	var solid := func(wx: int, wy: int, wz: int) -> bool:
 		return gen.is_solid_at(wx, wy, wz)
 
+	# 0.45 NAMED, NOT `WorldgenConfig.new().ao_strength`, AND THAT IS A FIX.
+	#
+	# Light v1 Q9 took the shipped `ao_strength` to 0. This list read
+	# `[0.0, WorldgenConfig.new().ao_strength]`, so from that commit on it has
+	# compared zero against zero and its "+0.0%" line has been measuring
+	# NOTHING - which is also where mesher v1's Q27 ("baked AO off did not
+	# widen the merge") came from. 0.45 is the value the winding test names for
+	# the same reason: it is the strength the photograph path uses.
+	const AO_ON := 0.45
 	var results := []
-	for ao in [0.0, WorldgenConfig.new().ao_strength]:
+	for ao in [0.0, AO_ON]:
 		cfg.ao_strength = ao
 		var quads := 0
 		var started := Time.get_ticks_usec()
@@ -3705,7 +3714,9 @@ func _test_chunk_parity():
 	var count_diffs := 0
 	var reported := 0
 
-	for ao in [0.0, WorldgenConfig.new().ao_strength]:
+	# Both AO settings and 0.45 named outright - see `_measure_ao_cost`'s note
+	# on why the config's own default is not the value to reach for here.
+	for ao in [0.0, 0.45]:
 		cfg.ao_strength = ao
 		impl.setup(ChunkMesher.setup_args(cfg))
 		for i in chunks.size():

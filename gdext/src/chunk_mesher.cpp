@@ -42,16 +42,17 @@ void KubikChunkMesher::setup(const Dictionary &p_world) {
 	// palette is an out-of-range read on the first quad, tens of thousands of
 	// times a world, and the answer to one is to keep GDScript rather than to
 	// try.
-	ready = palette.size() >= 96 && block_size > 0.0f;
+	ready = palette.size() >= PALETTE_IDS * PALETTE_LEVELS && block_size > 0.0f;
 }
 
 bool KubikChunkMesher::is_ready() const {
 	return ready;
 }
 
-// STAGE 0: nothing is painted yet, because nothing is meshed yet.
+// STAGE 2: the palette crossed, so the parity harness compares colours too and
+// its comparison is total.
 bool KubikChunkMesher::has_colors() const {
-	return false;
+	return true;
 }
 
 // --- Is the block at these chunk-local coordinates solid? ---------------------
@@ -265,12 +266,15 @@ void KubikChunkMesher::emit_quad(int d, int u, int v, int plane,
 		p[v] = (float)corners[c][1];
 		sink.verts.push_back(Vector3(p[0], p[1], p[2]) * block_size);
 		sink.normals.push_back(normal);
-		// STAGE 1: WHITE. The palette lands at Stage 2 and the parity harness is
-		// told to compare the rows that are meant to match and no others.
+		// THE COLOUR PATH IS AN INDEX AND NOTHING ELSE (Q3). The twin computes
+		// `Look.to_wire(Block.color_of(id) * shade)` per vertex with
+		// `shade = 1 - ao_strength * (1 - level / 3)`; GDScript evaluated that
+		// same expression for all 256 ids at all 4 levels once per world and
+		// handed the table over, so what happens here is a lookup. Two
+		// compilers cannot round a lookup differently, which is why this gate
+		// reads exact zero on Windows as well.
 		const int level = (ao_value >> (corners[c][2] * 2)) & 3;
-		(void)level;
-		(void)id;
-		sink.colors.push_back(Color(1.0f, 1.0f, 1.0f, 1.0f));
+		sink.colors.push_back(palette[id * PALETTE_LEVELS + level]);
 	}
 
 	sink.indices.push_back(first);
