@@ -9,12 +9,12 @@ the contradictions between sources resolved and every rule carrying its
 numbers.
 
 > **How to read this document after 2026-09-04. It is EVIDENCE, not
-> authority.** The direction is `../../Kubik-bible/` and nothing else: art
+> authority.** The direction is `../../../Kubik-bible/` and nothing else: art
 > pillar 2 (real light on flat cubes through a film lens; no textures, on
 > anything, ever; one body colour per material in three shades plus per-cube
 > noise; mood from light, fog, the hour and the lens, never from repainting),
 > pillar 5 (deco on the built, never on nature; Art Nouveau on paper only,
-> D2), the palette in `../../Kubik-bible/style-bible/10-color-and-light.md`, and the hours in
+> D2), the palette in `../../../Kubik-bible/style-bible/10-color-and-light.md`, and the hours in
 > D5 to D8. The re-cut this note used to describe - "Art Deco fantasy", the
 > poster retired as a rendering register, one painted-voxel surface language
 > - was this repo's own ruling and it is superseded with the rest of the old
