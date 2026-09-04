@@ -91,7 +91,12 @@ const KEYFRAMES := {
 		# starting row, both inside the tunable table's x0.5, because at the
 		# plan's numbers a midday postcard came back as haze with no lake in it.
 		"fog_height_offset": 40.0, "fog_height_density": 0.0005,
-		"vol_density": 0.003, "band_scale": 0.6,
+		# 2026-09-04, MARCEL, ON THE 5080: 0.003 over the 1,200 m froxel length left
+		# 22% of a thing visible at 500 m and 3% at 1.2 km - "Minecraft with a low
+		# view distance". Day is the clear hour; 0.0005 is 78% at 500 m, 55% at
+		# 1.2 km, and the exponential far term above still carries the aerial
+		# perspective. The valley bands scale off this same value, so they thin too.
+		"vol_density": 0.0005, "band_scale": 0.6,
 		"warm": 0.0, "saturation": 1.0,
 	},
 	# EVENING, THE PINK HALF (D6). The whole world is tinted, and the shadow

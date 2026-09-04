@@ -187,7 +187,7 @@ const VIEW_PRESETS := [
 	# the ladder simply stops there and they cost exactly what they cost before.
 	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 400.0},
 	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 500.0},
-	{"name": "high", "radius": 12, "fog_end": 3200.0, "far_tree": 800.0},
+	{"name": "high", "radius": 12, "fog_end": 3200.0, "far_tree": 400.0},
 	{"name": "ultra", "radius": 16, "fog_end": 3200.0, "far_tree": 1000.0},
 ]
 
@@ -1415,7 +1415,10 @@ const FOG_START_RATIO := 0.4
 ## 0.4 s for the old one-in-sixty-four - and this engine build SERIALISES
 ## GDScript across threads, so ring time is chunk time not happening. At 24 m
 ## and a walking pace that is a third of the worker; at 48 m it is a sixth.
-@export var far_tree_step_m := 48.0
+## 2026-09-04, Marcel on the 5080: 48 m still rebuilt nine times in one walk at
+## 3-5 s each on a pool that runs one task at a time - raised to 200 m, and
+## the ring itself halved (`far_tree` 400 on the high preset) the same day.
+@export var far_tree_step_m := 200.0
 
 ## HOW MUCH OF A FRAME THE FAR SYSTEMS MAY SPEND HANDING MESHES TO THE
 ## RENDERER, in milliseconds. Distance v5 Stage 1, decision 1.
