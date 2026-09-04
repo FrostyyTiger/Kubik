@@ -461,20 +461,54 @@ CONTENDED and the pair is comparable rather than absolute.
 | `11-forest-dusk` | 21.9 / 19.5 | 15.3 / 14.8 | `24-hour-eerie` | 19.9 / 17.1 | 17.2 / 14.6 |
 | `12-meadow-night` | 18.6 / 17.0 | 14.5 / 13.5 | `25-lens-fence` | 21.9 / 20.0 | 18.6 / 16.6 |
 
-**Worst frame anywhere: 45.6 ms with the twin, 26.8 ms with the C++ mesher.
-Median of the per-shot medians: 18.1 ms against 14.6 ms.** The C++ mesher is
-lower or equal at every one of the twenty-four vantages, on both columns.
+**READ THIS TABLE ONLY FOR THE WORST COLUMN, and the same-commit leg below is
+why.** `mesher-base` is a different commit taken hours earlier under a
+different contention profile, and comparing medians across it credits this lane
+with drift.
 
-That is not the mesher drawing faster - it draws exactly the same triangles, as
-the counts above say. It is the **worker pool**: a tour vantage is a teleport
-followed by a settle, the settle is a burst of column jobs on a pool that runs
-about one effective GDScript thread, and the frame the shutter opens on is
-competing with it. Taking 6.4 ms of GDScript out of every chunk takes that
-competition out of the frame. `1-spawn`, the first vantage and the biggest
-burst, is where it shows most: 45.6 -> 17.7 ms.
+### The same-commit cost line, and the correction it forces
+
+A third tour was taken at THIS commit with `--mesher gdscript`, so that the two
+legs differ in the mesher and in nothing else. It was stopped at 11 of 24
+vantages when it became clear it would cost another hour and a half of a box the
+other lane is also using; 11 settled vantages is a large enough sample to say
+what it says.
+
+| shot | twin worst / median | C++ worst / median | primitives |
+| --- | --- | --- | --- |
+| `1-spawn` | **44.0** / 16.3 | **17.7** / 15.6 | same, 14.60 M |
+| `2-summit` | 14.1 / 12.3 | 14.0 / 12.2 | same, 6.72 M |
+| `3-forest-slope` | 24.9 / 22.3 | 26.8 / 22.2 | same, 13.15 M |
+| `4-valley-floor` | 15.2 / 13.4 | 15.6 / 13.5 | same, 7.50 M |
+| `5-lake` | 17.6 / 14.5 | 15.6 / 14.5 | same, 10.38 M |
+| `6-postcard` | 14.7 / 14.2 | 17.1 / 14.3 | same, 10.11 M |
+| `14-postcard-dusk` | 17.6 / 14.9 | 17.3 / 15.2 | same, 10.12 M |
+| `20-hour-day` | 16.8 / 14.4 | 16.9 / 14.5 | same, 10.09 M |
+| `21-hour-evening` | **21.0** / 14.6 | **15.2** / 14.7 | same, 10.09 M |
+| `22-hour-dusk` | **20.7** / 15.1 | **16.2** / 15.4 | same, 10.12 M |
+| `23-hour-night` | 15.1 / 14.4 | 14.9 / 14.6 | same, 10.09 M |
+
+**Median of the per-shot medians: 14.5 ms twin, 14.6 ms C++ - the same frame.**
+**Worst frame anywhere: 44.0 ms twin, 26.8 ms C++.** Identical primitive counts
+at all 11.
+
+**So the honest statement is narrower than the base-versus-3 table suggests, and
+it is the right one.** At a SETTLED vantage the two meshers cost the same frame,
+and they must: they emit the same triangles, and by the time the shutter opens
+there is nothing left to mesh. What the port changes is the **tail** - the frame
+that opens while a settle is still draining the worker pool. `1-spawn`, the
+first vantage and the biggest burst, is 44.0 against 17.7 ms; `21-hour-evening`
+and `22-hour-dusk` are 21.0 -> 15.2 and 20.7 -> 16.2. The medians in the
+`mesher-base` table above (18.1 against 14.6) are mostly **drift between two
+runs hours apart on a contended box**, not the mesher, and should not be quoted.
+
+The load line from the same pair of full tours: **12,306 ms wall with the C++
+mesher against 32,138 ms with the twin - 2.61x**, which is the short-tour ABAB's
+2.50x at full-tour scale.
 
 The 60 FPS floor while sprinting is the horizon plan's gate and this lane does
-not claim it. What this lane contributes to it is the line above.
+not claim it. What this lane contributes to it is the worst-frame column and the
+load line: **the mesh is out of the way while the world is arriving.**
 
 ### The bench, Stage 3 build
 
@@ -499,7 +533,7 @@ mesh bench: seed 42, 441 columns, 1910 chunks, ao 0.00, 3 passes ABAB
 | C++ mesh per chunk | **0.061 ms**, gate 0.5 | ganymede, ABAB median |
 | ratio to the twin | **106.3x**, gate 10x | ganymede, ABAB median |
 | load at spawn | **12,375 vs 30,956 ms, 2.50x** | ganymede, ABAB median of 3 |
-| tour cost line at Ultra | worst 26.8 vs 45.6 ms, median-of-medians 14.6 vs 18.1 | ganymede, single run each, contended |
+| tour cost line at Ultra, SAME COMMIT, 11 vantages | worst frame 26.8 (C++) vs 44.0 (twin); medians equal at 14.6 vs 14.5 | ganymede, single run each, contended |
 | magenta | none in 24 shots | ganymede, single run |
 
 **One red line this lane cannot have caused, recorded per failure protocol item
@@ -750,11 +784,15 @@ the baseline than a repeat of the baseline is (mean 4.14 against 4.30).
 - **Load at spawn, ABAB, three each, the same 3,897 chunks every run:**
   **12,375 ms wall with the C++ mesher against 30,956 ms with the twin - 2.50x**,
   main thread 742 against 907 ms.
-- **Tour cost line at Ultra, twenty frames a vantage:** worst frame anywhere
-  **26.8 ms against 45.6**, median of the per-shot medians **14.6 against 18.1**,
-  and the C++ leg lower or equal at every one of the 24 vantages. Both tours
-  were contended by the horizon lane's far probe, so the pair is comparable and
-  neither number is absolute. `1-spawn`, the biggest settle, goes 45.6 -> 17.7.
+- **Tour cost line at Ultra, twenty frames a vantage, SAME COMMIT, 11 vantages
+  (the twin leg was stopped at 11 of 24 rather than take another 90 minutes of a
+  shared box):** **the medians are the same frame - 14.6 ms C++ against 14.5 ms
+  twin** - and they must be, because the two meshers emit the same triangles and
+  a settled vantage has nothing left to mesh. **What moves is the tail: worst
+  frame anywhere 26.8 ms against 44.0**, and `1-spawn`, the biggest settle, goes
+  44.0 -> 17.7. An earlier table against `mesher-base` showed the medians
+  improving too; that was drift between two runs hours apart on a contended box
+  and is corrected in the status doc rather than quoted.
 
 **6. Q27.** Measured over the spawn disc, both meshers: **37,592 quads at
 `ao_strength` 0 and 66,143 at 0.45 - baked AO widens the merge by 76%, not by
