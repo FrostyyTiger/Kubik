@@ -40,7 +40,8 @@ the tone and beside the five art pillars.
   written for two, and there is no party frame, ever. Solo is a dev
   convenience, never a balanced mode.
 - **TENSE OUT, WARM AT THE FIRE.** Danger and pacing scale with distance from
-  the current campfire, with altitude, and with eerie weather (D35). Firelight
+  the current campfire, with eerie weather, and with distance from the capital
+  (D35, D63). Firelight
   and daylight are the warm register: light, regen, respawn. Every dread beat
   ends at a fire. Death costs time, not progress, and is quiet and remembered
   (D39). No base building: players place objects (campfire, torch, marker),
@@ -195,8 +196,10 @@ the queue.
   footprints and flattening. Player-placed things stay at 0.5 m.
 - **Armour is a tech level (D27).** Mountain folk in leather, fur, wool, felt,
   mail, wood and horn; plate is the Engineers' guard. No tier ladder to plate.
-- **Player magic (D54).** A fire bolt and a frost bolt, a spark and a chill,
-  never a storm; weak or absent in the dead valleys, stronger with altitude.
+- **Player magic (D54, D65).** A fire rune and a frost rune, a spark and a
+  chill, never a storm; weak in the thin centre, stronger with every ring
+  outward (D63); a rune stone is a crystal that dims with use and is recharged
+  at a magic site (D76).
 
 ## Working order
 
