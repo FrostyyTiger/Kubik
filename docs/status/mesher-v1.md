@@ -511,6 +511,43 @@ not this lane's territory and which this lane does not touch.
 
 ---
 
+## Stage 4 - docs, the retirement proposal, the merge requests
+
+**Green.**
+
+- **`README.md`** § "Two things are C++, and you do not need either" is now
+  "**Three things are C++, and you do not need any of them**", with one
+  paragraph on `KubikChunkMesher`: the measured speedup, the load line, why the
+  gate is exact all the same, the `--mesher gdscript` switch, and the twin as
+  the reference until Marcel retires it. The F3 fallback sentence names the
+  second line beside `far mesher:`. (The edit was made during Stage 3 and rode
+  in on its commit; the content is Stage 4's.)
+- **This document** completed per section 6: a BLOCKING line at the top, one
+  section per stage with what shipped, the parity line verbatim, the probe line,
+  the bench table, a provenance column on every number, "Questions taken
+  alone", "For Marcel", "For Fable at merge", "For the bible", and the morning
+  message at the end so it survives the session.
+- **The twin's retirement** is proposed and not done - see "For Marcel", with a
+  recommendation against retiring it at this merge and the two reasons.
+- **The merge requests** are under "For Fable at merge".
+
+### The F3 line, verified
+
+```
+class_exists: true
+class_present: true
+backend_name (as-is):            cpp
+backend_name (--mesher gdscript): gdscript (forced by --mesher gdscript)
+backend_name (harness forced):    gdscript (forced by the test harness)
+```
+
+A checkout with no compiled library answers `gdscript (no c++ library)`; one
+whose class loads but does not mesh answers `gdscript (c++ mesher present but
+not meshing)`, which is the state Stages 0 to 2 were in and is the reason the
+two are different messages.
+
+---
+
 ## Questions taken alone
 
 Section 5 item 7: the conservative reading, written down, work continued.
@@ -660,3 +697,114 @@ Section 5 item 7: the conservative reading, written down, work continued.
   the mesher moved. The clause that does NOT hold yet is "delete each twin as
   its path lands" - see the retirement note under "For Marcel". D56's bundle and
   order are untouched.
+
+---
+
+## The morning message
+
+*(Section 6's shape, written into this document so it survives the session.)*
+
+**1. The branch.** `feat/mesher-v1`, five commits, all pushed. **Stages 0, 1, 2,
+3 and 4 are green. None was wrapped early, none was reverted, and nothing is
+outstanding on ganymede.** The Windows library has not been built - Fable
+rebuilds it from this branch's head and records the Windows parity count (Q9).
+
+**2. The bench.**
+
+```
+mesh bench: seed 42, 441 columns, 1910 chunks, ao 0.00, 3 passes ABAB
+  twin   median 6.443 ms/chunk (spread +-0.0%)   quads 37592
+  c++    median 0.061 ms/chunk (spread +-0.3%)   quads 37592   borders 0.010 ms/chunk
+  ratio  106.3x the twin
+  parity 0 differing components over 1910 chunks
+```
+
+**0.061 ms per chunk against 6.443**, gate 0.5 ms and 10x. The border marshal
+is 0.010 ms, twenty-five times inside Q4's line. And a number that did not exist
+before tonight: **GDScript meshing costs 6.4 ms per chunk averaged over a real
+spawn disc** - three times the plan's lower bound, and at 4.33 chunks per column
+it puts the audit's single real-forest column (29.63 ms) at the average rather
+than the worst case.
+
+**3. BLOCKING findings: none.**
+
+**4. The parity line, verbatim.**
+
+```
+chunk parity: 158 chunks, 35561 quads, max diff pos 0.000000000 normal 0.000000000 colour 0.000000000, 0 indices differ (this run dispatches to cpp)
+```
+
+Exact zero on every component including colour, at `ao_strength` 0.00 and 0.45,
+and `parity 0 differing components over 1910 chunks` over the whole spawn disc
+through the streaming marshal. **The near-band picture gate could not be run as
+written and was replaced on evidence**: `lens.gd`'s grain is animated full-frame
+noise and the flora ring settles differently every run, so two tours of the SAME
+commit differ by up to 6.7 mean luma levels over 26% of a frame. What replaced
+it is stronger - **all 24 vantages draw the identical geometry, 24 of 24 shots
+with the same primitives in frame and the same chunks loaded** - and the pixel
+diff is reported against that control, where the port sits marginally CLOSER to
+the baseline than a repeat of the baseline is (mean 4.14 against 4.30).
+
+**5. The load line and the cost line, Ultra, against `mesher-base`.**
+
+- **Load at spawn, ABAB, three each, the same 3,897 chunks every run:**
+  **12,375 ms wall with the C++ mesher against 30,956 ms with the twin - 2.50x**,
+  main thread 742 against 907 ms.
+- **Tour cost line at Ultra, twenty frames a vantage:** worst frame anywhere
+  **26.8 ms against 45.6**, median of the per-shot medians **14.6 against 18.1**,
+  and the C++ leg lower or equal at every one of the 24 vantages. Both tours
+  were contended by the horizon lane's far probe, so the pair is comparable and
+  neither number is absolute. `1-spawn`, the biggest settle, goes 45.6 -> 17.7.
+
+**6. Q27.** Measured over the spawn disc, both meshers: **37,592 quads at
+`ao_strength` 0 and 66,143 at 0.45 - baked AO widens the merge by 76%, not by
+0%.** Q27's "+0.0%" came from `_measure_ao_cost`, which has been comparing zero
+against zero since light v1 took the shipped `ao_strength` to 0 and left the
+test reading `[0.0, WorldgenConfig.new().ao_strength]`. Both legs now name 0.45.
+Nothing was changed because of it.
+
+**7. For Marcel.**
+
+- **The twin's retirement is proposed and I recommend AGAINST doing it at this
+  merge** - the Windows half of the gate is not in yet, the edit path and the
+  model gallery are the only paths a player triggers by hand, and the twin is
+  still the fast implementation of the AO path.
+- **The AO border shell is the one thing slower in C++ and it is a design gap,
+  not a marshalling slip**: 8.104 ms a chunk to build an 18^3 shell in GDScript
+  against 0.066 ms to mesh it. Closing it means handing the C++ 26 neighbour
+  chunks instead of 6. Only worth doing if baked AO comes back.
+- **`_measure_ao_cost` was measuring nothing and is fixed**; the sentence "baked
+  AO off did not widen the merge" should not be repeated in a later plan.
+- **The near-band picture gate was retired and replaced, on evidence** - the
+  numbers are above and in the Stage 0 section.
+
+**8. For Fable at merge.**
+
+- **Rebuild the Windows DLL and record the parity count.** The expectation is
+  that today's 1 failure does not become 2: this lane's colour path is a lookup
+  into a table GDScript computed, so the colour column should read exact zero on
+  MSVC as it does on gcc.
+- **Run the sprint probe against this branch** once horizon v1's Stage 0 is on
+  `main`; this lane did not run it and does not claim the 60 FPS floor.
+- **One line in `world.gd`** (not this lane's file): accumulate `job.mesh_usec`
+  and `job.border_usec` beside line 1012's `_gen_ms`, with their share of
+  `last_timings()`, so the load line and F3 finally print worker mesh time.
+- **Section 2's twin-forced gate line has its arguments in the wrong order** -
+  `scenes/selftest.tscn` must come before the `--`, or Godot runs the main scene
+  and never exits.
+- **`docs/plans/horizon-v1.md` quotes `config c18af99d`; the tip of `main` prints
+  `1d7c18c7`**, which is also what light v1's own gates table records. Nothing
+  moved; the plan quotes a stale number.
+- **`scripts/physics/world_body.gd:80` prints ~85 `!is_inside_tree()` errors per
+  tour on `main` already**, before any edit here. Somebody's, not this lane's.
+
+**9. What is left.**
+
+- The edit path (`ChunkNode.rebuild()` -> `ChunkMesher.build()`) and the model
+  gallery stay on the twin until Marcel retires it.
+- The AO path's shell, if baked AO ever comes back.
+- Voxel generation, lakes and the zone pass are the next C++ rungs and belong to
+  the world-truth break (phase 2, D56) - not touched here, and the world line is
+  unmoved: `heightmap 4782edac`, `spawn (-44, -124)`, 53 lakes, 15,218 trees,
+  `config 1d7c18c7`, after every stage.
+- The sprint probe run, and the Windows parity count.
