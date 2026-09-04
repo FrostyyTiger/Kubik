@@ -120,11 +120,11 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    forest does not stop at 96 m, and fireflies and glowing mushrooms after
    dark. Trees went from 34,925 to 73,675 on seed 42 and the terrain under them
    did not move - same heightmap hash, same zone shares, same spawn.
-   `docs/status/foliage-v1.md` has every number and the list of things tuned
+   `status/foliage-v1.md` has every number and the list of things tuned
    on the wrong renderer.
 
    **Water and rivers** is the other half and is still not written. What
-   foliage v1 leaves ready for it is at the end of `docs/status/foliage-v1.md`:
+   foliage v1 leaves ready for it is at the end of `status/foliage-v1.md`:
    the placement
    product takes another `base` case and another binary gate almost for free,
    the decoration layer takes water plants without changing, and reeds already
@@ -142,7 +142,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    that: the time-of-day sets as a table with dawn and a dusk that is actually
    reached, shade as an ink, fog that holds hue, monotonic far-field bands,
    grain instead of jitter, the re-authored palette, solid eyes and hair that
-   breaks the head box, and a UI with a title band. `docs/status/look-v2.md`
+   breaks the head box, and a UI with a title band. `status/look-v2.md`
    has every number, every check that failed and why, and one BLOCKING finding
    for the Windows box.
 
@@ -159,7 +159,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    about four races that D37 and D70 have since removed, and whose original
    words [status/character-v2.md](status/character-v2.md) keeps. Six armour slots on a bumped
    wire format, a tier ladder counted rather than judged, and a walk with a
-   contact pose in it. `docs/status/character-v2.md` has every number, the four
+   contact pose in it. `status/character-v2.md` has every number, the four
    `TODO(marcel)` exercises, and the three places the run did not meet its own
    gate.
 
@@ -174,7 +174,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    sprint samples to zero and made "never a hole, at any speed" a hard rule
    rather than a hope. Trees are drawn at 1:2 against the player with a third
    of groves at 1:1.33 old growth, and the ground under a closed canopy takes
-   the shade ink. `docs/status/world-feel-v1.md` has every number, three bugs
+   the shade ink. `status/world-feel-v1.md` has every number, three bugs
    worth reading about, and three open items in `STATUS.md`.
 
    **Distance v1 - the far country holds still, and the forest recedes** ran
@@ -191,7 +191,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    ROUGHNESS -44%, the worst re-cut at a ring boundary -35%, and the drawn
    summit is higher than it was before the epic. Same heightmap hash, same
    spawn, same 28,383 trees, every stage: this epic changed how the far country
-   is DRAWN and never what it IS. `docs/status/distance-v1.md` has every number
+   is DRAWN and never what it IS. `status/distance-v1.md` has every number
    with a provenance column, three gates that could not be met as written and
    what was run instead, and a **"Carried forward"** section at the end.
 
@@ -234,7 +234,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    **It ships OFF, on one knob.** `far_terrace` is on F4 at 0.0, 0.0 is
    `f23c3f0` byte for byte at every stage, and moving it rebuilds the far mesh
    and the impostor ring in place - no reroll, no voxel chunk, the player
-   standing still. `docs/status/distance-v2.md` has every number with a
+   standing still. `status/distance-v2.md` has every number with a
    provenance column, four gates that could not be met as written, and a
    **"Carried forward"** section at the end.
 
@@ -258,7 +258,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    **Trees v1 - no two alike, and the ziggurat arrives** ran in one night,
    2026-08-29/30, on `feat/trees-v1`, all seven stages.
    [plans/trees-v1.md](plans/trees-v1.md), with the taste in
-   `docs/research/art-direction.md` §2.5 and the machinery in
+   `research/art-direction.md` §2.5 and the machinery in
    [research/trees.md](research/trees.md). Marcel's ask: "no variation, they're
    all symmetrical, a bit boring - let's sort of nail this so we won't have to
    think about it for a while." Stage 0 measured exactly that and it was worse
@@ -275,7 +275,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    one floating block left in the forest. Same heightmap hash, same 28,383
    trees, same spawn, same mix, every stage: this epic changed what a tree
    LOOKS like and never where one stands. `DESIGN.md` rule 4 stops saying "not
-   yet". `docs/status/trees-v1.md` has every number with a provenance tag, the
+   yet". `status/trees-v1.md` has every number with a provenance tag, the
    judge rounds, and **one failed gate**: canopy closure fell where the design
    said fuller (old growth 0.694 -> 0.648, grove 0.523 -> 0.481), because
    §2.5's spire proportion narrowed old-growth crowns by ~30% of disc area and
