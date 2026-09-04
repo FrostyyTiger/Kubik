@@ -6,6 +6,10 @@
 #include <godot_cpp/variant/packed_color_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/string.hpp>
+#include <godot_cpp/variant/color.hpp>
+#include <godot_cpp/variant/vector3.hpp>
+
+#include <vector>
 
 using namespace godot;
 
@@ -90,10 +94,30 @@ private:
 		mutable int64_t missing = 0;
 	};
 
+	// Where a build's arrays accumulate. std::vector and not the packed arrays
+	// themselves: a PackedVector3Array grows through the engine's allocator one
+	// push at a time, and the whole point of this class is not to.
+	struct Sink {
+		std::vector<Vector3> verts;
+		std::vector<Vector3> normals;
+		std::vector<Color> colors;
+		std::vector<int32_t> indices;
+	};
+
 	bool solid_at(const Borders &b, int x, int y, int z) const;
+	// The same question in (d, u, v) coordinates, which is how the AO code asks
+	// it. `chunk_mesher.gd:_solid_at`.
+	bool solid_duv(const Borders &b, int d, int u, int v,
+			int dd, int uu, int vv) const;
 	// One face cell's four corner AO levels, packed (su + sv * 2).
 	int corner_ao(const Borders &b, int d, int u, int v,
 			int air_d, int iu, int jv) const;
+	// `chunk_mesher.gd:_emit_slice` and `_emit_quad`.
+	void emit_slice(int32_t *mask, const int32_t *ao_mask,
+			int d, int u, int v, int plane, Sink &sink) const;
+	void emit_quad(int d, int u, int v, int plane,
+			int u0, int v0, int w, int h, int value, int ao_value,
+			Sink &sink) const;
 
 protected:
 	static void _bind_methods();

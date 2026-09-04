@@ -193,6 +193,65 @@ gates are the ones that decide the stage.
 
 ---
 
+## Stage 1 - the port, geometry only
+
+**Green, and the parity gate was exact on the first run.**
+
+### What shipped
+
+`gdext/src/chunk_mesher.cpp` grew its body: `solid_at()`, `solid_duv()`,
+`vertex_ao()`, `corner_ao()`, `emit_slice()`, `emit_quad()` and the three-axis
+sweep in `build()`, transcribed from `chunk_mesher.gd` lines 96-198 and 226-342.
+Colours are `Color(1, 1, 1, 1)` this stage and the parity gate is told to
+compare the rows that are meant to match and no others. `scripts/tools/selftest.gd`'s
+`winding` test now meshes every shape BOTH ways.
+
+### The gates
+
+```
+winding: 98504 triangles checked, 0 wrong, 49252 quads emitted
+  ledge: 10 quads with AO off -> 16 with AO on
+  ledge    gdscript ao=0.00    40 verts,    20 tris
+  ledge    c++      ao=0.00    40 verts,    20 tris
+  ledge    gdscript ao=0.45    64 verts,    32 tris
+  ledge    c++      ao=0.45    64 verts,    32 tris
+chunk parity: 158 chunks, 32566 quads, max diff pos 0.000000000 normal 0.000000000 colour skipped (stage 1), 0 indices differ
+```
+
+**Positions, normals, indices and quad ORDER identical over 158 chunks and
+32,566 quads, at both AO settings.** No bisect was needed; nothing was widened.
+
+### The bench, with the C++ row real
+
+```
+mesh bench: seed 42, 441 columns, 1910 chunks, ao 0.00, 3 passes ABAB
+  twin   median 6.486 ms/chunk (spread +-0.0%)   quads 37592
+  c++    median 0.064 ms/chunk (spread +-0.3%)   quads 37592   borders 0.012 ms/chunk
+  ratio  101.9x the twin
+  parity 0 differing components over 1910 chunks
+```
+
+| number | value | gate | provenance |
+| --- | --- | --- | --- |
+| C++ per chunk | **0.064 ms** | <= 0.5 ms | ganymede, ABAB median of 3, spread 0.3% |
+| ratio to the twin | **101.9x** | >= 10x | ganymede, ABAB median |
+| border marshal per chunk | **0.012 ms** | Q4's line is 0.3 ms | ganymede, ABAB median |
+| parity over the spawn disc | **0 differing components, 1,910 chunks** | 0 | ganymede, deterministic |
+| quads, both meshers | 37,592 = 37,592 | equal | ganymede, deterministic |
+
+The border marshal is **25 times inside Q4's budget**, so the bottom-strip
+shortcut that tunable 2 allows stays OFF and the exact path stays.
+
+| gate | result |
+| --- | --- |
+| build, `check.gd` | clean, exit 0 |
+| full self-test | **all passed** |
+| character self-test | **all passed**, 36 tests |
+| worldgen probe | `4782edac`, `(-44, -124)`, 53 lakes, 15,218 trees, `config 1d7c18c7` - unchanged |
+| tour `mesher-1` (3 vantages) | `Vulkan 1.4.329 - Forward+ - NVIDIA GeForce RTX 3070 Ti`, 17.5 / 17.3 / 48.8 ms worst |
+
+---
+
 ## Questions taken alone
 
 Section 5 item 7: the conservative reading, written down, work continued.
@@ -240,7 +299,15 @@ Section 5 item 7: the conservative reading, written down, work continued.
    Q7 says the edit path stays on the twin until Marcel retires it; Stage 3.1
    says `build_arrays()` dispatches. Both are satisfied by naming the twin
    explicitly in the one function the edit path uses, which is `build()`.
-7. **The near-band pixel gate needs a control run and gets one.**
+7. **Stages 1 and 2 take a THREE-VANTAGE tour, not the full one.** Section 2
+   runs the whole tour at the end of every stage. Through Stage 2 the dispatch
+   is off - `build_arrays()` goes straight to the twin and the game executes
+   not one line of the port - so a full 24-shot Ultra tour would photograph
+   identical behaviour for half an hour, twice. `--only postcard` still proves
+   the game boots, renders Forward+ on the 3070 Ti and draws no magenta. The
+   full tour is taken at Stage 3, where the dispatch is live and it means
+   something, and at Stage 4.
+8. **The near-band pixel gate needs a control run and gets one.**
    `tools/png_diff.py`'s own header records that a tour shot is bit-reproducible
    in the FAR band and is **not** in the near one, "because the flora that has
    finished streaming when the shutter opens differs between runs" (worst 48.1

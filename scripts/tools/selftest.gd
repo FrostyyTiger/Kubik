@@ -159,33 +159,49 @@ func _test_winding():
 			cfg.ao_strength = ao
 			# The per-vertex tints this used to switch off left the mesher in
 			# light v1 Stage 3; there is nothing to turn off any more.
-			var arrays := ChunkMesher.build_arrays(
-				chunk, func(_a, _b, _c): return false, cfg, 0)
-			if arrays.is_empty():
-				print("winding %s: EMPTY - nothing was meshed" % case)
-				bad += 1
-				continue
-			var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-			quads += v.size() / 4
-			var i := 0
-			while i < idx.size():
-				var p0 := v[idx[i]]
-				var p1 := v[idx[i + 1]]
-				var p2 := v[idx[i + 2]]
-				var cross := (p1 - p0).cross(p2 - p0)
-				var want := -n[idx[i]]
-				checked += 1
-				if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+			var solid := func(_a, _b, _c): return false
+			var arrays := ChunkMesher.build_arrays_gd(chunk, solid, cfg, 0)
+			# MESHER V1 STAGE 1: BOTH MESHERS, EVERY SHAPE. The C++ port emits
+			# its own index buffer and its own two corner tables, and a winding
+			# rule proved on the twin says nothing about a transcription of it.
+			# The parity gate would catch a difference, but this says WHAT is
+			# wrong when one appears - "the world is inside out" rather than
+			# "vertex 4,118 differs".
+			var legs := [["gdscript", arrays]]
+			if ChunkMesher.class_present():
+				var impl: Object = ClassDB.instantiate(ChunkMesher.CPP_CLASS)
+				impl.setup(ChunkMesher.setup_args(cfg))
+				legs.append(["c++", ChunkMesher.arrays_from_cpp(impl.build(
+					ChunkMesher.borders_from_callable(chunk, solid)))])
+			for leg in legs:
+				var who: String = leg[0]
+				var got: Array = leg[1]
+				if got.is_empty():
+					print("winding %s (%s): EMPTY - nothing was meshed" % [case, who])
 					bad += 1
-					if bad <= 3:
-						print("  BAD %s ao=%.2f: cross %s want %s" % [
-							case, ao, cross.normalized(), want])
-				i += 3
-			per_case["%s@%.2f" % [case, ao]] = v.size() / 4
-			print("  %-8s ao=%.2f %5d verts, %5d tris" % [
-				case, ao, v.size(), idx.size() / 3])
+					continue
+				var v: PackedVector3Array = got[Mesh.ARRAY_VERTEX]
+				var n: PackedVector3Array = got[Mesh.ARRAY_NORMAL]
+				var idx: PackedInt32Array = got[Mesh.ARRAY_INDEX]
+				quads += v.size() / 4
+				var i := 0
+				while i < idx.size():
+					var p0 := v[idx[i]]
+					var p1 := v[idx[i + 1]]
+					var p2 := v[idx[i + 2]]
+					var cross := (p1 - p0).cross(p2 - p0)
+					var want := -n[idx[i]]
+					checked += 1
+					if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+						bad += 1
+						if bad <= 3:
+							print("  BAD %s %s ao=%.2f: cross %s want %s" % [
+								case, who, ao, cross.normalized(), want])
+					i += 3
+				if who == "gdscript":
+					per_case["%s@%.2f" % [case, ao]] = v.size() / 4
+				print("  %-8s %-8s ao=%.2f %5d verts, %5d tris" % [
+					case, who, ao, v.size(), idx.size() / 3])
 
 	print("winding: %d triangles checked, %d wrong, %d quads emitted" % [checked, bad, quads])
 
