@@ -517,9 +517,21 @@ is Stage 2 - and no far mesh behind them - that is Stage 3. A forest floating
 at 20 km is the honest intermediate state of a lane that removes the world's
 edge one layer at a time, and it is the clearest picture of what Stage 1 did.
 
-Recorded for the rest of the lane: **a per-pixel tour diff between runs is not
-an instrument in this build**, and a 9 x 9 window is only one where the window
-sits on ground that does not sway.
+**And there is a way to make the tour comparable exactly.** With the two `TIME`
+terms removed - `--lens off --set tree_sway=0` - two runs of the same code
+produce **mean |dL| 0.0237 over 3,484 pixels of 921,600**, which is a rounding
+difference in the froxels and nothing else. The tour harness is deterministic;
+the noise was the grain and the wind, both of which are `TIME` by design.
+
+Recorded for the rest of the lane:
+
+- **A per-pixel tour diff between two ordinary runs is not an instrument in
+  this build.** The floor is a mean |dL| of about 2.7 and rises with how far
+  into the tour a shot sits, because the wind phase drifts.
+- **A 9 x 9 window is an instrument only where the window sits on ground that
+  does not sway** - rock, snow, meadow, water's far shore.
+- **`--lens off --set tree_sway=0` makes a pixel diff exact**, and that is how
+  a stage from here on proves it changed only what it meant to.
 
 ### Tunables moved
 
