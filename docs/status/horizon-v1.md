@@ -539,6 +539,56 @@ None.
 
 ---
 
+## Stage 2 - voxels anywhere
+
+**Green.** The playable world follows the player. There is no position in this
+world you cannot stand on.
+
+### What shipped, and it is four lines of deletion
+
+| | what |
+| --- | --- |
+| `scripts/world/world.gd` `refresh_region` | The world-edge cull is gone: `if cx < lo or cx > hi ... continue # outside the bounded world`. That was the last place the VOXEL world knew it had an edge. The disc is the disc, wherever the centre is. |
+| `scripts/world/world.gd` `_sim_ring_columns` | The same cull, for the peers' collision rings. A friend outside the home region is a friend who needs ground under them. |
+| `scripts/world/world.gd` `_update_fog_floor` | The scan was clipped to `cells` with `maxi(.., 0)` and `mini(.., cols - 1)`, so outside the region the window collapsed to nothing and the fog floor kept the altitude of a valley the player had left three kilometres ago. Unclipped, and reading `height_at` instead of `cell_height` - the same number at a cell centre inside the region, real ground outside it. The LAKE branch keeps its index guard, because there are no lakes to find. |
+| `scripts/world/world.gd` `_world_chunk_min` / `_world_chunk_max` | Kept and no longer culling. "Is this column inside the 3 km the lakes and the spawn were computed over" is still a question worth being able to ask; the world-truth break will ask it. |
+
+Nothing else needed changing, and that is worth saying: `surface_at`,
+`detail_at`, `surface_zone_at`, `column_surface_range`, `is_solid_at` and
+`generate_into` all read `heightmap.height_at`, which stopped clamping in
+Stage 1, so the generator was already unbounded the moment the store landed.
+`_cell_index` returns -1 outside the region and every caller of it - the shore
+fade in `detail_at`, the shore rules in `flora_placement` and `tree_placement`
+- already treats that as "no shore here", which is correct: there are no lakes
+out there. **`column_job.gd`, `chunk_node.gd` and `chunk_mesher.gd` were
+checked by grep and carry no world-edge assumption at all**, so there is
+nothing to request from the mesher lane.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` |
+| main self-test | **SELFTEST: all passed** |
+| horizon self-test | **all passed** |
+| `--tp 5000 5000`, 30 s sprint | ground **108.7 m**; 1,749 chunks; 202 m moved; 77 tiles / 10 MB; median 13.79 ms; no `NO SPAWN`; exit 0 |
+| `--tp -12000 3000`, 30 s sprint | ground **281.2 m**; 1,297 chunks; **387 m moved, 0 jumps**; 71 tiles / 9 MB; median 12.12 ms; exit 0 |
+| `--tp 20000 0`, 60 s sprint | ground **155.1 m**; 2,153 chunks; **774 m moved, 0 jumps** - a full, unobstructed sprint twenty kilometres from the origin, on ground that did not exist this morning; 73 tiles / 9 MB; median 15.28 ms |
+| memory at 20 km | **9 MB of tiles**, 279 MB static. Failure protocol item 12 is a long way off. |
+| the sprint that crosses the old edge | `--tp 1000 2675`, 60 s, **778 m moved, 0 jumps**, crossing `x = 1500 m` - the region's rim - at about `s=39`. The per-second medians either side: 12.96, 18.33, 16.02, **16.01**, 15.28, 15.15, against the run's own 15.96, and the crossing second's worst frame is 31.41 ms against a run that is between 30 and 55 ms all the way through. **No spike attributable to the crossing.** The line was chosen by scanning the heightmap for a `z` where the ground from `x = 1000` to `1800 m` has no step over 0.06 m - two earlier attempts wedged on cliffs at 62 m, which the probe's `moved_m` said out loud. 218 tiles / 28 MB by the end. |
+
+The three teleports are the stage: before tonight `--tp 20000 0` built **no
+chunks at all** - `refresh_region` culled every column outside the region - and
+the player stood frozen forever because the ground it was waiting for could
+never arrive.
+
+*(The crossing run was taken after Stage 3's ring table and 32 km presets had
+already landed in the working tree, so its frame numbers are the 32 km build's
+and not Stage 2's. It answers the question it was asked - is there a spike at
+the rim - and is the stronger test for having been taken at the longer reach.)*
+
+---
+
 ## Questions taken alone
 
 Failure protocol item 7: the conservative reading, written down.
@@ -629,9 +679,43 @@ Failure protocol item 7: the conservative reading, written down.
 ## For the world-truth break
 
 The silences - things this lane deliberately leaves wrong outside the home
-region, for D44/D45's lane to fix.
+region, for D44/D45's lane to fix. Each is a thing the plan names and this lane
+does NOT change, because changing it would change what a seed produces.
 
-*(filled in from Stage 2 on)*
+1. **`wildness_at` and `danger_at` still measure from the middle of the home
+   region and clamp at its half-width.** So everything past 3 km is at
+   wildness 1.0: the mountain layer's `wildness_relief` boost is at maximum,
+   `rock_slope_deg - wildness_rock_deg` is at its lowest, and `danger_at`
+   reads 1.0 everywhere. D44 measures both from the Engineers' capital in
+   rings; that is the world-truth break's to write, and it changes what a seed
+   produces, which is exactly what this lane may not do.
+   `scripts/world/terrain_generator.gd`, `wildness_at`.
+2. **`_resolve_zone_thresholds` is a histogram of the home region's
+   altitudes.** The seven zone shares are percentiles of 2.25 M cells inside
+   3 km, and every column in the world - at 3 km or at 30 - is coloured against
+   those six thresholds. Outside the region the shares are therefore whatever
+   the terrain out there happens to give, not the authored ones.
+   `scripts/world/terrain_generator.gd`, `_resolve_zone_thresholds`.
+3. **Lakes and the spawn are the home region's, and only its.** `Lakes.compute`
+   floods `heightmap.cells`; `find_spawn` scans it. So there is no water
+   outside 3 km at all - not a dry basin, no water - and `detail_at`'s shore
+   fade and the flora placement's shore rules are inert there because
+   `_cell_index` returns -1. `scripts/world/lakes.gd`,
+   `scripts/world/terrain_generator.gd` `find_spawn`, and the `_cell_index`
+   guard.
+4. **`_update_fog_floor`'s lake branch keeps its region index guard**, for the
+   same reason: there are no lakes to find. Its LOWEST-GROUND branch was
+   unclipped in Stage 2 and follows the player anywhere.
+5. **The far mesh reads the region's PYRAMID above level 0 wherever the region
+   answers, and level-L tiles outside it.** The two are box means of the same
+   terrain anchored half a cell apart, and `min_block` is not a multiple of
+   `4 << L` above L = 1, so they cannot be made to line up without moving the
+   pyramid. The seam is look-only and only at the rim; the world-truth break
+   replaces the pyramid with tiles everywhere and it goes.
+6. **The zone shares, the lakes, the spawn and the thresholds are all
+   recomputed from `world_blocks_xz`**, so the home region is still a
+   configured size. D44's ringed content replaces the whole idea; until then
+   it is bookkeeping, and no system culls against it any more.
 
 ---
 

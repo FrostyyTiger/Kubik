@@ -786,7 +786,11 @@ func set_sim_centres(cols: Array[Vector2i]) -> void:
 ## Every column inside sim_radius_chunks of any simulated peer, clipped to the
 ## world. A dictionary because two peers standing together would otherwise
 ## queue the overlap twice.
-func _sim_ring_columns(lo: int, hi: int) -> Dictionary:
+## THE PEERS' COLLISION RINGS. No bounds since horizon v1 Stage 2: a friend
+## standing outside the home region is a friend who needs ground under them,
+## which is the whole of D44 applied to the one case that is not the local
+## player.
+func _sim_ring_columns() -> Dictionary:
 	var out := {}
 	if _sim_centres.is_empty():
 		return out
@@ -797,11 +801,7 @@ func _sim_ring_columns(lo: int, hi: int) -> Dictionary:
 			for dx in range(-r, r + 1):
 				if dx * dx + dz * dz > r_sq:
 					continue
-				var cx := centre.x + dx
-				var cz := centre.y + dz
-				if cx < lo or cx > hi or cz < lo or cz > hi:
-					continue
-				out[Vector2i(cx, cz)] = true
+				out[Vector2i(centre.x + dx, centre.y + dz)] = true
 	return out
 
 
@@ -929,26 +929,42 @@ func _update_fog_floor() -> void:
 	var lake_r2 := FOG_FLOOR_LAKE_M * FOG_FLOOR_LAKE_M
 	var disc_r2 := FOG_FLOOR_DISC_M * FOG_FLOOR_DISC_M
 
-	var j := maxi(cj - reach, 0)
-	var j_end := mini(cj + reach, hm.cols - 1)
-	var i_lo := maxi(ci - reach, 0)
-	var i_end := mini(ci + reach, hm.cols - 1)
+	# THE SCAN IS NO LONGER CLIPPED TO THE REGION, horizon v1 Stage 2.
+	#
+	# `maxi(cj - reach, 0)` and `mini(cj + reach, hm.cols - 1)` kept the window
+	# inside `cells`, which was right while `cells` was the world. Outside the
+	# region the window collapsed to nothing, `lowest` stayed INF, and the fog
+	# floor kept whatever value it had when the player left - so the valley fog
+	# at 20 km sat at the altitude of a valley three kilometres behind them.
+	#
+	# The height comes from `height_at` instead of `cell_height`, which is the
+	# same number at a cell centre inside the region - a bilinear at t = 0 IS
+	# the cell - and real ground outside it. The LAKE branch keeps its index
+	# guard: lakes are the home region's bookkeeping and are silence three.
+	var j := cj - reach
+	var j_end := cj + reach
+	var i_lo := ci - reach
+	var i_end := ci + reach
 	while j <= j_end:
-		var wz := float(hm.cell_to_block(j)) * bs
+		var jb := hm.cell_to_block(j)
+		var wz := float(jb) * bs
 		var dz := wz - pz
 		var i := i_lo
 		while i <= i_end:
-			var wx := float(hm.cell_to_block(i)) * bs
+			var ib := hm.cell_to_block(i)
+			var wx := float(ib) * bs
 			var dx := wx - px
 			var d2 := dx * dx + dz * dz
 			if d2 <= lake_r2:
-				var idx := i + j * hm.cols
-				if have_lakes and d2 < best_lake_d2 and lakes.lake_id[idx] >= 0:
+				if have_lakes and d2 < best_lake_d2 \
+						and i >= 0 and j >= 0 and i < hm.cols and j < hm.cols \
+						and lakes.lake_id[i + j * hm.cols] >= 0:
 					best_lake_d2 = d2
-					best_lake_level = float(lakes.lakes[lakes.lake_id[idx]]["level"]) * bs
+					best_lake_level = float(lakes.lakes[
+						lakes.lake_id[i + j * hm.cols]]["level"]) * bs
 					best_lake_at = Vector3(wx, best_lake_level, wz)
 				if d2 <= disc_r2:
-					var h := hm.cell_height(i, j) * bs
+					var h := hm.height_at(float(ib), float(jb)) * bs
 					if h < lowest:
 						lowest = h
 						lowest_at = Vector3(wx, h, wz)
@@ -1304,8 +1320,6 @@ func refresh_region() -> void:
 	var _freed_before := _chunk_nodes.size()
 	var radius: int = config.voxel_radius_chunks
 	var radius_sq := radius * radius
-	var lo := _world_chunk_min()
-	var hi := _world_chunk_max()
 
 	var wanted := {}
 	for dz in range(-radius, radius + 1):
@@ -1315,11 +1329,21 @@ func refresh_region() -> void:
 			# player terrain they cannot see any better than the rest.
 			if dx * dx + dz * dz > radius_sq:
 				continue
-			var cx := _center.x + dx
-			var cz := _center.y + dz
-			if cx < lo or cx > hi or cz < lo or cz > hi:
-				continue  # outside the bounded world
-			wanted[Vector2i(cx, cz)] = true
+			# THE WORLD-EDGE CULL IS GONE, horizon v1 Stage 2, D44.
+			#
+			# Two lines stood here: `if cx < lo or cx > hi ... continue #
+			# outside the bounded world`. That was the last place the VOXEL
+			# world knew it had an edge, and with it the disc simply stopped -
+			# a player who walked to 3 km stood on the rim with nothing in
+			# front of them, and `--tp 20000 0` built no chunks at all.
+			#
+			# Nothing replaces it. The disc is the disc, wherever the centre
+			# is; `Heightmap.height_at` answers everywhere from Stage 1, and
+			# every column job downstream reads it. What the home region still
+			# owns is its bookkeeping - the lakes, the spawn, the zone
+			# histogram - and those are the three silences recorded in
+			# docs/status/horizon-v1.md for the world-truth break.
+			wanted[Vector2i(_center.x + dx, _center.y + dz)] = true
 
 	# The frontier's counts are filled from the SAME scan, so nothing walks the
 	# disc twice. A column already loaded is not missing; everything else is,
@@ -1344,7 +1368,7 @@ func refresh_region() -> void:
 	# that and folding it into the sector counts would tell the far field to
 	# leave a hole around a friend nobody is looking at.
 	var spare := {}
-	for col in _sim_ring_columns(lo, hi):
+	for col in _sim_ring_columns():
 		spare[col] = true
 		if wanted.has(col):
 			continue  # already the host's own, and meshed
@@ -1481,7 +1505,7 @@ func _refresh_flora() -> void:
 	# THE PEERS' BODY RINGS. Queued like any other flora column and then not
 	# drawn - see _flora_bodies_only(). They are deliberately not in `wanted`
 	# above, because `wanted` drives the draw fraction and these are not drawn.
-	for col in _sim_ring_columns(_world_chunk_min(), _world_chunk_max()):
+	for col in _sim_ring_columns():
 		if wanted.has(col) or _flora_nodes.has(col) or _flora_cache.has(col):
 			continue
 		if _flora_in_flight.has(col) or _flora_queued.has(col):
@@ -1783,6 +1807,14 @@ func _drain_frees() -> void:
 		n += 1
 
 
+## THE HOME REGION'S CHUNK RANGE. Kept, and no longer a cull.
+##
+## These two named the edge of the world until horizon v1 Stage 2, and both
+## callers - `refresh_region`'s disc and `_sim_ring_columns` - dropped every
+## column outside it. Nothing culls now (D44: no system may bake in a world
+## edge), and they stay because "is this column inside the 3 km the lakes and
+## the spawn were computed over" is still a question worth being able to ask -
+## the world-truth break will ask it while it moves those three off the region.
 func _world_chunk_min() -> int:
 	return Chunk.floor_div(-int(config.world_blocks_xz / 2), Chunk.SIZE)
 
