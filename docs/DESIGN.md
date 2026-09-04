@@ -232,9 +232,10 @@ bodies. Identity is hair, hat and colour. The far islands hold Builder things
 and creatures, not changed people.
 
 **The launch set of four races is ripped** (`../RECONCILIATION.md` § 5).
-Human, elf, dwarf and lizardfolk, their perk column, `../scripts/character/races.gd`
-and the lizardfolk's rows in the parts data all go. The lizardfolk had no
-asset and no place in the lore; the four perks were two IOUs, one stat
+Human, elf, dwarf and one exotic reptilian fourth, their perk column,
+`../scripts/character/races.gd`, that fourth race's authoring script and its
+rows in the parts data all go. The fourth had no purchased asset and no place
+in the bible's lore at all; the four perks were two IOUs, one stat
 modifier that the identity rule forbade in the paragraph above it, and one
 that mitigated the game's own central tension.
 
@@ -571,7 +572,8 @@ is not.
 
 ### Scale: real relief, one ratio
 
-**Real relief, 1:1 (D45), replacing the 1:4 world.** Valley floor to peak is
+**Real relief, one to one (D45), replacing a land a quarter of real size.**
+Valley floor to peak is
 **1,400 to 2,500 m**, and a mountain's base is several kilometres across. One
 ratio everywhere: trees are already at real size (D21), so a quarter-size land
 under real-size trees was a mixed-scale world, and the repo's own one-ratio
@@ -766,8 +768,8 @@ dread at the edges: scale and indifference, never horror dressing.
 
 ### Night
 
-v1 night changes creature boldness only mildly. **Campfire raids and a
-blood-moon dial are OUT** (`../RECONCILIATION.md` § 5): every dread beat
+v1 night changes creature boldness only mildly. **Raids on the fire and a
+night-hostility dial are OUT** (`../RECONCILIATION.md` § 5): every dread beat
 ends at a fire (D39), and a fire that gets raided is a fire that stops being
 the warm register. What night is allowed to be is darker, quieter and further
 from help.
@@ -971,7 +973,8 @@ snow 0.3 - so a boulder's run-out depends on *where* rather than on how hard
 it was hit.
 
 *Every physics constant above is a starting value, tuned blind on a
-quarter-scale world. Real relief (D45) changes what a 45-degree face means and
+land a quarter of real size. Real relief (D45) changes what a 45-degree face
+means and
 how far a boulder runs; re-tune after the world-truth break, not before.*
 
 ### The host owns all of it
