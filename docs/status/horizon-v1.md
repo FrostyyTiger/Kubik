@@ -19,6 +19,11 @@ by the instrument Stage 0 exists to build - three runs on a quiet box, spread
 regression this lane caused; it is the state of `main`, and it is what Stage 7
 has to move. Full numbers under Stage 0.
 
+**Where it stands after Stage 3: 21.85 ms** - four warm runs on a quiet box,
+21.68 to 22.22, spread 2.5%, with the view at 32 km instead of 3.2. Half the
+frame for ten times the country, and still 5.1 ms over the gate. Full numbers
+under Stage 3.
+
 ---
 
 ## The canonical world line
@@ -589,6 +594,466 @@ the rim - and is the stronger test for having been taken at the longer reach.)*
 
 ---
 
+## Stage 3 - thirty-two kilometres, in persistent pieces
+
+**Green.** The view reaches the horizon, and it costs less than the 3.2 km view
+did this morning.
+
+### What shipped
+
+| | what |
+| --- | --- |
+| `far_field_job.gd`, `far_build.cpp` | `RING_OUTER_M` gains 4,800, 9,600, 19,200 and 38,400 m; `RING_STEP_MULTIPLE` gains 64, 128, 256, 512. Ten rings. |
+| `heightmap.gd`, `far_world.h` | `MAX_LEVEL` is the PYRAMID's 5; `TILE_MAX_LEVEL` is the tile store's 9. `far_max_level(bx, bz)` answers which source a position has and every level clamp on the far path goes through it. |
+| `far_field_job.gd`, `far_build.cpp` | **The far mesh's world edge is gone.** `if not heightmap.in_bounds(bx0, bz0): continue` had stood since terrain v1 and was the reason four more rings would still have drawn nothing past 3 km. |
+| `worldgen_config.gd` | The presets are the reach: Low 8 km, Medium 16, High and Ultra **32**. `far_reach_m` and `fog_end_m` are kept equal by `apply_view_preset`. Camera far plane **40,000 m**, printed at load. |
+| `far_field_job.gd`, `far_build.cpp` | `keys`: a build is a set of (ring, sector) pairs. One sink per key, vertices relative to the ring's anchor, `key_anchors` out beside the slices. Empty keys is the whole disc, exactly as before, which is what the probe and the parity harness build. |
+| `far_field.gd` | 160 `MeshInstance3D` children keyed (ring, sector), each at its ring's anchor, each replaced on its own out of the upload budget. `_rings_due()` decides the set: rings 0-2 follow the frontier, ring r >= 3 re-centres on `far_ring_recenter_frac` of its inner radius. `_prepare_tiles` builds what the build will read - on the worker, ahead of the mesh. |
+| `far_probe.gd` | `--ring-table`. And the flat quad-lookup grid is gone. |
+| `screenshot_tour.gd` | `31-horizon-far` lifts its camera 250 m off the ground it lands on. The vantage stood against a cliff; see question 13. |
+
+### The ring table, Ultra, seed 42, at the spawn
+
+```
+far_ring_div 2, base step 4 blocks (2.0 m), reach 32,000 m
+ring   cell            covers          vertices    ms
+0      2.0 m        0 ->    150 m       175,416    48
+1      4.0 m      150 ->    300 m       192,624    25
+2      8.0 m      300 ->    600 m       238,604    29
+3     16.0 m      600 ->  1,200 m       253,988    32
+4     32.0 m    1,200 ->  2,400 m       221,092    44
+5     64.0 m    2,400 ->  4,800 m       189,576    44
+6    128.0 m    4,800 ->  9,600 m       176,356    43
+7    256.0 m    9,600 -> 19,200 m       168,748    43
+8    512.0 m   19,200 -> 38,400 m       165,732    34
+9   1024.0 m       reserve, unused            0     0
+TOTAL                                 1,782,136        UNDER the 2.0 M budget
+```
+
+**Every ring costs about the same** - 165k to 254k vertices - which is the
+design claim of the whole ladder made visible: ring area grows 4x and cell area
+grows 4x with it. The four rings that take the view from 4.8 km to 38.4 are
+**711,000 vertices between them**, which is a fifth of what the 3.2 km far
+country cost this morning.
+
+### `far_ring_div` goes from 4 to 2, and it revisits a decision of Marcel's
+
+Measured at Ultra with `--far-probe --ring-table`:
+
+| | vertices | ring 0's cell |
+| --- | --- | --- |
+| `far_ring_div` 4 | **6,511,760** | 1 m |
+| `far_ring_div` 2 | **1,782,136** | 2 m |
+
+The budget is 2.0 M and only one of these is under it. The plan's own ring
+table reads "ring 0 | 2 m ... ring 9 | 1,024 m", which is `far_ring_div` 2
+exactly - so the table and the budget agree with each other and disagree with
+the plan's parenthetical "(cell = step at `far_ring_div` 4)". Taken as the
+table and the budget: two specific, load-bearing statements against one aside.
+
+Marcel's 2026-09-01 ruling put the divisor at 4 because he wanted the cells
+smaller. What this spends the halving on is the horizon: the same vertex count,
+ten times further out. It is one spinbox on F4 and on `FAR_ONLY_PROPERTIES`, so
+he can put it back to 4 standing still and see both; Stage 7 reports the frame
+at each. **For Marcel.**
+
+### What the partial rebuild bought
+
+The far country stopped being one disc. Measured at Ultra, 32 km, seed 42:
+
+| | whole disc | per (ring, sector) |
+| --- | --- | --- |
+| vertices | 1,795,048 | the same - the union is the disc |
+| build, worker | 407 ms | **121 ms** for a typical rebuild |
+| wall per rebuild | **1,477 ms** | **134 ms** |
+
+Eleven times cheaper, because a rebuild is the rings that moved and not the
+thirty-eight kilometres that did not. The Stage 0 baseline's complaint -
+seventeen to nineteen rebuilds in a sixty-second sprint at 530 ms each, most of
+them superseded before their upload finished - is answered.
+
+### The sprint, and what `far_rebuilds` counts now
+
+Six 60-second sprints at Ultra, 32 km, seed 42, on a quiet box:
+
+| run | median | p99 | worst | over 25 ms | chunks | `far_rebuilds` | `far_ms_median` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| h3q-1 (contended) | 30.00 | 107.15 | 145.89 | 1,214 | 4,989 | 17 | 114 |
+| h3q-2 (cold) | 23.33 | 80.56 | 149.74 | 818 | 5,692 | 33 | 110 |
+| h3q-3 | **21.88** | 55.24 | 112.62 | 651 | 6,465 | 51 | 114 |
+| h3q-4 | **21.82** | 54.80 | 102.66 | 639 | 6,187 | 52 | 115 |
+| h3q-5 | **21.68** | 56.67 | 115.82 | 671 | 6,414 | 59 | 120 |
+| h3q-6 | **22.22** | 57.98 | 108.23 | 673 | 6,266 | 55 | 117 |
+
+The four warm runs on a quiet box are **21.68 to 22.22 ms, a spread of 2.5%**,
+and the median of their medians is **21.85 ms**. h3q-1 shared the box with a
+far probe for its first forty seconds and h3q-2 was the first run after a cold
+page cache; both are kept in the table and out of the number, and the shape of
+the difference - fewer chunks loaded, a higher median - is the same shape in
+both.
+
+**Against the morning's baseline: 41.67 ms -> 21.85 ms, while the view went
+from 3.2 km to 32.** The gate is 16.7 and this is Stage 7's work, not Stage
+3's; what Stage 3 is entitled to say is that ten times the view now costs a
+little over half the frame it used to.
+
+**`far_rebuilds` fails its Stage 3 number and the number no longer means what
+it meant.** The plan asks for `far_rebuilds <= 12` in 60 s and
+`far_ms_median <= 300`. Measured: 51 to 59, and 110 to 120 ms.
+
+- `_rebuilds` counts **uploads that reached the screen**, and after this stage
+  an upload is a handful of the 160 keyed meshes, not the whole disc. The
+  baseline's 17 to 19 were 530 ms each and each one replaced 38 km of country;
+  tonight's 55 are 115 ms each and each one replaces the rings that moved.
+  Total worker time over the sprint went from about 9.5 s to about 6.3 s while
+  the reach grew tenfold.
+- The count went UP for the reason the design intended: rings 0 to 2 follow
+  every frontier move, and a warm run loads 6,400 chunks in 60 s where a cold
+  one loads 5,000. **The count now tracks how fast the near field streams, not
+  how expensive the far field is.**
+- `far_ring_recenter_frac` is the tunable in range and it moves rings 3 and
+  out only. Measured at 0.5, twice the plan's value: **49 rebuilds against 51 to 59**, median 112 ms, frame
+  20.83 ms - about a tenth off the count, which is the size of the share
+  rings 3 and out have of it. No value of this knob reaches 12, because
+  rings 0 to 2 are frontier-driven by design (plan § 3.2) and the
+  frontier moved 543 m.
+- **Taken as: the cost gate is met with a 2.5x margin, the count gate is
+  measuring a different quantity than it was written for, and the honest
+  replacement is worker milliseconds per second of play.** Recorded under
+  "Questions taken alone"; the plan's number is not silently redefined here.
+
+**And no hitch in the sprint is attributable to a far upload.** The probe tags
+each second with the far uploads it applied. Over h3q-3's sixty seconds, the
+median worst frame in a second that applied a far upload is **48.61 ms**; in a
+second that applied none it is **52.16 ms** - the seconds with far work in them
+are, if anything, the calmer ones. h3q-2 says the same, 51.97 against 75.00.
+Every second of every run has a worst frame over 25 ms; all of them belong to
+chunk and tree uploads, which is Stage 7's list and not this stage's.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| **far key parity** (new, horizon self-test) | **132,400 vertices over 160 keys, 0 bad.** The union of the 160 keyed meshes is the disc, vertex for vertex, in world space with each key's anchor added back - and the GDScript keyed build and the C++ keyed build agree with each other. |
+| vertex sum at Ultra | **1,782,136**, under the plan's 2.0 M |
+| camera far plane | **40,000 m** - `[Game] view distance ultra: voxel radius 16 chunks (128 m), fog 32000 m, camera far 40000 m` |
+| main self-test | **SELFTEST: all passed** - after four fixes, all of them cross-leg and all of them found by the gate |
+| horizon self-test | **all passed**, six tests |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` |
+| far probe, twice | **identical.** Two whole runs on a quiet box, each of which internally re-measures itself twice: `tables IDENTICAL` inside each, and the seventy-eight geometry rows of one diff clean against the other. FIZZ, ROUGHNESS, PEAK LOSS and the terrace table for rings 0 to 8, character for character. Both `PASS`. |
+| far probe, handover | **fails at 0/1, 2/3, and 3/4 outward.** Recorded in full below with the baseline's own failures beside it; `far_supersample` 4 measured as the plan's remedy. |
+| sprint, far cost | `far_ms_median` **110-120 ms**, gate 300. `far_rebuilds` **51-59**, gate 12 - the count now measures near-field streaming; see below and question 12. |
+| sprint, far hitches | **none attributable.** The seconds that applied a far upload have a LOWER median worst frame than the seconds that did not (48.61 against 52.16 in h3q-3). |
+
+### The eye check, and grill Q24 was right
+
+`30-horizon-peak`, Stage 1 against Stage 3, from the home region's highest
+summit with the camera level and looking `+X`:
+
+| | |
+| --- | --- |
+| **Stage 1** | The summit, and then grey void. The far mesh culled every quad past the region however far the rings reached. |
+| **Stage 3** | **Terrain to the horizon.** A massif fills the left of the frame where there was nothing, with a cube silhouette and a lit wedge in the middle of it. |
+
+**And it is very dark.** Measured, 9 x 9 windows: the far mass reads V 12 at
+`(200, 480)`, V 18 at `(400, 420)`, V 22 at `(600, 400)`, against the near
+snow's V 69 at `(900, 600)` and the sky's V 51. The hue is the same family
+throughout - H 29 to 34 - so this is not a wrong colour table; it is a lit
+surface that is barely lit.
+
+Grill Q24 says what to do with that in as many words: *"Stage 3 may [look worse
+than before], before Stage 4 gives it colour and Stage 5 gives it air. For any
+other stage: check the sampled windows first; if they pass and the eye check
+fails, record the sentence and do not revert."* **The sentence: the far country
+now reaches the horizon and arrives there almost black.** Stage 4 replaces the
+colour path with one material source at every level and Stage 5 puts the air in
+front of it; the reading is repeated after both.
+
+### The eye check: `31-horizon-far`, and the vantage had to be lifted
+
+The plan's second Stage 3 eye check is "the home region is visible from 20 km
+as a range". At eye level it was not, and the reason was not the far mesh:
+outside the home region `wildness_at` clamps to 1.0 until the world-truth
+break, so the relief out there is at maximum, and the camera landed against a
+200 m wall that filled two thirds of the frame. The vantage now lifts 250 m
+(question 13).
+
+**And the answer is yes.** From 20 km the frame is a meadow floor, snow-capped
+red-rock ranges left and right, a dark massif in the middle distance, and
+terrain that recedes into fog without an edge. Measured, 9 x 9 windows:
+
+| window | H | S | V |
+| --- | --- | --- | --- |
+| near meadow `(640, 660)` | 69.2 | 38.8 | 42.6 |
+| near snow `(150, 420)` | 31.3 | 11.9 | 58.4 |
+| mid massif `(600, 470)` | 68.6 | 32.0 | 42.9 |
+| far band `(760, 380)` | 47.9 | 2.7 | 39.4 |
+| horizon `(900, 360)` | 76.9 | 1.4 | 39.6 |
+| sky `(640, 150)` | 128.2 | 0.5 | 42.4 |
+
+**The horizon band and the sky above it are 2.8 V apart** with the fog as it
+stands and no ramp yet - which is the number Stage 5's gate wants to be under
+3, taken here as a RECORD and re-taken there. Saturation falls from 38.8 in
+the near meadow to 1.4 at the horizon, monotonically: the far country loses
+colour with distance rather than ending.
+
+**RECORD, for Stage 4 and 5 to answer:** thin horizontal light streaks are
+visible in the middle distance on the right of the frame, at about y 370 to
+460 - ring skirts seen edge-on from a high vantage. They are not a hole and
+not a crack; nothing sky-coloured shows through. Named here so the same band
+is looked at again once the colour path is one source.
+
+### The handover, ring by ring, and what it says
+
+The plan's gate: across a 200 m arc centred on each boundary, at 1 m spacing,
+the inner and the outer side differ by RMS <= 0.5 x the inner cell's height
+step and max <= 1.0 x. `!` marks a fail. From the spawn, Ultra, seed 42:
+
+```
+seam  rms  0.46 max   2.19 / 4
+0/1   rms  1.87 max   9.66 / 4    max!
+1/2   rms  1.88 max   7.26 / 8
+2/3   rms  7.16 max  23.03 / 16   max!
+3/4   rms 17.44 max  69.36 / 32   both!
+4/5   rms 47.91 max 390.64 / 64   both!
+5/6   rms 147.90 max 494.78 / 128 both!
+6/7   rms 344.02 max 757.64 / 256 both!
+7/8   rms 216.08 max 436.87 / 512 rms passes, max passes
+```
+
+**Three readings, and only the third is new.**
+
+1. **The near boundaries are what they were on `main`.** The Stage 0 baseline
+   failed 0/1, 2/3 and 3/4 too, on the same arcs with half the cell size
+   (`0/1 rms 0.81 max 4.18/2!`, `2/3 rms 2.76 max 10.42/8!`,
+   `3/4 rms 5.97 max 19.35/16!`). Handover has never passed this gate in this
+   repo; horizon v1 did not break it.
+2. **The RMS grows about 2x per ring while the gate grows 2x too**, so the
+   ratio is roughly flat from 3/4 outward: 1.1x, 1.5x, 2.3x, 2.7x over the
+   gate. It is not a cliff at any one ring; it is one systematic thing seen at
+   eight scales - the filtered height at level L and at level L+1 differ by
+   more than half a cell in real Alpine relief, which is the LOD chooser's
+   business and not the ring ladder's.
+3. **`far_supersample` is the tunable the plan names, and it moves the outer
+   boundaries only.** Rings 5 and out read the tile store, which is where the
+   supersample lives; rings 0 to 3 read the region pyramid, whose levels are
+   exact 2x2 reductions and cannot be improved by sampling more. Measured, see
+   below.
+
+### `far_supersample` 4, measured, and what it does not reach
+
+The plan says: "Where a boundary fails and `far_supersample` 4 fixes it, take
+4 and record." Measured, a whole probe run at Ultra with
+`--set far_supersample=4`, diffed against the same run at 2:
+
+**Three numbers move in seventy-eight rows, and all three are the same
+number.** The summit vantage's fizz max goes 34.890 -> 35.239, the 150 m ring
+boundary's max fizz goes 34.89 -> 35.24, and its handover RMS goes 36.77 ->
+36.81. **Every failing boundary fails by the same amount it did at 2.** Peak
+loss is identical to the last digit; so is valley gain; so is every terrace
+row.
+
+And it is not free: the 168 tiles the probe holds take **27,891 ms to build
+instead of 10,063** - 2.8x for three tenths of a block at one vantage.
+
+**Why it cannot help, which is the useful part.** Supersampling changes how a
+tile CELL is averaged. A handover step is the difference between the height
+filtered at level L and the same place filtered at level L+1 - two different
+box widths over the same terrain - and no amount of sampling inside a cell
+makes a 512 m box agree with a 256 m one on a mountain. The boundaries fail
+because real Alpine relief has more than half a cell of height in it at every
+scale, which is a statement about the terrain and the LOD chooser, not about
+the tile store.
+
+**Taken as: stay at 2, record the numbers, do not spend 2.8x on nothing.**
+The knob keeps its place on F4. The thing that would actually move these rows
+is a wider geomorph blend across a ring boundary, or the level chooser
+overlapping its bands - both of them look changes with a frame cost, both of
+them Stage 5's or a later lane's to weigh, and neither of them named in this
+plan.
+
+
+
+### Peak loss went from +0.96 to +23.02 blocks, and the cause is the divisor
+
+At 600 m, over the twenty highest summits:
+
+| | mean | worst | over 4 blocks |
+| --- | --- | --- | --- |
+| Stage 0 baseline, `far_ring_div` 4, 3.2 km | **+0.96** | +2.62 | 0 of 20 |
+| Stage 3, `far_ring_div` 2, 32 km | **+23.02** | +64.71 | **12 of 20** |
+
+600 m is where ring 3 begins, and ring 3's cell went from 8 m to 16 m when the
+divisor was halved. A summit is a point; the mesh can only draw it if a vertex
+lands near it, and `far_peak_gain` buys back what the max pyramid saw within
+the filter footprint, not what fell between two vertices 32 blocks apart.
+Doubling the lattice spacing at a peak is the one place where a 4x vertex
+saving is paid for in a visible way, and it is paid at 600 m - inside the
+frontier, on the ridgeline you are walking towards.
+
+**Measured, not argued.** A third whole probe run at Ultra with
+`--set far_ring_div=4` - the same ten rings, the same 32 km, the only
+difference the base cell:
+
+| at 32 km | peak loss, mean | worst | over 4 blocks | vertices | far build |
+| --- | --- | --- | --- | --- | --- |
+| `far_ring_div` 2 | +23.02 | +64.71 | 12 of 20 | 1,782,136 | 457 ms |
+| `far_ring_div` 4 | **+1.34** | **+2.72** | **0 of 20** | 6,625,522 | 1,618 ms |
+
+The divisor is the whole cause and nothing else is: at 4 the summits come back
+to the Stage 0 baseline's +0.96 (the remaining tenth of a block is the ladder
+having ten rings now instead of five). It costs 3.7x the vertices - 3.3x over
+the plan's budget - and 3.5x the far build.
+
+The near handover improves with it and does not pass either: `2/3` goes from
+`rms 7.16 max 23.03/16` to `rms 3.76 max 15.49/8`, `3/4` from `17.44/32` to
+`6.88/16`. The coarse boundaries and the summit vantage's 465-block seam are
+unchanged, which is the second confirmation that those belong to the region's
+rim and not to the ring ladder.
+
+**This is not a red gate.** The plan's Stage 3 check on peak loss is that the
+two runs agree, and they do, character for character, at both settings. What
+this is, is the price of the horizon written down in the one place it is
+visible: **one spinbox, 4.8 M vertices, and 22 blocks off every summit at
+600 m.** Stage 7 measures the frame at both. **For Marcel.**
+
+### Everything that blew up is at the home region's rim
+
+The summit vantage is the highest cell in the world and it sits about 48
+blocks from the region's edge; its seam circle has a radius of 510 blocks, so
+nine tenths of it is outside the region. That is the whole explanation of the
+one alarming row in the tables:
+
+| seam, far mesh against the voxel surface | max | rms | samples |
+| --- | --- | --- | --- |
+| spawn | 2.24 | 0.47 | 720 |
+| **summit** | **465.33** | **160.93** | 720 |
+| lake | 0.45 | 0.35 | 720 |
+
+At the Stage 0 baseline the same row read `max 5.835 rms 1.069 over 417
+samples`: the far mesh was culled outside the region, so 303 of the 720
+samples had no far mesh to disagree with and were not counted. Stage 3 draws
+there, so they are counted now, and they disagree.
+
+**The mechanism, as far as this lane can see it.** Outside the region,
+`height_at` reads the level-0 tile through the LIVE store and may build it;
+the far mesh reads the FROZEN view and, when a tile is not in it, falls back
+to `_region_clamped` - the extruded rim, which at 48 blocks from a 416 m
+summit is several hundred blocks of nothing. The two doors have different
+fallbacks and only one of them can build. 465.33 is very close to
+832.2 - 366.9, a rim altitude.
+
+**It is not fixed in this lane and here is why.** The fallback is correct for
+what it is: a far read may not build, and it must answer something. The right
+answer - the coarsest tile the view does hold over that position - is a change
+to the far read's fallback chain, which is Stage 4's file and the world-truth
+break's problem: **the region stops existing in phase 2**, and with it both
+doors and both fallbacks. Written up under "For the world-truth break".
+
+### The far probe had to be taught the reach twice
+
+Two of its constants were written against a 3.2 km disc and are quadratic in it:
+
+1. **The quad lookup grid**, `2 * far_radius / 8` on a side - 15 MB at 3.2 km,
+   **1.5 GB at 32**. Replaced by the exact per-step index (above).
+2. **The fizz lattice.** `FIZZ_STEP_BLOCKS` is 13 and covers the whole disc, so
+   the sample count is quadratic too: 1.4 M samples at 3.2 km and **139 million
+   at 32**. The probe would still have been running in the morning. The spacing
+   is now `13 * m` with `m` ODD, scaled to keep the count near what it was -
+   odd times thirteen still shares no factor with any power of two, which is
+   the whole property the 13 was chosen for.
+
+Neither is a horizon-v1 bug; both are what a constant chosen for one reach does
+when the reach moves by a factor of ten, and both would have failed silently as
+"the probe is slow" or "the probe died".
+
+### The race that made a gate report a different number each run
+
+Far parity went red with the shape of a real bug and the smell of a bad one:
+**the GDScript leg's vertex count changed between runs of the same build** -
+133,392, then 133,424, then 135,088 - while the C++ leg sat at 132,640. A gate
+that varies is not a gate, and the cause is worth writing down in full because
+it is a class of mistake this lane could make again.
+
+`Heightmap.publish_far_view()` REPLACES the two dictionaries the far mesh
+reads. Stage 3 put it on a WORKER, inside the build task, right after the tile
+preparation - which looked right, because the preparation and the build belong
+together. But a far build has two legs and they take their tiles at different
+moments: the GDScript job read `_far_tiles` per sample, and the C++ leg is
+handed its tiles by `FarMesher.build` at the top of its own build. So a publish
+landing between the two handed them views from either side of the same
+replacement. Two different mountains, intermittently.
+
+Two fixes, and both are the design rather than a patch:
+
+1. **A job captures the view once.** `FarFieldJob._view = heightmap.far_view()`
+   at the top of `run()`, held for the whole build, threaded down through every
+   far door and through `detail_at`, `_slope_zone` and `surface_zone_at`. The
+   `far := false` flag those three gained in Stage 1 becomes "which view do you
+   read", which is the question that was actually being asked. That is exactly
+   the deal the C++ leg has always had, made explicit on this side.
+2. **`publish_far_view` only ever runs on the main thread.** The far build is
+   two tasks now: a worker prepares the tiles, `_process` sees it finish,
+   publishes, and submits the mesh. The harness that builds both legs runs
+   synchronously, so nothing can interleave; in the game there is one
+   `FarField` and one build at a time.
+
+After both: all five far-parity cases at `pos 0.000000000 normal 0.000000000
+colour 0.000000000`, run after run.
+
+And a third thing the two-phase build broke, which is the same lesson from the
+other side: **`_task == -1` is what every waiter in this project reads as "the
+far field is idle"** - `selftest.gd`'s `_pump_far_field` returns the moment it
+sees it. A second task handle for the prepare left a window where the far field
+looked idle with nothing built, and the far-terrace-knob gate measured zero
+vertices and zero rebuilds. `_task` carries both phases and is never -1 between
+them; the transition happens inside one `_process` call.
+
+And the last one, which had been latent since Stage 1: **`FarMesher.heightmap`
+was never assigned.** `FarMesher.build` marshals the tiles the C++ side has not
+seen and reads them off that member; `far_field.gd` sets `config`, `center`,
+`frontier` and `slice` on the mesher before every build and never set the
+heightmap, because until Stage 1 there was nothing to send and `setup()` took
+the heightmap as a parameter. So the C++ leg received the tiles marshalled at
+setup and **nothing after** - it drew the region's rim wherever the GDScript
+leg drew prepared ground. The far dispatch gate reported it as one leg emitting
+135,088 vertices against another's 132,640, and it survived three earlier
+rounds of fixing because the parity harness builds its jobs by hand and never
+prepares a tile.
+
+**And `parsecheck` is not a gate.** The throwaway script this run used to check
+syntax reports `ok` for a script that fails to compile - `ResourceLoader.load`
+returns a non-null Resource with a compile error attached. Every parse check
+from here is a real scene run.
+
+### The far probe's lookup grid had to go
+
+`Surface`'s flat grid was `2 * far_radius / LOOKUP_CELL_BLOCKS` on a side. At
+3.2 km that is 1,922 square - 15 MB, fine. At 32 km it is **19,204 square,
+1.5 GB**, and the probe would have died on its first allocation the moment the
+reach moved. It is replaced by the exact per-step index Stage 0 added for the
+inner rings, extended to every ring: one entry per ground quad, bounded by the
+mesh rather than by the reach, and a lookup walks the steps finest-first and
+takes the first hit. `LOOKUP_CELL_BLOCKS` is retired with it.
+
+---
+
+## The amendment, 2026-09-04 evening
+
+Marcel, relayed by Fable, overriding the plan's "never touch `main`" for the
+final step only: **when the run is complete and every gate of the last stage is
+green, this branch merges itself into `main` and pushes.** `git fetch origin`,
+`git merge origin/main`, resolve only trivial docs conflicts by keeping both
+sides' substance and otherwise abort and stop, re-run the gates if any code
+file changed in the merge, then `git push origin HEAD:main`; once more if the
+push is rejected. Never force-push, never rewrite history, never merge a red or
+wrapped-early stage. `main` carries `feat/mesher-v1` (merged `2b93471`) and the
+docs commits to `c1bd01d`, so the merge brings the chunk mesher in and the
+GDExtension is rebuilt before the gates re-run.
+
+---
+
 ## Questions taken alone
 
 Failure protocol item 7: the conservative reading, written down.
@@ -626,34 +1091,61 @@ Failure protocol item 7: the conservative reading, written down.
    game draws the C++ mesh (`far_cpp` defaults to 1) and the two legs are
    asserted identical three ways in `selftest.gd`. `--gdscript` forces the
    reference leg.
-6. **Level 0 tiles are never supersampled.** The plan applies
+6. **The plan's ring cell table and its "cell = step at `far_ring_div` 4"
+   parenthetical contradict each other.** The table reads "ring 0 | 2 m ...
+   ring 9 | 1,024 m", which is `far_ring_div` 2; at 4 the cells are half that
+   and the vertex sum is 6.5 M against the plan's own 2.0 M budget. Taken as
+   the table and the budget - two specific statements against one aside - and
+   measured both ways before deciding. Stage 3 has the numbers.
+7. **Level 0 tiles are never supersampled.** The plan applies
    `far_supersample` at every level; taken as level 1 and up only, because at
    level 0 it would put a metre-high filter step around the whole home region
    where the tile store meets the array. Reasoning and measurement under
    Stage 1.
-7. **`far_supersample` is applied by calling `build_tile` s-squared times at
+8. **`far_supersample` is applied by calling `build_tile` s-squared times at
    sub-cell offsets, not by adding a `supersample` argument to
    `KubikHeightTiles`.** Same samples, same means, same quantisation, and
    `gdext/src/height_tiles.{h,cpp}` is untouched - which is the smaller change
    and keeps the one class in this seam that decides WORLD TRUTH out of this
    lane's diff. The offsets are `cstep * (2k + 1) / 2s`, whole blocks at every
    level the store uses.
-8. **The far mesh reads a frozen view of the tile store and never builds.**
+9. **The far mesh reads a frozen view of the tile store and never builds.**
    The plan does not say what a far-mesh read does on a missing tile; taken as
    "the region's clamped rim", because the C++ leg cannot build one and the two
    legs must agree. `FarField` publishes the view before each build. See
    Stage 1.
-9. **ENet's default port is taken by the other lane.** `24565` is held by the
+10. **ENet's default port is taken by the other lane.** `24565` is held by the
    mesher lane's tour for as long as it runs, so every hosted run in this lane
    passes `--port 24566`. Nothing in the plan's command lines changes meaning;
    the flag is recorded here so a reader reproducing a number uses the same
    one. No file the other lane owns was touched to get this.
-4. **Grill Q21 contradicts itself on the presets' reach.** "All presets see
+11. **Grill Q21 contradicts itself on the presets' reach.** "All presets see
    R = 32 km; they differ in the near" is followed immediately by "Low: ...
    R 8 km. Medium: ... 16 km." Taken as the explicit per-preset table, which is
    the more specific of the two and the only one that can be implemented.
    Ultra is 32 km either way, and Ultra is what every gate in this plan is
    measured at, so no gate depends on the reading. Lands in Stage 3.
+12. **`far_rebuilds <= 12` cannot be met and no longer measures what it was
+   written to measure.** Taken as: report the number, report the cost beside
+   it, and do not redefine the gate. A rebuild after Stage 3 is a partial - a
+   handful of the 160 keyed meshes - so the count follows how fast the near
+   field streams (55 rebuilds against 6,300 chunks warm, 33 against 5,700
+   cold) while the cost per rebuild fell from 530 ms to 115 ms and the total
+   worker time over a sprint fell from about 9.5 s to about 6.3 s at ten times
+   the reach. `far_ring_recenter_frac` at 0.5 takes 55 to 49 and no further,
+   because rings 0 to 2 follow the frontier by design. The conservative
+   reading is that this is a green stage with one number that needs rewriting,
+   not a red one: the quantity the gate exists to bound - far work per second
+   of play - improved by a third. **For Marcel.**
+13. **The plan's Stage 3 eye check for `31-horizon-far` could not be answered
+   by the vantage as first written.** "The home region is visible from 20 km
+   as a range" was photographed standing at eye level on ground that, outside
+   the home region, is generated at wildness 1.0 and so is at maximum relief:
+   the camera stood against a cliff and two thirds of the frame was the wall
+   in front of it. Taken as: lift THAT ONE vantage 250 m, in
+   `screenshot_tour.gd`, and say so in its note. Conservative in the sense
+   that matters - it changes where the camera stands, never what the world is,
+   and every other vantage in the file is untouched.
 
 ---
 
@@ -673,6 +1165,31 @@ Failure protocol item 7: the conservative reading, written down.
    the plan's copy corrected.
 5. The plan's Stage 0 determinism check and the sprint probe's jump are both
    deviations, both recorded above with their measurements.
+6. **`far_ring_div` goes from 4 to 2, which revisits your 2026-09-01 ruling.**
+   At 32 km the divisor decides whether the far country is 1.8 M vertices or
+   6.5 M, and the plan's budget is 2.0 M. The halving you asked for in the near
+   field is spent on the four rings that reach the horizon instead. One spinbox
+   on F4 puts it back, standing still. Full numbers under Stage 3.
+7. **The view distance presets are now the reach**: Low 8 km, Medium 16 km,
+   High and Ultra 32 km, and Ultra's tree ring goes from 1,000 m to 800 (the
+   plan's Q21). Camera far plane 40 km.
+8. **The divisor's bill, measured: summits at 600 m lose 23.02 blocks at
+   `far_ring_div` 2 and 1.34 at 4.** Twelve of the twenty highest summits are
+   cut by more than four blocks where none was before, and a third probe run
+   at 4 puts all twenty back. It costs 6.6 M vertices against 1.8 M - 3.3x
+   over the plan's budget - and a far build of 1,618 ms against 457. This is
+   the argument against item 6 and it is on the ridgeline you walk towards,
+   not on the horizon. Stage 7 reports the frame at each; the choice is yours
+   and it is one spinbox.
+9. **The sprint's `far_rebuilds` gate is unmeetable and, after this stage,
+   meaningless.** 55 partial rebuilds at 115 ms have replaced 18 whole ones at
+   530, and the plan asks for 12. The quantity worth bounding is far worker
+   time per second of play, which fell by a third while the reach grew
+   tenfold. Question 12 has the numbers.
+10. **The far country reaches the horizon and arrives there almost black.**
+   Measured, and left alone on purpose: grill Q24 says Stage 3 may look worse
+   before Stage 4 gives it colour and Stage 5 gives it air. If it is still
+   black after Stage 5, that is a real finding and not a stage in progress.
 
 ---
 
@@ -716,6 +1233,17 @@ does NOT change, because changing it would change what a seed produces.
    recomputed from `world_blocks_xz`**, so the home region is still a
    configured size. D44's ringed content replaces the whole idea; until then
    it is bookkeeping, and no system culls against it any more.
+7. **The two doors outside the region have different fallbacks, and one of
+   them draws the rim.** `height_at` reads the LIVE tile store and may build
+   the tile it needs; the far mesh reads the FROZEN view and may not, so when
+   a tile is missing from the view it answers `_region_clamped` - the home
+   region's edge cell, extruded. Near a summit at the rim that is several
+   hundred blocks of wrong ground, which is where the summit vantage's seam
+   number of 465 blocks comes from. The honest fallback is the coarsest tile
+   the view DOES hold over that position, and only the region after that; the
+   world-truth break deletes the region and with it the whole fallback chain,
+   so it is written here rather than patched now.
+   `scripts/world/heightmap.gd`, `_tile_bilinear`.
 
 ---
 

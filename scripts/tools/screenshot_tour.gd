@@ -474,6 +474,22 @@ func _choose_vantages() -> Array:
 		"eye_m": Vector3(20000.0, 0.0, 0.0),
 		"tp": Vector2(20000.0, 0.0),
 		"look_home": true,
+		# AND 250 M ABOVE THE GROUND IT LANDS ON, horizon v1 Stage 3.
+		#
+		# Standing at eye level 20 km out was the first spelling and it took a
+		# picture of a cliff: outside the home region `wildness_at` clamps to
+		# 1.0 until the world-truth break, so the relief there is at maximum,
+		# and the vantage put the camera against a 200 m wall that filled two
+		# thirds of the frame. Nothing was wrong with the far mesh; the shot
+		# simply could not see past the ground it stood on.
+		#
+		# The question this shot exists to answer is whether the far country
+		# carries a range 20 km back, not where a person would stand. So it
+		# lifts. It is the only vantage in this file that does, it says so in
+		# its own note, and the number is a round 250 m rather than a fraction
+		# of anything so that a later relief change moves the ground under it
+		# and not the shot.
+		"eye_lift": 250.0,
 		"distance": 0.0, "height": 0.0,
 	})
 	# THE SPRINT LINE'S MIDPOINT, looking along it. The frame gate is measured
@@ -1191,7 +1207,8 @@ func _capture(index: int, shot: Dictionary) -> void:
 	if shot.get("ground_eye", false) or shot.has("tp"):
 		var bx := int(floor(eye.x / cfg.block_size))
 		var bz := int(floor(eye.z / cfg.block_size))
-		eye.y = _world.surface_height_m(bx, bz) + EYE_LEVEL_M
+		eye.y = _world.surface_height_m(bx, bz) + EYE_LEVEL_M \
+			+ float(shot.get("eye_lift", 0.0))
 		if shot.get("look_home", false):
 			# Level, looking at the origin: the home region seen as a range
 			# rather than as ground in front of the camera.

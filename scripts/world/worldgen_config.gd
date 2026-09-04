@@ -185,10 +185,22 @@ const VIEW_PRESETS := [
 	#
 	# Low and Medium are untouched. Their far radius runs out inside ring 2, so
 	# the ladder simply stops there and they cost exactly what they cost before.
-	{"name": "low", "radius": 6, "fog_end": 400.0, "far_tree": 400.0},
-	{"name": "medium", "radius": 8, "fog_end": 500.0, "far_tree": 500.0},
-	{"name": "high", "radius": 12, "fog_end": 3200.0, "far_tree": 400.0},
-	{"name": "ultra", "radius": 16, "fog_end": 3200.0, "far_tree": 1000.0},
+	# HORIZON V1 STAGE 3, grill Q21. `fog_end` is R, the reach - the distance
+	# the fog ramp is normalised to and the distance the far mesh draws to. The
+	# presets differ in the NEAR: how many chunks of voxels, and how far the
+	# impostor ring goes. High and Ultra both see 32 km, which is D84's "32 km
+	# on a clear day"; Low and Medium halve it twice, which costs them two
+	# rings and nothing else, because a ring is a constant number of quads.
+	#
+	# Q21's own sentence says "all presets see R = 32 km" and then gives Low
+	# 8 km and Medium 16 km in the next line. The explicit table is taken -
+	# it is the more specific of the two and the only one that can be
+	# implemented - and Ultra is 32 km either way, which is what every gate in
+	# this plan is measured at. Recorded in docs/status/horizon-v1.md.
+	{"name": "low", "radius": 6, "fog_end": 8000.0, "far_tree": 400.0},
+	{"name": "medium", "radius": 8, "fog_end": 16000.0, "far_tree": 500.0},
+	{"name": "high", "radius": 12, "fog_end": 32000.0, "far_tree": 400.0},
+	{"name": "ultra", "radius": 16, "fog_end": 32000.0, "far_tree": 800.0},
 ]
 
 ## view_distance value meaning "leave the numbers below exactly as they are".
@@ -1216,7 +1228,27 @@ const FOG_START_RATIO := 0.4
 ## cost. Putting it back is this one number.
 ##
 ## LOOK, NOT SHAPE. LOCAL and unhashed, like far_terrace.
-@export var far_ring_div := 4.0
+## HORIZON V1 STAGE 3: 4 TO 2, AND THE REACH IS WHY.
+##
+## Marcel's 2026-09-01 ruling put this at 4 - "Marcel wants the cells smaller
+## still" - and at a 3.2 km reach that was a 3.4 M vertex far country, which
+## the box carried. The reach is 32 km now, which is four more rings, and a
+## ring costs about the same as the ring inside it by construction. Measured
+## at Ultra, seed 42, `--far-probe --ring-table`:
+##
+##     far_ring_div 4:  6,511,760 vertices, ring 0 at 1 m cells
+##     far_ring_div 2:  1,782,136 vertices, ring 0 at 2 m cells
+##
+## The plan's budget is 2.0 M and its own ring table reads "ring 0 | 2 m",
+## which is this value. So the halving Marcel asked for in the NEAR field is
+## spent on the four rings that reach the horizon instead - the same vertices,
+## ten times further out.
+##
+## IT IS ONE SPINBOX ON F4 and on `FarField.FAR_ONLY_PROPERTIES`, so it
+## redraws the far country standing still: Marcel can put it back to 4 and see
+## both, and Stage 7 reports the frame at each. Recorded under "For Marcel" in
+## docs/status/horizon-v1.md, because it revisits a decision of his.
+@export var far_ring_div := 2.0
 
 ## WHICH MESHER DRAWS THE FAR COUNTRY. Distance v4 Stage 5. 1 is the C++
 ## GDExtension, 0 forces the GDScript one.
@@ -1968,6 +2000,13 @@ func apply_view_preset() -> void:
 	fog_end_m = preset["fog_end"]
 	fog_start_m = fog_end_m * FOG_START_RATIO
 	far_tree_m = preset["far_tree"]
+	# R AND `fog_end_m` ARE ONE NUMBER, horizon v1 Stage 3. `far_reach_m` is
+	# the name with the meaning in it - the distance the fog ramp is normalised
+	# to - and `fog_end_m` is the name everything downstream already derives
+	# from: the far radius (`fog_end_m / bs * FOG_MARGIN`), the camera's far
+	# plane (`fog_end_m * Player.FAR_PLANE_RATIO`) and the tour's own. Keeping
+	# them equal here means one preset row sets both and neither can drift.
+	far_reach_m = fog_end_m
 
 
 ## Name of the current preset, for the debug readout and the boot log.

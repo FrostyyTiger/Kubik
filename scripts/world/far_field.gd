@@ -132,8 +132,57 @@ func setup(generator: TerrainGenerator, config: WorldgenConfig) -> void:
 func request_rebuild(center_block: Vector2i, p_frontier := PackedInt32Array()) -> void:
 	_pending_center = center_block
 	_pending_frontier = p_frontier
+	# WHICH RINGS THIS ONE IS FOR, accumulated rather than replaced: a request
+	# arriving while a build runs adds its rings to the pending set, so a ring
+	# that came due while the worker was busy is not forgotten when the next
+	# frontier move only asks for ring 0.
+	for r in _rings_due():
+		_pending_rings[r] = true
 	_has_pending = true
 	_start_if_idle()
+
+
+## Rings due for a rebuild, given where the player is now.
+##
+## RINGS 0 TO 2 FOLLOW THE FRONTIER, as the whole disc used to: they are the
+## ground the player is about to walk on, their hole is cut to the frontier,
+## and between them they are a few per cent of the disc's quads.
+##
+## RING r >= 3 RE-CENTRES ON A QUARTER OF ITS OWN INNER RADIUS
+## (`far_ring_recenter_frac`). Ring 3's inner edge is 600 m, so it is rebuilt
+## every 150 m of walking; ring 8's is 19.2 km, so it is rebuilt every 4.8 -
+## which at sprint speed is once every six minutes. That is the whole point:
+## the coarse rings are the expensive ones and they are the ones that do not
+## need to move.
+##
+## The comparison is against the position the ring was last BUILT around, not
+## against the last request, so a ring that has been waiting its turn does not
+## reset its clock every time ring 0 is rebuilt.
+func _rings_due() -> Array:
+	var out := []
+	var bs: float = _config.block_size if _config != null else 0.5
+	var base := FarFieldJob.base_step_blocks(_config) if _config != null else 2
+	var frac: float = _config.far_ring_recenter_frac if _config != null else 0.25
+	var inner_m := 0.0
+	for ring in FarFieldJob.RING_STEP_MULTIPLE.size():
+		var outer_m: float = FarFieldJob.RING_OUTER_M[ring] \
+			if ring < FarFieldJob.RING_OUTER_M.size() else INF
+		if ring <= 2:
+			out.append(ring)
+		else:
+			var was = _ring_anchor.get(ring)
+			if was == null:
+				out.append(ring)
+			else:
+				var d := Vector2(_pending_center - (was as Vector2i)).length() * bs
+				if d > frac * inner_m:
+					out.append(ring)
+		inner_m = outer_m
+	return out
+
+
+## Rings asked for since the last build started. See `request_rebuild`.
+var _pending_rings := {}
 
 
 func _process(_delta: float) -> void:
@@ -147,7 +196,23 @@ func _process(_delta: float) -> void:
 	if not WorkerThreadPool.is_task_completed(_task):
 		return
 	WorkerThreadPool.wait_for_task_completion(_task)
+	# PHASE ONE HAS FINISHED: freeze the store and submit the mesh, in this
+	# same call. Main thread, which is the whole point - see `_start_if_idle`.
+	#
+	# `_task` CARRIES BOTH PHASES AND IS NEVER -1 BETWEEN THEM, and that is not
+	# bookkeeping: `_task == -1` is what every waiter in the project reads as
+	# "the far field is idle" - `selftest.gd`'s `_pump_far_field` most of all,
+	# which returns the moment it sees it. A second handle for the prepare left
+	# a window where the far field looked idle with nothing built, and the
+	# far-terrace-knob gate duly measured zero vertices and zero rebuilds.
+	if _phase == PHASE_PREPARE:
+		_phase = PHASE_BUILD
+		_prep_us = Time.get_ticks_usec() - _prep_started_us
+		_heightmap.publish_far_view()
+		_task = WorkerThreadPool.add_task(_active.run, false, "kubik far field")
+		return
 	_task = -1
+	_phase = PHASE_PREPARE
 
 	_last_ms = _active.elapsed_ms
 	_last_wall_ms = int((Time.get_ticks_usec() - _started_us) / 1000)
@@ -200,6 +265,10 @@ func _process(_delta: float) -> void:
 ## - the stream probe above all - would otherwise be told yes about ground that
 ## is still sixteen frames from being on screen.
 func _queue_upload(slices: Array, frontier: PackedInt32Array, verts: int) -> void:
+	# THE KEYED PATH PUTS EACH KEY ON ITS OWN NODE. Horizon v1 Stage 3.
+	if not _built_keys.is_empty():
+		_queue_keyed_upload(slices, frontier, verts)
+		return
 	var next := ArrayMesh.new()
 	_next_mesh = next
 	_next_frontier = frontier
@@ -217,9 +286,104 @@ func _queue_upload(slices: Array, frontier: PackedInt32Array, verts: int) -> voi
 	_upload.submit(&"far_field", work, _commit_upload)
 
 
+# --- ONE MESH PER (RING, SECTOR), horizon v1 Stage 3, grill Q14 --------------
+#
+# TEN RINGS BY SIXTEEN SECTORS, each its own `MeshInstance3D` under this node,
+# each at its ring's world anchor, each replaced on its own. What that buys is
+# the thing the Stage 0 baseline measured and could not fix: the far field
+# rebuilt the WHOLE DISC every time the frontier moved, which is every time a
+# chunk column lands, and at 32 km the whole disc is six and a half million
+# vertices and a second and a half. Walking a hundred metres now touches rings
+# 0 and 1 and nothing else.
+#
+# WHY NODES AND NOT SURFACES OF ONE MESH. An `ArrayMesh` surface cannot be
+# replaced in place - `surface_remove` shuffles every index above it - so a
+# per-key update of one mesh would be a rebuild of the whole mesh's surface
+# list on the frame thread, which is the cost being removed. A node per key is
+# 160 `MeshInstance3D`s, which is 160 draw calls at worst and in practice far
+# fewer, because a key with no quads gets no mesh at all.
+#
+# AND THE ANCHOR IS WHY THE VERTICES ARE SMALL. A key's vertices are relative
+# to its ring's snapped centre (far_field_job.gd's `_anchor_x`), so nothing in
+# a buffer is ever more than the ring's outer radius from its own origin -
+# which is section 3's anchor rule, and what Stage 6 needs in place before it
+# can move an origin at all.
+
+## `Vector2i(ring, sector)` -> the MeshInstance3D holding it.
+var _key_nodes := {}
+
+## The keys the build in flight was asked for, flat, as the job takes them.
+var _built_keys := PackedInt32Array()
+
+## Per ring: the block position its meshes were last built around, and whether
+## it has ever been built. `request_rebuild` compares the player against these
+## to decide which rings this rebuild is for.
+var _ring_anchor := {}
+
+## How many keys the last rebuild touched, for the F3 readout.
+var _last_keys := 0
+
+
+## Land a keyed build: one surface per key, on that key's own node.
+##
+## THE SWAP IS STILL ATOMIC PER KEY. FarUpload's rule 2 is that a half-uploaded
+## mesh never reaches the screen; here the unit is a key rather than the whole
+## disc, which is weaker in principle and stronger in practice - a key is one
+## wedge of one ring, and the alternative was a whole 32 km disc arriving
+## sixteen frames late.
+func _queue_keyed_upload(slices: Array, frontier: PackedInt32Array,
+		verts: int) -> void:
+	var anchors: PackedVector3Array = _active.key_anchors \
+		if _active != null else PackedVector3Array()
+	var work: Array[Callable] = []
+	var n := mini(slices.size(), _built_keys.size() / 2)
+	for i in n:
+		var key := Vector2i(_built_keys[i * 2], _built_keys[i * 2 + 1])
+		var arrays: Array = slices[i]
+		var at := anchors[i] if i < anchors.size() else Vector3.ZERO
+		work.append(func() -> void: _apply_key(key, arrays, at))
+	_next_frontier = frontier
+	_next_verts = verts
+	_last_keys = n
+	_upload.submit(&"far_field", work, _commit_upload)
+
+
+## One key's mesh, on the frame thread, out of the upload budget.
+func _apply_key(key: Vector2i, arrays: Array, anchor: Vector3) -> void:
+	var node: MeshInstance3D = _key_nodes.get(key)
+	if arrays.is_empty():
+		# NO QUADS IN THIS WEDGE. Some keys always have none - the disc has a
+		# hole in the middle - and a key that HAD quads and now has none must
+		# lose them, or a ring that has just been re-centred leaves its old
+		# ground standing beside its new.
+		if node != null:
+			node.mesh = null
+		return
+	if node == null:
+		node = MeshInstance3D.new()
+		node.name = "Far_%d_%d" % [key.x, key.y]
+		# The far field's own material, the same one this node carries - see
+		# setup(). Set on the instance rather than per surface so a key's mesh
+		# is one assignment.
+		node.material_override = material_override
+		node.cast_shadow = cast_shadow
+		add_child(node)
+		_key_nodes[key] = node
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	m.surface_set_material(0, ChunkMesher.get_material())
+	node.mesh = m
+	node.position = anchor
+
+
 func _commit_upload() -> void:
-	mesh = _next_mesh if _next_mesh != null \
-		and _next_mesh.get_surface_count() > 0 else null
+	# ON THE KEYED PATH THE GEOMETRY IS IN THE CHILDREN and this node draws
+	# nothing itself, so `mesh` is left alone - assigning null here would be
+	# right and assigning `_next_mesh` would put a stale whole-disc mesh back
+	# on screen beside the per-key ones.
+	if _built_keys.is_empty():
+		mesh = _next_mesh if _next_mesh != null \
+			and _next_mesh.get_surface_count() > 0 else null
 	# The frontier THIS MESH was cut to. Not the same as the world's current
 	# one: a rebuild takes a frame or two on a worker plus a handover on the
 	# frame thread, and during that window what is on screen is the old hole.
@@ -230,6 +394,12 @@ func _commit_upload() -> void:
 	# bench - spins on this number to mean "the new mesh is up", and after this
 	# stage the build finishing is no longer that moment.
 	_rebuilds += 1
+	# WHAT IS RESIDENT, not what was just built. On the keyed path a rebuild
+	# touches a handful of the 160 meshes, so `_next_verts` is the cost of the
+	# REBUILD and this is the cost of the far country - two different facts,
+	# and the F3 line and the tour's budget want the second.
+	if not _built_keys.is_empty():
+		_last_verts = _resident_vertices()
 	var last: Dictionary = _upload.stats()["last"]
 	if last.has(&"far_field"):
 		_last_upload_ms = float(last[&"far_field"]["ms"])
@@ -237,25 +407,58 @@ func _commit_upload() -> void:
 	rebuilt.emit(_next_verts)
 
 
+## Vertices across every key's mesh. The far country's actual size.
+func _resident_vertices() -> int:
+	var n := 0
+	for key in _key_nodes:
+		var node: MeshInstance3D = _key_nodes[key]
+		if node == null or node.mesh == null:
+			continue
+		var m: ArrayMesh = node.mesh
+		for si in m.get_surface_count():
+			n += m.surface_get_array_len(si)
+	return n
+
+
 func _start_if_idle() -> void:
 	if _task != -1 or not _has_pending or _generator == null:
 		return
 	_has_pending = false
-	# THE TILE STORE IS FROZEN FOR THIS BUILD, horizon v1 Stage 1. Main thread,
-	# here, immediately before the job is submitted - see
-	# `Heightmap._far_tiles`. Both legs then read the same set: the GDScript
-	# one through the published view, the C++ one through the marshal that
-	# reads the same published view. A tile that appears on a chunk worker
-	# while this build runs arrives in the NEXT one, on both legs together.
-	_heightmap.publish_far_view()
 	# THE DISPATCH. The C++ mesher when there is one and the knob has not turned
 	# it off; GDScript otherwise, on exactly the same three lines - both objects
 	# present the same five members, so nothing below this branch knows which
 	# built the mesh.
+	# THE KEY SET FOR THIS BUILD: every sector of every ring that came due.
+	#
+	# EVERY SECTOR, and not a subset of them, because a ring's hole is cut per
+	# sector to the frontier and a sector whose voxels have just arrived needs
+	# its far mesh re-cut whether or not the ring moved. Sixteen keys of a
+	# cheap ring is cheap; the saving this stage is for is the RINGS it does
+	# not walk at all.
+	_built_keys = PackedInt32Array()
+	var rings := _pending_rings.keys()
+	rings.sort()
+	for r in rings:
+		_ring_anchor[r] = _pending_center
+		for sec in World.FRONTIER_SECTORS:
+			_built_keys.push_back(r)
+			_built_keys.push_back(sec)
+	_pending_rings.clear()
+
 	if _use_cpp():
+		# THE HEIGHTMAP, and it is not decoration. `FarMesher.build` marshals
+		# the tiles this side has not sent yet, and it reads them off this
+		# member - which nothing assigned until horizon v1 Stage 3, because
+		# until Stage 1 there were no tiles and `setup()` took the heightmap as
+		# a parameter. Left unset, the C++ leg received the tiles marshalled at
+		# setup and NOTHING AFTER, so it drew the region's rim wherever the
+		# GDScript leg drew prepared ground, and the far dispatch gate reported
+		# it as one leg emitting 135,088 vertices against another's 132,640.
+		_mesher.heightmap = _heightmap
 		_mesher.config = _config
 		_mesher.center = _pending_center
 		_mesher.frontier = _pending_frontier
+		_mesher.keys = _built_keys
 		# SLICED, distance v5 Stage 1. The runtime path is the only caller that
 		# asks for this; the probe, the parity harness and the self-test build
 		# the whole mesh, which is byte for byte the one this project has
@@ -271,10 +474,103 @@ func _start_if_idle() -> void:
 		_job.center = _pending_center
 		_job.frontier = _pending_frontier
 		_job.slice = true
+		_job.keys = _built_keys
 		_active = _job
 		_last_mesher = "gdscript"
 	_started_us = Time.get_ticks_usec()
-	_task = WorkerThreadPool.add_task(_active.run, false, "kubik far field")
+	# PREPARE, FREEZE, THEN BUILD - all three on the worker. Horizon v1 Stage 3.
+	#
+	# The far mesh reads height tiles it may not build (see
+	# `Heightmap._far_tiles`), so something has to build them, and the
+	# something cannot be the main thread: a level-8 tile is forty
+	# milliseconds and a rebuild wants a dozen of them. So the task the pool
+	# gets is `_prepare_and_run`, which does the store's work and then the
+	# mesher's, in that order, on the same worker - and the old mesh stays on
+	# screen for all of it, which is the whole reason this was ever
+	# asynchronous.
+	# PREPARE ON A WORKER, PUBLISH ON THE MAIN THREAD, THEN BUILD. Two tasks,
+	# and the split is not tidiness - it is the only place `publish_far_view`
+	# can safely be called from.
+	#
+	# THE RACE IT CLOSES. `publish_far_view` REPLACES the two dictionaries the
+	# far mesh reads. A build holds its own reference for its whole run
+	# (`FarFieldJob._view`), so it is immune - but the C++ leg is handed its
+	# tiles by `FarMesher.build`, which reads the view at ITS start. Publish
+	# from a worker and the two legs can be handed views from either side of
+	# the same publish: the GDScript job captures V1, a worker publishes V2,
+	# the marshal sends V2. Two different mountains, and the far parity gate
+	# reported it as a vertex count that changed between runs of the same
+	# build.
+	#
+	# On the main thread it cannot happen: the harness that builds both legs
+	# runs synchronously, so no `_process` interleaves, and in the game there
+	# is one `FarField` and one build at a time.
+	_prep_started_us = Time.get_ticks_usec()
+	_phase = PHASE_PREPARE
+	_task = WorkerThreadPool.add_task(_prepare_tiles, false, "kubik far tiles")
+
+
+## What the last prepare cost, for the F3 readout, and which phase `_task` is.
+var _prep_us := 0
+var _prep_started_us := 0
+
+const PHASE_PREPARE := 0
+const PHASE_BUILD := 1
+var _phase := PHASE_PREPARE
+
+
+## THE TILES EVERY RING OF THIS BUILD WILL READ, AND NO OTHERS.
+##
+## WHICH LEVEL IS READ WHERE. `_level_at` is `log2(d / far_level_ref_m) +
+## far_filter_bias`, so level L is the one being read out to
+##
+##     far_level_ref_m * 2^(L + 1 - far_filter_bias)
+##
+## metres from the ring's centre, and past that L + 1 takes over. That is the
+## disc level L needs - not the whole reach - which is why this costs a
+## handful of tiles per level rather than the nine hundred a level-0 disc of
+## 38 km would be. A level-L tile spans `256 * 2^L` m and the disc it has to
+## cover grows by the same factor, so **every level needs about the same two
+## by two neighbourhood**, whatever L is. That is the ring table's own
+## constant-cost property, applied to the store.
+##
+## `far_tile_apron` tiles of margin on top, because `_flank_normal` reads
+## ninety-six blocks past a quad and a quad at the edge of the disc would
+## otherwise sample the rim.
+##
+## EVICTION AT TWICE THE RADIUS, for the reason `World._evict_height_tiles`
+## uses the same rule: a player walking back and forth across one boundary
+## should not rebuild the same tile every crossing.
+func _prepare_tiles() -> void:
+	if _heightmap == null or _config == null:
+		return
+	var bs: float = _config.block_size
+	var reach := _config.fog_end_m / bs * FarFieldJob.FOG_MARGIN
+	var apron := maxf(_config.far_tile_apron, 0.0)
+	var ref_m := maxf(_config.far_level_ref_m, 1.0)
+	var ring0 := FarFieldJob.RING_OUTER_M[0] / bs
+	for level in range(0, Heightmap.TILE_MAX_LEVEL + 1):
+		# WHERE LEVEL L'S BAND STARTS. `_level_at` is
+		# `log2(d / far_level_ref_m) + far_filter_bias`, so level L is first
+		# read at `far_level_ref_m * 2^(L - bias)` metres - and if that is
+		# already past the reach, NO QUAD IN THIS BUILD WILL EVER ASK FOR IT.
+		#
+		# Without this the prepare built all ten levels whatever the preset,
+		# which at the self-test's 90 m reach is eight levels of tiles nothing
+		# reads and seven seconds of first build. It cost the far-terrace-knob
+		# gate, which pumps a fixed number of frames and got none.
+		var from_m: float = ref_m * pow(2.0, float(level)
+			- _config.far_filter_bias)
+		if level > 0 and from_m / bs > reach:
+			break
+		var top_m: float = ref_m * pow(2.0, float(level) + 1.0
+			- _config.far_filter_bias)
+		var r := minf(top_m / bs, reach)
+		# Never less than ring 0's own outer radius: level 0 is read across the
+		# whole of it and the voxel disc may be smaller than 150 m.
+		r = maxf(r, ring0) + apron * float(_heightmap.tile_span_blocks(level))
+		_heightmap.ensure_disc(level, _pending_center, r)
+		_heightmap.evict_beyond(level, _pending_center, r * 2.0)
 
 
 ## THE A/B, IN A RUNNING GAME. `far_cpp` is a local knob on F4, default 1, and
@@ -354,6 +650,14 @@ func stats() -> Dictionary:
 		"upload_ms": _last_upload_ms,
 		"upload_frames": _last_upload_frames,
 		"upload_pending": _upload.pending(),
+		# HORIZON V1 STAGE 3. How many (ring, sector) keys the last rebuild
+		# touched, of 160 - the number that says whether the partial rebuild is
+		# doing its job.
+		"keys": _last_keys,
+		"key_nodes": _key_nodes.size(),
+		# HORIZON V1 STAGE 3. What the store's own work cost on the worker,
+		# ahead of the mesh - see _prepare_tiles.
+		"prep_ms": float(_prep_us) / 1000.0,
 	}
 
 
@@ -369,10 +673,27 @@ func uploader() -> FarUpload:
 
 
 ## Block until any build finishes, before the world it reads is thrown away.
+## Drop every per-key mesh. Called when the world is put down, so a reroll does
+## not leave the old country's 160 nodes standing under the new one.
+func clear_keys() -> void:
+	for key in _key_nodes:
+		var node: MeshInstance3D = _key_nodes[key]
+		if is_instance_valid(node):
+			node.queue_free()
+	_key_nodes.clear()
+	_ring_anchor.clear()
+	_pending_rings.clear()
+	_built_keys = PackedInt32Array()
+	_last_keys = 0
+
+
 func drain() -> void:
+	# EITHER PHASE. A prepare in flight is taking the tile store's mutex from
+	# time to time and must be joined before the world it reads is put down.
 	if _task != -1:
 		WorkerThreadPool.wait_for_task_completion(_task)
 		_task = -1
+	_phase = PHASE_PREPARE
 	_job = null
 	_active = null
 	_has_pending = false
@@ -572,6 +893,12 @@ static func apply_far_knobs(world: Node, tree_field: Node,
 func rebuild_in_place() -> bool:
 	if _generator == null:
 		return false
+	# EVERY RING, because a knob moved and a knob moves the whole country. The
+	# per-ring re-centre rule is about WALKING; standing still and turning a
+	# spinbox is the one case where all ten rings are due at once, and it is
+	# the case this function exists for.
+	for r in FarFieldJob.RING_STEP_MULTIPLE.size():
+		_pending_rings[r] = true
 	_has_pending = true
 	_start_if_idle()
 	return true

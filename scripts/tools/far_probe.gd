@@ -117,6 +117,22 @@ const SEAM_PROBE_SAMPLES := 720
 ## thing it measures is worse than no instrument.
 const FIZZ_STEP_BLOCKS := 13
 
+## AND IT SCALES WITH THE REACH, horizon v1 Stage 3.
+##
+## THIRTEEN IS THE RIGHT SPACING AND THE WRONG COST. The lattice covers the
+## whole disc, so its sample count is quadratic in the reach: 1.4 M samples at
+## the 3.2 km this constant was chosen for, and **139 million** at 32 km. The
+## probe would still be running in the morning.
+##
+## So the spacing is `13 * m` with `m` ODD, chosen to keep the count near what
+## it was. Odd times thirteen still shares no factor with 8, 16, 32 or any
+## other power of two, which is the whole property the 13 is for - "the samples
+## walk across the quads instead of sitting on their corners" - and an
+## instrument aliased against the thing it measures is worse than none.
+##
+## The reach it is normalised against: the 7,680 blocks the 13 was written at.
+const FIZZ_REFERENCE_BLOCKS := 7680.0
+
 ## FIZZ: width of the distance bins the max is reported in, in metres. The
 ## Stage 2 gate is "no spike at 200 m or 400 m", which needs the max broken out
 ## by range rather than one number over the whole disc.
@@ -136,9 +152,13 @@ const PEAK_COUNT := 20
 const PEAK_SEPARATION_CELLS := 40
 const PEAK_RANGE_M := 600.0
 
-## The grid the quad lookup is indexed on, in blocks. far_step is the finest
-## ring's step, so one cell is covered by at most one quad of every ring.
-const LOOKUP_CELL_BLOCKS := 8
+## RETIRED, horizon v1 Stage 3. `Surface` indexes every quad by its own corner
+## at its own step now - see the note by `Surface.fine` - so there is no lookup
+## cell any more, and the constant is gone with the grid it sized. It had two
+## faults and either alone was fatal: it could not see a quad finer than itself
+## (`far_ring_div` has been 4 since 2026-09-01, so rings 0 and 1 were invisible
+## to it), and its grid was sized to the REACH, which at 32 km would have been
+## a 1.5 GB allocation.
 
 ## HALF-WIDTH OF THE RING-BOUNDARY WINDOW, in metres. Distance v2 Stage 0.
 ##
@@ -325,6 +345,12 @@ func _go() -> void:
 		get_tree().quit(0)
 		return
 
+	# HORIZON V1 STAGE 3. The vertex table per ring - see _ring_table().
+	if "--ring-table" in OS.get_cmdline_user_args():
+		await _ring_table()
+		get_tree().quit(0)
+		return
+
 	if "--idle" in OS.get_cmdline_user_args():
 		await _idle_table()
 		get_tree().quit(0)
@@ -355,6 +381,76 @@ func _go() -> void:
 	_print_fleck_recipe()
 	print("[FarProbe] %s" % ["PASS" if same else "FAIL"])
 	get_tree().quit(0 if same else 1)
+
+
+# --- THE RING TABLE, horizon v1 Stage 3 --------------------------------------
+#
+#     godot --headless --path . -- --host --seed 42 --view ultra \
+#         --far-probe --ring-table
+#
+# WHAT EACH RING COSTS, ring by ring, at whatever reach and ring divisor the
+# run is configured for. The plan's section 3 asks for exactly this table and
+# puts a budget on its last line - "the sum over all rings at Ultra must not
+# exceed 2.0 M vertices" - and until Stage 3 there was no way to ask a ring
+# what it cost on its own, because the far mesh was one disc.
+#
+# BUILT THROUGH THE KEY SET, which is what makes it possible: sixteen keys of
+# one ring is that ring and nothing else, and the union of the ten of them is
+# the disc the game draws - which the horizon self-test asserts.
+func _ring_table() -> void:
+	var bs: float = _config.block_size
+	var base := FarFieldJob.base_step_blocks(_config)
+	var centre: Vector2i = _generator.spawn_block
+	_prepare_far_tiles(centre)
+	var ts: Dictionary = _heightmap.tile_stats()
+	print("[FarRings] preset %s, reach %.0f m, far_ring_div %.0f, base step %d blocks (%.1f m)" % [
+		_config.view_distance_name(), _config.fog_end_m, _config.far_ring_div,
+		base, float(base) * bs])
+	print("[FarRings] %d tiles held, %.1f MB, %d built in %d ms" % [
+		int(ts["tiles"]), float(ts["bytes"]) / 1048576.0,
+		int(ts["built"]), int(ts["build_ms"])])
+	print("[FarRings] %-5s %9s %20s %12s %8s" % [
+		"ring", "cell", "covers", "vertices", "ms"])
+	var total := 0
+	var inner_m := 0.0
+	var reach := _config.fog_end_m / bs * FarFieldJob.FOG_MARGIN
+	for ring in FarFieldJob.RING_STEP_MULTIPLE.size():
+		var keys := PackedInt32Array()
+		for sec in World.FRONTIER_SECTORS:
+			keys.push_back(ring)
+			keys.push_back(sec)
+		var verts := 0
+		var ms := 0
+		if _cpp_mesher != null:
+			_cpp_mesher.config = _config
+			_cpp_mesher.center = centre
+			_cpp_mesher.frontier = PackedInt32Array()
+			_cpp_mesher.slice = true
+			_cpp_mesher.keys = keys
+			_cpp_mesher.run()
+			verts = _cpp_mesher.vertex_count
+			ms = _cpp_mesher.elapsed_ms
+		else:
+			var job := FarFieldJob.new()
+			job.heightmap = _heightmap
+			job.generator = _generator
+			job.config = _config
+			job.center = centre
+			job.slice = true
+			job.keys = keys
+			job.run()
+			verts = job.vertex_count
+			ms = job.elapsed_ms
+		var outer_m: float = FarFieldJob.RING_OUTER_M[ring] \
+			if ring < FarFieldJob.RING_OUTER_M.size() else reach * bs
+		var cell_m := float(base * FarFieldJob.RING_STEP_MULTIPLE[ring]) * bs
+		print("[FarRings] %-5d %7.1f m %9.0f -> %7.0f m %12d %6d" % [
+			ring, cell_m, inner_m, outer_m, verts, ms])
+		total += verts
+		inner_m = outer_m
+		await get_tree().process_frame
+	print("[FarRings] TOTAL %d vertices - the plan's budget is 2,000,000 (%s)" % [
+		total, "under" if total <= 2000000 else "OVER"])
 
 
 ## THE FLECK NUMBER IS NOT MEASURED HERE, AND THIS PRINTS WHERE IT IS.
@@ -483,6 +579,9 @@ func _idle_rebuild() -> void:
 func _measure() -> PackedStringArray:
 	var out := PackedStringArray()
 	var vantages := _vantages()
+	out.append("[FarProbe] fizz lattice %d blocks (13 x %d), reach %.0f blocks" % [
+		_fizz_step(), _fizz_step() / FIZZ_STEP_BLOCKS,
+		_config.fog_end_m / _config.block_size * FarFieldJob.FOG_MARGIN])
 	out.append("[FarProbe] %-14s %9s %9s %10s %s" % [
 		"vantage", "fizz rms", "fizz max", "roughness", "max fizz per 100 m band"])
 
@@ -725,6 +824,54 @@ func _handover_arc(s: Surface, centre: Vector2i, radius_blocks: float,
 	}
 
 
+## The fizz lattice's spacing for this reach - see FIZZ_REFERENCE_BLOCKS.
+func _fizz_step() -> int:
+	var reach := _config.fog_end_m / _config.block_size * FarFieldJob.FOG_MARGIN
+	var m := maxi(int(round(reach / FIZZ_REFERENCE_BLOCKS)), 1)
+	if m % 2 == 0:
+		m += 1
+	return FIZZ_STEP_BLOCKS * m
+
+
+## `FarField._prepare_tiles`, for a probe that has no FarField.
+##
+## WITHOUT THIS THE PROBE MEASURES A MESH THE GAME NEVER DRAWS. The far mesh
+## does not build tiles - `Heightmap._far_tiles`, and the C++ leg could not if
+## it wanted to - so `FarField` prepares them on a worker before every build.
+## The probe builds its jobs by hand, and until Stage 3 that meant every ring
+## outside the home region read the region's CLAMPED RIM: a flat extruded skirt
+## where the game draws mountains. The handover rows said so in the loudest
+## possible way the first time the reach was 32 km - rms 344 blocks at the 6/7
+## boundary, where a ring of real ground met a ring of rim.
+##
+## The rule is `FarField._prepare_tiles`'s and is kept in step with it by hand:
+## level L is read out to `far_level_ref_m * 2^(L + 1 - far_filter_bias)` metres
+## and no further, and a level whose band begins past the reach is never read.
+## The price of the probe building its jobs directly, and the reason it does is
+## that the whole instrument exists to be deterministic, which a `FarField` on
+## a worker is not.
+func _prepare_far_tiles(centre: Vector2i) -> void:
+	var bs: float = _config.block_size
+	var reach := _config.fog_end_m / bs * FarFieldJob.FOG_MARGIN
+	var apron := maxf(_config.far_tile_apron, 0.0)
+	var ref_m := maxf(_config.far_level_ref_m, 1.0)
+	var ring0 := FarFieldJob.RING_OUTER_M[0] / bs
+	for level in range(0, Heightmap.TILE_MAX_LEVEL + 1):
+		var from_m: float = ref_m * pow(2.0, float(level) - _config.far_filter_bias)
+		if level > 0 and from_m / bs > reach:
+			break
+		var top_m: float = ref_m * pow(2.0, float(level) + 1.0
+			- _config.far_filter_bias)
+		var r := minf(top_m / bs, reach)
+		r = maxf(r, ring0) + apron * float(_heightmap.tile_span_blocks(level))
+		_heightmap.ensure_disc(level, centre, r)
+		# EVICTED AT TWICE THE RADIUS, as `World` and `FarField` both do. The
+		# probe visits twenty summits and three vantages; without this it would
+		# hold every tile of every one of them at once.
+		_heightmap.evict_beyond(level, centre, r * 2.0)
+	_heightmap.publish_far_view()
+
+
 ## One extremum table: twenty peaks, or twenty basins.
 func _extrema_rows(sign: int, title: String, sense: String) -> PackedStringArray:
 	var out := PackedStringArray()
@@ -915,17 +1062,19 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 	var sum_sq := 0.0
 	var n := 0
 	var worst := 0.0
+	# THE LATTICE SCALES WITH THE REACH - see FIZZ_REFERENCE_BLOCKS.
+	var lattice := _fizz_step()
 	var bz := lo_z
 	while bz <= centre.y + reach:
 		var bx := lo_x
 		while bx <= centre.x + reach:
 			var ha := a.height_at(float(bx), float(bz))
 			if is_nan(ha):
-				bx += FIZZ_STEP_BLOCKS
+				bx += lattice
 				continue
 			var hb := b.height_at(float(bx), float(bz))
 			if is_nan(hb):
-				bx += FIZZ_STEP_BLOCKS
+				bx += lattice
 				continue
 			var d := absf(ha - hb)
 			sum_sq += d * d
@@ -939,8 +1088,8 @@ func _fizz(a: Surface, b: Surface, centre: Vector2i) -> Dictionary:
 					edges[e] = maxf(edges[e], d)
 					edge_sq[e] += float(d) * float(d)
 					edge_n[e] += 1
-			bx += FIZZ_STEP_BLOCKS
-		bz += FIZZ_STEP_BLOCKS
+			bx += lattice
+		bz += lattice
 
 	var parts := PackedStringArray()
 	for i in bins.size():
@@ -984,7 +1133,8 @@ func _roughness(s: Surface, centre: Vector2i) -> Dictionary:
 
 
 func _snap(b: int) -> int:
-	return int(floor(float(b) / float(FIZZ_STEP_BLOCKS))) * FIZZ_STEP_BLOCKS
+	var lattice := _fizz_step()
+	return int(floor(float(b) / float(lattice))) * lattice
 
 
 ## STAGE 8'S GATE AS A NUMBER: does the far mesh still meet the voxel surface
@@ -1097,6 +1247,11 @@ func _surface(centre: Vector2i) -> Surface:
 	# comparison, because these rows are fizz, roughness, peak loss, terrace
 	# compliance and seam agreement, computed off the triangles rather than off
 	# the arrays. A mesh can match array-for-array and still be read wrong.
+	# THE TILES THIS CENTRE WILL READ - see `_prepare_far_tiles`. Without it
+	# the probe measures a far mesh built on the region's clamped rim, which is
+	# not the mesh the game draws.
+	_prepare_far_tiles(centre)
+
 	var job: RefCounted = _cpp_mesher
 	if job != null:
 		_cpp_mesher.config = _config
@@ -1144,13 +1299,6 @@ class Surface extends RefCounted:
 	var y_off_blocks := 0.0
 	var seam_end_blocks := 0.0
 
-	# A flat grid of LOOKUP_CELL_BLOCKS cells over the disc's bounding box,
-	# each holding the index of the finest quad covering it, or -1.
-	var grid := PackedInt32Array()
-	var g_min_bx := 0
-	var g_min_bz := 0
-	var g_cols := 0
-
 	# THE FINE QUADS, KEYED EXACTLY. Horizon v1 Stage 0.
 	#
 	# THE FLAT GRID CANNOT SEE THE INNER RINGS AND NEVER COULD. Its cell is
@@ -1192,14 +1340,6 @@ class Surface extends RefCounted:
 		var verts: PackedVector3Array = job.arrays[Mesh.ARRAY_VERTEX] \
 			if not job.arrays.is_empty() else PackedVector3Array()
 
-		var reach := int(ceil(config.fog_end_m * inv * FarFieldJob.FOG_MARGIN)) \
-			+ FarProbe.LOOKUP_CELL_BLOCKS
-		g_min_bx = job.center.x - reach
-		g_min_bz = job.center.y - reach
-		g_cols = 2 * reach / FarProbe.LOOKUP_CELL_BLOCKS + 2
-		grid.resize(g_cols * g_cols)
-		grid.fill(-1)
-
 		var q := 0
 		while q + 3 < verts.size():
 			var p0 := verts[q]
@@ -1225,30 +1365,15 @@ class Surface extends RefCounted:
 			qy.push_back(p1.y * inv)
 			qy.push_back(p2.y * inv)
 			qy.push_back(p3.y * inv)
-			# Finer than the lookup cell: keyed exactly - see `fine` above.
-			# Still claimed in the grid below as well, so a query that lands
-			# here through the grid behaves exactly as it did before.
-			if step < FarProbe.LOOKUP_CELL_BLOCKS:
-				fine[Vector2i(bx, bz)] = idx
-				if not fine_steps.has(step):
-					fine_steps.push_back(step)
-					fine_steps.sort()
-			# Claim every lookup cell the quad covers. THE FINER QUAD WINS
-			# where two rings overlap: it is the one nearer the player and the
-			# one drawn in front.
-			var cz := bz
-			while cz < bz + step:
-				var cx := bx
-				while cx < bx + step:
-					var gi := (cx - g_min_bx) / FarProbe.LOOKUP_CELL_BLOCKS
-					var gj := (cz - g_min_bz) / FarProbe.LOOKUP_CELL_BLOCKS
-					if gi >= 0 and gj >= 0 and gi < g_cols and gj < g_cols:
-						var at := gi + gj * g_cols
-						var was := grid[at]
-						if was < 0 or qstep[was] > step:
-							grid[at] = idx
-					cx += FarProbe.LOOKUP_CELL_BLOCKS
-				cz += FarProbe.LOOKUP_CELL_BLOCKS
+			# EVERY QUAD, keyed by its own corner at its own step - see the
+			# note by `fine`. The flat grid this used to share the work with
+			# went in Stage 3: it was sized to the REACH, `2 * far_radius / 8`
+			# on a side, which is 15 MB at 3.2 km and **1.5 GB at 32**. One
+			# entry per ground quad is bounded by the mesh instead.
+			fine[Vector2i(bx, bz)] = idx
+			if not fine_steps.has(step):
+				fine_steps.push_back(step)
+				fine_steps.sort()
 
 	## Drawn height in BLOCKS at a block position, or NAN where the mesh has
 	## nothing - inside the voxel hole, or past the disc's edge.
@@ -1274,12 +1399,6 @@ class Surface extends RefCounted:
 			if hit != null:
 				idx = hit
 				break
-		if idx < 0:
-			var gi := int(floor((bx - float(g_min_bx)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
-			var gj := int(floor((bz - float(g_min_bz)) / float(FarProbe.LOOKUP_CELL_BLOCKS)))
-			if gi < 0 or gj < 0 or gi >= g_cols or gj >= g_cols:
-				return NAN
-			idx = grid[gi + gj * g_cols]
 		if idx < 0:
 			return NAN
 		var step := float(qstep[idx])

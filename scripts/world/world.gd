@@ -526,6 +526,11 @@ func reset() -> void:
 	_drain_jobs()
 	if _far_field != null:
 		_far_field.drain()
+		# AND ITS 160 PER-KEY MESHES, horizon v1 Stage 3. They are children of
+		# FarField rather than of this node, so the chunk teardown below does
+		# not reach them, and a reroll would otherwise leave the old world's
+		# far country standing under the new one's.
+		_far_field.clear_keys()
 	for pos in _chunk_nodes:
 		_chunk_nodes[pos].queue_free()
 	_chunk_nodes.clear()

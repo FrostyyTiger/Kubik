@@ -147,7 +147,7 @@ func height_at(bx: float, bz: float) -> float:
 	# across the boundary, and there is no seam to hide.
 	if bx < float(min_block) or bx > float(_max_block) \
 			or bz < float(min_block) or bz > float(_max_block):
-		return _tile_bilinear(0, bx, bz, false, true)
+		return _tile_bilinear(0, bx, bz, false, {})
 	return _region_bilinear(bx, bz)
 
 
@@ -189,11 +189,13 @@ func _region_bilinear(bx: float, bz: float) -> float:
 ## and a slope read that quietly conjured ground on this side and not on that
 ## one is two different mountains. See the note by `_far_tiles`. Defaulted
 ## false, so every caller that was here before this line is unchanged.
-func slope_deg_at(bx: float, bz: float, far := false) -> float:
+func slope_deg_at(bx: float, bz: float, far := false, view := {}) -> float:
 	var d := float(step)
 	if far:
-		var fgx := (far_height_at(bx + d, bz) - far_height_at(bx - d, bz)) / (2.0 * d)
-		var fgz := (far_height_at(bx, bz + d) - far_height_at(bx, bz - d)) / (2.0 * d)
+		var fgx := (far_height_at(bx + d, bz, view)
+			- far_height_at(bx - d, bz, view)) / (2.0 * d)
+		var fgz := (far_height_at(bx, bz + d, view)
+			- far_height_at(bx, bz - d, view)) / (2.0 * d)
 		return rad_to_deg(atan(sqrt(fgx * fgx + fgz * fgz)))
 	var gx := (height_at(bx + d, bz) - height_at(bx - d, bz)) / (2.0 * d)
 	var gz := (height_at(bx, bz + d) - height_at(bx, bz - d)) / (2.0 * d)
@@ -249,8 +251,24 @@ func in_home_region(bx: int, bz: int) -> bool:
 # more memory and one pass over a quarter of the data. Measured on ganymede and
 # recorded in docs/status/distance-v1.md.
 
-## The coarsest level. 5 is 64 m per cell, which is a whole mountain flank.
+## The coarsest level THE REGION PYRAMID HAS. 5 is 64 m per cell, which is a
+## whole mountain flank.
+##
+## PER-SOURCE SINCE HORIZON V1 STAGE 3. This one is the pyramid's and it is
+## bounded by the region: level 5 of a 1500-cell map is 47 cells, and a sixth
+## level would be 24, which is a mountain range in four numbers. The TILE store
+## has no such bound - a level-9 tile is 128 cells of 1,024 m, built from the
+## seed like any other - so the two are named separately and every level clamp
+## asks which source it is about. See `TILE_MAX_LEVEL`.
 const MAX_LEVEL := 5
+
+## The coarsest level THE TILE STORE builds, and it is the ring table's.
+##
+## Ring 9 draws 1,024 m cells to 38.4 km (`FarFieldJob.RING_STEP_MULTIPLE`), and
+## `_level_at` is log2 of the distance, so the level chooser has to be able to
+## ask for 9. Inside the region the pyramid answers and clamps itself to 5,
+## which is what keeps the home 3 km drawn exactly as it was.
+const TILE_MAX_LEVEL := 9
 
 ## Levels 1..MAX_LEVEL. Level 0 is `cells` itself and is never copied.
 var _levels: Array[PackedFloat32Array] = []
@@ -429,7 +447,7 @@ func _bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
 	# VOXEL world reads it and the ground has to follow the player.
 	if bx < float(min_block) or bx > float(_max_block) \
 			or bz < float(min_block) or bz > float(_max_block):
-		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, false)
+		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, far_view())
 	if not _pyramid_ready:
 		build_pyramid()
 	return _pyramid_bilinear(bx, bz, mini(level, MAX_LEVEL), use_max)
@@ -800,8 +818,11 @@ func _raw_tile(bx0: int, bz0: int, n: int, cstep: int) -> PackedFloat32Array:
 ## what is there and falls back to the region's clamped rim rather than
 ## building, so both legs of the mesher read the same store. `height_at` and
 ## the voxel world pass false and get ground wherever they ask.
+## `view` empty means the live store and a build on a miss - the voxel world's
+## door. A view is a job's snapshot and never builds; a missing tile there
+## reads the region's clamped rim, which is what the C++ leg does too.
 func _tile_bilinear(level: int, bx: float, bz: float, use_max: bool,
-		may_build: bool) -> float:
+		view: Dictionary) -> float:
 	var span := tile_span_blocks(level)
 	var cstep := cell_step_blocks(level)
 	var fbx := int(floor(bx))
@@ -812,13 +833,13 @@ func _tile_bilinear(level: int, bx: float, bz: float, use_max: bool,
 	# THE FAR MESH READS THE PUBLISHED VIEW, everything else reads the store -
 	# see the note by `_far_tiles`. `may_build` is the same flag: the door that
 	# may build is the door that reads the live store.
-	var data := _tile_lookup(key, use_max, may_build)
+	var data := _tile_lookup(key, use_max, view)
 	if data.is_empty():
-		if not may_build:
+		if not view.is_empty():
 			return _region_clamped(bx, bz, level, use_max)
 		if not ensure_tile(level, tx, tz):
 			return _region_clamped(bx, bz, level, use_max)
-		data = _tile_lookup(key, use_max, true)
+		data = _tile_lookup(key, use_max, view)
 		if data.is_empty():
 			return _region_clamped(bx, bz, level, use_max)
 
@@ -839,13 +860,14 @@ func _tile_bilinear(level: int, bx: float, bz: float, use_max: bool,
 
 
 ## One tile's array, from the live store or from the published view.
-func _tile_lookup(key: Vector3i, use_max: bool, live: bool) -> PackedFloat32Array:
+## One tile's array. `view` empty means the LIVE store, which is the door that
+## may build; a view is a snapshot a job is holding - see `far_view`.
+func _tile_lookup(key: Vector3i, use_max: bool, view: Dictionary) -> PackedFloat32Array:
+	if not view.is_empty():
+		var held: Dictionary = view["max"] if use_max else view["mean"]
+		return held.get(key, PackedFloat32Array())
 	_tiles_mutex.lock()
-	var from: Dictionary
-	if live:
-		from = _tiles_max if use_max else _tiles
-	else:
-		from = _far_tiles_max if use_max else _far_tiles
+	var from: Dictionary = _tiles_max if use_max else _tiles
 	var out: PackedFloat32Array = from.get(key, PackedFloat32Array())
 	_tiles_mutex.unlock()
 	return out
@@ -858,6 +880,31 @@ func publish_far_view() -> void:
 	_far_tiles = _tiles.duplicate()
 	_far_tiles_max = _tiles_max.duplicate()
 	_tiles_mutex.unlock()
+
+
+## THE PUBLISHED VIEW ITSELF, as two dictionary references, for a job to hold
+## for the length of its run.
+##
+## WHY A JOB HOLDS IT RATHER THAN ASKING EACH TIME. `publish_far_view` replaces
+## these two references; a reader that looked them up per sample could take
+## sample 1 from the old view and sample 2 from the new one, and the two legs
+## of the mesher would then disagree about ground one of them could see. The
+## C++ leg is handed a snapshot at the top of its build by construction - it
+## has no other way - and this is how the GDScript leg gets the same deal.
+##
+## It cost a night to find: the far parity gate went red with a vertex count
+## that CHANGED BETWEEN RUNS, because a `FarField` on a worker was publishing a
+## new view in the middle of the parity harness's own hand-built job.
+##
+## References, not copies: a `PackedFloat32Array` is copy-on-write, nothing
+## ever writes into a published tile, and `publish_far_view` builds a new
+## Dictionary rather than clearing this one - so a job holding the old one
+## holds a complete, immutable view for as long as it needs it.
+func far_view() -> Dictionary:
+	_tiles_mutex.lock()
+	var out := {"mean": _far_tiles, "max": _far_tiles_max}
+	_tiles_mutex.unlock()
+	return out
 
 
 ## Every key in the PUBLISHED view, for the marshal across the seam. The
@@ -891,6 +938,10 @@ func _region_clamped(bx: float, bz: float, level: int, use_max: bool) -> float:
 		return _region_bilinear(cx, cz)
 	if not _pyramid_ready:
 		build_pyramid()
+	# CLAMPED TO THE PYRAMID'S OWN TOP, always. This is the fallback a far read
+	# takes when its tile is absent, and the level it was asked for may be 9;
+	# `_levels` has five entries and asking for the eighth is a crash, not a
+	# coarse mountain.
 	return _pyramid_bilinear(cx, cz, mini(level, MAX_LEVEL), use_max)
 
 
@@ -902,48 +953,66 @@ func _region_clamped(bx: float, bz: float, level: int, use_max: bool) -> float:
 # it. In Stage 1 nothing is prepared, so every one of these is the region read
 # this project shipped, byte for byte, and the far parity gate says so.
 
-func far_height_at(bx: float, bz: float) -> float:
+func far_height_at(bx: float, bz: float, view := {}) -> float:
 	if bx < float(min_block) or bx > float(_max_block) \
 			or bz < float(min_block) or bz > float(_max_block):
-		return _tile_bilinear(0, bx, bz, false, false)
+		return _tile_bilinear(0, bx, bz, false,
+			view if not view.is_empty() else far_view())
 	return _region_bilinear(bx, bz)
 
 
-func far_height_filtered(bx: float, bz: float, level: float) -> float:
-	return _far_trilinear(bx, bz, level, false)
+func far_height_filtered(bx: float, bz: float, level: float, view := {}) -> float:
+	return _far_trilinear(bx, bz, level, false, view)
 
 
-func far_height_max_filtered(bx: float, bz: float, level: float) -> float:
-	return _far_trilinear(bx, bz, level, true)
+func far_height_max_filtered(bx: float, bz: float, level: float, view := {}) -> float:
+	return _far_trilinear(bx, bz, level, true, view)
 
 
-func far_height_at_level(bx: float, bz: float, level: int) -> float:
-	return _far_bilinear(bx, bz, level, false)
+func far_height_at_level(bx: float, bz: float, level: int, view := {}) -> float:
+	return _far_bilinear(bx, bz, level, false, view)
 
 
-func far_height_max_at_level(bx: float, bz: float, level: int) -> float:
-	return _far_bilinear(bx, bz, level, true)
+func far_height_max_at_level(bx: float, bz: float, level: int, view := {}) -> float:
+	return _far_bilinear(bx, bz, level, true, view)
 
 
-func _far_bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
-	if level <= 0:
-		return far_height_at(bx, bz)
+## THE COARSEST LEVEL THIS POSITION HAS A SOURCE FOR - horizon v1 Stage 3.
+##
+## Five inside the region, where the pyramid answers; nine outside it, where
+## the tile store does. Every level clamp on the far path goes through this,
+## because asking for level 8 inside the region would index `_levels[7]` of a
+## five-level pyramid - a crash rather than a coarse mountain.
+func far_max_level(bx: float, bz: float) -> int:
 	if bx < float(min_block) or bx > float(_max_block) \
 			or bz < float(min_block) or bz > float(_max_block):
-		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, false)
+		return TILE_MAX_LEVEL
+	return MAX_LEVEL
+
+
+func _far_bilinear(bx: float, bz: float, level: int, use_max: bool,
+		view := {}) -> float:
+	if level <= 0:
+		return far_height_at(bx, bz, view)
+	if bx < float(min_block) or bx > float(_max_block) \
+			or bz < float(min_block) or bz > float(_max_block):
+		return _tile_bilinear(mini(level, TILE_MAX_LEVEL), bx, bz, use_max,
+			view if not view.is_empty() else far_view())
 	if not _pyramid_ready:
 		build_pyramid()
 	return _pyramid_bilinear(bx, bz, mini(level, MAX_LEVEL), use_max)
 
 
-func _far_trilinear(bx: float, bz: float, level: float, use_max: bool) -> float:
-	var l := clampf(level, 0.0, float(MAX_LEVEL))
+func _far_trilinear(bx: float, bz: float, level: float, use_max: bool,
+		view := {}) -> float:
+	var top := far_max_level(bx, bz)
+	var l := clampf(level, 0.0, float(top))
 	var lo := int(floor(l))
 	var f := l - float(lo)
-	if f <= 0.0001 or lo >= MAX_LEVEL:
-		return _far_bilinear(bx, bz, lo, use_max)
-	return lerpf(_far_bilinear(bx, bz, lo, use_max),
-		_far_bilinear(bx, bz, lo + 1, use_max), f)
+	if f <= 0.0001 or lo >= top:
+		return _far_bilinear(bx, bz, lo, use_max, view)
+	return lerpf(_far_bilinear(bx, bz, lo, use_max, view),
+		_far_bilinear(bx, bz, lo + 1, use_max, view), f)
 
 
 # --- Keeping the store the right size ----------------------------------------

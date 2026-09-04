@@ -220,6 +220,10 @@ var frontier := PackedInt32Array()
 var slice := false
 var slices: Array = []
 
+## FarFieldJob's, by the same names - see its `keys` and `key_anchors`.
+var keys := PackedInt32Array()
+var key_anchors: PackedVector3Array = PackedVector3Array()
+
 
 ## What FarField submits to the worker pool. The whole build is one call into
 ## C++, so this GDScript frame exists for the length of that call and no cell
@@ -248,6 +252,10 @@ func build(config: WorldgenConfig, center: Vector2i,
 		"center_z": center.y,
 		# ONLY THE TILES THIS MESHER HAS NOT SEEN. See `_sent_tiles`.
 		"tiles": _new_tiles(heightmap),
+		# THE (RING, SECTOR) KEYS THIS BUILD IS FOR - far_field_job.gd's own
+		# `keys`. Empty is the whole disc, which is what the probe and the
+		# parity harness ask for.
+		"keys": keys,
 		"frontier": frontier,
 		"overlap_cells": FarFieldJob.FRONTIER_OVERLAP_CELLS,
 		# ONE SET OF ARRAYS PER SECTOR INSTEAD OF ONE FOR THE WHOLE DISC.
@@ -263,6 +271,7 @@ func build(config: WorldgenConfig, center: Vector2i,
 	})
 	arrays = out.get("arrays", [])
 	slices = out.get("slices", [])
+	key_anchors = out.get("anchors", PackedVector3Array())
 	vertex_count = int(out.get("vertex_count", 0))
 	elapsed_ms = int(out.get("elapsed_ms", 0))
 	return true

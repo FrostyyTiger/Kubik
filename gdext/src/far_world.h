@@ -209,6 +209,11 @@ struct Tile {
 constexpr int TILE_CELLS = 128;
 constexpr int TILE_STRIDE = TILE_CELLS + 1;
 
+// Heightmap.TILE_MAX_LEVEL. The coarsest level the TILE store builds - ring 9's
+// 1,024 m cell. The region PYRAMID's own top is `World::max_level`, which is 5,
+// and every level clamp below asks which source the position has.
+constexpr int TILE_MAX_LEVEL = 9;
+
 struct World {
 	// Heightmap level 0, and its dimensions.
 	std::vector<float> cells;
@@ -362,22 +367,32 @@ struct World {
 				bz <= (int64_t)max_block + hm_step - 1;
 	}
 
+	// Heightmap.far_max_level - the coarsest level this position has a source
+	// for. Nine outside the region, where the tile store answers; the pyramid's
+	// own top inside it. Asking the pyramid for level 8 would index levels[7]
+	// of a five-level pyramid, which is a crash rather than a coarse mountain.
+	inline int far_max_level(double bx, double bz) const {
+		return outside_region(bx, bz) ? TILE_MAX_LEVEL : max_level;
+	}
+
 	// Heightmap._far_bilinear
 	double bilinear(double bx, double bz, int level, bool use_max) const {
 		if (level <= 0) {
 			return height_at(bx, bz);
 		}
-		int l = level < max_level ? level : max_level;
 		if (outside_region(bx, bz)) {
-			double h = tile_bilinear(l, bx, bz, use_max);
+			int lt = level < TILE_MAX_LEVEL ? level : TILE_MAX_LEVEL;
+			double h = tile_bilinear(lt, bx, bz, use_max);
 			if (!Math::is_nan(h)) {
 				return h;
 			}
 			// The rim, at this level, exactly as the pyramid read it before
-			// tonight - which is what Heightmap._region_clamped does.
+			// tonight - which is what Heightmap._region_clamped does, clamped
+			// to the PYRAMID's own top for the reason far_max_level gives.
 			bx = Math::clamp(bx, (double)min_block, (double)max_block);
 			bz = Math::clamp(bz, (double)min_block, (double)max_block);
 		}
+		int l = level < max_level ? level : max_level;
 		int n = level_cols[l - 1];
 		const std::vector<float> &data = use_max ? max_levels[l - 1] : levels[l - 1];
 		double lstep = (double)((int64_t)hm_step << l);
@@ -400,12 +415,13 @@ struct World {
 		return Math::lerp(Math::lerp(h00, h10, tx), Math::lerp(h01, h11, tx), tz);
 	}
 
-	// Heightmap._trilinear
+	// Heightmap._far_trilinear
 	double trilinear(double bx, double bz, double level, bool use_max) const {
-		double l = Math::clamp(level, 0.0, (double)max_level);
+		int top = far_max_level(bx, bz);
+		double l = Math::clamp(level, 0.0, (double)top);
 		int lo = (int)Math::floor(l);
 		double f = l - (double)lo;
-		if (f <= 0.0001 || lo >= max_level) {
+		if (f <= 0.0001 || lo >= top) {
 			return bilinear(bx, bz, lo, use_max);
 		}
 		return Math::lerp(bilinear(bx, bz, lo, use_max),

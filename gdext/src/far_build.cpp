@@ -42,9 +42,15 @@ namespace kubik {
 // --- The constants, from far_field_job.gd ------------------------------------
 
 static constexpr double FOG_MARGIN = 1.2;
-static const double RING_OUTER_M[5] = { 150.0, 300.0, 600.0, 1200.0, 2400.0 };
-static const int RING_STEP_MULTIPLE[6] = { 1, 2, 4, 8, 16, 32 };
-static constexpr int RING_COUNT = 6;
+// FOUR MORE RINGS SINCE HORIZON V1 STAGE 3 - see far_field_job.gd's table for
+// what they cover and why the quad count per ring stays roughly constant.
+// RING_OUTER_M has one entry fewer than RING_COUNT by construction: the last
+// ring runs to `far_radius` rather than to a boundary.
+static const double RING_OUTER_M[9] = { 150.0, 300.0, 600.0, 1200.0, 2400.0,
+	4800.0, 9600.0, 19200.0, 38400.0 };
+static const int RING_STEP_MULTIPLE[10] = { 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 };
+static constexpr int RING_COUNT = 10;
+static constexpr int RING_OUTER_COUNT = 9;
 static constexpr double SKIRT_DEPTH_CELLS = 1.0;
 static constexpr double SEAM_BAND_CELLS = 8.0;
 static constexpr double TERRACE_FADE_CELLS = 12.0;
@@ -155,6 +161,18 @@ struct Mesher {
 	Sink *out = nullptr;
 	bool slicing = false;
 
+	// THE (RING, SECTOR) KEYS THIS BUILD IS FOR - far_field_job.gd's `keys`,
+	// and its header carries the whole argument. Empty means the whole disc in
+	// one mesh, which is what the probe and the parity harness build.
+	bool keyed = false;
+	std::vector<int> key_ring;                       // one per key: its ring
+	std::vector<int> key_ring_first;                 // ring -> first key, or -1
+	std::vector<int> key_slot;                       // ring*16 + sector -> sink
+	std::vector<Vector3> key_anchors;                // one per key, metres
+	// The ring's anchor, subtracted from every vertex of a keyed build.
+	double anchor_x = 0.0;
+	double anchor_z = 0.0;
+
 	explicit Mesher(World &p_w) :
 			w(p_w), c(p_w.config), bs(p_w.config.block_size) {}
 
@@ -214,7 +232,9 @@ struct Mesher {
 		}
 		double level = Math::log(d_m / Math::max(c.far_level_ref_m, 1.0)) * INV_LN2
 				+ c.far_filter_bias;
-		level = Math::clamp(level, 0.0, (double)w.max_level);
+		// The TILE store's top, not the pyramid's - see far_field_job.gd's
+		// _level_at. `World::far_max_level` clamps per source on the read.
+		level = Math::clamp(level, 0.0, (double)TILE_MAX_LEVEL);
 		if (band > 0.0 && level > 0.0) {
 			double sx = (double)(bx - center_x);
 			double sz = (double)(bz - center_z);
@@ -379,7 +399,7 @@ struct Mesher {
 		double sub = Math::max((double)cell / (double)VOTE_SPLIT, 1.0);
 		double l = Math::log(sub / (double)w.hm_step) * INV_LN2 + c.far_filter_bias;
 		int v = (int)Math::floor(l);
-		return v < 0 ? 0 : (v > w.max_level ? w.max_level : v);
+		return v < 0 ? 0 : (v > TILE_MAX_LEVEL ? TILE_MAX_LEVEL : v);
 	}
 
 	// _zone_vote - the mode of four sub-cell zones, shore excluded, first
@@ -506,6 +526,17 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 	int64_t cz = (int64_t)Math::floor((double)center_z / (double)step) * step;
 	ring_cx = cx;
 	ring_cz = cz;
+	// The ring's anchor - see far_field_job.gd's own note. All sixteen sectors
+	// of a ring share it, because they share the snapped centre.
+	anchor_x = keyed ? (double)cx * bs : 0.0;
+	anchor_z = keyed ? (double)cz * bs : 0.0;
+	if (keyed) {
+		for (size_t i = 0; i < key_anchors.size(); i++) {
+			if (key_ring[i] == ring) {
+				key_anchors[i] = Vector3((real_t)anchor_x, 0, (real_t)anchor_z);
+			}
+		}
+	}
 
 	int64_t span = (int64_t)Math::ceil(outer / (double)step) + 1;
 	double skirt_drop = (double)step * (SKIRT_DEPTH_CELLS + t_amount) * bs;
@@ -544,9 +575,9 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			if (!in_ring(bx0, bz0, step, inner, outer)) {
 				continue;
 			}
-			if (!w.in_bounds(bx0, bz0)) {
-				continue;
-			}
+			// THE LAST EDGE IS GONE - see far_field_job.gd. `w.in_bounds` (the
+			// home region test) culled every quad past 3 km however far the
+			// rings reached; the tile store answers everywhere now.
 			int64_t bx1 = bx0 + step;
 			int64_t bz1 = bz0 + step;
 
@@ -554,10 +585,22 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			// note. The cell's sector, from its centre, by the same function
 			// in_ring cuts the per-sector hole with, so a cell, its risers and
 			// its skirts land together.
-			out = &sinks[slicing
-							? (size_t)frontier_sector_of(bx0 + step / 2 - center_x,
-									  bz0 + step / 2 - center_z)
-							: (size_t)0];
+			if (keyed) {
+				// The key's own sink, or nothing: a ring rebuilt for two of
+				// its sixteen sectors walks all its cells and emits only two.
+				int slot = key_slot[(size_t)(ring * FRONTIER_SECTORS
+						+ frontier_sector_of(bx0 + step / 2 - center_x,
+								bz0 + step / 2 - center_z))];
+				if (slot < 0) {
+					continue;
+				}
+				out = &sinks[(size_t)slot];
+			} else {
+				out = &sinks[slicing
+								? (size_t)frontier_sector_of(bx0 + step / 2 - center_x,
+										  bz0 + step / 2 - center_z)
+								: (size_t)0];
+			}
 
 			double h00, h10, h11, h01;
 			double r00 = 0.0, r10 = 0.0, r11 = 0.0, r01 = 0.0;
@@ -595,18 +638,20 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 					}
 				}
 			}
-			Vector3 p0((real_t)((double)bx0 * bs),
-					(real_t)corner_y(bx0, bz0, h00, band, y_offset),
-					(real_t)((double)bz0 * bs));
-			Vector3 p1((real_t)((double)bx1 * bs),
-					(real_t)corner_y(bx1, bz0, h10, band, y_offset),
-					(real_t)((double)bz0 * bs));
-			Vector3 p2((real_t)((double)bx1 * bs),
-					(real_t)corner_y(bx1, bz1, h11, band, y_offset),
-					(real_t)((double)bz1 * bs));
-			Vector3 p3((real_t)((double)bx0 * bs),
-					(real_t)corner_y(bx0, bz1, h01, band, y_offset),
-					(real_t)((double)bz1 * bs));
+			// ANCHOR-RELATIVE ON THE KEYED PATH, world on the whole-disc one.
+			// See far_field_job.gd's `_anchor_x`; Y is never anchored.
+			double px0 = (double)bx0 * bs - anchor_x;
+			double px1 = (double)bx1 * bs - anchor_x;
+			double pz0 = (double)bz0 * bs - anchor_z;
+			double pz1 = (double)bz1 * bs - anchor_z;
+			Vector3 p0((real_t)px0,
+					(real_t)corner_y(bx0, bz0, h00, band, y_offset), (real_t)pz0);
+			Vector3 p1((real_t)px1,
+					(real_t)corner_y(bx1, bz0, h10, band, y_offset), (real_t)pz0);
+			Vector3 p2((real_t)px1,
+					(real_t)corner_y(bx1, bz1, h11, band, y_offset), (real_t)pz1);
+			Vector3 p3((real_t)px0,
+					(real_t)corner_y(bx0, bz1, h01, band, y_offset), (real_t)pz1);
 
 			// Colour from the same zone rules the voxels use, sampled at the
 			// quad's middle - see far_field_job.gd for why the zone reads the
@@ -677,9 +722,7 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 				if (t_amount <= 0.0) {
 					continue;
 				}
-				if (!w.in_bounds(nbx, nbz)) {
-					continue;
-				}
+				// The neighbour always exists now - see far_field_job.gd.
 				size_t nat = cell(i + ed.di, j + ed.dj);
 				double nt = (double)t_t[nat];
 				double nq = (double)t_hq[nat];
@@ -717,9 +760,39 @@ void Mesher::run(const Dictionary &args) {
 	int64_t overlap_cells = (int64_t)args.get("overlap_cells", 8);
 	PackedInt32Array frontier = args.get("frontier", PackedInt32Array());
 
+	// THE KEYS, if any - far_field_job.gd's `_setup_keys`, transcribed. One
+	// sink per key whatever the key says, so `slices[i]` is always the arrays
+	// for `keys[2i]`; an out-of-range key simply never gets a cell.
+	PackedInt32Array kin = args.get("keys", PackedInt32Array());
+	keyed = kin.size() >= 2;
+	key_ring.clear();
+	key_ring_first.clear();
+	key_slot.clear();
+	key_anchors.clear();
 	slicing = (bool)args.get("slice", false);
 	sinks.clear();
-	sinks.resize(slicing ? (size_t)FRONTIER_SECTORS : (size_t)1);
+	if (keyed) {
+		int64_t n = kin.size() / 2;
+		key_ring.assign((size_t)n, -1);
+		key_ring_first.assign((size_t)RING_COUNT, -1);
+		key_slot.assign((size_t)(RING_COUNT * FRONTIER_SECTORS), -1);
+		key_anchors.assign((size_t)n, Vector3());
+		sinks.resize((size_t)n);
+		for (int64_t i = 0; i < n; i++) {
+			int r = kin[i * 2];
+			int sec = kin[i * 2 + 1];
+			if (r < 0 || r >= RING_COUNT || sec < 0 || sec >= FRONTIER_SECTORS) {
+				continue;
+			}
+			key_ring[(size_t)i] = r;
+			key_slot[(size_t)(r * FRONTIER_SECTORS + sec)] = (int)i;
+			if (key_ring_first[(size_t)r] < 0) {
+				key_ring_first[(size_t)r] = (int)i;
+			}
+		}
+	} else {
+		sinks.resize(slicing ? (size_t)FRONTIER_SECTORS : (size_t)1);
+	}
 	out = &sinks[0];
 
 	bs = c.block_size;
@@ -758,11 +831,18 @@ void Mesher::run(const Dictionary &args) {
 	for (int ring = 0; ring < RING_COUNT; ring++) {
 		int step = base_step * RING_STEP_MULTIPLE[ring];
 		double outer = far_radius_local;
-		if (ring < 5) {
+		if (ring < RING_OUTER_COUNT) {
 			outer = Math::min(RING_OUTER_M[ring] / bs, far_radius_local);
 		}
 		if (outer <= inner) {
 			inner = Math::max(inner, outer);
+			continue;
+		}
+		// A ring nobody asked for is not walked at all; `inner` still advances,
+		// because the ladder is a property of the table and not of what
+		// happened to be built.
+		if (keyed && key_ring_first[(size_t)ring] < 0) {
+			inner = outer;
 			continue;
 		}
 		build_ring(ring, step, inner, outer, y_offset);
@@ -837,7 +917,21 @@ Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 		total += (int64_t)s.verts.size();
 	}
 
-	if (m.slicing) {
+	if (m.keyed) {
+		// ONE SET OF ARRAYS PER KEY, in key order, plus the anchor each one's
+		// vertices are relative to. `FarField` puts the anchor on the node.
+		Array slices;
+		for (const Mesher::Sink &s : m.sinks) {
+			slices.push_back(sink_arrays(s));
+		}
+		PackedVector3Array anchors;
+		anchors.resize((int64_t)m.key_anchors.size());
+		for (size_t k = 0; k < m.key_anchors.size(); k++) {
+			anchors[(int64_t)k] = m.key_anchors[k];
+		}
+		out["slices"] = slices;
+		out["anchors"] = anchors;
+	} else if (m.slicing) {
 		// ONE SET OF ARRAYS PER SECTOR, in sector order, and no concatenation:
 		// the runtime path never wants one and building it is the main-thread
 		// cost this stage exists to remove.

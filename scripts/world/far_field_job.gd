@@ -100,12 +100,34 @@ const FOG_MARGIN := 1.2
 ## radius runs out inside - so Low and Medium simply never start rings 3 and 4,
 ## and a preset that reached ten kilometres would want a sixth entry and
 ## nothing else. CLAUDE.md, 2026-08-31.
-const RING_OUTER_M := [150.0, 300.0, 600.0, 1200.0, 2400.0]
+## FOUR MORE RINGS SINCE HORIZON V1 STAGE 3, and they are what makes the north
+## star's second sentence a number: the view reaches the horizon, 32 km on a
+## clear day (D41 as raised by D84).
+##
+## | ring | covers          | step multiple |
+## | 6    | 2400-4800 m     | 64            |
+## | 7    | 4800-9600 m     | 128           |
+## | 8    | 9600-19200 m    | 256           |
+## | 9    | 19200-38400 m   | 512           |
+##
+## EACH DOUBLING OF THE REACH COSTS ONE MORE RING AND ABOUT WHAT THE LAST ONE
+## COST - the sentence four rings above, now with four more rings standing on
+## it. Ring area grows 4x per ring and cell area grows 4x with it, so the quad
+## count per ring is roughly constant; the measured table per ring is in
+## docs/status/horizon-v1.md and the sum at Ultra is what the plan's 2.0 M
+## vertex budget is read against.
+##
+## RING 5'S OUTER MOVES FROM "TO THE FOG" TO 4,800 m. It used to be the last
+## ring and ran to `far_radius`, which at the old 3,200 m reach was 3,840 m of
+## 32 m cells; it is now a ring like any other and the reach is carried by the
+## four above it.
+const RING_OUTER_M := [150.0, 300.0, 600.0, 1200.0, 2400.0,
+	4800.0, 9600.0, 19200.0, 38400.0]
 
 ## Blocks per vertex in each ring, as a multiple of the BASE step below. At the
 ## default far_step of 8 blocks that is 2, 4, 8, 16, 32 and 64 metres per
 ## vertex.
-const RING_STEP_MULTIPLE := [1, 2, 4, 8, 16, 32]
+const RING_STEP_MULTIPLE := [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
 
 ## The innermost cell is far_step / config.far_ring_div, in blocks - see the
 ## table above for why the divisor exists at all. Every conversion between
@@ -306,9 +328,57 @@ var center := Vector2i.ZERO
 ## sector.
 var slice := false
 
-## One `[verts, normals, colors, indices]` per frontier sector, in sector
-## order. Empty unless `slice` is on.
+## THE (RING, SECTOR) KEYS THIS BUILD IS FOR. Horizon v1 Stage 3, grill Q14.
+##
+## Flat, `[ring, sector, ring, sector, ...]`, because it crosses the
+## GDExtension seam and a PackedInt32Array is one marshal where an Array of
+## Vector2i is a Variant per entry.
+##
+## WHY A SUBSET AT ALL. The reach went from 3.2 km to 32, which is four more
+## rings, and the frontier moves every time a chunk column lands - so a far
+## field that rebuilds the whole disc every time the frontier moves would
+## rebuild thirty-eight kilometres of country because the player walked eight
+## metres. The Stage 0 baseline already measured that thrashing at the OLD
+## reach: seventeen to nineteen rebuilds in a sixty-second sprint, 530 ms
+## each, and the sprint probe's `far=0` columns say most of them never even
+## finished their upload before the next one superseded them.
+##
+## So a rebuild is a SET OF KEYS. Rings 0 to 2 follow the frontier as they
+## always have; ring r >= 3 is rebuilt only when the player has left the
+## quarter-radius its last build was centred on (`far_ring_recenter_frac`).
+## Walking a hundred metres touches rings 0 and 1 and nothing else.
+##
+## EMPTY MEANS EVERYTHING, in one mesh, exactly as this file has emitted since
+## terrain v1 - which is what the far probe, the parity harness and the
+## self-test build, and why their numbers stay comparable across this night.
+var keys := PackedInt32Array()
+
+## One `[verts, normals, colors, indices]` per frontier sector in sector order
+## (`slice`), or one per KEY in key order (`keys`). Empty unless one of the two
+## is set.
 var slices: Array = []
+
+## One world anchor per key, in key order, in METRES. Empty unless `keys` is
+## set.
+##
+## THE VERTICES OF A KEYED BUILD ARE RELATIVE TO THIS. A ring snaps its centre
+## to its own grid, so all sixteen sectors of a ring share one anchor and a
+## vertex is at most the ring's outer radius from it - 38 km at ring 8, which
+## is a float with 4 mm of resolution, and 4 mm at 38 km is what Stage 6's
+## floating origin exists to keep. `FarField` puts the anchor on the node and
+## Stage 6 subtracts the origin from it there; nothing in this file knows about
+## an origin.
+var key_anchors: PackedVector3Array = PackedVector3Array()
+
+## Ring -> the first index in `keys` for it, or -1. Built once per run.
+var _key_ring_first := PackedInt32Array()
+
+## (ring * FRONTIER_SECTORS + sector) -> the sink index, or -1.
+var _key_slot := PackedInt32Array()
+
+## The ring's anchor in metres, subtracted from every vertex of a keyed build.
+var _anchor_x := 0.0
+var _anchor_z := 0.0
 
 var arrays: Array = []
 var vertex_count := 0
@@ -543,6 +613,9 @@ var _t_geo := 0.0
 ## outer edge is a handover or the end of the world.
 var _far_radius := 0.0
 
+## The tile view this build reads - see `run()`.
+var _view := {}
+
 # --- THE DETAIL LAYER, distance v5 Stage 6 -----------------------------------
 #
 # WHAT THE PYRAMID CANNOT KNOW. The far mesh reads a filtered height map, so
@@ -626,6 +699,13 @@ var _t_full := false
 
 func run() -> void:
 	var _t0 := Time.get_ticks_msec()
+	# THE TILE VIEW THIS BUILD READS, captured once - see `Heightmap.far_view`.
+	# Held for the whole run so a `publish_far_view` landing on another thread
+	# cannot change what this build can see half way through it. That race is
+	# what made the far parity gate report a vertex count that VARIED BETWEEN
+	# RUNS: a `FarField` on a worker was publishing a new view in the middle of
+	# the parity harness's own hand-built job.
+	_view = heightmap.far_view()
 	# THE PYRAMID IS BUILT ON FIRST USE, and this is the first use. Idempotent
 	# and behind a mutex, so the cost lands once, on this worker, inside this
 	# job's elapsed_ms - which is where it is visible rather than hidden in a
@@ -701,7 +781,11 @@ func run() -> void:
 	# piece of far country from the seam to the fog rather than a complete
 	# inner ring and nothing beyond it.
 	slices = []
-	if slice:
+	key_anchors = PackedVector3Array()
+	# THE KEYED PATH'S SINKS, one per (ring, sector) asked for, in key order,
+	# plus the lookup the ring loop dispatches through. See `keys`.
+	var keyed := _setup_keys()
+	if not keyed and slice:
 		for s in World.FRONTIER_SECTORS:
 			slices.append([PackedVector3Array(), PackedVector3Array(),
 				PackedColorArray(), PackedInt32Array()])
@@ -718,8 +802,25 @@ func run() -> void:
 			# outermost ring never starts at all.
 			inner = maxf(inner, outer)
 			continue
+		# A RING NOBODY ASKED FOR IS NOT WALKED AT ALL. `inner` still advances,
+		# because the next ring starts where this one would have ended - the
+		# ladder is a property of the table, not of what happened to be built.
+		if keyed and _key_ring_first[ring] < 0:
+			inner = outer
+			continue
 		_build_ring(ring, step, inner, outer, y_offset, verts, normals, colors, indices)
 		inner = outer
+
+	if keyed:
+		vertex_count = 0
+		var kout := []
+		for sink in slices:
+			vertex_count += sink[0].size()
+			kout.append(_sink_arrays(sink))
+		slices = kout
+		arrays = []
+		elapsed_ms = Time.get_ticks_msec() - _t0
+		return
 
 	# THE SLICED PATH ENDS HERE. `arrays` stays empty and `vertex_count` is the
 	# sum over the sectors - the same number the whole-mesh path reports,
@@ -734,16 +835,7 @@ func run() -> void:
 			# four packed arrays are moved into the ARRAY_MAX-sized Array the
 			# renderer wants, and an empty sector emits an empty Array rather
 			# than a surface with nothing in it.
-			if sink[0].is_empty():
-				out.append([])
-				continue
-			var a := []
-			a.resize(Mesh.ARRAY_MAX)
-			a[Mesh.ARRAY_VERTEX] = sink[0]
-			a[Mesh.ARRAY_NORMAL] = sink[1]
-			a[Mesh.ARRAY_COLOR] = sink[2]
-			a[Mesh.ARRAY_INDEX] = sink[3]
-			out.append(a)
+			out.append(_sink_arrays(sink))
 		slices = out
 		arrays = []
 		elapsed_ms = Time.get_ticks_msec() - _t0
@@ -762,6 +854,51 @@ func run() -> void:
 	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = indices
 	elapsed_ms = Time.get_ticks_msec() - _t0
+
+
+## One sink's four packed arrays as the mesh arrays Godot takes. An empty sink
+## emits an empty Array rather than a surface with nothing in it.
+func _sink_arrays(sink: Array) -> Array:
+	if (sink[0] as PackedVector3Array).is_empty():
+		return []
+	var a := []
+	a.resize(Mesh.ARRAY_MAX)
+	a[Mesh.ARRAY_VERTEX] = sink[0]
+	a[Mesh.ARRAY_NORMAL] = sink[1]
+	a[Mesh.ARRAY_COLOR] = sink[2]
+	a[Mesh.ARRAY_INDEX] = sink[3]
+	return a
+
+
+## Allocate one sink per key and the two lookups the ring loop dispatches
+## through. Returns whether this is a keyed build at all.
+func _setup_keys() -> bool:
+	_key_ring_first = PackedInt32Array()
+	_key_slot = PackedInt32Array()
+	if keys.is_empty():
+		return false
+	var rings := RING_STEP_MULTIPLE.size()
+	var sectors := World.FRONTIER_SECTORS
+	_key_ring_first.resize(rings)
+	_key_ring_first.fill(-1)
+	_key_slot.resize(rings * sectors)
+	_key_slot.fill(-1)
+	var n := keys.size() / 2
+	for i in n:
+		var r := keys[i * 2]
+		var sec := keys[i * 2 + 1]
+		# ONE SINK PER KEY, ALWAYS, valid or not: `slices[i]` has to be the
+		# arrays for `keys[2i]` whatever the key says, or the caller's mapping
+		# from key to mesh slips by one the first time a bad key arrives.
+		slices.append([PackedVector3Array(), PackedVector3Array(),
+			PackedColorArray(), PackedInt32Array()])
+		if r < 0 or r >= rings or sec < 0 or sec >= sectors:
+			continue
+		_key_slot[r * sectors + sec] = i
+		if _key_ring_first[r] < 0:
+			_key_ring_first[r] = i
+	key_anchors.resize(n)
+	return true
 
 
 ## One annulus of the disc, at one resolution.
@@ -786,6 +923,24 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	var cz := int(floor(float(center.y) / float(step))) * step
 	_ring_cx = cx
 	_ring_cz = cz
+	# THE RING'S ANCHOR, and every vertex of a keyed build is relative to it.
+	#
+	# All sixteen sectors of a ring share it, because they share the snapped
+	# centre - so a key's mesh sits at its ring's anchor and its vertices reach
+	# at most the ring's outer radius from there. At ring 8 that is 38 km, and
+	# a float has 4 mm at 38 km, which is the resolution Stage 6's floating
+	# origin exists to keep. Zero on the whole-disc path, so the probe, the
+	# parity harness and the self-test still read world positions out of
+	# `arrays` exactly as they always have.
+	var keyed := not _key_slot.is_empty()
+	_anchor_x = float(cx) * bs if keyed else 0.0
+	_anchor_z = float(cz) * bs if keyed else 0.0
+	if keyed:
+		var first := _key_ring_first[ring]
+		if first >= 0:
+			for i in range(first, keys.size() / 2):
+				if keys[i * 2] == ring:
+					key_anchors[i] = Vector3(_anchor_x, 0.0, _anchor_z)
 
 	var span := int(ceil(outer / float(step))) + 1
 	# A RING-BOUNDARY SKIRT GROWS WITH THE TERRACE. One cell of drop covers any
@@ -842,8 +997,16 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var bz0 := cz + j * step
 			if not _in_ring(bx0, bz0, step, inner, outer):
 				continue
-			if not heightmap.in_home_region(bx0, bz0):
-				continue
+			# THE LAST EDGE, AND IT IS GONE. Horizon v1 Stage 3, D44.
+			#
+			# `if not heightmap.in_bounds(bx0, bz0): continue` stood here since
+			# terrain v1 and was the reason the far country stopped at the
+			# region however far the rings reached: Stage 3 can add four rings
+			# to 38 km and this line would still have drawn nothing past 3.
+			# The height comes from the tile store now (Stage 1) and the tiles
+			# the rings need are prepared before the build (`FarField.
+			# _prepare_tiles`), so there is ground to draw everywhere the ring
+			# asks and nothing left to cull against.
 
 			var bx1 := bx0 + step
 			var bz1 := bz0 + step
@@ -857,7 +1020,21 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var w_normals := normals
 			var w_colors := colors
 			var w_indices := indices
-			if slice:
+			if keyed:
+				# THE KEY'S OWN SINK, or nothing: a ring being rebuilt for two
+				# of its sixteen sectors walks all its cells - the ring test
+				# is a subtraction and a compare - and emits only the two.
+				var slot := _key_slot[ring * World.FRONTIER_SECTORS
+					+ World.frontier_sector_of(bx0 + step / 2 - center.x,
+						bz0 + step / 2 - center.y)]
+				if slot < 0:
+					continue
+				var ksink: Array = slices[slot]
+				w_verts = ksink[0]
+				w_normals = ksink[1]
+				w_colors = ksink[2]
+				w_indices = ksink[3]
+			elif slice:
 				var sink: Array = slices[World.frontier_sector_of(
 					bx0 + step / 2 - center.x, bz0 + step / 2 - center.y)]
 				w_verts = sink[0]
@@ -924,10 +1101,17 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			# Corner order is the +Y face order from ChunkMesher, which is
 			# clockwise seen from above - the same winding the voxels use, so
 			# both are lit and culled identically.
-			var p0 := Vector3(float(bx0) * bs, _corner_y(bx0, bz0, h00, band, y_offset), float(bz0) * bs)
-			var p1 := Vector3(float(bx1) * bs, _corner_y(bx1, bz0, h10, band, y_offset), float(bz0) * bs)
-			var p2 := Vector3(float(bx1) * bs, _corner_y(bx1, bz1, h11, band, y_offset), float(bz1) * bs)
-			var p3 := Vector3(float(bx0) * bs, _corner_y(bx0, bz1, h01, band, y_offset), float(bz1) * bs)
+			# ANCHOR-RELATIVE ON THE KEYED PATH, world on the whole-disc one -
+			# see `_anchor_x`. Y is never anchored: the origin offset is a
+			# horizontal thing (Stage 6) and an altitude is small anyway.
+			var x0 := float(bx0) * bs - _anchor_x
+			var x1 := float(bx1) * bs - _anchor_x
+			var z0 := float(bz0) * bs - _anchor_z
+			var z1 := float(bz1) * bs - _anchor_z
+			var p0 := Vector3(x0, _corner_y(bx0, bz0, h00, band, y_offset), z0)
+			var p1 := Vector3(x1, _corner_y(bx1, bz0, h10, band, y_offset), z0)
+			var p2 := Vector3(x1, _corner_y(bx1, bz1, h11, band, y_offset), z1)
+			var p3 := Vector3(x0, _corner_y(bx0, bz1, h01, band, y_offset), z1)
 
 			# Colour from the same zone rules the voxels use, sampled at the
 			# quad's middle. Anything else and the treeline would be in a
@@ -1055,12 +1239,13 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					continue
 				if _t_amount <= 0.0:
 					continue
-				# A neighbour outside the heightmap emitted no quad of its own,
-				# so there is no shelf for a riser to stand against. Left exactly
-				# as it was before this epic: hard rule 1 is about every edge,
-				# including the ones at the edge of the world.
-				if not heightmap.in_home_region(nbx, nbz):
-					continue
+				# THE NEIGHBOUR ALWAYS EXISTS NOW. This was "a neighbour
+				# outside the heightmap emitted no quad of its own, so there is
+				# no shelf for a riser to stand against" - true while the far
+				# mesh had an edge. `_in_ring` above already answered whether
+				# there is a quad over there, which is the question a riser
+				# actually asks, and the world-edge half of it has no meaning
+				# any more.
 				var nat := _cell(i + e[4], j + e[5])
 				var nt: float = _t_t[nat]
 				var nq: float = _t_hq[nat]
@@ -1130,9 +1315,9 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 ## by anything that decides what the world is.
 func _far_zone(bx: int, bz: int, altitude: float, ring: int, cell: int) -> int:
 	if ring == 0:
-		return generator.surface_zone_at(bx, bz, altitude, true)
+		return generator.surface_zone_at(bx, bz, altitude, true, _view)
 	if not _voting:
-		return backdrop_zone(generator, bx, bz, altitude)
+		return backdrop_zone(generator, bx, bz, altitude, _view)
 	return _zone_vote(bx, bz, cell)
 
 
@@ -1215,7 +1400,7 @@ func _zone_vote(cx: int, cz: int, cell: int) -> int:
 		for dx in [-q, q]:
 			var bx: int = cx + dx
 			var bz: int = cz + dz
-			var h := heightmap.far_height_at_level(float(bx), float(bz), level)
+			var h := heightmap.far_height_at_level(float(bx), float(bz), level, _view)
 			if gain > 0.0:
 				# THE PEAK GAIN IS IN THE VOTE, for the reason the zone reads a
 				# filtered height at all: the snow line has to sit where the
@@ -1223,8 +1408,8 @@ func _zone_vote(cx: int, cz: int, cell: int) -> int:
 				# pulled towards the maxima. A vote off the mean alone would
 				# paint the snow line tens of blocks below the ridge it is on.
 				h = lerpf(h, heightmap.far_height_max_at_level(
-					float(bx), float(bz), level), gain)
-			zones[k] = backdrop_zone(generator, bx, bz, h)
+					float(bx), float(bz), level, _view), gain)
+			zones[k] = backdrop_zone(generator, bx, bz, h, _view)
 			k += 1
 	# The mode, with shore excluded and the first sample winning ties. Four
 	# values, so a histogram is more code than a double loop and slower.
@@ -1261,7 +1446,7 @@ func _zone_vote(cx: int, cz: int, cell: int) -> int:
 func _vote_level(cell: int) -> int:
 	var sub := maxf(float(cell) / float(VOTE_SPLIT), 1.0)
 	var l := log(sub / float(heightmap.step)) * INV_LN2 + config.far_filter_bias
-	return clampi(int(floor(l)), 0, Heightmap.MAX_LEVEL)
+	return clampi(int(floor(l)), 0, Heightmap.TILE_MAX_LEVEL)
 
 
 ## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
@@ -1297,7 +1482,17 @@ func _level_at(bx: int, bz: int, band: float) -> float:
 		return 0.0
 	var level := log(d_m / maxf(config.far_level_ref_m, 1.0)) * INV_LN2 \
 		+ config.far_filter_bias
-	level = clampf(level, 0.0, float(Heightmap.MAX_LEVEL))
+	# CLAMPED TO THE TILE STORE'S TOP, not the pyramid's - horizon v1 Stage 3.
+	#
+	# `_level_at` is log2 of the distance from the ring's centre, and ring 9
+	# draws to 38.4 km, so the level it wants out there is 9. The five-level
+	# clamp that stood here was the PYRAMID's bound, and it was the right one
+	# while the pyramid was the only source: it meant every ring past 5 read a
+	# 64 m box filter, so a mountain at 30 km would have been drawn from the
+	# same numbers as one at 3 km. `Heightmap.far_max_level` clamps per source
+	# on the read, so inside the home region this still resolves to 5 and the
+	# home 3 km is drawn exactly as it was.
+	level = clampf(level, 0.0, float(Heightmap.TILE_MAX_LEVEL))
 	if band > 0.0 and level > 0.0:
 		var sx := float(bx - center.x)
 		var sz := float(bz - center.y)
@@ -1318,13 +1513,13 @@ func _level_at(bx: int, bz: int, band: float) -> float:
 func _filtered(bx: int, bz: int, band: float) -> float:
 	var level := _level_at(bx, bz, band)
 	if level <= 0.0:
-		return heightmap.far_height_at(float(bx), float(bz))
-	var mean := heightmap.far_height_filtered(float(bx), float(bz), level)
+		return heightmap.far_height_at(float(bx), float(bz), _view)
+	var mean := heightmap.far_height_filtered(float(bx), float(bz), level, _view)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return mean
 	return lerpf(mean,
-		heightmap.far_height_max_filtered(float(bx), float(bz), level), gain)
+		heightmap.far_height_max_filtered(float(bx), float(bz), level, _view), gain)
 
 
 
@@ -1377,7 +1572,7 @@ func _corner_y(bx: int, bz: int, coarse: float, band: float, y_offset: float) ->
 	var blend := clampf(1.0 - (sqrt(dx * dx + dz * dz) - _seam_radius) / band, 0.0, 1.0)
 	if blend <= 0.0:
 		return coarse * bs + y_offset
-	var h := coarse + (generator.detail_at(float(bx), float(bz), true)
+	var h := coarse + (generator.detail_at(float(bx), float(bz), true, _view)
 		+ VOXEL_TOP_BIAS_BLOCKS) * blend
 	# The offset exists to keep the far mesh UNDER voxels whose detail it does
 	# not know about. Where it does know about it, there is nothing to hide
@@ -1493,10 +1688,10 @@ func _cell_h(i: int, j: int) -> float:
 				+ Chunk.floor_div(int(bz) - ccz, coarse) * coarse + chalf)
 			bx = lerpf(bx, cbx, w)
 			bz = lerpf(bz, cbz, w)
-	v = heightmap.far_height_filtered(bx, bz, _t_level)
+	v = heightmap.far_height_filtered(bx, bz, _t_level, _view)
 	var gain: float = config.far_peak_gain
 	if gain > 0.0:
-		v = lerpf(v, heightmap.far_height_max_filtered(bx, bz, _t_level), gain)
+		v = lerpf(v, heightmap.far_height_max_filtered(bx, bz, _t_level, _view), gain)
 	# THE DETAIL LAYER - see the note by _t_detail. At the cell's own position,
 	# which is the geomorphed one, so the layer is boundary-stable for exactly
 	# the reason the height is.
@@ -1685,29 +1880,31 @@ static func level_at_distance(config: WorldgenConfig, d_m: float) -> float:
 		return 0.0
 	var level := log(d_m / maxf(config.far_level_ref_m, 1.0)) * INV_LN2 \
 		+ config.far_filter_bias
-	return clampf(level, 0.0, float(Heightmap.MAX_LEVEL))
+	# See _level_at: the tile store's top, and the heightmap clamps per source.
+	return clampf(level, 0.0, float(Heightmap.TILE_MAX_LEVEL))
 
 
 ## The height the far mesh draws at one place, read off the pyramid at `level`
 ## and pulled back towards the maxima by far_peak_gain. Level 0 is the raw
 ## grid, which is the surface the voxels are built from.
 static func filtered_height(heightmap: Heightmap, config: WorldgenConfig,
-		bx: float, bz: float, level: float) -> float:
+		bx: float, bz: float, level: float, view := {}) -> float:
 	if level <= 0.0:
-		return heightmap.far_height_at(bx, bz)
-	var mean := heightmap.far_height_filtered(bx, bz, level)
+		return heightmap.far_height_at(bx, bz, view)
+	var mean := heightmap.far_height_filtered(bx, bz, level, view)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return mean
-	return lerpf(mean, heightmap.far_height_max_filtered(bx, bz, level), gain)
+	return lerpf(mean, heightmap.far_height_max_filtered(bx, bz, level, view), gain)
 
 
 ## The zone the far mesh paints past ring 0: altitude alone, no jitter and a
 ## dither of exactly 0.5, with the slope override kept. See _far_zone above,
 ## which carries the reasoning.
 static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
-		altitude: float) -> int:
-	return generator._slope_zone(bx, bz, generator.zone_at(altitude, 0.0, 0.5), true)
+		altitude: float, view := {}) -> int:
+	return generator._slope_zone(bx, bz,
+		generator.zone_at(altitude, 0.0, 0.5), true, view)
 
 
 ## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
@@ -1728,9 +1925,10 @@ static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 		config: WorldgenConfig, bx: int, bz: int, d_m: float,
 		band_treeline: int) -> Color:
+	var view := heightmap.far_view()
 	var h := filtered_height(heightmap, config, float(bx), float(bz),
-		level_at_distance(config, d_m))
-	var zone := backdrop_zone(generator, bx, bz, h)
+		level_at_distance(config, d_m), view)
+	var zone := backdrop_zone(generator, bx, bz, h, view)
 	return Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
 
 
@@ -1802,13 +2000,16 @@ static func terrace_offset(heightmap: Heightmap, config: WorldgenConfig,
 	var half := step / 2
 	var cx := Chunk.floor_div(bx, step) * step + half
 	var cz := Chunk.floor_div(bz, step) * step + half
-	var h := _cell_height_at(heightmap, config, cx, cz, level)
+	# ONE VIEW FOR ALL FIVE READS, so the impostor's footing is computed
+	# against a single snapshot of the tile store - see `Heightmap.far_view`.
+	var view := heightmap.far_view()
+	var h := _cell_height_at(heightmap, config, cx, cz, level, view)
 	var fstep := float(step)
 	var r := maxi(RIDGE_SPAN_BLOCKS / step, 1) * step
-	var ridge := h >= _cell_height_at(heightmap, config, cx - r, cz, level) \
-		and h >= _cell_height_at(heightmap, config, cx + r, cz, level) \
-		and h >= _cell_height_at(heightmap, config, cx, cz - r, level) \
-		and h >= _cell_height_at(heightmap, config, cx, cz + r, level)
+	var ridge := h >= _cell_height_at(heightmap, config, cx - r, cz, level, view) \
+		and h >= _cell_height_at(heightmap, config, cx + r, cz, level, view) \
+		and h >= _cell_height_at(heightmap, config, cx, cz - r, level, view) \
+		and h >= _cell_height_at(heightmap, config, cx, cz + r, level, view)
 	var hq: float = (ceil(h / fstep) if ridge else round(h / fstep)) * fstep
 	return amount * (hq - h)
 
@@ -1816,9 +2017,9 @@ static func terrace_offset(heightmap: Heightmap, config: WorldgenConfig,
 ## One cell-centre height off the terrace level, with the peak gain - the static
 ## twin of _cell_h().
 static func _cell_height_at(heightmap: Heightmap, config: WorldgenConfig,
-		bx: int, bz: int, level: float) -> float:
-	var h := heightmap.far_height_filtered(float(bx), float(bz), level)
+		bx: int, bz: int, level: float, view := {}) -> float:
+	var h := heightmap.far_height_filtered(float(bx), float(bz), level, view)
 	var gain: float = config.far_peak_gain
 	if gain <= 0.0:
 		return h
-	return lerpf(h, heightmap.far_height_max_filtered(float(bx), float(bz), level), gain)
+	return lerpf(h, heightmap.far_height_max_filtered(float(bx), float(bz), level, view), gain)

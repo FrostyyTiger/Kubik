@@ -652,11 +652,11 @@ func _terrace(h: float) -> float:
 ## down or its two legs disagree; everything else reads the store and gets
 ## ground wherever it asks. Defaulted false: every caller from before this line
 ## is unchanged.
-func detail_at(bx: float, bz: float, far := false) -> float:
+func detail_at(bx: float, bz: float, far := false, view := {}) -> float:
 	var d := _detail.get_noise_2d(bx, bz) * config.detail_amp
 	if config.detail_flat_damp > 0.0 and heightmap != null:
 		var on_slope := smoothstep(config.detail_flat_deg, config.detail_full_deg,
-			heightmap.slope_deg_at(bx, bz, far))
+			heightmap.slope_deg_at(bx, bz, far, view))
 		d *= lerpf(1.0, on_slope, clampf(config.detail_flat_damp, 0.0, 1.0))
 	if lakes == null or config.shore_flat_blocks <= 0.0:
 		return d
@@ -666,7 +666,7 @@ func detail_at(bx: float, bz: float, far := false) -> float:
 	# 0 at the water line, 1 a full band away from it - so the fade covers the
 	# ground just above the water AND the lake bed just below, and the shore
 	# has no step in it at the point where the two meet.
-	var t := clampf(absf((heightmap.far_height_at(bx, bz) if far
+	var t := clampf(absf((heightmap.far_height_at(bx, bz, view) if far
 			else heightmap.height_at(bx, bz)) - level)
 		/ config.shore_flat_blocks, 0.0, 1.0)
 	return d * t
@@ -804,7 +804,7 @@ func zone_band(zone: int) -> Vector2:
 
 ## Zone of the surface at one block column.
 ## `far` picks the height door - see `detail_at`.
-func surface_zone_at(bx: int, bz: int, altitude: float, far := false) -> int:
+func surface_zone_at(bx: int, bz: int, altitude: float, far := false, view := {}) -> int:
 	# Hashed on a coarser grid than the blocks themselves, so the interleave at
 	# a zone boundary happens in patches rather than per block. See
 	# zone_dither_blocks: per-block dither reads as a gradient on a hillside and
@@ -815,7 +815,7 @@ func surface_zone_at(bx: int, bz: int, altitude: float, far := false) -> int:
 		zone_jitter_at(float(bx), float(bz)),
 		WorldHash.hash01(Chunk.floor_div(bx, patch), Chunk.floor_div(bz, patch),
 			world_seed, SALT_ZONE_DITHER))
-	return _slope_zone(bx, bz, zone, far)
+	return _slope_zone(bx, bz, zone, far, view)
 
 
 ## Let the STEEPNESS of the ground override what its altitude said.
@@ -836,11 +836,11 @@ func surface_zone_at(bx: int, bz: int, altitude: float, far := false) -> int:
 ## slope histogram is reported in, so a value here can be read straight off the
 ## probe rather than converted.
 ## `far` picks the height door - see `detail_at`.
-func _slope_zone(bx: int, bz: int, zone: int, far := false) -> int:
+func _slope_zone(bx: int, bz: int, zone: int, far := false, view := {}) -> int:
 	if config.slope_zone_strength <= 0.0 or heightmap == null:
 		return zone
 
-	var slope := heightmap.slope_deg_at(float(bx), float(bz), far)
+	var slope := heightmap.slope_deg_at(float(bx), float(bz), far, view)
 
 	# The strength knob is a probability rather than a blend, because a zone is
 	# an integer and there is no half-way between rock and snow. Hashed from

@@ -53,6 +53,8 @@ static func run() -> int:
 		# STAGE 1.
 		"tile store": _test_tile_store,
 		"tile threads": _test_tile_threads,
+		# STAGE 3.
+		"far key parity": _test_far_key_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -390,6 +392,138 @@ static func _canonical_config() -> WorldgenConfig:
 	cfg.apply_view_preset()
 	cfg.apply_world_scale()
 	return cfg
+
+
+# --- Stage 3 ------------------------------------------------------------------
+
+## THE 160 KEYED MESHES ARE THE SAME MESH.
+##
+## Stage 3 stops building the far country as one disc and starts building it as
+## ten rings by sixteen sectors, each on its own node at its own anchor, each
+## replaced on its own. The claim that has to hold is that **the union of the
+## keys is the disc**: the same quads, at the same world positions, with the
+## same colours - because a key's vertices are relative to its ring's anchor
+## and the disc's are absolute, and an anchor applied to the wrong ring is a
+## wedge of country in the wrong place.
+##
+## Both legs, and against each other: the GDScript disc, the GDScript keys, the
+## C++ disc and the C++ keys are four builds of one mesh. `selftest.gd`'s far
+## parity compares the two discs; this compares the two keyed builds and each
+## keyed build against its own disc.
+##
+## THE COMPARISON IS A MULTISET OF VERTICES, sorted. Quad ORDER differs by
+## construction - the disc walks ring by ring and the keyed build walks the
+## same rings but writes into sixteen sinks - so anything order-sensitive would
+## fail on a mesh that is correct. Sorting a few thousand vertices is
+## milliseconds and says exactly the right thing.
+static func _test_far_key_parity():
+	var bad := 0
+	var cfg := WorldgenConfig.new()
+	cfg.world_blocks_xz = 400
+	cfg.view_distance = -1
+	cfg.voxel_radius_chunks = 3
+	cfg.fog_end_m = 90.0
+	cfg.apply_world_scale()
+	var gen := TerrainGenerator.new(1234, cfg)
+	gen.build_heightmap()
+	var hm: Heightmap = gen.heightmap
+	var lakes := Lakes.new()
+	lakes.compute(hm, cfg)
+	gen.lakes = lakes
+	hm.build_pyramid()
+	hm.publish_far_view()
+
+	var centre := Vector2i(0, 0)
+	# Every key there is, so the union is the whole disc by construction.
+	var keys := PackedInt32Array()
+	for r in FarFieldJob.RING_STEP_MULTIPLE.size():
+		for sec in World.FRONTIER_SECTORS:
+			keys.push_back(r)
+			keys.push_back(sec)
+
+	var gd_disc := _gd_build(hm, gen, cfg, centre, PackedInt32Array())
+	var gd_keys := _gd_build(hm, gen, cfg, centre, keys)
+	if gd_disc.is_empty():
+		print("  far key parity: the disc build produced nothing")
+		return 1
+	bad += _compare_verts(gd_disc, gd_keys, "gdscript disc vs gdscript keys")
+
+	if FarMesher.class_present():
+		var m := FarMesher.new()
+		if m.setup(hm, gen, cfg):
+			var cpp_keys := _cpp_build(m, cfg, centre, keys)
+			bad += _compare_verts(gd_keys, cpp_keys, "gdscript keys vs c++ keys")
+		else:
+			print("  far key parity: the c++ mesher would not take this world")
+			bad += 1
+	else:
+		print("  (no c++ mesher - one leg only)")
+	print("far key parity: %d vertices over %d keys, %d bad" % [
+		gd_disc.size(), keys.size() / 2, bad])
+	return bad
+
+
+## Every vertex of a build, in WORLD metres, sorted. The disc's are already
+## world; a key's are relative to its ring's anchor and get it added back.
+static func _gd_build(hm: Heightmap, gen: TerrainGenerator, cfg: WorldgenConfig,
+		centre: Vector2i, keys: PackedInt32Array) -> PackedVector3Array:
+	var job := FarFieldJob.new()
+	job.heightmap = hm
+	job.generator = gen
+	job.config = cfg
+	job.center = centre
+	job.slice = true
+	job.keys = keys
+	job.run()
+	return _gather(job.slices, job.key_anchors)
+
+
+static func _cpp_build(m: FarMesher, cfg: WorldgenConfig, centre: Vector2i,
+		keys: PackedInt32Array) -> PackedVector3Array:
+	m.keys = keys
+	m.build(cfg, centre, PackedInt32Array(), true)
+	return _gather(m.slices, m.key_anchors)
+
+
+static func _gather(slices: Array, anchors: PackedVector3Array) -> PackedVector3Array:
+	var out := PackedVector3Array()
+	for i in slices.size():
+		var arrays: Array = slices[i]
+		if arrays.is_empty():
+			continue
+		var at := anchors[i] if i < anchors.size() else Vector3.ZERO
+		var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		for p in v:
+			out.push_back(p + at)
+	# THE MULTISET, NOT THE SEQUENCE. Two correct builds emit the same quads in
+	# different orders - see the note above.
+	var arr := Array(out)
+	arr.sort_custom(func(a: Vector3, b: Vector3) -> bool:
+		if a.x != b.x:
+			return a.x < b.x
+		if a.y != b.y:
+			return a.y < b.y
+		return a.z < b.z)
+	return PackedVector3Array(arr)
+
+
+static func _compare_verts(a: PackedVector3Array, b: PackedVector3Array,
+		tag: String) -> int:
+	if a.size() != b.size():
+		print("  %s: %d vertices vs %d" % [tag, a.size(), b.size()])
+		return 1
+	var worst := 0.0
+	var differ := 0
+	for i in a.size():
+		var d: float = (a[i] - b[i]).length()
+		worst = maxf(worst, d)
+		if d > 0.0005:
+			differ += 1
+	if differ > 0:
+		print("  %s: %d of %d vertices differ, worst %.6f m" % [
+			tag, differ, a.size(), worst])
+		return 1
+	return 0
 
 
 # --- Helpers ------------------------------------------------------------------
