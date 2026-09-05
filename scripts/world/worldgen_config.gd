@@ -1476,6 +1476,21 @@ const FOG_START_RATIO := 0.4
 ## is in it. LOCAL and unhashed, like every far knob.
 @export var far_upload_budget_ms := 4.0
 
+## HOW MUCH OF A FRAME THE CHUNK PUMP MAY SPEND, in milliseconds - horizon v1
+## Stage 7, and the first rung of the plan's shrink list.
+##
+## It was a constant of 8 in `world.gd` and it is the largest single thing on
+## the frame this stage measures: at 60 FPS a frame is 16.7 ms and this may take
+## half of it, so a second in which many columns land is a second with hitches
+## in it whatever the far country costs. A knob rather than a smaller constant,
+## because the trade is real in both directions - a smaller slice is a smoother
+## frame and a world that arrives more slowly behind you - and Marcel should be
+## able to move it standing still and see both halves.
+##
+## LOCAL and unhashed: it changes WHEN a chunk reaches the screen, never what is
+## in it.
+@export var chunk_upload_budget_ms := 8.0
+
 ## Real seconds per in-game day.
 ## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
 ##
@@ -1800,7 +1815,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	"far_cpp",
 	# DISTANCE V5 STAGE 1. LOCAL and unhashed for the same reason far_cpp is:
 	# it changes when a mesh reaches the screen and never what is in it.
-	"far_upload_budget_ms",
+	"far_upload_budget_ms", "chunk_upload_budget_ms",
 	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
 	"far_tree_step_m",
 	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.

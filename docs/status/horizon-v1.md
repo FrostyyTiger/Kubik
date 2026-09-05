@@ -20,9 +20,16 @@ regression this lane caused; it is the state of `main`, and it is what Stage 7
 has to move. Full numbers under Stage 0.
 
 **Where it stands after Stage 3: 21.85 ms** - four warm runs on a quiet box,
-21.68 to 22.22, spread 2.5%, with the view at 32 km instead of 3.2. Half the
-frame for ten times the country, and still 5.1 ms over the gate. Full numbers
-under Stage 3.
+21.68 to 22.22, spread 2.5%, with the view at 32 km instead of 3.2.
+
+**WHERE IT ENDED, Stage 7: 16.67 ms, three runs, spread 0.00%.** The median
+gate is 16.7 and it is met, at Ultra, with the view at 32 km. **The other half
+of the gate is not met and is the BLOCKING line: 171 to 233 frames of about
+3,340 are over 25 ms**, and not one rung of the plan's shrink list moves them -
+three of the five make both numbers worse. They are chunk and flora uploads on
+the main thread: the seconds containing a far upload and the seconds containing
+an origin rebase are both CALMER than the median second, measured. Full table
+under Stage 7.
 
 ---
 
@@ -1620,6 +1627,115 @@ Recorded as a question rather than chased.
 | character self-test | **36 tests, all passed** |
 | canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` |
 | far probe | **PASS**, tables identical across its two runs and **identical to Stage 4's and Stage 5's**, row for row |
+
+---
+
+## Stage 7 - the sprint line
+
+**The median gate is met. The hitch gate is not.**
+
+```
+SPRINT: 16.67 ms median at Ultra, 32 km, three runs, spread 0.00%
+        - against 41.67 ms at 3.2 km on `main` this morning.
+        171 to 233 frames of about 3,340 over 25 ms.
+```
+
+### The line
+
+Sixty seconds sprinting from the spawn along `+X`, Ultra, seed 42, on
+ganymede with the box otherwise idle. Three plain runs, then the plan's shrink
+list one rung at a time.
+
+| run | median | p99 | worst | over 25 ms | chunks | far rebuilds |
+| --- | --- | --- | --- | --- | --- | --- |
+| **plain 1** | **16.67** | 40.44 | 84.44 | 171 | 6,535 | 67 |
+| **plain 2** | **16.67** | 46.24 | 75.14 | 233 | 5,895 | 69 |
+| **plain 3** | **16.67** | 40.76 | 79.14 | 202 | 5,866 | 69 |
+| volumetric field off | 17.66 | 41.67 | 65.01 | 212 | 6,502 | 69 |
+| tree shadows off | 16.67 | 45.83 | 68.20 | 249 | 5,957 | 77 |
+| both off | 18.06 | 45.84 | 150.00 | 253 | 6,109 | 65 |
+| chunk upload slice 4 ms | 18.79 | 50.15 | 128.68 | 380 | 5,806 | 59 |
+| chunk upload slice 2 ms | 19.31 | 42.07 | 91.14 | 368 | 5,941 | 65 |
+| slice 2 ms + `far_ring_recenter_frac` 0.5 | 20.00 | 50.00 | 120.92 | 412 | 6,141 | 52 |
+| **both lanes merged**, run 1 | 22.17 | 36.48 | 72.77 | 786 | **12,862** | 33 |
+| **both lanes merged**, run 2 | 22.08 | 36.45 | 73.30 | 807 | **12,871** | 27 |
+
+**Three plain runs and the same median to the hundredth.** The spread the
+contract asks for is 0.00%.
+
+### The shrink list, walked, and every rung makes it worse
+
+The plan's failure protocol item 5 gives an order: upload slice size,
+`far_ring_recenter_frac` up, tree-ring radius, shadow distance, volumetric
+length. Four of the five were measured (the tree ring's radius is `far_tree_m`,
+which Stage 3 already moved from 1,000 m to 800 for a different reason):
+
+| rung | median | over 25 ms | against plain |
+| --- | --- | --- | --- |
+| chunk upload slice 8 -> 4 ms | 18.79 | 380 | **worse both ways** |
+| chunk upload slice 8 -> 2 ms | 19.31 | 368 | **worse both ways** |
+| ...and `far_ring_recenter_frac` 0.25 -> 0.5 | 20.00 | 412 | **worse both ways** |
+| the volumetric field off | 17.66 | 212 | **worse** |
+| tree shadows off | 16.67 | 249 | median same, hitches worse |
+| both off | 18.06 | 253 | **worse both ways** |
+
+**Not one rung improves either number, and the slice rungs make both worse -
+which is the useful finding.** A smaller upload slice does not smooth the
+frame; it lengthens the queue, so a second that would have paid eight
+milliseconds once pays four twice and then arrives with a backlog behind it.
+The frame this build has is the frame it wants: the plain configuration is the
+best of the seven measured.
+
+**The chunk upload budget is a knob now** (`chunk_upload_budget_ms`, LOCAL,
+default 8.0, on F4) because it was a constant in `world.gd` and the plan's
+shrink list asks for it by name. It stays at 8.
+
+### The two halves of the gate
+
+**MEDIAN: PASS.** 16.67 ms against 16.7, three runs, spread 0.00%. From 41.67
+this morning, with ten times the view distance.
+
+**NO FRAME OVER 25 ms: FAIL, and BLOCKING.** 171 to 233 frames of about 3,340
+are over 25 ms - five to seven per cent - and nothing on the plan's shrink list
+moves them. They are chunk and flora uploads: Stage 3 measured that the seconds
+containing a far upload have a LOWER median worst frame than the seconds
+without one (48.61 ms against 52.16), and Stage 6 measured that the seconds
+containing an origin rebase are the calmer ones too. What is left is the voxel
+world arriving, on the main thread, while the player sprints into it at
+13 m/s - and it is the mesher lane's ground, not this one's.
+
+### The two lanes together, and the number that explains the rest
+
+A throwaway worktree off this branch with `origin/main` merged in - which is
+where `feat/mesher-v1` landed at `2b93471` - built, asset-mounted and run
+twice. Never pushed; the branch is `tmp/horizon-mesher-merge` and it exists to
+be deleted.
+
+**The merge is clean.** Twenty-four files, no conflicts, including the two both
+lanes touched (`scripts/tools/selftest.gd` and `scripts/ui/debug_hud.gd`).
+
+| | median | over 25 ms | **chunks in 60 s** |
+| --- | --- | --- | --- |
+| horizon alone | 16.67 | 171-233 | **5,866 - 6,535** |
+| horizon + mesher | 22.1 | 786-807 | **12,862 - 12,871** |
+
+**The merged build streams TWICE THE WORLD in the same sixty seconds** - 12,870
+chunks against 5,900 - because the chunk mesher in C++ stops being the thing
+the queue waits on. The frame pays for it: 22.1 ms instead of 16.67, and four
+times the hitches.
+
+**That is not a regression in either lane and it should not be read as one.**
+Both are doing exactly what they were built to do; what it says is that with
+generation and meshing both off the main thread, **the upload is now the
+bottleneck**, and it is the one thing neither lane moved. A chunk's arrival is
+still `add_surface_from_arrays` plus a collision shape on the frame thread, and
+at 214 columns a second that is the whole story of the hitch column above.
+
+**For Marcel, and it is the sharpest thing this lane learned:** the next frame
+win is not another mesher or another ring ladder. It is the upload - fewer,
+larger surfaces per column, or a way to hand the rendering server a mesh
+without the frame thread touching it. The measurement is here and the shrink
+list above says the obvious lever (a smaller slice) makes it worse.
 
 ---
 

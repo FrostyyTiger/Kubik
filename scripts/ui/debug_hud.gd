@@ -130,6 +130,7 @@ const LOCAL_TUNING_ROWS := [
 	["far_ring_recenter_frac", "horizon: ring recentre (x r)", 0.05, 0.5, 0.05],
 	["far_tile_apron", "horizon: tile apron", 0.0, 3.0, 1.0],
 	["far_forest_blend", "horizon: far forest blend", 0.0, 1.0, 0.05],
+	["chunk_upload_budget_ms", "horizon: chunk upload (ms)", 1.0, 16.0, 1.0],
 	["far_origin_rebase_m", "horizon: rebase at (m)", 512.0, 8192.0, 256.0],
 	["fly_speed_mps", "horizon: fly speed (m/s)", 18.0, 500.0, 1.0],
 ]

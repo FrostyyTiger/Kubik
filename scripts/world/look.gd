@@ -178,7 +178,12 @@ static func configure_environment(env: Environment, sun: DirectionalLight3D,
 		# a PLACE, and a distance fog is a function of the camera - so they
 		# need a density field with a position. This is that field;
 		# `ValleyFog` puts `FogVolume`s into it.
-		env.volumetric_fog_enabled = true
+		# THE SWITCH, horizon v1 Stage 7. The plan's shrink list ends with the
+		# volumetric field, and a knob is how it is measured rather than
+		# argued: `--no-volumetric` on any run turns the field off and leaves
+		# every other fog term where it was, so the difference in the sprint
+		# line is the field's own cost and nothing else's.
+		env.volumetric_fog_enabled = not volumetric_off
 		env.volumetric_fog_length = VOLUMETRIC_LENGTH_M
 		env.volumetric_fog_density = VOLUMETRIC_DENSITY
 		env.volumetric_fog_anisotropy = 0.35
@@ -285,6 +290,11 @@ const ADJUST_CONTRAST := 1.05
 ## is a fixed froxel grid, so doubling the length halves its depth resolution
 ## rather than doubling its cost.
 const VOLUMETRIC_LENGTH_M := 1200.0
+
+## `--no-volumetric`: the volumetric field off, every other fog term unchanged.
+## A static for the reason `SkyCycle.fog_off` is one - the tour, the probes and
+## `Look` all need the same answer and none of them holds the others.
+static var volumetric_off := false
 ## The ambient density of the field, before any FogVolume is added to it.
 ## Range x0.5-x2, judged on the hour shots and shot 6.
 const VOLUMETRIC_DENSITY := 0.01

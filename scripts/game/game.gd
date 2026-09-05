@@ -203,6 +203,15 @@ func _ready() -> void:
 	# (`apply_view_preset` keeps `far_reach_m` equal to `fog_end_m`), the sky
 	# writes it to a shader global once a frame, and the far material reads it.
 	SkyCycle.far_reach_m = config.far_reach_m
+	# THE TWO SHRINK SWITCHES, horizon v1 Stage 7. Neither changes what the
+	# world IS; both are read once here so a sprint can be measured with and
+	# without them and the difference written down.
+	Look.volumetric_off = "--no-volumetric" in OS.get_cmdline_user_args()
+	TreeField.shadows_off = "--no-tree-shadows" in OS.get_cmdline_user_args()
+	if Look.volumetric_off:
+		print("[Game] --no-volumetric: the volumetric field is off")
+	if TreeField.shadows_off:
+		print("[Game] --no-tree-shadows: no tree rung casts")
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.

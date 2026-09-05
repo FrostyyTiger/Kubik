@@ -132,6 +132,10 @@ var _slots := {}
 ## The world's origin offset as this node last saw it - horizon v1 Stage 6.
 var _origin_m := Vector3.ZERO
 
+## `--no-tree-shadows`: no rung casts. Static, for the same reason
+## `Look.volumetric_off` is.
+static var shadows_off := false
+
 
 ## Every slot moved by -delta, and the offset remembered. Called by `Game` on a
 ## rebase, with the same delta every other anchor in the world just took.
@@ -469,7 +473,10 @@ func _make_slot(key: String, mesh: Mesh) -> MultiMeshInstance3D:
 	# distance, so a rung that casts is always a rung the shadow map already
 	# reaches. The key is `m<variant>|<lod>`; the rung is what follows the bar.
 	var lod := key.get_slice("|", 1).to_int()
-	node.cast_shadow = (GeometryInstance3D.SHADOW_CASTING_SETTING_ON if lod == 0
+	# `--no-tree-shadows` (horizon v1 Stage 7) takes even LOD0 out of the shadow
+	# map, which is the plan's shrink list one rung before the volumetric field.
+	node.cast_shadow = (GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		if lod == 0 and not shadows_off
 		else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF)
 	add_child(node)
 	return node

@@ -565,7 +565,13 @@ func _process(delta: float) -> void:
 	# Spend a bounded slice of this frame on chunk work. Doing it all at once
 	# would freeze the window for seconds with no sign of life.
 	var started := Time.get_ticks_msec()
-	var budget := BUILD_BUDGET_MS if _initial_load_reported else INITIAL_BUILD_BUDGET_MS
+	# THE KNOB, horizon v1 Stage 7 - see `chunk_upload_budget_ms`. The constant
+	# is the fallback for a `World` with no config, which the self-tests build.
+	var budget: float = float(BUILD_BUDGET_MS)
+	if config != null and config.chunk_upload_budget_ms > 0.0:
+		budget = config.chunk_upload_budget_ms
+	if not _initial_load_reported:
+		budget = maxf(budget * 2.0, float(INITIAL_BUILD_BUDGET_MS))
 	_collect_finished(started, budget)
 	_submit_jobs()
 	_submit_flora()
@@ -1158,12 +1164,12 @@ func _track_frame(delta: float) -> void:
 ## whole budget with publishing while finished meshes queued behind it unseen.
 ## With one job there is one kind of completion and nothing to starve: a chunk
 ## arrives finished or it does not arrive.
-func _collect_finished(started: int, budget: int = BUILD_BUDGET_MS) -> void:
+func _collect_finished(started: int, budget: float = float(BUILD_BUDGET_MS)) -> void:
 	_collect_chunks(started, budget)
 	_collect_flora(started, budget)
 
 
-func _collect_chunks(started: int, budget: int) -> void:
+func _collect_chunks(started: int, budget: float) -> void:
 	var done: Array[Vector2i] = []
 	for col in _in_flight:
 		if Time.get_ticks_msec() - started >= budget:
@@ -1230,7 +1236,7 @@ func _collect_chunks(started: int, budget: int) -> void:
 ## submitted last: ground the player can stand on outranks grass growing on it.
 ## When the terrain has nothing waiting this costs nothing and the whole budget
 ## falls through to here.
-func _collect_flora(started: int, budget: int) -> void:
+func _collect_flora(started: int, budget: float) -> void:
 	var done: Array[Vector2i] = []
 	for col in _flora_in_flight:
 		if Time.get_ticks_msec() - started >= budget:
