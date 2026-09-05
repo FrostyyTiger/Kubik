@@ -301,6 +301,11 @@ const VOLUMETRIC_DENSITY := 0.01
 const HEADER := """
 global uniform float kubik_night;
 global uniform float kubik_warm;
+// HORIZON V1 STAGE 5. The fog ramp's three: the hour's switch, the hour's fog
+// colour after fog_sky_affect, and R. See project.godot.
+global uniform float kubik_far_ramp;
+global uniform vec3 kubik_fog_color;
+global uniform float kubik_far_reach;
 
 // The inverse of the push conversion (see Look.to_wire). Vertex colours travel
 // sRGB on the wire and the engine decodes ALBEDO for us; anything that is NOT
@@ -408,14 +413,45 @@ void fragment() {
 		albedo = albedo + (1.0 - albedo) * fg_r;
 	}
 
+	// THE RAMP ON THE DRAW DISTANCE, horizon v1 Stage 5. See project.godot's
+	// shader globals for the curve and for why it is a ramp and not a density.
+	//
+	// AS ALBEDO AND EMISSION, AND NOT AS `FOG`. The built-in is the obvious
+	// spelling and it does nothing here: a fragment that writes
+	// `FOG = vec4(1.0, 0.0, 0.0, 0.5)` comes out of this renderer exactly as
+	// red-free as one that does not, on Forward+ with `fog_enabled` true and
+	// the exponential mode on. Measured, not assumed - the test frame was a
+	// tour shot with the write forced and the albedo forced green, and the
+	// world came back green and unfogged.
+	//
+	// So the mix is done by hand, and the pair of lines is what makes it
+	// correct rather than merely close: the SURFACE fades out
+	// (`albedo * (1 - f)`, so its lit contribution goes with it) and the AIR
+	// is added unlit (`EMISSION += air * f`). At f = 1 the fragment is the
+	// air's colour at the air's own brightness, whatever light happens to
+	// fall on that slope - which is the whole point of fogging after lighting,
+	// and the reason a mix into ALBEDO alone would leave a fogged mountain
+	// black at night and a white blaze at noon.
+	vec3 far_air = vec3(0.0);
+	if (kubik_far_ramp > 0.0) {
+		float far_d = length(VERTEX);
+		float far_t = clamp((far_d - 0.4 * kubik_far_reach)
+			/ (0.6 * kubik_far_reach), 0.0, 1.0);
+		float far_e = 2.5 * far_t;
+		float far_f = (1.0 - exp(-far_e * far_e)) * kubik_far_ramp;
+		albedo *= 1.0 - far_f;
+		far_air = kubik_fog_color * far_f;
+	}
+
 	ALBEDO = albedo;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.1;
 	METALLIC = 0.0;
 	// The rune band on a named piece, and nothing else in the world. Off
-	// entirely under eerie weather, with every other warm light (D7).
+	// entirely under eerie weather, with every other warm light (D7). Plus the
+	// air, which is unlit by construction.
 	EMISSION = kubik_to_linear(COLOR.rgb) * COLOR.a * figure_emissive
-		* FIGURE_EMISSIVE_ENERGY * kubik_warm;
+		* FIGURE_EMISSIVE_ENERGY * kubik_warm + far_air;
 }
 """
 

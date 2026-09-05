@@ -104,6 +104,42 @@ kubik_warm={
 "value": 1.0
 }
 
+; HORIZON V1 STAGE 5. THE FOG RAMP ON THE DRAW DISTANCE, and its three globals.
+;
+; The engine's exponential fog is a density: it thickens with distance forever
+; and has no idea where the world stops. The north star's second line asks for
+; the opposite - "fog as a ramp on that distance and never a wall" - which is a
+; curve normalised to R, the draw distance, so that the far mesh's own edge at
+; R is exactly where the fog reaches full and there is nothing to see past it.
+; The plan's § 3: t = clamp((d - 0.4R) / 0.6R, 0, 1), fog = 1 - exp(-(2.5t)^2).
+; Nothing at 12.8 km, 0.22 at 20, 0.63 at 26, 0.998 at 32.
+;
+; GLOBALS RATHER THAN MATERIAL UNIFORMS, for the reason kubik_night is one: the
+; hour owns all three, SkyCycle writes them once a frame, and every material
+; that draws ground reads them without being handed a reference. `kubik_far_ramp`
+; is the hour's switch - 1 at day and evening, 0 at dusk, night and eerie, where
+; the air is thick enough that the engine's own term does the whole job.
+;
+; The three the poster renderer left behind - kubik_fog_color among them - were
+; deleted in light v1 with the banded fog that read them. This is a different
+; kubik_fog_color: the hour's fog keyframe blended towards its sky by
+; fog_sky_affect, which is the colour the engine's own fog fades to, so the ramp
+; and the exponential term agree about what the air looks like.
+kubik_far_ramp={
+"type": "float",
+"value": 0.0
+}
+
+kubik_fog_color={
+"type": "vec3",
+"value": Vector3(0.7, 0.7, 0.7)
+}
+
+kubik_far_reach={
+"type": "float",
+"value": 32000.0
+}
+
 [threading]
 
 ; Chunk generation and chunk meshing both run as LOW priority worker tasks, and

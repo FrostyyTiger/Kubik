@@ -199,6 +199,10 @@ func _ready() -> void:
 	SkyCycle.fog_off = "off" == _arg_value("--fog", "")
 	if SkyCycle.fog_off:
 		print("[Game] --fog off: every fog term zero for this run")
+	# AND R, THE DISTANCE THE STAGE 5 RAMP IS NORMALISED TO. The preset owns it
+	# (`apply_view_preset` keeps `far_reach_m` equal to `fog_end_m`), the sky
+	# writes it to a shader global once a frame, and the far material reads it.
+	SkyCycle.far_reach_m = config.far_reach_m
 	# A client retuning its own terrain has silently left the host's world, so
 	# the panel is read-only there. Read-only rather than synced-from-host
 	# because it is the safer of the two and this is a debug tool.
@@ -1563,6 +1567,9 @@ func _apply_msaa() -> void:
 ## already sees the new value; what it does NOT have is terrain built with it.
 func _on_config_changed() -> void:
 	_apply_msaa()
+	# R MOVES WITH THE PRESET (horizon v1 Stage 5), so the ramp follows a
+	# view-distance change standing still, like every other far knob.
+	SkyCycle.far_reach_m = config.far_reach_m
 	# Fog and day length take effect immediately - they cost nothing to change
 	# and are much easier to tune when you can see the result at once. Terrain
 	# shape needs a rebuild, which is what the message is about.

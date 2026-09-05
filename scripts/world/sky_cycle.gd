@@ -84,7 +84,13 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#B3E4EF", "sky_mie": "#D3C2BB",
 		"sky_turbidity": 10.0, "sky_energy": 1.00, "sky_ground": "#6B6659",
 		"fog_sky_affect": 0.30,
-		"fog": "#C6C6C4", "fog_density": 0.00018,
+		# HORIZON V1 STAGE 5: 0.00018 -> 0.00003, and the ramp does the distance.
+		# The exponential term had two jobs and could only do one well - aerial
+		# tint near, and hiding the mesh's edge far - and at 32 km the second one
+		# had become "grey out everything past 8". What is left here is the tint;
+		# `far_ramp` carries the distance, normalised to R, so the air thickens
+		# where the world ends instead of where a density happened to reach 1.
+		"fog": "#C6C6C4", "fog_density": 0.00003, "far_ramp": 1.0,
 		# THIN, AND IN THE VALLEY BOTTOMS ONLY. The bible's day fog is the one
 		# hour that is explicitly not a fog bank: "thin, valley bottoms only,
 		# mornings". Half the height term and half the volumetric of the plan's
@@ -110,7 +116,7 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#CCA8EB", "sky_mie": "#F0D2EC",
 		"sky_turbidity": 14.0, "sky_energy": 1.00, "sky_ground": "#5A4650",
 		"fog_sky_affect": 0.60,
-		"fog": "#E8AFC9", "fog_density": 0.00027,
+		"fog": "#E8AFC9", "fog_density": 0.00003, "far_ramp": 1.0,
 		"fog_height_offset": 40.0, "fog_height_density": 0.001,
 		"vol_density": 0.003, "band_scale": 0.6,
 		"warm": 1.0, "saturation": 1.0,
@@ -129,7 +135,10 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#63559E", "sky_mie": "#A281C3",
 		"sky_turbidity": 26.0, "sky_energy": 0.45, "sky_ground": "#2A2438",
 		"fog_sky_affect": 0.60,
-		"fog": "#736EB7", "fog_density": 0.0006,
+		# The ramp is OFF from here on: at these densities the engine's own
+		# term reaches full well inside R, so a second curve would only darken
+		# ground the first one has already hidden.
+		"fog": "#736EB7", "fog_density": 0.0006, "far_ramp": 0.0,
 		"fog_height_offset": 40.0, "fog_height_density": 0.0015,
 		"vol_density": 0.006, "band_scale": 1.0,
 		"warm": 1.0, "saturation": 1.0,
@@ -146,7 +155,7 @@ const KEYFRAMES := {
 		"sky_rayleigh": "#213147", "sky_mie": "#0C1722",
 		"sky_turbidity": 6.0, "sky_energy": 0.35, "sky_ground": "#121A24",
 		"fog_sky_affect": 0.50,
-		"fog": "#466477", "fog_density": 0.00045,
+		"fog": "#466477", "fog_density": 0.00045, "far_ramp": 0.0,
 		# MEASURED, AND THE OBVIOUS LEVER RUNS BACKWARDS AT THIS HOUR. Fog's
 		# second job is pooling that is VISIBLE against dark ground, so the
 		# first instinct is more of it. Three values were shot: at the plan's
@@ -206,6 +215,17 @@ const EERIE := {
 ## A `static var` rather than an instance field because `Look`, the tour and
 ## the probes all need the same answer and none of them holds this node.
 static var fog_off := false
+
+## R, THE DRAW DISTANCE THE RAMP IS NORMALISED TO, in metres - horizon v1
+## Stage 5. `WorldgenConfig.far_reach_m`, which `apply_view_preset` keeps equal
+## to `fog_end_m`, pushed here by `Game` when the world loads or the preset
+## changes. A static for the same reason `fog_off` is one: the sky node does not
+## hold the config and the tour and the probes need the same answer.
+##
+## The default is the Ultra preset's, so a scene with no world - a gallery
+## sheet, a self-test - has a sane R rather than a zero that would put the ramp
+## at full one metre from the camera.
+static var far_reach_m := 32000.0
 
 ## THE HOUR ANCHORS, as sun elevations. The tour and the gallery ask for an hour
 ## by NAME and `time_for_elevation()` answers with a time, so a shot called
@@ -331,6 +351,10 @@ static func _apply_eerie(out: Dictionary) -> void:
 		out[field] = _eerie_linear[field]
 	out["fog_density"] = out["fog_density"] * _eerie_linear["fog_density_scale"]
 	out["vol_density"] = out["vol_density"] * _eerie_linear["vol_density_scale"]
+	# AND THE DISTANCE RAMP IS OFF UNDER EERIE, horizon v1 Stage 5. Eerie's own
+	# fog is four times the hour's and reaches full well inside R; a second
+	# curve on top of it would be a wall behind a wall.
+	out["far_ramp"] = 0.0
 
 
 ## A window that peaks at `peak` and falls to nothing `width` either side of it,
@@ -716,6 +740,33 @@ func apply() -> void:
 		# The volumetric field takes the hour's colour, so a band in the valley
 		# and the distance behind it are the same fog.
 		_env.volumetric_fog_density = 0.0 if fog_off else kf["vol_density"]
+		# THE RAMP ON THE DRAW DISTANCE, horizon v1 Stage 5. Three globals, once
+		# a frame, read by every material that draws ground - see
+		# project.godot's shader_globals and Look.OPAQUE_SHADER.
+		#
+		# THE COLOUR IS THE HOUR'S FOG AFTER `fog_sky_affect`, computed here
+		# rather than left to the engine: `fog_sky_affect` is what makes the
+		# engine's own fog fade to the sky at the horizon, and a ramp that
+		# fogged to the raw keyframe colour would end the world in a band of a
+		# different grey than the air beside it. `sky_horizon` is the sky the
+		# fog is seen against at eye level, which is where a 32 km sightline
+		# meets it.
+		var ramp: float = 0.0 if fog_off else float(kf.get("far_ramp", 0.0))
+		# R FROM THE CONFIG THIS NODE IS BOUND TO, not from a value pushed in
+		# from outside. `Game` sets a static once at load and `--set
+		# far_reach_m=200` then arrives too late for it, which cost an hour of
+		# "the ramp does nothing" - the ramp was working and R was the preset's
+		# 32,000 the whole time. The node already holds the config; ask it.
+		var reach: float = far_reach_m
+		if config != null and config.far_reach_m > 1.0:
+			reach = config.far_reach_m
+		var fog_c: Color = kf["fog"] as Color
+		var sky_c: Color = kf["sky_horizon"] as Color
+		var air := fog_c.lerp(sky_c, clampf(kf["fog_sky_affect"], 0.0, 1.0))
+		RenderingServer.global_shader_parameter_set("kubik_far_ramp", ramp)
+		RenderingServer.global_shader_parameter_set("kubik_fog_color",
+			Vector3(air.r, air.g, air.b))
+		RenderingServer.global_shader_parameter_set("kubik_far_reach", reach)
 		_env.volumetric_fog_albedo = (kf["fog"] as Color).linear_to_srgb()
 		# THE GRADE: THE HOUR OWNS THE VALUE, THE LENS OWNS THE SWITCH.
 		#

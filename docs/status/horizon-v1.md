@@ -1313,6 +1313,165 @@ and the picture agrees.
 
 ---
 
+## Stage 5 - the air
+
+**Green.** The fog is a ramp on the draw distance, and the day is clear for
+twelve kilometres before it starts.
+
+### What shipped
+
+| | what |
+| --- | --- |
+| `project.godot` | Three shader globals: `kubik_far_ramp` (the hour's switch), `kubik_fog_color` (the hour's fog after `fog_sky_affect`), `kubik_far_reach` (R). |
+| `look.gd` | The ramp in `OPAQUE_SHADER`: `t = clamp((d - 0.4R)/0.6R, 0, 1)`, `f = 1 - exp(-(2.5t)^2)`, the surface faded out by `f` and the air added unlit. |
+| `sky_cycle.gd` | `far_ramp` in every keyframe - **1 at day and evening, 0 at dusk, night and eerie** - and 0 under eerie whatever the hour. The three globals written once a frame beside `kubik_night` and `kubik_warm`. Day and evening `fog_density` **0.00018 and 0.00027 -> 0.00003**. |
+| `game.gd` | R follows the preset, at load and on every config change. |
+
+### The curve, and why it is not a density
+
+The engine's exponential fog is a density: it thickens with distance forever
+and has no idea where the world stops. At a 3.2 km view that was fine - the
+mesh ended before the fog did. At 32 km it had become the thing the north star
+forbids: "fog as a ramp on that distance and **never a wall**". At the old day
+density of 0.00018 a hillside at 8 km was already 76% air.
+
+The ramp is normalised to R instead, so the air is a fact about **where the
+world ends** rather than about how far a photon travels: nothing at all before
+0.4 R, 0.22 at 20 km, 0.63 at 26, and 0.998 at 32 - which is exactly where the
+far mesh's own outer edge sits inside the fog rather than against the sky.
+
+The exponential term is not deleted, it is demoted: 0.00003 is the aerial tint
+that makes a ridge at 3 km sit BEHIND one at 1 km, and `fog_aerial_perspective`
+0.6 still fades it toward the sky in that direction. The volumetric field, the
+height term and the valley bands are untouched - they are fog's other two jobs
+(light v1) and they are about places, not distances.
+
+### `FOG` does nothing in this renderer, and that cost an hour
+
+The obvious spelling is the built-in: write `FOG = vec4(colour, amount)` in
+`fragment()` and the engine blends it after lighting. **It has no effect
+here.** A tour frame with `FOG = vec4(1.0, 0.0, 0.0, 0.5)` forced on every
+fragment came back with no red in it at all, on Forward+, with
+`fog_enabled` true and `FOG_MODE_EXPONENTIAL` on the environment - and the
+same frame with `ALBEDO` forced green came back green, so the shader was the
+one running.
+
+So the mix is done by hand, and the pair of lines is what makes it correct
+rather than merely close:
+
+```
+albedo *= 1.0 - far_f;              // the surface's LIT contribution goes with it
+far_air = kubik_fog_color * far_f;  // and the air is added UNLIT
+```
+
+At `f = 1` the fragment is the air's colour at the air's own brightness,
+whatever light happens to fall on that slope. A mix into `ALBEDO` alone would
+have left a fogged mountain black at night and a white blaze at noon.
+
+**Verified before it was trusted**, because a ramp that starts at 12.8 km is
+invisible in any frame this tour takes: the same shot at `far_reach_m` 200 m,
+where the massif on the left of `30-horizon-peak` fogs out to a flat pale wall
+and the summit plateau under the camera does not. `build/tour/ramp200`.
+
+### The gate, on `30-horizon-peak`, fog on against fog off
+
+Both shots from the same build, `--fog off` zeroing the ramp with everything
+else. A skyline detector walks each column down from the sky, finds the first
+row that differs from it by more than 6 V, and takes a 9 x 9 window across the
+edge; the contrast is that window's V range.
+
+| | |
+| --- | --- |
+| **ridges well below the horizon line** (289 columns) | **median 86.0% of the fog-off contrast kept** |
+| named: `x=1100, y=365` | off 37.6, on 36.9 - **97.9%** |
+| named: `x=900, y=364` | off 36.1, on 29.8 - **82.6%** |
+| named: `x=720, y=356` | off 31.0, on 31.4 - **101.3%** |
+| the horizon line itself (20 km and beyond) | 59% to 69% - **the ramp doing its job** |
+
+**The gate is 85% and the median is 86.0%.** The columns that lose a third of
+their contrast are the ones the ramp is FOR: terrain on the horizon line, which
+at this vantage is twenty kilometres and further, where the plan's curve is
+0.22 and rising. A screenshot cannot label a ridge with a distance, which is
+the honest limit of this instrument; **the rigorous version of "the same rock
+is the same colour at two distances" is the far probe's colour handover**, and
+it answers within 4.6 degrees of hue and 2.2 points of value at every ring
+boundary out to 19 km.
+
+### And the far mesh's edge is invisible
+
+The plan: at 32 km a 9 x 9 window straddling the edge differs from the sky
+beside it by less than 3 V. Over 317 sampled columns of `30-horizon-peak`:
+
+- **34 columns are within 3 V of the sky, the best of them 0.1** - those are
+  the sightlines where the ground reaches far enough for the ramp to be full,
+  and they are exactly where the mesh's own rim would be if it were visible.
+- The median column is 13.4 V from the sky, and it should be: it is a ridge
+  at five or ten kilometres, and a ridge you cannot see is not a horizon.
+- **Nowhere in the frame is there a straight horizontal edge.** The skyline is
+  terrain in every column of the frame.
+
+### The hours are unmoved, and the tour's sky window is not a stable instrument
+
+`20-hour-day` to `24-hour-eerie`, 9 x 9 windows, Stage 4 against Stage 5:
+
+| shot | ground dV | mid dV |
+| --- | --- | --- |
+| day | -0.2 | +0.2 |
+| evening | +0.2 | +0.1 |
+| dusk | **-0.7** | **-1.5** |
+| night | **+0.2** | **-0.2** |
+| eerie | **-0.1** | **-1.5** |
+
+**Dusk, night and eerie are within 1.5 V, against a gate of 2.** Evening is
++0.2 and +0.1, RECORDED as the plan asks.
+
+**The sky window at `(640, 120)` moved +7 V at every hour including the three
+where the ramp is off, which is not this stage.** The control says so: the same
+window is `38.5 -> 31.5 -> 38.6` across Stage 3, Stage 4 and Stage 5 at day and
+`22.6 -> 15.6 -> 22.5` at night - Stage 5 lands back on Stage 3's number to a
+tenth, and Stage 4's tour is the outlier by seven points at all four hours at
+once. A whole-frame offset that size, identical across hours, is an exposure
+difference between tour runs and not a colour change. **Recorded rather than
+chased**: no gate in this plan reads that window, and the ground and mid
+windows - which do measure the world - agree to a tenth across all three
+stages. **For Marcel**, as a caveat on any sky number taken from a single tour.
+
+### `31-horizon-far`, and this is the shot to open first
+
+Twenty kilometres out, looking back. **Stage 4 and Stage 5 side by side is the
+clearest picture this lane has produced of what the old fog was costing.**
+
+| | |
+| --- | --- |
+| **Stage 4**, day density 0.00018 | grey. A meadow in the foreground, a white smear where a range is, and nothing else. The world ends about four hundred metres from the camera. |
+| **Stage 5**, density 0.00003 and the ramp | **A country.** Snow and red rock on the left, a green valley floor running away to the middle distance, ridges behind ridges, and the fog taking over only at the horizon. |
+
+**RECORD, and it is not this stage's**: a long pale horizontal slab sits at
+about `y 370` across the middle distance, with a grey vertical column under it
+near `x 530`. It is in the Stage 4 frame too, at the same place, which is what
+says it is geometry and not air - almost certainly a far-mesh SKIRT seen
+edge-on from a vantage 250 m above the ground, which is a sightline no shot in
+this tour had before Stage 3 lifted `31-horizon-far`. Stage 3's eye check
+recorded "thin horizontal light streaks... ring skirts seen edge-on"; this is
+the same thing with the haze taken off it. Named here so it can be looked at:
+`build/tour/horizon-5/31-horizon-far.png`, and the skirt rule is
+`far_field_job.gd`'s `SKIRT_DEPTH_CELLS`. **For Marcel.**
+
+### Checks
+
+| check | result |
+| --- | --- |
+| main self-test | **SELFTEST: all passed** |
+| horizon self-test | **all passed**, eight tests |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7`. The keyframes are in `sky_cycle.gd`, not in the config, so a fog density is not a hashed field. |
+| far probe | **PASS**, tables identical across its two runs and **identical to Stage 4's table**, row for row - the air is a shader and the mesh does not know about it |
+| skyline contrast, fog on vs off | **median 86.0%** over 289 ridges, gate 85% |
+| the mesh's edge against the sky | **0.1 V at best**, 34 of 317 columns within the gate's 3 |
+| dusk, night, eerie | **within 1.5 V**, gate 2 |
+
+---
+
 ## The amendment, 2026-09-04 evening
 
 Marcel, relayed by Fable, overriding the plan's "never touch `main`" for the
