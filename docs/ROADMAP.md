@@ -22,7 +22,7 @@ The spine. Nothing from a later phase is pulled forward except where
 | 1 | **Real light** - the engine's sun, soft sky-tinted shadows, sky ambient, filmic tonemap, four hours plus eerie, volumetric fog's three jobs, the bible palette, the film lens (D40), reflective water | **done**, merged 2026-09-04 |
 | 1b | **The chunk mesher in C++** (D56) - voxels in, arrays out, one flat colour per material plus per-cube noise, no baked corner shading | **done**, merged 2026-09-04 |
 | 1c | **Horizon v1** (D41, D44, D84) - the tile store, voxels anywhere, the far field to 32 km in persistent per-ring and per-sector pieces, one material source for every level, the fog ramp, a floating origin, the sprint probe  | **done**, merged 2026-09-05 |
-| 1d | **Upload v1** (D85) - the chunk and flora upload off the frame thread: `add_surface_from_arrays` plus a collision shape per column is the whole hitch column of horizon v1's sprint line, and a smaller slice makes it worse. Look-only; changes nothing a seed produces | **next**, alone; plan not yet written |
+| 1d | **Upload v1** (D85) - the chunk and flora upload off the frame thread: `add_surface_from_arrays` plus a collision shape per column is the whole hitch column of horizon v1's sprint line, and a smaller slice makes it worse. Look-only; changes nothing a seed produces | **running** from 2026-09-05, alone, `docs/plans/upload-v1.md` |
 | 2 | **The world-truth break** (D56, timing amended by D84 and D85) - real relief (D45), rings measured from the capital (D44), the tiled heightmap store, lakes and zones per tile, the generator's truth in C++  | right after 1d lands |
 | 3 | **People and fire** - the bought templates as the character path (D1), two players at a campfire, the campfire as the first warm light | queued |
 | 4 | **Buildings** - the `BuildingModels` loader, placement, the landmark gate (D43, D47, D48) | queued |
@@ -263,9 +263,9 @@ merges by hand.
 
 ```
 NOW  (2026-09-05)
-  1d. Upload v1 ---------- nights    the chunk and flora upload off the
-                                        frame thread (D85); plan not yet
-                                        written
+  1d. Upload v1 ---------- 1 night+  feat/upload-v1, ganymede tmux upload-v1
+                                        the chunk and flora upload off the
+                                        frame thread (D85)
   (1c. Horizon v1 merged 2026-09-05; 1b. Mesher v1 and 1. Light v1 merged
    2026-09-04)
 

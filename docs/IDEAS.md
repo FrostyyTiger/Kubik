@@ -20,7 +20,8 @@ what a phase report and a playtest teach us.
    it is `add_surface_from_arrays` plus a collision shape per column, 214
    columns a second. Fewer, larger surfaces per column, or a mesh handed to
    the rendering server without the frame thread touching it. **Changes
-   nothing a seed produces.** Plan not yet written.
+   nothing a seed produces.** Launched 2026-09-05 on ganymede,
+   [plans/upload-v1.md](plans/upload-v1.md).
    *Answers:* does the frame hold at 60 FPS on an RTX 3070 Ti with no frame
    over 25 ms, sprinting through forest, with the view at 32 km?
 

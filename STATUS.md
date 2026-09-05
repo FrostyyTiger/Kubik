@@ -1,8 +1,12 @@
 # Status
 
-**Running now:** nothing. **Next: upload v1** (phase 1d, D85, decided
-2026-09-05) - the chunk and flora upload off the frame thread, alone, plan
-`docs/plans/upload-v1.md` not yet written. **Then the world-truth break** -
+**Running now (launched 2026-09-05):** upload v1 (`feat/upload-v1`,
+`docs/plans/upload-v1.md`), on ganymede in tmux `upload-v1`; its status doc
+is `docs/status/upload-v1.md`. The chunk and flora upload off the frame
+thread, measured part by part first, then rung by rung against a base
+worktree; the gate is the north star's frame rule, over-25 = 0. Merges itself
+to `main` if green and no worse than base on both numbers (the standing
+amendment). **Then the world-truth break** -
 real relief (D45), rings measured from the capital (D44), lakes and zones per
 tile, the generator's truth in C++ (D56, timing amended by D84 and D85). Then
 people and fire, buildings, the round 3 scene.

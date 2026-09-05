@@ -228,7 +228,8 @@ forward except where the table says so.
    a smaller upload slice makes it worse (measured, Stage 7). Fewer, larger
    surfaces per column, or a mesh handed to the rendering server without the
    frame thread touching it. Look-only: changes nothing a seed produces. Runs
-   next, alone. Plan `docs/plans/upload-v1.md`, not yet written.
+   next, alone. Plan `docs/plans/upload-v1.md`, launched 2026-09-05 on
+   ganymede in tmux `upload-v1`.
 2. The world-truth break (D56, timing amended by D84 and D85): real relief
    (D45), rings from the capital (D44), lakes and zones per tile, the
    generator's truth in C++. Right after 1d lands. Draft at

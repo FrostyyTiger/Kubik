@@ -869,7 +869,7 @@ reordered by D84 on 2026-09-04 and D85 on 2026-09-05:
 | 1 | **Real light** | **done**, merged 2026-09-04 |
 | 1b | **The chunk mesher in C++** (D56) | **done**, merged 2026-09-04 |
 | 1c | **Horizon v1** - the view to the horizon and a world with no edge (D41, D44, D84) | **done**, merged 2026-09-05 |
-| 1d | **Upload v1** - the chunk and flora upload off the frame thread (D85); the hitch half of the frame gate horizon v1 left open | next, alone |
+| 1d | **Upload v1** - the chunk and flora upload off the frame thread (D85); the hitch half of the frame gate horizon v1 left open | running from 2026-09-05 |
 | 2 | The world-truth break (D56 as amended by D84 and D85): real relief (D45), rings from the capital (D44), lakes and zones per tile, the generator's truth in C++ | right after 1d |
 | 3 | People and fire: the bought templates as the character path, two players at a campfire | queued |
 | 4 | Buildings: the loader, placement, the landmark gate | queued |
