@@ -129,9 +129,11 @@ const TREE_RESERVE_MARGIN := 3.0
 ## Two numbers decide how far you can see and they cost completely different
 ## things, which is why they used to drift apart:
 ##
-##   fog_end_m costs GPU vertices and NOTHING at load. Since Stage 4 the far
-##   field is built in LOD rings, so its cost is roughly logarithmic in
-##   distance rather than quadratic. Fog can be generous on any machine.
+##   fog_end_m - which is R, the reach - costs GPU vertices and NOTHING at
+##   load. The far field is built in LOD rings, so its cost is roughly
+##   logarithmic in distance rather than quadratic: measured at Ultra, the four
+##   rings that take the view from 4.8 km to 38.4 are 711,000 vertices between
+##   them, a fifth of what the 3.2 km far country cost before horizon v1.
 ##
 ##   voxel_radius_chunks is quadratic and it is CPU work - 1201 chunks at
 ##   radius 8, 2653 at 12, 4829 at 16. This is the real quality dial and the
@@ -163,16 +165,16 @@ const VIEW_PRESETS := [
 	# High from 300 to 400 for this reason and did not close the gap; this
 	# closes it. What pays for it is the LOD ramp in TreeFieldJob, which keeps
 	# the candidate count growing with the radius rather than with its square.
-	# AND FROM DISTANCE V3 STAGE 4 THE TOP TWO PRESETS SEE THE WHOLE REGION,
-	# which is decision 3 and the monumental north star as a number.
+	# AND FROM HORIZON V1 STAGE 3 THE PRESET IS THE REACH, which is D84's north
+	# star as four numbers: Low 8 km, Medium 16, High and Ultra 32.
 	#
-	# The region is 3 x 3 km, so its diagonal is 4,243 m and its rim is about
-	# 2.6 km from a valley floor. fog_end 3200 m puts the far field's own radius
-	# at 3,840 m (x FOG_MARGIN) and the camera's far plane at 4,000 m
-	# (x Player.FAR_PLANE_RATIO), so the rim is inside the frame from anywhere a
-	# player can stand, with headroom. It costs one more ring per doubling and
-	# nothing at load - the far field has been logarithmic in reach since
-	# distance v1 Stage 4, and this is the first time anything has spent that.
+	# The old note here reasoned about seeing "the whole region" - 3 x 3 km,
+	# rim 2.6 km from a valley floor, fog_end 3,200 m - and that is a
+	# measurement of a thing that is no longer the world's shape. There is no
+	# region to see the whole of: the terrain has no edge, the far mesh has ten
+	# rings that reach 38.4 km, and what the preset now decides is how much of
+	# an endless world the frame is asked to carry. It still costs one more
+	# ring per doubling and nothing at load.
 	#
 	# FAR_TREE DOES NOT FOLLOW IT, and that is decision 6 rather than an
 	# oversight: the impostor ring stays at 800 m and the forest beyond it is
@@ -941,8 +943,14 @@ const FOG_START_RATIO := 0.4
 
 # --- Atmosphere -------------------------------------------------------------
 
-## Metres. Beyond fog_end nothing is visible, which is what makes the far-field
-## mesh's edge invisible rather than a cliff at the horizon.
+## Metres. `fog_end_m` IS R, THE DRAW DISTANCE (horizon v1 Stage 3) - the same
+## number as `far_reach_m`, which `apply_view_preset` keeps equal to it. Since
+## Stage 5 the fog is a RAMP normalised to it rather than a density that
+## thickens forever: nothing before 0.4 R, 0.998 at R, which is where the far
+## mesh's own rim sits. That is what makes the rim invisible, and the old
+## sentence here - "beyond fog_end nothing is visible" - was a statement about
+## a density that had to reach 1 before the world stopped. It no longer does:
+## at Ultra a hillside at 8 km is 0% air, and the horizon at 32 km is 99.8%.
 @export var fog_start_m := 360.0
 @export var fog_end_m := 600.0
 ## 24 m was the first value and the postcard came back still a patchwork: at

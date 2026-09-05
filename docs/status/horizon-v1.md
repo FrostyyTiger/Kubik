@@ -2031,6 +2031,20 @@ does NOT change, because changing it would change what a seed produces.
    run is known to be caused by it. The world-truth break deletes the region
    and with it the whole fallback chain.
    `scripts/world/heightmap.gd`, `_tile_bilinear`.
+8. **The forest cover outside the region is the region's tree rules applied to
+   ground the region does not describe.** `TreePlacement.cover_at` reads
+   `_base_probability`, which reads the zone bands, which are percentiles of
+   the home region's own altitudes (silence 2) - so a forest at 20 km is
+   placed by a treeline solved for a different place. It is drawn, it is
+   deterministic and it is not what D44's rings will say.
+   `scripts/world/flora/tree_placement.gd`, `cover_at`.
+9. **The material pyramid inside a tile is a mode of `far_supersample`
+   sub-samples, not of four children.** The region's pyramid reduces exactly;
+   a tile cannot - a level-8 cell has 65,536 level-0 cells under it and there
+   are no level-0 tiles to read them from. Question 14 has the reasoning. When
+   the world-truth break makes tiles the only source, the same question comes
+   back for the whole world and is worth deciding once rather than twice.
+   `scripts/world/heightmap.gd`, `_build_tile_cells`.
 
 ---
 

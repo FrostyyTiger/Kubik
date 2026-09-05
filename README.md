@@ -129,13 +129,38 @@ written against the wrapper, and "swap the transport" would quietly become
 ### 5. Chunks and the two-scale world
 
 Voxels exist only in a disc around the player — real, editable, collidable
-terrain. Everything beyond is the far field: low-poly meshes built from a
-**coarse heightmap** at 2 m resolution and coarser, kept as origin-anchored
-tiles at every level of detail and generated on demand (horizon v1; until it
-lands, one array covering the home 3 km, and one mesh per ring and sector
-after it). That coarse heightmap is also what makes lakes possible: a basin
-is a depression with a rim all the way round it, and you cannot see one by
-looking at a chunk.
+terrain, and since horizon v1 they follow the player anywhere rather than
+stopping at the home region's edge. Everything beyond is the far field:
+low-poly meshes built from a **coarse heightmap** at 2 m resolution and
+coarser. That coarse heightmap is also what makes lakes possible: a basin is a
+depression with a rim all the way round it, and you cannot see one by looking
+at a chunk.
+
+**The height store is origin-anchored tiles at every level** (horizon v1). A
+level-L tile is 129 x 129 cells of `4 << L` blocks and spans `256 << L` metres,
+so one key is `(level, tx, tz)` anchored to the ORIGIN and never to the player;
+it holds the cell mean, the cell max (which is what `far_peak_gain` pulls a
+summit towards), one byte of material per cell and a coarser byte of forest
+cover. Tiles are built on demand from the seed by whoever asks and evicted by
+distance, and the far mesh reads a PUBLISHED, frozen view of the store rather
+than the live one - because it has two legs, one of them cannot build a tile,
+and two legs reading different ground is the one thing that seam may not do.
+Inside the home 3 km the region's own pyramid still answers; the world-truth
+break replaces it with tiles everywhere.
+
+**The far country is ten rings of sixteen sectors**, 160 meshes, each at its
+own world anchor, each rebuilt on its own: rings 0 to 2 follow the loaded
+frontier and ring r >= 3 re-centres when the player has moved a quarter of its
+inner radius. The ladder reaches **38.4 km** at 1,782,136 vertices, and every
+ring costs about the same because ring area and cell area both grow fourfold.
+
+**Positions live on a floating origin.** World metres are what a system means
+when it says where something is - the wire, a save, every `_m` argument -
+while the scene tree holds `render = world - offset`, the offset a whole number
+of 256 m tiles. A rebase moves every anchor by one delta in one frame and
+touches no vertex and no MultiMesh row; the rule that makes it safe is that no
+buffer holds a position more than a few hundred metres from its own node, which
+`scenes/selftest_horizon.tscn` asserts.
 
 The world itself is **unbounded by design** (ruled 2026-08-31, overturning
 the bounded decision that used to be recorded here — the ruling and the
@@ -335,6 +360,85 @@ makes a hole or a frame over 33 ms a non-zero exit.
 
 `--flora-probe` is the same shape for ground cover, and
 `--traverse --view low` walks the map diagonal.
+
+### The sprint probe
+
+**The north star's third line as a number** (horizon v1): sixty seconds
+sprinting from the spawn along `+X`, in real frames, at whatever preset you
+name.
+
+```
+xvfb-run -a -s "-screen 0 1280x720x24" godot --path . -- --host --seed 42 \
+    --view ultra --sprint-probe --seconds 60 --label mine
+```
+
+It drives the body with the same wish and sprint bits a player sends, presses
+Space when it has not moved half a metre in half a second (a wedged run is not
+a sprint, and the first two baselines wedged), and writes a per-second line plus
+one summary:
+
+```
+SPRINT label=mine seconds=60 frames=3340 median_ms=16.67 p99_ms=40.44
+  worst_ms=84.44 over25=171 chunks=6535 far_rebuilds=67 far_ms_median=100
+  tree_rebuilds=3 mem_mb=431 moved_m=543 jumps=10 tiles=172 tile_mb=25
+  rebases=0 jitter_mm=0.000
+```
+
+`moved_m` is the honesty check - a run that went nowhere warns and says so.
+`rebases` counts floating-origin moves and `jitter_mm` is how far a standing
+body drifted in a frame, which is 0.000 at thirty kilometres. The gate is
+**median under 16.7 ms and no frame over 25**; `docs/status/horizon-v1.md`
+carries the line and what is still over it.
+
+Three flags exist for the shrink list and change nothing about the world:
+`--no-volumetric`, `--no-tree-shadows`, and `--set chunk_upload_budget_ms=N`.
+
+### Getting somewhere, and switching the air off
+
+```
+godot --path . -- --host --seed 42 --tp 30000 30000    # teleport, host only
+godot --path . -- --tour --seed 42 --fog off           # every fog term zero
+```
+
+`--tp` takes WORLD metres and drops the player on the ground there, building
+whatever has to be built on the way; it is how any measurement past the home
+region is taken. `--fog off` zeroes the exponential term, the height term, the
+volumetric field and the Stage 5 distance ramp, which is what a colour window
+on a hillside at 8 km has to be measured through - otherwise it measures the
+fog.
+
+### The view presets are the draw distance
+
+`--view low | medium | high | ultra` and the preset sets the reach: **8, 16, 32
+and 32 km**, with the camera's far plane at 1.25x that and the fog ramp
+normalised to it. Ultra is what every gate in `docs/plans/horizon-v1.md` is
+measured at.
+
+### The horizon self-test
+
+```
+godot --headless --path . scenes/selftest_horizon.tscn
+```
+
+Ten tests that belong to the far country rather than to the world: the sprint
+summary's shape, the local knobs, the tile store and its threads, the far
+mesh's 160 keyed pieces against the whole disc, the material pyramid's level 0
+against `surface_zone_at` on ten thousand cells, the floating origin's
+arithmetic and the anchor rule. `scenes/selftest.tscn` runs the world's own
+gates and is unchanged.
+
+### A parse gate that works
+
+`ResourceLoader.load` returns a Resource for a script with compile errors, so
+`parsecheck.gd` prints "ok" for a broken file. This does not:
+
+```
+godot --headless --path . --check-only --script <file> 2>&1 | grep -c 'Parse Error'
+```
+
+The COMPILE errors it also prints are noise - autoloads are not registered in
+that mode, so every script naming `Net` reports one. Only `Parse Error` counts,
+and it carries the line.
 
 ### The pair probe
 
