@@ -286,6 +286,165 @@ None. `chunk_upload_budget_ms` stays at 8.
 
 ---
 
+## Stage 2 - collision on its own budget
+
+**Green, and it is the rung that moves the number: the over-25 count's median
+goes 3 -> 1 against base, over eleven clean runs.** The shape on the worker
+(2.2, grill Q5) is measured and **dead**.
+
+### What shipped
+
+- **`_collect_chunks` installs the mesh and OWES the shape.** A chunk with
+  faces pushes `[faces, shape]` onto `_collision_pending` (the debt, keyed by
+  chunk position) with `_collision_order` beside it (the order); a chunk with no
+  faces, and a collision-only column, are installed inline as before.
+- **`_pump_collision(budget)` right after `_collect_finished`.** Every owed
+  chunk within `collision_now_radius` (2) of the streaming centre is installed
+  **before the budget is consulted** - the ground under the player is never
+  scheduled - then the rest nearest-first by `_queue_key`, with the budget
+  checked AFTER each shape, the way `FarUpload`'s slices are.
+- **`is_chunk_collidable` is still the truth.** `ChunkNode` gained
+  `_collision_installed`, and `set_parked` is now `collision_applied =
+  _collision_installed and not parked` rather than an assignment - a chunk can
+  be drawn, parked and restored with its shape still owed, and `set_parked
+  (false)` must not promise ground nobody installed.
+- **Park drops the debt; restore pays it** from the node's own mesh. Eviction
+  drops it too.
+- **`ColumnJob` can build the shape on the worker** behind `shape_on_worker`
+  (default **0** - see below).
+- **Knobs:** `collision_budget_ms` (2.0), `collision_now_radius` (2),
+  `shape_on_worker` (0), all LOCAL and unhashed. **And
+  `chunk_upload_budget_ms` moves 8.0 -> 6.0** - see the tunable below, it is
+  half the result.
+
+### THE TUNABLE THAT IS HALF THE RESULT: two budgets add
+
+The first three branch runs came back at an over-25 median of **4 against
+base's 3** - the rung making the number it exists to move *worse*. The
+mechanism is arithmetic and the instrument found it: `_pump_collision` spends
+`collision_budget_ms` **on top of** the chunk pump's `chunk_upload_budget_ms`,
+so a frame that could spend eight milliseconds installing the world could now
+spend ten.
+
+Held at **6 + 2**, the total is the eight it always was:
+
+| configuration | clean runs | over 25 ms | **median** | `up_col_max_ms` |
+| --- | --- | --- | --- | --- |
+| **base** (chunk 8, no queue) | 10 | 0,1,1,1,1,3,3,5,6,7 | **3** | - |
+| branch, chunk 8 + collision 2 (**total 10**) | 6 | 1,1,1,4,4,5 | **4** | 3.20 |
+| queue off, chunk 8 | 2 | 1,3 | 3 | 6.04 |
+| queue off, chunk 6 | 6 | 1,1,2,2,4,4 | **2** | 4.91 |
+| **SHIPPED: chunk 6 + collision 2 (total 8)** | **11** | **0,0,0,0,1,1,1,2,2,4,5** | **1** | **3.31** |
+
+**Both halves contribute and neither is the whole of it.** The 6 ms chunk
+budget alone takes the median count from 3 to 2; the queue on top of it takes
+it to 1 and takes the worst arrival slice from 4.91 ms to 3.31. Seven of the
+eleven shipped runs are at 0 or 1, and the whole spread is 0 to 5 against
+base's 0 to 7.
+
+The frame median is **6.90 ms on every clean run of every configuration**,
+including base. This lane cannot move it and never claimed it would.
+
+### A run is "clean" if its p99 is at or under 10 ms, and that is not a
+### judgement call
+
+**There is another lane on this box after all.** `tmux ls` shows `bauplan`,
+`bauplan-babysit` and `bauplan-watch` (the last created at 18:35, an hour after
+this lane started), a `claude` process at 14.6% CPU with 31 hours on it, and the
+Navigo test server's `next-server` and `uvicorn`. None of them is this lane's
+and none of them is this lane's to kill. The plan's § 0 says "the box is this
+lane's"; it is not, and every frame number in this document is taken with that
+qualification.
+
+What it does to the sample is bimodal and obvious rather than subtle: a clean
+run has **p99 8.33 to 9.26 ms**, a contended one **12.50 to 19.17**, with
+nothing in between, and the contended ones also load fewer chunks (12,093 to
+12,966 against 12,980 to 13,099). So the split is drawn at p99 = 10 ms, every
+run of every configuration is counted the same way, and both counts are in the
+table above. 24 of 33 sprints in this stage are clean.
+
+### Grill Q5: the shape on the worker is DEAD, and it is worth why
+
+`shape_on_worker` 1 builds the `ConcavePolygonShape3D` and calls `set_faces`
+inside `ColumnJob.run()`, on the worker.
+
+| | `col_median_us` | `shape_us` | `col_max_us` |
+| --- | --- | --- | --- |
+| shipped | 233 | 102 | 1,091 |
+| `shape_on_worker=1` | 232 | 100 | 1,065 |
+
+**Two per cent. Q5's ship rule asks for over fifteen.** And the sprint agrees:
+`up_shape_ms` 1,430 against 1,385, `up_col_max_ms` **27.22 against 3.20**, over
+25 ms 6 against 1. The knob stays at 0.
+
+**Why it buys nothing, which is the useful part:** the main-thread shape cost is
+not `ConcavePolygonShape3D.new()` and `set_faces()`. Those move to the worker
+cleanly - the stress test built **8,600 shapes over 20 rounds** on worker
+threads with no crash, no deadlock and no thread-guard line. The cost is the
+ASSIGNMENT, `_collider.shape = shape`, where Jolt builds its own mesh shape and
+inserts it into the broadphase, and that happens on the main thread wherever the
+resource was made. Q5 guessed exactly this ("Jolt builds its own mesh shape
+lazily when the shape reaches a body, so the saving may be nothing"); it is now
+measured. **A C++ rung would not help either**, for the same reason - the
+remaining cost is inside the physics server, not in front of it. Recorded under
+"For Marcel".
+
+### The bench
+
+```
+UPLOAD_BENCH mesher=cpp config=shipped             columns=197 chunks=841 col_median_us=233 col_p99_us=949 col_max_us=1091 arrival_us=127 node_us=70 mesh_us=28 shape_us=102 per_chunk_us=54 passes=3 spread=+-2.1%
+UPLOAD_BENCH mesher=cpp config=shape_on_worker=1   columns=197 chunks=841 col_median_us=232 col_p99_us=938 col_max_us=1065 arrival_us=128 node_us=70 mesh_us=29 shape_us=100 per_chunk_us=54 passes=3 spread=+-2.2%
+```
+
+**`arrival_us` is new and it is the point of the stage: 127 us of the 233 is
+paid in the frame the column lands, and the other 106 is paid later.** The
+bench had to be corrected to say that - see "Questions taken alone" item 12; as
+first written it stopped at `_collect_chunks` and reported the arrival falling
+from 210 us to 116, which is an accounting change and not a saving.
+
+### The collision queue never gets deep, and that was the thing to check
+
+`coll_peak=11` in **every** shipped run - the deepest the queue ever got over
+sixty seconds of sprinting at 214 columns a second. `coll_urgent=13`: thirteen
+shapes over the whole run were installed off-budget because they were within
+two chunks of the player.
+
+The arithmetic said it had to be so - the sprint owes about 22 ms of shape per
+second and the pump is offered 2 ms of every frame at 145 fps - and this is the
+check on the arithmetic rather than a restatement of it. **It also means the
+budget is nowhere near binding**, which is why raising it does nothing and
+lowering it to 1 did nothing either (median 3 over 2 clean runs).
+
+### Checks
+
+| check | result |
+| --- | --- |
+| main self-test | **SELFTEST: all passed** |
+| upload self-test | **SELFTEST-UPLOAD: all passed** - nine tests |
+| horizon self-test | **SELFTEST-HORIZON: all passed** |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged**, character for character |
+| upload parity | **0 bad, both meshers** |
+| collision honesty | **0 bad** |
+| **collision queue** (new) | **36 chunks compared, 0 bad.** The budgeted queue and the inline path install the same shapes, face for face, and the queue owes nothing when it is done. |
+| **collision never early** (new) | **9 owed, 9 restored, 0 bad.** `is_chunk_collidable` is false for a chunk whose mesh is up and whose shape is owed, false for one parked with a debt, and true with a real shape under it for one brought back. |
+| **worker shape stress** (new) | **20 rounds, 8,600 shapes, 0 bad.** Built on worker threads; no crash, no deadlock, no wrong shape. |
+| thread-guard errors | **none** - strict count 0 over every console log of the stage, `shape_on_worker=1`'s runs included |
+| **the ground wait** (plan 2.3) | **unchanged.** `ground at 1.2 s` at the spawn and `1.4 s` at `--tp 20000 0`, base and branch identical on both. |
+| `jumps`, `moved_m` | **9 and 543 m** in every clean run of both sides |
+| the load line | within noise of base |
+
+### Tunables moved
+
+| knob | was | now | the number that decided it |
+| --- | --- | --- | --- |
+| `chunk_upload_budget_ms` | 8.0 | **6.0** | over-25 median 4 at 8+2, **1** at 6+2, against base's 3. Two budgets add; the total goes back to the 8 ms the frame always had. |
+| `collision_budget_ms` | - | **2.0** (new) | the plan's start value; 1.0 measured no better (median 3 over 2 clean runs) and the queue's peak depth of 11 says it is nowhere near binding |
+| `collision_now_radius` | - | **2** (new) | the plan's start value; the ground wait is unchanged at 1.2 s and 1.4 s, so it did not need moving |
+| `shape_on_worker` | - | **0** (new, and it stays 0) | 2% on the bench against Q5's 15%; worse on the sprint |
+
+---
+
 ## Questions taken alone
 
 Plan § 5 item 9: where this file does not answer, the conservative reading -
@@ -368,7 +527,20 @@ down. In stage order.
    `create_trimesh_shape()` the edit path has always used, on the same mesh the
    faces were derived from, so the triangles are the same triangles. It takes
    walking away from a column inside the frame or two its shape was queued for.
-11. **`up_flora_us` includes one `BodyField.column_landed` call.** On the flora
+11. **The bench had to charge the collision pump to the column that owed it.**
+   As first written it timed `_collect_chunks` alone, and the moment Stage 2
+   moved the shape onto a later frame it reported the arrival falling from
+   210 us to 116 - which is an accounting change and not a saving. Taken as:
+   drain the pump inside the per-column timer so `col_median_us` stays
+   comparable across every stage, and report `arrival_us` beside it for the
+   part that is actually paid in the frame the column lands.
+12. **A run is called contended if its p99 exceeds 10 ms.** The plan assumes a
+   quiet box and there is another lane on this one (Stage 2 has the detail).
+   The threshold is not a judgement call: clean runs sit at p99 8.33 to 9.26
+   and contended ones at 12.50 to 19.17, with nothing in between, and the
+   contended ones independently load 200 to 1,000 fewer chunks. Every
+   configuration is counted the same way and both counts are printed.
+13. **`up_flora_us` includes one `BodyField.column_landed` call.** On the flora
    CACHE-HIT path only, where the bodies are handed over inside the block that
    acquires the node. Left as it is rather than pausing the timer around it: it
    is a branch a sprint into new terrain almost never takes, and the six
@@ -395,7 +567,20 @@ down. In stage order.
    the quietness of the box, and the ABAB against a base worktree is what makes
    it honest.** Both of tonight's contended runs (`base-s0-3`, `s0-3`) show the
    same effect inside this lane's own table.
-3. **Stages 4 and 5 will not be attempted, by the plan's own rule.** The mesh is
+3. **THE BOX WAS NOT THIS LANE'S.** The plan's § 0 says "no second lane runs
+   these nights"; `tmux ls` shows the `bauplan` lane's three sessions, one of
+   them started an hour after this one, plus the Navigo test server. Nothing
+   was killed - none of it is this lane's - and every frame number here is an
+   ABAB median with contended runs separated out and printed. It cost this lane
+   a lot of extra runs: Stage 2's decision needed 33 sprints where the plan
+   budgeted six. **If a frame lane is worth an unattended night, the box has to
+   actually be reserved.**
+4. **A C++ rung for the collision shape would not help.** Q5's measurement says
+   the main-thread cost is not building the resource - that moves to a worker
+   cleanly, 8,600 times over - it is the assignment to the body, inside Jolt.
+   Anything written in front of the physics server, in any language, is
+   optimising the 2% rather than the 98%. Stage 2 has the numbers.
+5. **Stages 4 and 5 will not be attempted, by the plan's own rule.** The mesh is
    11.0% of the arrival and flora plus bodies is 12.5%; grill Q2 binds anything
    under 15%. Stage 2 (the shape, 58.9%) and Stage 3 (the node, 17.0%) are.
 

@@ -201,11 +201,23 @@ func run() -> void:
 		else:
 			arrays = ChunkMesher.build_arrays_gd(
 				chunk, _solid_at, config, world_seed)
+		var faces := ChunkMesher.faces_from(arrays)
 		built[cy] = {
 			"chunk": chunk,
 			"arrays": arrays,
-			"faces": ChunkMesher.faces_from(arrays),
+			"faces": faces,
 		}
+		# THE SHAPE ON THE WORKER, upload v1 Stage 2.2, behind `shape_on_worker`
+		# and off by default. This is the only thing in this file that happens
+		# AFTER the arrays exist and it is the only thing this lane may add
+		# here: `faces` is already derived on this thread, and the question the
+		# knob asks is whether wrapping it in a resource here saves the frame
+		# anything or whether Jolt does the work later on the main thread
+		# anyway. Nothing about what the mesher emits changes either way.
+		if config.shape_on_worker != 0 and not faces.is_empty():
+			var shape := ConcavePolygonShape3D.new()
+			shape.set_faces(faces)
+			built[cy]["shape"] = shape
 	mesh_usec = Time.get_ticks_usec() - t2 - border_usec
 
 

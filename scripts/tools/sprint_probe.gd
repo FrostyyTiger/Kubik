@@ -478,7 +478,8 @@ func _summary() -> void:
 		+ "tree_rebuilds=%d mem_mb=%.0f moved_m=%.0f jumps=%d "
 		+ "tiles=%d tile_mb=%.0f rebases=%d jitter_mm=%.3f "
 		+ "up_node_ms=%.1f up_mesh_ms=%.1f up_shape_ms=%.1f up_edit_ms=%.1f "
-		+ "up_flora_ms=%.1f up_bodies_ms=%.1f up_col_max_ms=%.2f") % [
+		+ "up_flora_ms=%.1f up_bodies_ms=%.1f up_col_max_ms=%.2f "
+		+ "coll_peak=%d coll_urgent=%d") % [
 		_label, _seconds, n, med, p99, worst, over,
 		_world.built_chunk_count() - _base_chunks,
 		_far_rebuilds() - _base_far, far_med,
@@ -486,7 +487,8 @@ func _summary() -> void:
 		_tile_stat("tiles"), float(_tile_stat("bytes")) / 1048576.0,
 		_rebases() - _base_rebases, jitter_mm,
 		_up_ms("node"), _up_ms("mesh"), _up_ms("shape"), _up_ms("edit"),
-		_up_ms("flora"), _up_ms("bodies"), _up_ms("col_max")])
+		_up_ms("flora"), _up_ms("bodies"), _up_ms("col_max"),
+		_coll("peak"), _coll("urgent")])
 	# A RUN THAT DID NOT GO ANYWHERE IS NOT A SPRINT, and it is the one way
 	# this instrument can look green while measuring nothing: a player wedged
 	# against a rise builds no chunks, rebuilds no far country and holds a
@@ -508,6 +510,14 @@ func _summary() -> void:
 	_say("SPRINT gate: median %s (%.2f vs %.1f), over25 %s (%d)" % [
 		"PASS" if pass_med else "FAIL", med, GATE_MEDIAN_MS,
 		"PASS" if over == 0 else "FAIL", over])
+
+
+## One field of the collision queue's stats, or 0 for a build that has none -
+## the base worktree runs its own probe, but a bisect may not.
+func _coll(key: String) -> int:
+	if _world != null and _world.has_method("collision_stats"):
+		return int((_world.collision_stats() as Dictionary).get(key, 0))
+	return 0
 
 
 ## One field of the run's split, in milliseconds.

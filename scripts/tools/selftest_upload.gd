@@ -40,6 +40,10 @@ static func run() -> int:
 		"atom knob": _test_atom_knob,
 		"atom parity": _test_atom_parity,
 		"atom invariants": _test_atom_invariants,
+		# STAGE 2.
+		"collision queue": _test_collision_queue,
+		"collision never early": _test_collision_never_early,
+		"worker shape stress": _test_worker_shape_stress,
 	}
 	var failures := 0
 	for name in tests:
@@ -352,11 +356,24 @@ static func _config() -> WorldgenConfig:
 	return cfg
 
 
-## Spend the collision queue, for a build that has one (Stage 2 onward). A
+## Spend the collision queue DRY, for a build that has one (Stage 2 onward). A
 ## no-op before it lands, which is what keeps this file's tests written once.
+##
+## An unbounded budget, and a loop around it. It was written as
+## `_pump_collision(0.0)` first, and 0 means "install the near ones and then
+## stop after the first shape" - which left 48 chunks of the parity disc
+## without a shape and turned the upload parity gate red the moment Stage 2
+## landed. A drain has to drain.
 static func _drain_collision(world: World) -> void:
-	if world.has_method("_pump_collision"):
-		world.call("_pump_collision", 0.0)
+	if not world.has_method("_pump_collision"):
+		return
+	var spins := 0
+	while spins < 10000:
+		var stats: Dictionary = world.call("collision_stats")
+		if int(stats.get("pending", 0)) == 0:
+			return
+		world.call("_pump_collision", 1.0e9)
+		spins += 1
 
 
 ## The `ArrayMesh` surface installed for this chunk, read back - whatever shape
@@ -434,7 +451,11 @@ static func _test_atom_knob():
 	var cfg := WorldgenConfig.load_or_default()
 	var before := cfg.hash_key()
 	for knob in _knobs():
-		cfg.set(knob, 1 - int(cfg.get(knob)))
+		# Generic, because these are not all 0/1 flips: `collision_budget_ms`
+		# is a float and `collision_now_radius` is a count. Any change will do -
+		# the question is only whether the hash notices.
+		var was = cfg.get(knob)
+		cfg.set(knob, (was + 1.0) if was is float else (int(was) + 1))
 	var after := cfg.hash_key()
 	if before != after:
 		print("  the config hash moved with the upload knobs: %s -> %s" % [
@@ -450,8 +471,9 @@ static func _test_atom_knob():
 static func _knobs() -> PackedStringArray:
 	var out := PackedStringArray()
 	var cfg := WorldgenConfig.new()
-	for knob in ["upload_atom_chunk", "column_node", "mesh_on_worker",
-			"shape_on_worker", "flora_on_pump"]:
+	for knob in ["upload_atom_chunk", "collision_budget_ms",
+			"collision_now_radius", "shape_on_worker",
+			"column_node", "mesh_on_worker", "flora_on_pump"]:
 		if knob in cfg:
 			out.append(knob)
 	return out
@@ -588,3 +610,210 @@ static func _test_atom_invariants():
 	print("atom invariants: %d pumps, %d mid-column observations, %d bad" % [
 		pumps, splits, bad])
 	return bad
+
+
+# --- Stage 2 ------------------------------------------------------------------
+
+## THE BUDGETED QUEUE INSTALLS THE SAME SHAPES THE INLINE PATH DID.
+##
+## `collision_budget_ms` 0 is the arrival before this stage - the shape goes up
+## in the frame its mesh does - and any positive value is the queue. Two worlds
+## on the canonical seed, pumped to completion, every collision shape compared
+## face for face. The rung is about WHEN a chunk becomes standable and must not
+## be about what it is standable on.
+static func _test_collision_queue():
+	var bad := 0
+	var shapes := {}
+	var counts := {}
+	for budget in [0.0, 2.0]:
+		var cfg := _config()
+		cfg.collision_budget_ms = budget
+		var world := _spawn_world(cfg, 1)
+		var got := {}
+		for pos in world._chunk_nodes:
+			var shape := _shape_of(world._chunk_nodes[pos], pos)
+			got[pos] = (shape as ConcavePolygonShape3D).get_faces() \
+				if shape != null else PackedVector3Array()
+		shapes[budget] = got
+		counts[budget] = world.collision_stats() if budget > 0.0 else {}
+		world.free()
+
+	var inline: Dictionary = shapes[0.0]
+	var queued: Dictionary = shapes[2.0]
+	if inline.size() != queued.size():
+		print("  %d chunks inline, %d queued" % [inline.size(), queued.size()])
+		bad += 1
+	for pos in inline:
+		if not queued.has(pos):
+			print("  %s is missing when collision is budgeted" % pos)
+			bad += 1
+		elif inline[pos] != queued[pos]:
+			print("  %s has different collision faces when budgeted" % pos)
+			bad += 1
+	var stats: Dictionary = counts[2.0]
+	if int(stats.get("pending", 0)) != 0:
+		print("  the queue still owes %d shapes after draining" % \
+			stats.get("pending", 0))
+		bad += 1
+	print("collision queue: %d chunks compared, %d installed (%d off budget), %d bad" % [
+		inline.size(), stats.get("installed", 0), stats.get("urgent", 0), bad])
+	return bad
+
+
+## `is_chunk_collidable` NEVER SAYS YES BEFORE THE SHAPE IS IN.
+##
+## This is the one that matters and the one Stage 2 could break in three
+## different ways, because it is what the ground wait reads before it drops the
+## player's body: a chunk whose mesh is up and whose shape is still owed, a
+## chunk parked with its shape owed, and a chunk brought back from the cache
+## with its shape never installed. All three must answer false - or the player
+## is released into ground that is not there yet.
+static func _test_collision_never_early():
+	var bad := 0
+	var cfg := _config()
+	cfg.collision_budget_ms = 2.0
+	# The near pass would install everything in a 3 x 3 test disc before the
+	# budget was consulted, so the case under test would never occur. 0 turns
+	# it off; the ground wait is checked against the SHIPPED radius by the
+	# stage's own `--tp` runs, which is where it belongs.
+	cfg.collision_now_radius = 0
+	var world := World.new()
+	world.setup(SEED, cfg)
+	var spawn: Vector2i = world.generator.spawn_block
+	var centre := Vector2i(
+		Chunk.floor_div(spawn.x, Chunk.SIZE), Chunk.floor_div(spawn.y, Chunk.SIZE))
+	var cols: Array[Vector2i] = []
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			cols.append(centre + Vector2i(dx, dz))
+	for col in cols:
+		world._submit_column(col)
+
+	# THE MESHES IN, THE SHAPES OWED. `_collect_finished` with no pump after it
+	# is exactly the state a frame is in between the two.
+	var spins := 0
+	while not world._in_flight.is_empty() and spins < 60000:
+		world._collect_finished(Time.get_ticks_msec(), 1.0e9)
+		OS.delay_msec(1)
+		spins += 1
+	var owed := 0
+	for pos in world._collision_pending:
+		owed += 1
+		if world.is_chunk_collidable(pos):
+			print("  %s is collidable with its shape still owed" % pos)
+			bad += 1
+	if owed == 0:
+		print("  nothing was ever owed, so this test measured nothing")
+		bad += 1
+
+	# PARKED WITH THE DEBT OUTSTANDING.
+	var parked_owed: Array[Vector3i] = []
+	for pos in world._collision_pending:
+		parked_owed.append(pos)
+	world._center = Vector2i(100000, 100000)
+	world._free_distant_chunks(1, 1)
+	for pos in parked_owed:
+		if world.is_chunk_collidable(pos):
+			print("  %s is collidable after being parked with a debt" % pos)
+			bad += 1
+
+	# AND BROUGHT BACK: the debt was dropped with the parking, so the shape is
+	# derived from the node's own mesh - and it is there before anything can
+	# ask.
+	for col in cols:
+		world._restore_column(col)
+	var restored := 0
+	for pos in parked_owed:
+		if not world._chunk_nodes.has(pos):
+			continue
+		restored += 1
+		var node: ChunkNode = world._chunk_nodes[pos]
+		var drawn: bool = node.mesh != null \
+			and (node.mesh as ArrayMesh).get_surface_count() > 0
+		if drawn and _shape_of(node, pos) == null:
+			print("  %s came back drawing faces with no shape" % pos)
+			bad += 1
+		if drawn and not world.is_chunk_collidable(pos):
+			print("  %s came back drawn and not collidable" % pos)
+			bad += 1
+	world.free()
+	print("collision never early: %d owed, %d restored, %d bad" % [
+		owed, restored, bad])
+	return bad
+
+
+## THE SHAPE BUILT ON THE WORKER, TWENTY TIMES OVER (grill Q5).
+##
+## `ConcavePolygonShape3D.new()` and `set_faces()` inside `ColumnJob.run()` is a
+## physics-server call from a worker while the physics server is on the main
+## thread. This installs a disc of columns twenty times with `shape_on_worker`
+## at 1 and asserts the shapes are the ones the faces describe.
+##
+## IT CANNOT READ ITS OWN CONSOLE, so it cannot see a thread-guard error - the
+## plan says so and the STAGE's gate is the log grep of section 2. What this can
+## prove is that it does not crash, does not deadlock, and does not install a
+## different shape; the grep proves the rest.
+static func _test_worker_shape_stress():
+	var bad := 0
+	# A SMALL WORLD, NOT THE CANONICAL ONE. Twenty canonical heightmaps is six
+	# minutes of a gate that runs after every stage, and this test is about a
+	# physics-server call from a worker thread - it does not care which
+	# mountains the columns are under. 225 columns a round, which is the plan's
+	# "200 columns twenty times"; against the canonical seed at radius 1 it was
+	# nine.
+	var cfg := WorldgenConfig.load_or_default()
+	cfg.world_blocks_xz = 400
+	cfg.voxel_radius_chunks = 2
+	cfg.shape_on_worker = 1
+	var rounds := 20
+	var installed := 0
+	var checked := 0
+	for round_i in rounds:
+		var world := _spawn_world(cfg, 7)
+		for pos in world._chunk_nodes:
+			var node: ChunkNode = world._chunk_nodes[pos]
+			var drawn: bool = node.mesh != null \
+				and (node.mesh as ArrayMesh).get_surface_count() > 0
+			if not drawn:
+				continue
+			installed += 1
+			var shape := _shape_of(node, pos)
+			if shape == null:
+				print("  round %d: %s draws faces with no worker shape" % [
+					round_i, pos])
+				bad += 1
+				continue
+			if round_i == 0:
+				checked += 1
+				if (shape as ConcavePolygonShape3D).get_faces().is_empty():
+					print("  %s got an empty shape from the worker" % pos)
+					bad += 1
+		world.free()
+	print("worker shape stress: %d rounds, %d shapes, %d checked, %d bad" % [
+		rounds, installed, checked, bad])
+	return bad
+
+
+## A world on the canonical seed with a disc of columns installed and every
+## queue drained. `radius` is in columns either side of the spawn.
+static func _spawn_world(cfg: WorldgenConfig, radius: int) -> World:
+	var world := World.new()
+	world.setup(SEED, cfg)
+	var spawn: Vector2i = world.generator.spawn_block
+	var centre := Vector2i(
+		Chunk.floor_div(spawn.x, Chunk.SIZE), Chunk.floor_div(spawn.y, Chunk.SIZE))
+	# THE STREAMING CENTRE WHERE THE COLUMNS ARE, so the collision queue's near
+	# pass has something to be near. Left at (0, 0) it never fires and the test
+	# quietly measures the budgeted path only.
+	world._center = centre
+	for dz in range(-radius, radius + 1):
+		for dx in range(-radius, radius + 1):
+			world._submit_column(centre + Vector2i(dx, dz))
+	var spins := 0
+	while not world._in_flight.is_empty() and spins < 60000:
+		world._collect_finished(Time.get_ticks_msec(), 8.0)
+		world._pump_collision(2.0)
+		OS.delay_msec(1)
+		spins += 1
+	_drain_collision(world)
+	return world

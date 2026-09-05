@@ -276,6 +276,42 @@ func _shift_anchors(delta: Vector3) -> void:
 
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
+
+
+# --- THE COLLISION QUEUE, upload v1 Stage 2 -----------------------------------
+#
+# The mesh and the shape stopped being one arrival. A chunk's mesh goes up in
+# the frame its column is pumped, as it always has; its `ConcavePolygonShape3D`
+# joins this queue and is installed on `collision_budget_ms` of a later frame,
+# nearest first - except within `collision_now_radius` of the streaming centre,
+# where it is never budgeted at all.
+#
+# WHY A DICTIONARY AND AN ARRAY. The dictionary is the truth about what is
+# owed, so a parked or evicted column can drop its debt in one erase; the array
+# is the order, and an entry in it that the dictionary no longer has is simply
+# skipped. That is the same shape `_pending_restores` and `_restore_queued`
+# have, for the same reason.
+#
+# `_collision_pending[chunk_pos]` is `[faces, shape]` and nothing more. NOT the
+# job's `built[cy]` dictionary, which would hold the arrays and the chunk alive
+# behind it - plan § 5 item 13 is about exactly that.
+var _collision_pending := {}
+var _collision_order: Array[Vector3i] = []
+var _collision_dirty := false
+
+## Shapes installed and shapes installed off the budget because they were near.
+## For the F3 readout and the status doc.
+var _collision_installed := 0
+var _collision_urgent := 0
+
+## The deepest the queue has ever been. THE NUMBER THAT SAYS WHETHER THIS
+## DESIGN IS SOUND: the budget only helps if the demand is under it, and if
+## this grows without bound then the world is becoming standable slower than it
+## is arriving, which is a hole in the ground with a plan behind it. It stays
+## small because the arithmetic says it must - a sprint owes about 22 ms of
+## shape per second and the pump is offered 2 ms of every frame - and this is
+## the check on that arithmetic rather than a restatement of it.
+var _collision_peak := 0
 var _build_queue: Array[Vector2i] = []
 
 ## Mirror of _build_queue, for membership tests only. refresh_region() asks
@@ -638,7 +674,8 @@ func _process(delta: float) -> void:
 	_update_fog_floor()
 	if _build_queue.is_empty() and _in_flight.is_empty() \
 			and _flora_queue.is_empty() \
-			and _flora_in_flight.is_empty():
+			and _flora_in_flight.is_empty() \
+			and _collision_pending.is_empty():
 		return
 
 	# Spend a bounded slice of this frame on chunk work. Doing it all at once
@@ -652,6 +689,19 @@ func _process(delta: float) -> void:
 	if not _initial_load_reported:
 		budget = maxf(budget * 2.0, float(INITIAL_BUILD_BUDGET_MS))
 	_collect_finished(started, budget)
+	# RIGHT AFTER THE COLLECT, upload v1 Stage 2. The meshes of this frame are
+	# in and their shapes are owed; the pump spends its own budget on the
+	# nearest of what is owed, and on the ground under the player whatever the
+	# budget says.
+	var collision_budget: float = 0.0
+	if config != null:
+		collision_budget = config.collision_budget_ms
+	if not _initial_load_reported:
+		# DOUBLED FOR THE LOAD, exactly as the chunk budget above is. The load
+		# is not a frame anybody is looking at and the ground wait is at the
+		# end of it; a 2 ms slice per frame would stretch the spawn.
+		collision_budget *= 2.0
+	_pump_collision(collision_budget)
 	_submit_jobs()
 	_submit_flora()
 	_drain_restores()
@@ -832,6 +882,12 @@ func reset() -> void:
 	# A reroll is a new world and the split is a property of one world.
 	take_upload_split()
 	up_total_us.clear()
+	_collision_pending.clear()
+	_collision_order.clear()
+	_collision_dirty = false
+	_collision_installed = 0
+	_collision_urgent = 0
+	_collision_peak = 0
 	_heightmap_ms = 0
 	_wall_start_ms = Time.get_ticks_msec()
 
@@ -843,7 +899,8 @@ func reset() -> void:
 func is_idle() -> bool:
 	return generator != null and _build_queue.is_empty() \
 		and _in_flight.is_empty() \
-		and _flora_queue.is_empty() and _flora_in_flight.is_empty()
+		and _flora_queue.is_empty() and _flora_in_flight.is_empty() \
+		and _collision_pending.is_empty()
 
 
 func loaded_chunk_count() -> int:
@@ -1400,7 +1457,24 @@ func _collect_chunks(started: int, budget: float) -> void:
 				node.apply_mesh(entry["arrays"], job.mesh)
 				var t_mid := Time.get_ticks_usec()
 				up_mesh_us += t_mid - t_part
-				node.apply_collision(entry["faces"])
+				var faces: PackedVector3Array = entry["faces"]
+				if faces.is_empty() or not job.mesh or not _collision_budgeted():
+					# A CHUNK WITH NO FACES IS NOT QUEUED. It has no shape to
+					# install - `chunk_node.gd`'s rule - so queueing it would
+					# put a frame of latency on a chunk that becomes standable
+					# for free, and `is_chunk_collidable` would say false about
+					# a sky chunk for no reason.
+					#
+					# AND NEITHER IS A COLLISION-ONLY COLUMN, which is the one
+					# the host streams so a remote peer's body has ground under
+					# it (world feel v1 Stage 10). Deferring the only thing such
+					# a column exists for is the wrong trade twice over: it has
+					# no mesh, so `_restore_column`'s derive-from-the-mesh
+					# fallback has nothing to derive from, and it would promise
+					# ground it did not install.
+					node.apply_collision(faces, entry.get("shape"))
+				else:
+					_queue_collision(chunk_pos, faces, entry.get("shape"))
 				up_shape_us += Time.get_ticks_usec() - t_mid
 			_built += 1
 
@@ -1498,6 +1572,110 @@ func _collect_flora(started: int, budget: float) -> void:
 		up_flora_us += Time.get_ticks_usec() - t_part
 
 
+
+
+## Is the collision queue in use at all? 0 restores the arrival before Stage 2:
+## the shape goes up in the same frame as its mesh.
+func _collision_budgeted() -> bool:
+	return config != null and config.collision_budget_ms > 0.0
+
+
+## Owe a shape for this chunk.
+func _queue_collision(chunk_pos: Vector3i, faces: PackedVector3Array,
+		shape: Variant) -> void:
+	if not _collision_pending.has(chunk_pos):
+		_collision_order.append(chunk_pos)
+		_collision_dirty = true
+	_collision_pending[chunk_pos] = [faces, shape]
+	_collision_peak = maxi(_collision_peak, _collision_pending.size())
+
+
+## HOOK: spend up to `budget_ms` of this frame installing collision shapes.
+##
+## THE NEAR ONES FIRST AND OFF THE BUDGET. Every chunk owed within
+## `collision_now_radius` of the streaming centre is installed before the
+## budget is consulted, because the ground the player is standing on and about
+## to run onto is not a thing to schedule. That set is small - a disc of two
+## chunks is at most a couple of dozen columns and almost all of them already
+## have their shapes - and it is the whole of what keeps the ground wait and
+## `jumps` unchanged.
+##
+## THEN THE REST, NEAREST FIRST, AND THE BUDGET IS A LINE IT STOPS AT. One
+## shape is the atom, exactly as one sector is `FarUpload`'s: the check is
+## after the install, not before it, so a frame with a tenth of a millisecond
+## left does not start one and then blame the budget for the overrun.
+func _pump_collision(budget_ms: float) -> void:
+	if _collision_pending.is_empty():
+		return
+	var t0 := Time.get_ticks_usec()
+
+	var now_radius := 2
+	if config != null:
+		now_radius = config.collision_now_radius
+	if now_radius > 0:
+		var near_sq := now_radius * now_radius
+		var urgent: Array[Vector3i] = []
+		for pos in _collision_pending:
+			var dx: int = pos.x - _center.x
+			var dz: int = pos.z - _center.y
+			if dx * dx + dz * dz <= near_sq:
+				urgent.append(pos)
+		for pos in urgent:
+			if _install_collision(pos):
+				_collision_urgent += 1
+
+	if not _collision_pending.is_empty():
+		if _collision_dirty:
+			_collision_order.sort_custom(_collision_nearer)
+			_collision_dirty = false
+		var budget_us := int(maxf(budget_ms, 0.0) * 1000.0)
+		while not _collision_order.is_empty():
+			var pos: Vector3i = _collision_order.pop_front()
+			if not _install_collision(pos):
+				# A stale order entry: parked, evicted, or already installed by
+				# the near pass. It costs a dictionary lookup and is not worth
+				# a frame of the budget.
+				continue
+			if Time.get_ticks_usec() - t0 >= budget_us:
+				break
+
+	# THE PUMP IS UPLOAD TIME AND IS COUNTED AS SUCH. It left `_collect_chunks`
+	# and it must not leave the split with it, or the shape share would read as
+	# zero the moment this stage landed.
+	var spent := Time.get_ticks_usec() - t0
+	up_shape_us += spent
+	_mesh_ms += spent
+
+
+## Install one owed shape. False if there was nothing owed for this chunk, or
+## nothing to install it on.
+func _install_collision(chunk_pos: Vector3i) -> bool:
+	if not _collision_pending.has(chunk_pos):
+		return false
+	var owed: Array = _collision_pending[chunk_pos]
+	_collision_pending.erase(chunk_pos)
+	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
+	if node == null:
+		return false
+	node.apply_collision(owed[0], owed[1])
+	_collision_installed += 1
+	return true
+
+
+func _collision_nearer(a: Vector3i, b: Vector3i) -> bool:
+	return _queue_key(Vector2i(a.x, a.z)) < _queue_key(Vector2i(b.x, b.z))
+
+
+## What the collision queue owes and has paid. For the F3 readout and the
+## status doc; the self-test reads `pending` to know when the world has fully
+## arrived.
+func collision_stats() -> Dictionary:
+	return {
+		"pending": _collision_pending.size(),
+		"peak": _collision_peak,
+		"installed": _collision_installed,
+		"urgent": _collision_urgent,
+	}
 
 
 func lake_count() -> int:
@@ -2094,6 +2272,12 @@ func _free_distant_chunks(keep_radius: int, prune_radius: int = -1,
 		_chunk_nodes.erase(pos)
 		if node == null:
 			continue
+		# AND ITS COLLISION DEBT GOES WITH IT, upload v1 Stage 2. A shape must
+		# never land on a parked node: the node is hidden and its collider
+		# disabled, and a queue that outlived the parking would install ground
+		# nobody can see. `_restore_column` derives the shape from the node's
+		# own mesh if it comes back before one was ever installed.
+		_collision_pending.erase(pos)
 		# PARKED, NOT FREED (world feel v1 Stage 4). Turning round used to
 		# rebuild the trail you had just walked.
 		node.set_parked(true)
@@ -2144,6 +2328,15 @@ func _restore_column(col: Vector2i) -> bool:
 		node.set_parked(false)
 		if _replay_edits_for(chunk):
 			node.rebuild(Callable(self, "is_solid_world"))
+		elif not node.collision_applied:
+			# PARKED BEFORE ITS SHAPE LANDED, upload v1 Stage 2. The faces were
+			# dropped with the debt, so the shape is derived from the node's
+			# own mesh here - the same `create_trimesh_shape()` the edit path
+			# has always used, and the same triangles, because it is the same
+			# mesh the faces were derived from. Rare by construction: it takes
+			# walking away from a column inside the frame or two its shape was
+			# queued for.
+			node.apply_collision()
 		_cache_chunks -= 1
 	_loaded_columns[col] = true
 	_column_landed(col)
@@ -2163,6 +2356,7 @@ func _evict_cache() -> void:
 			# Spread over frames: freeing 600 columns' nodes in one frame is
 			# the hitch this stage exists to remove.
 			_pending_frees.append(entry["nodes"][cy])
+			_collision_pending.erase(Vector3i(col.x, cy, col.y))
 			_cache_chunks -= 1
 
 

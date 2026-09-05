@@ -168,20 +168,35 @@ func _one(knobs: Dictionary) -> Dictionary:
 	var pending: Dictionary = world._in_flight.duplicate()
 	world._in_flight = {}
 	var col_us: Array[float] = []
+	var arrival_us: Array[float] = []
 	var node_us: Array[float] = []
 	var mesh_us: Array[float] = []
 	var shape_us: Array[float] = []
 	var chunks := 0
+	var has_pump: bool = world.has_method("_pump_collision")
 	for col in pending:
 		world._in_flight[col] = pending[col]
 		world.take_upload_split()
 		var before: int = world.built_chunk_count()
 		var t := Time.get_ticks_usec()
 		world._collect_chunks(Time.get_ticks_msec(), 1.0e9)
+		var t_arrived := Time.get_ticks_usec()
+		# AND THE SHAPE THIS COLUMN NOW OWES, upload v1 Stage 2. The collision
+		# queue moved the shape out of `_collect_chunks` and onto a later
+		# frame's budget; it did not make it free. A bench that stopped at the
+		# line above would have reported the arrival falling from 210 us to
+		# 116 the moment Stage 2 landed, which is not a saving, it is an
+		# accounting change - so the pump is drained here and charged to the
+		# column that owed it. `col_median_us` therefore stays comparable
+		# across every stage, and `arrival_us` beside it is the part that is
+		# paid in the frame the column lands.
+		if has_pump:
+			world._pump_collision(1.0e9)
 		var us := Time.get_ticks_usec() - t
 		var split: Dictionary = world.take_upload_split()
 		chunks += world.built_chunk_count() - before
 		col_us.append(float(us))
+		arrival_us.append(float(t_arrived - t))
 		node_us.append(float(int(split.get("node", 0))))
 		mesh_us.append(float(int(split.get("mesh", 0))))
 		shape_us.append(float(int(split.get("shape", 0))))
@@ -190,6 +205,7 @@ func _one(knobs: Dictionary) -> Dictionary:
 		"columns": col_us.size(),
 		"chunks": chunks,
 		"col_median_us": _median(col_us),
+		"arrival_us": _median(arrival_us),
 		"col_p99_us": _percentile(col_us, 0.99),
 		"col_max_us": _percentile(col_us, 1.0),
 		"node_us": _median(node_us),
@@ -213,7 +229,7 @@ func _report(name: String, rows: Array) -> void:
 		col_med.append(float(row["col_median_us"]))
 	var last: Dictionary = rows[rows.size() - 1]
 	print(("UPLOAD_BENCH mesher=%s config=%s columns=%d chunks=%d "
-		+ "col_median_us=%d col_p99_us=%d col_max_us=%d "
+		+ "col_median_us=%d col_p99_us=%d col_max_us=%d arrival_us=%d "
 		+ "node_us=%d mesh_us=%d shape_us=%d per_chunk_us=%d "
 		+ "passes=%d spread=%s") % [
 		ChunkMesher.resolve_backend(), name,
@@ -221,6 +237,7 @@ func _report(name: String, rows: Array) -> void:
 		int(_median(col_med)),
 		int(_median_of(rows, "col_p99_us")),
 		int(_median_of(rows, "col_max_us")),
+		int(_median_of(rows, "arrival_us")),
 		int(_median_of(rows, "node_us")),
 		int(_median_of(rows, "mesh_us")),
 		int(_median_of(rows, "shape_us")),

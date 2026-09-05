@@ -1497,7 +1497,16 @@ const FOG_START_RATIO := 0.4
 ##
 ## LOCAL and unhashed: it changes WHEN a chunk reaches the screen, never what is
 ## in it.
-@export var chunk_upload_budget_ms := 8.0
+##
+## 8.0 UNTIL UPLOAD V1 STAGE 2, AND 6.0 SINCE, and the reason is arithmetic
+## rather than taste. Stage 2 gave collision its own `collision_budget_ms`, and
+## two budgets ADD: at 8 + 2 a frame could spend ten milliseconds installing
+## the world where it used to spend eight, and the sprint said so - the over-25
+## count went from a median of 3 on the untouched tree to 4, WORSE. Held at
+## 6 + 2 the total is the eight it always was, split so the shape cannot stack
+## a column's worth on top of a full chunk slice, and the count goes to 1.
+## Measured over eleven clean runs; see docs/status/upload-v1.md Stage 2.
+@export var chunk_upload_budget_ms := 6.0
 
 ## IS THE ATOM OF THE CHUNK PUMP A CHUNK, OR A WHOLE COLUMN? Upload v1
 ## Stage 1, grill Q3.
@@ -1517,6 +1526,50 @@ const FOG_START_RATIO := 0.4
 ## LOCAL and unhashed: it changes WHEN a chunk reaches the screen, never what
 ## is in it.
 @export var upload_atom_chunk := 1
+
+## HOW MUCH OF A FRAME THE COLLISION PUMP MAY SPEND, in milliseconds - upload
+## v1 Stage 2, grill Q4.
+##
+## Upload v1 Stage 0 measured the collision shape at 58.9% of a column's
+## arrival - `ConcavePolygonShape3D.new()`, `set_faces()` and the assignment,
+## once per chunk with faces - which is the largest single thing the frame
+## thread does when the world arrives. The mesh is what the player SEES and the
+## shape is what the player STANDS on, and the two do not have to land in the
+## same frame: the mesh goes up as it always did and the shape joins a
+## nearest-first queue that gets this much of each frame.
+##
+## THE GROUND UNDER THE PLAYER IS NEVER BUDGETED - see `collision_now_radius`.
+## `is_chunk_collidable` stays the truth either way: false until the shape is
+## actually installed, which is what the ground wait reads.
+##
+## 0 restores the arrival before this stage: the shape goes up in the same
+## frame as its mesh. That is the A/B.
+##
+## LOCAL and unhashed: it changes WHEN a chunk becomes standable, never what
+## is in it.
+@export var collision_budget_ms := 2.0
+
+## HOW NEAR IS "NOW", in chunks, for the collision queue. Upload v1 Stage 2.
+##
+## Every queued chunk whose column is within this many chunks of the streaming
+## centre is installed unconditionally, before the pump spends a microsecond of
+## its budget. The ground the player is standing on and about to run onto is
+## not a thing to be scheduled; everything beyond it is.
+##
+## LOCAL and unhashed.
+@export var collision_now_radius := 2
+
+## BUILD THE COLLISION SHAPE ON THE WORKER THAT BUILT ITS FACES? Upload v1
+## Stage 2.2, grill Q5.
+##
+## `ConcavePolygonShape3D.new()` and `set_faces()` from a `ColumnJob` is a
+## physics-server call from a worker while the physics server runs on the main
+## thread. Jolt builds its own mesh shape lazily when the shape reaches a body,
+## so the saving may be nothing and the risk is real. Measured rather than
+## assumed; the default is 0 unless the measurement says otherwise.
+##
+## LOCAL and unhashed.
+@export var shape_on_worker := 0
 
 ## Real seconds per in-game day.
 ## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
@@ -1849,7 +1902,8 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# `World.setup()`'s clone drops them and the F4 panel's value never reaches
 	# the world - the failure this file warns about twice and that has happened
 	# twice.
-	"upload_atom_chunk",
+	"upload_atom_chunk", "collision_budget_ms", "collision_now_radius",
+	"shape_on_worker",
 	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
 	"far_tree_step_m",
 	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.

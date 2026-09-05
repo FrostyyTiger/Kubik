@@ -50,6 +50,15 @@ var _config: WorldgenConfig = null
 var _world_seed := 0
 var _collider: CollisionShape3D = null
 
+## Has a shape ever actually been installed on this node? Upload v1 Stage 2.
+##
+## `collision_applied` is the LIVE answer to "can something stand here", and
+## `set_parked` turns it off and on. That was the same fact until collision got
+## its own budget: a chunk can now be drawn, parked and brought back with its
+## shape still in the queue, and `set_parked(false)` must not promise ground
+## that was never installed. So the live flag is this one AND not parked.
+var _collision_installed := false
+
 
 ## The shared material for one zone.
 ##
@@ -150,13 +159,21 @@ func apply_mesh(arrays: Array, want_mesh := true) -> void:
 ## THE COLLISION HALF. `collision_applied` becomes true HERE and nowhere else
 ## on the arrival path, which is what makes `World.is_chunk_collidable` honest
 ## once the two halves can land in different frames (Stage 2).
-func apply_collision(faces := PackedVector3Array()) -> void:
-	if faces.is_empty():
+##
+## `shape` is a `ConcavePolygonShape3D` the WORKER already built from these
+## faces - upload v1 Stage 2.2, behind `shape_on_worker`. Handed in, this half
+## is one assignment; null, the shape is built here as it always was.
+func apply_collision(faces := PackedVector3Array(),
+		shape: Shape3D = null) -> void:
+	if shape != null:
+		_collider.shape = shape
+	elif faces.is_empty():
 		_apply_collision()
 	else:
-		var shape := ConcavePolygonShape3D.new()
-		shape.set_faces(faces)
-		_collider.shape = shape
+		var built := ConcavePolygonShape3D.new()
+		built.set_faces(faces)
+		_collider.shape = built
+	_collision_installed = true
 	collision_applied = true
 
 
@@ -172,8 +189,10 @@ func set_parked(parked: bool) -> void:
 	if _collider != null:
 		_collider.disabled = parked
 	# A parked chunk is not standable, and nothing must believe otherwise
-	# between it leaving _chunks and coming back.
-	collision_applied = not parked
+	# between it leaving _chunks and coming back - nor is one whose shape is
+	# still in the collision queue, which is why this is an AND and not an
+	# assignment. See _collision_installed.
+	collision_applied = _collision_installed and not parked
 
 
 func rebuild(world_solid: Callable) -> void:
@@ -182,6 +201,7 @@ func rebuild(world_solid: Callable) -> void:
 	mesh = ChunkMesher.build(chunk, world_solid, _config, _world_seed)
 	_apply_collision()
 	chunk.dirty = false
+	_collision_installed = true
 	collision_applied = true
 	# This is also the UPGRADE path for a collision-only chunk: it re-meshes
 	# from the voxels, which the node already has, rather than sending the
