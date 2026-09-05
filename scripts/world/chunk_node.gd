@@ -128,18 +128,36 @@ func setup(p_chunk: Chunk, config: WorldgenConfig, world_seed: int,
 ## touches the rendering server.
 func apply_arrays(arrays: Array, faces := PackedVector3Array(),
 		want_mesh := true) -> void:
+	apply_mesh(arrays, want_mesh)
+	apply_collision(faces)
+
+
+## THE MESH HALF, on its own - upload v1 Stage 0.
+##
+## Split out of apply_arrays() so the instrument can time the two halves apart
+## (`up_mesh_us` against `up_shape_us`) and so Stage 2 can put collision on its
+## own budget. apply_arrays() still calls both in the old order, so a caller
+## that wants the whole arrival in one line - the edit path, the tests - is
+## unchanged, byte for byte, in what it installs.
+func apply_mesh(arrays: Array, want_mesh := true) -> void:
 	mesh = ChunkMesher.arrays_to_mesh(arrays) if want_mesh else null
+	chunk.dirty = false
+	# Remembered so the world can tell a column that was never drawn from one
+	# that has nothing to draw - an all-air chunk also has a null mesh.
+	mesh_built = want_mesh
+
+
+## THE COLLISION HALF. `collision_applied` becomes true HERE and nowhere else
+## on the arrival path, which is what makes `World.is_chunk_collidable` honest
+## once the two halves can land in different frames (Stage 2).
+func apply_collision(faces := PackedVector3Array()) -> void:
 	if faces.is_empty():
 		_apply_collision()
 	else:
 		var shape := ConcavePolygonShape3D.new()
 		shape.set_faces(faces)
 		_collider.shape = shape
-	chunk.dirty = false
 	collision_applied = true
-	# Remembered so the world can tell a column that was never drawn from one
-	# that has nothing to draw - an all-air chunk also has a null mesh.
-	mesh_built = want_mesh
 
 
 ## Park this node in the cache, or bring it back (world feel v1 Stage 4).

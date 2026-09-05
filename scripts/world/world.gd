@@ -503,6 +503,85 @@ var _mesh_ms := 0
 var _heightmap_ms := 0
 var _far_vertices := 0
 
+## WHAT THE WORKERS SPENT MESHING, and marshalling borders for it - mesher v1's
+## "For Fable at merge" request, taken here because upload v1 owns this file.
+##
+## `_gen_ms` is `gen_usec + tree_usec` and has never included the mesh, so the
+## load line's "gen per chunk" has never been able to show what the C++ mesher
+## bought. These two are the missing halves, kept apart from each other so the
+## marshal can be read against the mesh (mesher v1 Q4) and apart from `_mesh_ms`,
+## which is MAIN-THREAD upload time and a different quantity entirely.
+var _worker_mesh_ms := 0
+var _worker_border_ms := 0
+
+
+# --- THE SPLIT, upload v1 Stage 0 ---------------------------------------------
+#
+# WHAT A COLUMN'S ARRIVAL COSTS THE FRAME THREAD, part by part, in microseconds.
+#
+# The project has had ONE number for all of it - `_mesh_ms`, the whole
+# `_collect_chunks` upload loop - and horizon v1 Stage 7 left the frame gate's
+# hitch half open with that sum as its only description. A sum cannot say
+# whether the frame is paying for nodes, for meshes, for shapes, for flora or
+# for bodies, and no rung of this plan is judgeable without knowing which.
+#
+# Accumulated here, drained once a second by `take_upload_split()` (the sprint
+# probe) and printed once at the end of the initial load. Six `Time
+# .get_ticks_usec()` pairs per column arrival: about a microsecond of clock
+# reading against a 4,000 microsecond arrival, and they stay in the shipped
+# build because the split is the instrument every later lane will want too.
+var up_node_us := 0
+var up_mesh_us := 0
+var up_shape_us := 0
+var up_edit_us := 0
+var up_flora_us := 0
+var up_bodies_us := 0
+
+## The single most expensive COLUMN arrival since the last drain - the whole of
+## one column's node, mesh, shape and edit time added up. The median second
+## says what the stream costs; this says what the worst frame in it was asked
+## to swallow whole, which is the number the hitch gate is about.
+var up_col_max_us := 0
+
+## Totals over the whole session, never reset. The summary line's `up_*_ms`.
+var up_total_us := {}
+
+
+## The split since the last call, and reset. Called once a second by the sprint
+## probe; the totals in `up_total_us` are what the summary line reports.
+func take_upload_split() -> Dictionary:
+	var out := {
+		"node": up_node_us, "mesh": up_mesh_us, "shape": up_shape_us,
+		"edit": up_edit_us, "flora": up_flora_us, "bodies": up_bodies_us,
+		"col_max": up_col_max_us,
+	}
+	for key in out:
+		if key == "col_max":
+			continue
+		up_total_us[key] = int(up_total_us.get(key, 0)) + int(out[key])
+	up_total_us["col_max"] = maxi(
+		int(up_total_us.get("col_max", 0)), up_col_max_us)
+	up_node_us = 0
+	up_mesh_us = 0
+	up_shape_us = 0
+	up_edit_us = 0
+	up_flora_us = 0
+	up_bodies_us = 0
+	up_col_max_us = 0
+	return out
+
+
+## Every part of the arrival since the world loaded, microseconds. The probe's
+## summary line and the load line both read this; `take_upload_split()` has to
+## have been called at least once for the running second to be in it, which the
+## load line does for itself.
+func upload_totals() -> Dictionary:
+	var out := up_total_us.duplicate()
+	for key in ["node", "mesh", "shape", "edit", "flora", "bodies"]:
+		out[key] = int(out.get(key, 0))
+	out["col_max"] = int(out.get("col_max", 0))
+	return out
+
 
 ## Start building. Called once per session.
 func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
@@ -607,6 +686,31 @@ func _process(delta: float) -> void:
 		print("[World] %d chunks in %d ms wall (%d ms main thread; %.2f ms gen per chunk on workers, %.2f ms main-thread upload per chunk)" % [
 			_built, wall, _total_ms, float(_gen_ms) / 1000.0 / n,
 			float(_mesh_ms) / 1000.0 / n])
+		# THE WORKER'S MESH, at last (mesher v1's merge request). "gen per
+		# chunk" above has never included it, which is why the C++ mesher's win
+		# could not be read off this line.
+		print("[World] worker mesh %.2f ms per chunk, borders %.2f ms per chunk" % [
+			float(_worker_mesh_ms) / 1000.0 / n,
+			float(_worker_border_ms) / 1000.0 / n])
+		# AND THE SPLIT OF THE UPLOAD, once, in microseconds per chunk and as a
+		# share of the whole - upload v1 Stage 0. This is the load-time twin of
+		# the sprint probe's per-second line and it is a RECORD, not a gate
+		# (grill Q11).
+		take_upload_split()
+		var up := upload_totals()
+		var whole: float = float(maxi(1, int(up["node"]) + int(up["mesh"])
+			+ int(up["shape"]) + int(up["edit"]) + int(up["flora"])
+			+ int(up["bodies"])))
+		print(("[World] upload split: node %.0f%% mesh %.0f%% shape %.0f%% "
+			+ "edit %.0f%% flora %.0f%% bodies %.0f%% "
+			+ "(%.0f ms total, worst column %.2f ms)") % [
+			100.0 * float(up["node"]) / whole,
+			100.0 * float(up["mesh"]) / whole,
+			100.0 * float(up["shape"]) / whole,
+			100.0 * float(up["edit"]) / whole,
+			100.0 * float(up["flora"]) / whole,
+			100.0 * float(up["bodies"]) / whole,
+			whole / 1000.0, float(up["col_max"]) / 1000.0])
 		print("[World] far field %d vertices" % _far_vertices)
 		print("[World] flora %d instances, %.2f M triangles, %d columns, %.2f ms per column on workers" % [
 			_flora_instances, float(_flora_triangles) / 1000000.0,
@@ -723,6 +827,11 @@ func reset() -> void:
 	_built = 0
 	_gen_ms = 0
 	_mesh_ms = 0
+	_worker_mesh_ms = 0
+	_worker_border_ms = 0
+	# A reroll is a new world and the split is a property of one world.
+	take_upload_split()
+	up_total_us.clear()
 	_heightmap_ms = 0
 	_wall_start_ms = Time.get_ticks_msec()
 
@@ -788,6 +897,11 @@ func last_timings() -> Dictionary:
 	return {
 		"gen_ms": float(_gen_ms) / 1000.0 / float(n),
 		"mesh_ms": float(_mesh_ms) / 1000.0 / float(n),
+		# MESHER V1'S MERGE REQUEST, one line each: what the WORKERS spent on
+		# the mesh and on marshalling its borders, per chunk. `mesh_ms` above
+		# is main-thread upload and always was.
+		"worker_mesh_ms": float(_worker_mesh_ms) / 1000.0 / float(n),
+		"worker_border_ms": float(_worker_border_ms) / 1000.0 / float(n),
 		"heightmap_ms": _heightmap_ms,
 		# WORLD FEEL V1 STAGE 0. The averages above are cumulative since load,
 		# which is the right number for "did the world arrive" and the wrong
@@ -1185,6 +1299,10 @@ func _collect_chunks(started: int, budget: float) -> void:
 	for col in done:
 		var job: ColumnJob = _in_flight[col]["job"]
 		_gen_ms += job.gen_usec + job.tree_usec
+		# THE WORKER'S MESH AND MARSHAL, beside the generation - mesher v1's
+		# merge request, and the load line prints them from here.
+		_worker_mesh_ms += job.mesh_usec
+		_worker_border_ms += job.border_usec
 		_in_flight.erase(col)
 		_loaded_columns[col] = true
 		_column_landed(col)
@@ -1209,8 +1327,13 @@ func _collect_chunks(started: int, budget: float) -> void:
 			# broken. The chunk is therefore REMESHED rather than the job's
 			# arrays used, which costs a main-thread mesh for the rare chunk
 			# edited mid-flight - the same cost breaking a block has always had.
+			# THE SPLIT, part 1 of 4: the edit replay (upload v1 Stage 0).
+			var t_part := Time.get_ticks_usec()
 			var edited := _replay_edits_for(chunk)
+			up_edit_us += Time.get_ticks_usec() - t_part
 
+			# Part 2: the node, the body, the collider and the adoption.
+			t_part = Time.get_ticks_usec()
 			var node := ChunkNode.new()
 			node.setup(chunk, config, world_seed, job.zone)
 			# INTO RENDER SPACE, horizon v1 Stage 6. `ChunkNode.setup` puts the
@@ -1221,12 +1344,29 @@ func _collect_chunks(started: int, budget: float) -> void:
 			node.position -= origin_offset_m()
 			add_child(node)
 			_chunk_nodes[chunk_pos] = node
+			up_node_us += Time.get_ticks_usec() - t_part
+
 			if edited:
+				# A REMESH IS EDIT TIME, not mesh time. It is the price of an
+				# edit landing mid-flight and it is not what a rung of this
+				# plan can move; folding it into `up_mesh_us` would make the
+				# mesh share depend on how much digging happened.
+				t_part = Time.get_ticks_usec()
 				node.rebuild(Callable(self, "is_solid_world"))
+				up_edit_us += Time.get_ticks_usec() - t_part
 			else:
-				node.apply_arrays(entry["arrays"], entry["faces"], job.mesh)
+				# Parts 3 and 4: the mesh and the shape, apart - which is the
+				# whole reason `apply_arrays` was split in two.
+				t_part = Time.get_ticks_usec()
+				node.apply_mesh(entry["arrays"], job.mesh)
+				var t_mid := Time.get_ticks_usec()
+				up_mesh_us += t_mid - t_part
+				node.apply_collision(entry["faces"])
+				up_shape_us += Time.get_ticks_usec() - t_mid
 			_built += 1
-		_mesh_ms += Time.get_ticks_usec() - t_upload
+		var col_us := Time.get_ticks_usec() - t_upload
+		_mesh_ms += col_us
+		up_col_max_us = maxi(up_col_max_us, col_us)
 		_columns_built += 1
 
 
@@ -1259,13 +1399,17 @@ func _collect_flora(started: int, budget: float) -> void:
 		if not _wants_flora(col):
 			continue
 		# THE BODIES FIRST, and for a bodies-only column they are all there is.
+		var t_part := Time.get_ticks_usec()
 		if body_field != null:
 			body_field.column_landed(col, job.bodies)
+		up_bodies_us += Time.get_ticks_usec() - t_part
 		if job.bodies_only:
 			# Nothing is drawn, so there is no FloraColumn to remember them on.
 			# A bodies-only column is re-scanned if it comes back, which is the
 			# right trade: it is not in the cache either.
 			continue
+		# AND THE FLORA HALF, from the node to the last buffer written.
+		t_part = Time.get_ticks_usec()
 		var node: FloraColumn = _flora_nodes.get(col)
 		if node == null:
 			node = _flora_cache.get(col)
@@ -1289,6 +1433,7 @@ func _collect_flora(started: int, budget: float) -> void:
 		node.apply_buffers(job.buffers, config)
 		_flora_instances += node.instance_count
 		_flora_triangles += node.triangle_count
+		up_flora_us += Time.get_ticks_usec() - t_part
 
 
 

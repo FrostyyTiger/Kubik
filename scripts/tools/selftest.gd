@@ -94,6 +94,9 @@ func _ready() -> void:
 		# fortnight - see scripts/tools/selftest_horizon.gd for why that lane's
 		# tests are a second file rather than more entries here.
 		"horizon": SelftestHorizon.run,
+		# UPLOAD V1. One line, for the same reason horizon v1 has one - see
+		# scripts/tools/selftest_upload.gd.
+		"upload": SelftestUpload.run,
 	}
 	var failures := 0
 	for name in tests:

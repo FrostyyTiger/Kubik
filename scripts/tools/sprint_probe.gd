@@ -129,6 +129,19 @@ var _sec_far := 0
 var _sec_slices := 0
 var _sec_rebase := 0
 
+## THE UPLOAD SPLIT OF THE SECOND, upload v1 Stage 0 - what the frame thread
+## spent installing arriving columns, part by part, in microseconds. Drained
+## from `World.take_upload_split()` once per second, which is why the drain is
+## in `_write_second` and nowhere else: two callers would each get a share of
+## the second and neither would get the second.
+var _sec_up := {}
+
+## And the whole run's, for the summary. Accumulated here rather than read from
+## `World.upload_totals()` at the end, because the totals there include the
+## LOAD - twelve seconds of the world arriving at spawn - and the summary line
+## is a delta over the sprint like every other field on it.
+var _run_up := {}
+
 ## Counts at the moment the sprint started, so every total is a DELTA over the
 ## sprint rather than a total since the world loaded. The load is the biggest
 ## number in the session and it is not what is being measured.
@@ -394,16 +407,38 @@ func _write_second() -> void:
 		worst = sorted[sorted.size() - 1]
 	var moved: Vector3 = _player.world_position() - _start_m
 	moved.y = 0.0
+	# THE SPLIT OF THIS SECOND. Drained here and only here - see `_sec_up`.
+	_sec_up = _take_split()
+	for key in _sec_up:
+		if key == "col_max":
+			_run_up["col_max"] = maxi(
+				int(_run_up.get("col_max", 0)), int(_sec_up[key]))
+		else:
+			_run_up[key] = int(_run_up.get(key, 0)) + int(_sec_up[key])
 	var line := ("s=%02d frames=%d median_ms=%.2f worst_ms=%.2f "
-		+ "far=%d slices=%d rebase=%d moved_m=%.0f chunks=%d") % [
+		+ "far=%d slices=%d rebase=%d moved_m=%.0f chunks=%d "
+		+ "up=%d/%d/%d/%d/%d/%d colmax=%d") % [
 		_sec, _sec_frames.size(), med, worst, _sec_far, _sec_slices,
 		_sec_rebase, moved.length(),
-		_world.built_chunk_count() - _base_chunks]
+		_world.built_chunk_count() - _base_chunks,
+		int(_sec_up.get("node", 0)), int(_sec_up.get("mesh", 0)),
+		int(_sec_up.get("shape", 0)), int(_sec_up.get("edit", 0)),
+		int(_sec_up.get("flora", 0)), int(_sec_up.get("bodies", 0)),
+		int(_sec_up.get("col_max", 0))]
 	_say(line)
 	_sec_frames = PackedFloat32Array()
 	_sec_far = 0
 	_sec_slices = 0
 	_sec_rebase = 0
+
+
+## `World.take_upload_split()`, or zeroes for a world that has none. The probe
+## runs against the base worktree too, where the instrument does not exist, and
+## a missing method there must not be a crash.
+func _take_split() -> Dictionary:
+	if _world != null and _world.has_method("take_upload_split"):
+		return _world.take_upload_split()
+	return {}
 
 
 ## THE ONE LINE, machine-parseable, and the shape is the plan's.
@@ -428,16 +463,30 @@ func _summary() -> void:
 		f.sort()
 		far_med = f[f.size() / 2]
 	var mem := float(Performance.get_monitor(Performance.MEMORY_STATIC)) / 1048576.0
+	# THE TAIL OF THE RUN. The last partial second has never been written, so
+	# its split would be lost; drained into the totals here so the six `up_*_ms`
+	# fields add up to the whole sprint and not to the whole minus a fraction.
+	var tail := _take_split()
+	for key in tail:
+		if key == "col_max":
+			_run_up["col_max"] = maxi(
+				int(_run_up.get("col_max", 0)), int(tail[key]))
+		else:
+			_run_up[key] = int(_run_up.get(key, 0)) + int(tail[key])
 	_say(("SPRINT label=%s seconds=%.0f frames=%d median_ms=%.2f p99_ms=%.2f "
 		+ "worst_ms=%.2f over25=%d chunks=%d far_rebuilds=%d far_ms_median=%d "
 		+ "tree_rebuilds=%d mem_mb=%.0f moved_m=%.0f jumps=%d "
-		+ "tiles=%d tile_mb=%.0f rebases=%d jitter_mm=%.3f") % [
+		+ "tiles=%d tile_mb=%.0f rebases=%d jitter_mm=%.3f "
+		+ "up_node_ms=%.1f up_mesh_ms=%.1f up_shape_ms=%.1f up_edit_ms=%.1f "
+		+ "up_flora_ms=%.1f up_bodies_ms=%.1f up_col_max_ms=%.2f") % [
 		_label, _seconds, n, med, p99, worst, over,
 		_world.built_chunk_count() - _base_chunks,
 		_far_rebuilds() - _base_far, far_med,
 		_tree_rebuilds() - _base_tree, mem, _moved(), _jumps,
 		_tile_stat("tiles"), float(_tile_stat("bytes")) / 1048576.0,
-		_rebases() - _base_rebases, jitter_mm])
+		_rebases() - _base_rebases, jitter_mm,
+		_up_ms("node"), _up_ms("mesh"), _up_ms("shape"), _up_ms("edit"),
+		_up_ms("flora"), _up_ms("bodies"), _up_ms("col_max")])
 	# A RUN THAT DID NOT GO ANYWHERE IS NOT A SPRINT, and it is the one way
 	# this instrument can look green while measuring nothing: a player wedged
 	# against a rise builds no chunks, rebuilds no far country and holds a
@@ -459,6 +508,11 @@ func _summary() -> void:
 	_say("SPRINT gate: median %s (%.2f vs %.1f), over25 %s (%d)" % [
 		"PASS" if pass_med else "FAIL", med, GATE_MEDIAN_MS,
 		"PASS" if over == 0 else "FAIL", over])
+
+
+## One field of the run's split, in milliseconds.
+func _up_ms(key: String) -> float:
+	return float(int(_run_up.get(key, 0))) / 1000.0
 
 
 func _finish(code: int) -> void:
