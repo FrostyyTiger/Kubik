@@ -36,6 +36,10 @@ static func run() -> int:
 		"sprint summary parse": _test_sprint_summary,
 		"upload parity": _test_upload_parity,
 		"collision honesty": _test_collision_honesty,
+		# STAGE 1.
+		"atom knob": _test_atom_knob,
+		"atom parity": _test_atom_parity,
+		"atom invariants": _test_atom_invariants,
 	}
 	var failures := 0
 	for name in tests:
@@ -405,3 +409,182 @@ static func _parse_kv(line: String) -> Dictionary:
 			continue
 		out[part.substr(0, at)] = part.substr(at + 1)
 	return out
+
+
+# --- Stage 1 ------------------------------------------------------------------
+
+## `upload_atom_chunk` IS LOCAL AND UNHASHED.
+##
+## Both halves, and the first is the one that fails silently: a knob missing
+## from `LOCAL_PROPERTIES` is dropped by `World.setup()`'s clone, so the F4
+## panel's value never reaches the world and the A/B measures the same path
+## twice. `worldgen_config.gd` warns about it twice and it has happened twice.
+static func _test_atom_knob():
+	var bad := 0
+	for knob in _knobs():
+		if not WorldgenConfig.LOCAL_PROPERTIES.has(knob):
+			print("  %s is not in LOCAL_PROPERTIES" % knob)
+			bad += 1
+		if WorldgenConfig.PROPERTIES.has(knob):
+			print("  %s is HASHED - every upload knob must be local" % knob)
+			bad += 1
+	# AND THE HASH DOES NOT MOVE. The canonical line's `config` field is the
+	# gate every stage reprints; a knob that moved it would make two machines
+	# refuse each other over when a chunk reaches the screen.
+	var cfg := WorldgenConfig.load_or_default()
+	var before := cfg.hash_key()
+	for knob in _knobs():
+		cfg.set(knob, 1 - int(cfg.get(knob)))
+	var after := cfg.hash_key()
+	if before != after:
+		print("  the config hash moved with the upload knobs: %s -> %s" % [
+			before, after])
+		bad += 1
+	print("atom knob: %d upload knobs local, config hash %s unmoved" % [
+		_knobs().size(), before])
+	return bad
+
+
+## The upload knobs that exist in the tree right now. Each stage's rung adds
+## one; the tests are written once and pick up whichever have landed.
+static func _knobs() -> PackedStringArray:
+	var out := PackedStringArray()
+	var cfg := WorldgenConfig.new()
+	for knob in ["upload_atom_chunk", "column_node", "mesh_on_worker",
+			"shape_on_worker", "flora_on_pump"]:
+		if knob in cfg:
+			out.append(knob)
+	return out
+
+
+## THE CHUNK ATOM AND THE COLUMN ATOM INSTALL THE SAME WORLD.
+##
+## The rung is about WHEN a chunk reaches the screen and must not be about what
+## is in it. Two worlds on the canonical seed, the same 3 x 3 columns, one with
+## `upload_atom_chunk` 0 and one with 1, both pumped to completion: every
+## installed surface and every collision shape compared between them, exact,
+## and the same set of chunks and of landed columns.
+static func _test_atom_parity():
+	var bad := 0
+	var worlds := {}
+	for atom in [0, 1]:
+		var cfg := _config()
+		cfg.upload_atom_chunk = atom
+		var world := World.new()
+		world.setup(SEED, cfg)
+		var spawn: Vector2i = world.generator.spawn_block
+		var centre := Vector2i(
+			Chunk.floor_div(spawn.x, Chunk.SIZE),
+			Chunk.floor_div(spawn.y, Chunk.SIZE))
+		for dz in range(-1, 2):
+			for dx in range(-1, 2):
+				world._submit_column(centre + Vector2i(dx, dz))
+		# A REAL BUDGET, and as many pumps as it takes. The chunk-atom world
+		# will take more of them, which is the rung; the end state is what is
+		# being compared.
+		var spins := 0
+		while not world._in_flight.is_empty() and spins < 60000:
+			world._collect_finished(Time.get_ticks_msec(), 8.0)
+			OS.delay_msec(1)
+			spins += 1
+		_drain_collision(world)
+		worlds[atom] = world
+
+	var a: World = worlds[0]
+	var b: World = worlds[1]
+	if a._chunk_nodes.size() != b._chunk_nodes.size():
+		print("  %d chunks by column, %d by chunk" % [
+			a._chunk_nodes.size(), b._chunk_nodes.size()])
+		bad += 1
+	if a._loaded_columns.size() != b._loaded_columns.size():
+		print("  %d columns landed by column, %d by chunk" % [
+			a._loaded_columns.size(), b._loaded_columns.size()])
+		bad += 1
+	var compared := 0
+	for pos in a._chunk_nodes:
+		if not b._chunk_nodes.has(pos):
+			print("  %s is missing from the chunk-atom world" % pos)
+			bad += 1
+			continue
+		compared += 1
+		if _surface_arrays(a, pos) != _surface_arrays(b, pos):
+			print("  %s draws different arrays under the two atoms" % pos)
+			bad += 1
+		var sa := _shape_of(a._chunk_nodes[pos], pos)
+		var sb := _shape_of(b._chunk_nodes[pos], pos)
+		var fa := (sa as ConcavePolygonShape3D).get_faces() if sa != null \
+			else PackedVector3Array()
+		var fb := (sb as ConcavePolygonShape3D).get_faces() if sb != null \
+			else PackedVector3Array()
+		if fa != fb:
+			print("  %s has different collision faces under the two atoms" % pos)
+			bad += 1
+	a.free()
+	b.free()
+	print("atom parity: %d chunks compared, %d bad" % [compared, bad])
+	return bad
+
+
+## A HALF-INSTALLED COLUMN IS NOT A LANDED COLUMN.
+##
+## The one invariant the cursor can break, and it is the one the ground wait
+## rests on: while a column is part-installed it stays in `_in_flight`, so
+## `is_chunk_pending` says yes and `_loaded_columns` must NOT contain it - or
+## `is_chunk_collidable` would answer true for the sky chunks of a column whose
+## ground has not been installed yet, and the player would be released into it.
+##
+## Driven with a 0.5 ms budget over 25 columns so the pump is forced to stop
+## mid-column many times. If it never does, the test says so and FAILS: it
+## would have measured nothing, and a gate that can quietly measure nothing is
+## the failure `selftest.gd`'s own header is about.
+static func _test_atom_invariants():
+	var bad := 0
+	var cfg := _config()
+	cfg.upload_atom_chunk = 1
+	var world := World.new()
+	world.setup(SEED, cfg)
+	var spawn: Vector2i = world.generator.spawn_block
+	var centre := Vector2i(
+		Chunk.floor_div(spawn.x, Chunk.SIZE), Chunk.floor_div(spawn.y, Chunk.SIZE))
+	for dz in range(-2, 3):
+		for dx in range(-2, 3):
+			world._submit_column(centre + Vector2i(dx, dz))
+
+	var splits := 0
+	var pumps := 0
+	var spins := 0
+	while not world._in_flight.is_empty() and spins < 60000:
+		world._collect_chunks(Time.get_ticks_msec(), 0.5)
+		pumps += 1
+		for col in world._in_flight:
+			var entry: Dictionary = world._in_flight[col]
+			if not entry.has("cys"):
+				continue
+			if int(entry["next"]) <= 0 or int(entry["next"]) >= (entry["cys"] as Array).size():
+				continue
+			splits += 1
+			if world._loaded_columns.has(col):
+				print("  %s is half installed and already reported landed" % col)
+				bad += 1
+			# And every chunk the cursor has passed IS installed.
+			for i in int(entry["next"]):
+				var cy = (entry["cys"] as Array)[i]
+				var pos := Vector3i(col.x, cy, col.y)
+				if not world._chunk_nodes.has(pos):
+					print("  %s is behind the cursor and has no node" % pos)
+					bad += 1
+		OS.delay_msec(1)
+		spins += 1
+
+	if not world._in_flight.is_empty():
+		print("  the pump never finished: %d columns still in flight" % \
+			world._in_flight.size())
+		bad += 1
+	if splits == 0:
+		print("  the pump never stopped mid-column, so this test measured "
+			+ "nothing - lower the budget or raise the column count")
+		bad += 1
+	world.free()
+	print("atom invariants: %d pumps, %d mid-column observations, %d bad" % [
+		pumps, splits, bad])
+	return bad

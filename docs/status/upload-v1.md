@@ -192,6 +192,100 @@ None. Every knob is at the plan's start value.
 
 ---
 
+## Stage 1 - the atom is a chunk
+
+**Green, and it ships - but the sprint cannot tell it from the column atom on
+this build, and that is said plainly below.**
+
+### What shipped
+
+`_collect_chunks` checks `chunk_upload_budget_ms` between CHUNKS instead of
+between columns. A column whose remaining chunks did not fit stays in
+`_in_flight` with a cursor (`entry["cys"]`, the install order fixed once, and
+`entry["next"]`) and the next frame resumes it before starting anything new -
+`_in_flight` keeps insertion order, so the resumed column is at the front of
+the walk. `_column_landed`, `_frontier_advanced`, `_loaded_columns` and
+`_columns_built` now fire on the column's LAST chunk, which for a column that
+fits in one frame is the frame it always was. `_drain_jobs` learned not to wait
+a second time on a task the pump has already joined. `upload_atom_chunk` (LOCAL,
+unhashed, default **1**) restores the column atom at 0.
+
+### The bench
+
+```
+UPLOAD_BENCH mesher=cpp config=shipped              columns=197 chunks=841 col_median_us=217 col_p99_us=954 col_max_us=1066 node_us=67 mesh_us=29 shape_us=93 per_chunk_us=50 passes=3 spread=+-6.2%
+UPLOAD_BENCH mesher=cpp config=upload_atom_chunk=0  columns=197 chunks=841 col_median_us=217 col_p99_us=935 col_max_us=1071 node_us=69 mesh_us=28 shape_us=93 per_chunk_us=50 passes=3 spread=+-1.2%
+```
+
+**Identical, and the bench is blind to this rung by construction.** It installs
+one column at a time with an unbounded budget, so there is no budget line for
+the atom to stop at. Plan § 3's rule - "a rung that does not move
+`col_median_us` and `col_max_us` on the bench is not worth a sprint" - cannot
+apply to Stage 1, whose whole subject IS the budget line. Recorded under
+"Questions taken alone"; the sprint is the only judge here.
+
+### The sprint line, ABAB x3, plus the knob off twice
+
+| run | median | p99 | worst | **over 25 ms** | chunks | `up_col_max_ms` |
+| --- | --- | --- | --- | --- | --- | --- |
+| base-s1-1 (contended) | 6.93 | 15.67 | 121.59 | 32 | 12,814 | - |
+| **s1-1** | 6.94 | 8.33 | 29.34 | **2** | 13,010 | 15.73 |
+| base-s1-2 | 6.90 | 8.33 | 30.38 | 3 | 13,048 | - |
+| **s1-2** | 6.90 | 8.33 | 39.84 | **3** | 13,085 | 25.17 |
+| base-s1-3 | 6.90 | 8.33 | 39.55 | 3 | 13,001 | - |
+| **s1-3** | 6.90 | 8.33 | 26.15 | **1** | 13,053 | 6.28 |
+| `upload_atom_chunk=0`, 1 | 6.90 | 8.33 | 32.29 | 5 | 13,049 | 10.42 |
+| `upload_atom_chunk=0`, 2 | 6.90 | 8.33 | 26.15 | 3 | 13,049 | 21.69 |
+
+**Medians: base 6.90, branch 6.90.** Over-25 medians: **base 3, chunk atom 2,
+column atom 4.** Against base the rung is no worse on either number and
+directionally better on the count, which is what plan § 5 item 4 asks of a rung
+that ships.
+
+**And the honest reading is that three runs cannot separate 2 from 4 when the
+quantity is a handful of frames out of 8,590.** `base-s1-1` produced 32 on the
+untouched tree; that is the size of this measurement's noise floor, and it is
+larger than the effect. The rung is kept at default 1 anyway, for a reason that
+does not need the sprint to agree: **it bounds the slice by construction.**
+Before it, a frame with 0.1 ms of its budget left could start a whole column and
+pay all of it; after it, the most a frame can be made to swallow past its budget
+is one chunk. That the bound rarely binds today is a fact about this build's
+column sizes, not an argument for being able to overshoot by a column.
+
+**`up_col_max_ms` did NOT fall to about one chunk's cost, and the plan expected
+it to** (1.2). Measured: 15.73 / 25.17 / 6.28 with the chunk atom against
+10.42 / 21.69 with the column atom - the same distribution. The explanation is
+in the atom rule itself: the budget is checked AFTER a chunk, so the worst slice
+is always at least one chunk's cost, and **one chunk's worst cost on this build
+is 6 to 25 ms**. That is a finding for Stage 2 and 3 rather than a failure of
+Stage 1: the tail of the arrival is not a column being too big, it is a single
+chunk occasionally being very expensive, and the shape is 59% of a chunk.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| main self-test | **SELFTEST: all passed** - `edit while cached` and `edit during generation` inside it |
+| upload self-test | **SELFTEST-UPLOAD: all passed** - six tests |
+| horizon self-test | **SELFTEST-HORIZON: all passed** |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged**, character for character |
+| upload parity | **0 bad, both meshers** |
+| collision honesty | **0 bad** |
+| **atom knob** (new) | `upload_atom_chunk` in `LOCAL_PROPERTIES`, not in `PROPERTIES`, **config hash `1d7c18c7` unmoved** when it is flipped |
+| **atom parity** (new) | **36 chunks compared, 0 bad.** Two worlds on the canonical seed, one per atom, pumped to completion: every installed surface and every collision shape identical, and the same set of landed columns. |
+| **atom invariants** (new) | **122 pumps, 4 mid-column observations, 0 bad.** While a column is half installed it is never in `_loaded_columns`, and every chunk behind the cursor has its node. The test FAILS if it never catches the pump mid-column, so it cannot quietly measure nothing. |
+| thread-guard errors | **none** |
+| the tour | green, `Forward+` on the RTX 3070 Ti, no seam and no missing chunk |
+| the load line | 16,325 / 16,027 / 16,257 ms wall against base 16,780 / 15,988 / 17,567. Inside noise. |
+| `jumps`, `moved_m` | **9 to 10 and 543 m in every run of both sides** - unchanged, so nothing arrived late under the player |
+
+### Tunables moved
+
+None. `chunk_upload_budget_ms` stays at 8.
+
+---
+
 ## Questions taken alone
 
 Plan § 5 item 9: where this file does not answer, the conservative reading -
@@ -252,7 +346,29 @@ down. In stage order.
    the bench IS Stage 0's code. Restored with `git checkout --`, the two new
    files and their `.uid` sidecars deleted, `--import` re-run, and
    `git status --porcelain` empty before the next base sprint.
-8. **`up_flora_us` includes one `BodyField.column_landed` call.** On the flora
+8. **Stage 1's rung cannot be judged on the bench, and the plan says every rung
+   must be.** Plan § 3: "a rung that does not move `col_median_us` and
+   `col_max_us` on the bench is not worth a sprint." The bench installs one
+   column at a time with an unbounded budget - that is what makes it a
+   per-column instrument - so it has no budget line for a chunk atom to stop
+   at, and it reported 217 us both ways. Taken as: the rule is about rungs that
+   make the ARRIVAL cheaper, and Stage 1 makes it *interruptible* instead. The
+   sprint judged it, and the bench line is in the table saying it saw nothing.
+9. **Stage 2's collision budget is DOUBLED during the initial load**, exactly as
+   `chunk_upload_budget_ms` is, and the plan does not say either way. Taken as
+   the doubling: the load is not a frame anybody is looking at, the ground wait
+   is at the end of it, and a 2 ms slice per frame against 850 ms of shape work
+   would have stretched the spawn into Q11's 10% fence for nothing.
+10. **A column parked before its shape was installed derives the shape from its
+   own mesh when it comes back.** Plan 2.1 says "a parked column drops its
+   queue entries; `_restore_column` re-queues", and re-queueing needs the faces,
+   which were dropped with the entry. Keeping them instead would leave a debt
+   nothing pays for a column that is never restored. Taken as: drop the faces on
+   park, and on restore call `apply_collision()` with none - the same
+   `create_trimesh_shape()` the edit path has always used, on the same mesh the
+   faces were derived from, so the triangles are the same triangles. It takes
+   walking away from a column inside the frame or two its shape was queued for.
+11. **`up_flora_us` includes one `BodyField.column_landed` call.** On the flora
    CACHE-HIT path only, where the bodies are handed over inside the block that
    acquires the node. Left as it is rather than pausing the timer around it: it
    is a branch a sprint into new terrain almost never takes, and the six

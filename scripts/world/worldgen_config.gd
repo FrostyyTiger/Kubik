@@ -1499,6 +1499,25 @@ const FOG_START_RATIO := 0.4
 ## in it.
 @export var chunk_upload_budget_ms := 8.0
 
+## IS THE ATOM OF THE CHUNK PUMP A CHUNK, OR A WHOLE COLUMN? Upload v1
+## Stage 1, grill Q3.
+##
+## 1 (the default since Stage 1) is a chunk: `_collect_chunks` checks
+## `chunk_upload_budget_ms` between CHUNKS, so a column's seven chunks may land
+## across several frames and a frame with a tenth of a millisecond left cannot
+## start a whole column. 0 is what the pump did before: the budget is checked
+## between COLUMNS and whatever a column costs is paid in full once it is
+## started - which upload v1 Stage 0 measured as a single slice of 3.2 to
+## 12.9 ms on a frame whose budget is 8.
+##
+## Nothing above the pump changes either way: `is_chunk_collidable` and
+## `collision_applied` already carry per-chunk truth, and the column's landing
+## signals still fire on its last chunk.
+##
+## LOCAL and unhashed: it changes WHEN a chunk reaches the screen, never what
+## is in it.
+@export var upload_atom_chunk := 1
+
 ## Real seconds per in-game day.
 ## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
 ##
@@ -1824,6 +1843,13 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# DISTANCE V5 STAGE 1. LOCAL and unhashed for the same reason far_cpp is:
 	# it changes when a mesh reaches the screen and never what is in it.
 	"far_upload_budget_ms", "chunk_upload_budget_ms",
+	# UPLOAD V1. LOCAL and unhashed, every one: each changes WHEN a chunk, a
+	# shape, a plant or a body reaches the screen and never what is in it.
+	# LOCAL_PROPERTIES and not PROPERTIES, and they have to be on THIS list or
+	# `World.setup()`'s clone drops them and the F4 panel's value never reaches
+	# the world - the failure this file warns about twice and that has happened
+	# twice.
+	"upload_atom_chunk",
 	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
 	"far_tree_step_m",
 	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.

@@ -1283,33 +1283,72 @@ func _collect_finished(started: int, budget: float = float(BUILD_BUDGET_MS)) -> 
 	_collect_flora(started, budget)
 
 
+## THE ATOM OF THE PUMP IS A CHUNK, upload v1 Stage 1 (grill Q3).
+##
+## It was a COLUMN: the budget was checked between columns and a whole column -
+## up to seven chunks - was installed inside it, so a frame that had 0.1 ms of
+## its eight milliseconds left could still start a column and pay all of it.
+## `up_col_max_ms` measured that overshoot at 3.2 to 12.9 ms in Stage 0.
+##
+## Now the budget is a line the pump stops AT at chunk granularity. A column
+## whose remaining chunks did not fit STAYS IN `_in_flight` with a cursor and
+## the next frame resumes it - which is why the cursor lives on the in-flight
+## entry and not on the job: `_in_flight` is already the answer to "is this
+## column pending", and every caller that asks (`is_chunk_pending`,
+## `_free_distant_chunks`'s "never free a chunk a worker is still reading",
+## `refresh_region`'s third place a column can be, `is_idle`) wants a
+## half-installed column to answer exactly as an unfinished one does.
+##
+## `_column_landed`, `_frontier_advanced`, `_loaded_columns` and `_columns_built`
+## fire when the LAST chunk of the column is in, so the frontier and the far
+## field see a column when the column is actually there. For a column that fits
+## in one frame - which is nearly all of them - that is the same frame as before.
+##
+## `upload_atom_chunk` 0 restores the column atom for the A/B.
 func _collect_chunks(started: int, budget: float) -> void:
+	var atom_chunk := true
+	if config != null:
+		atom_chunk = config.upload_atom_chunk != 0
 	var done: Array[Vector2i] = []
 	for col in _in_flight:
 		if Time.get_ticks_msec() - started >= budget:
 			break
 		var entry: Dictionary = _in_flight[col]
+		if entry.has("cys"):
+			# ALREADY JOINED AND PART-INSTALLED. Asking the pool about a task
+			# that has been waited on is not a question it can answer twice.
+			# `_in_flight` keeps insertion order, so a resumed column is at the
+			# front of this walk and finishes before a new one is started.
+			done.append(col)
+			continue
 		if not WorkerThreadPool.is_task_completed(entry["task"]):
 			continue
 		# Required even for a task already reported complete - it is what
 		# releases the pool's own bookkeeping for it.
 		WorkerThreadPool.wait_for_task_completion(entry["task"])
+		# The install order, fixed once. `job.built` is not walked directly
+		# because the cursor has to index something stable across frames.
+		entry["cys"] = (entry["job"] as ColumnJob).built.keys()
+		entry["next"] = 0
 		done.append(col)
 
 	for col in done:
-		var job: ColumnJob = _in_flight[col]["job"]
-		_gen_ms += job.gen_usec + job.tree_usec
-		# THE WORKER'S MESH AND MARSHAL, beside the generation - mesher v1's
-		# merge request, and the load line prints them from here.
-		_worker_mesh_ms += job.mesh_usec
-		_worker_border_ms += job.border_usec
-		_in_flight.erase(col)
-		_loaded_columns[col] = true
-		_column_landed(col)
-		_frontier_advanced = true
+		var in_flight: Dictionary = _in_flight[col]
+		var job: ColumnJob = in_flight["job"]
+		if not in_flight.has("counted"):
+			in_flight["counted"] = true
+			_gen_ms += job.gen_usec + job.tree_usec
+			# THE WORKER'S MESH AND MARSHAL, beside the generation - mesher v1's
+			# merge request, and the load line prints them from here.
+			_worker_mesh_ms += job.mesh_usec
+			_worker_border_ms += job.border_usec
+		var cys: Array = in_flight["cys"]
+		var next: int = in_flight["next"]
 
 		var t_upload := Time.get_ticks_usec()
-		for cy in job.built:
+		while next < cys.size():
+			var cy = cys[next]
+			next += 1
 			var entry: Dictionary = job.built[cy]
 			var chunk: Chunk = entry["chunk"]
 			var chunk_pos := chunk.chunk_pos
@@ -1364,9 +1403,32 @@ func _collect_chunks(started: int, budget: float) -> void:
 				node.apply_collision(entry["faces"])
 				up_shape_us += Time.get_ticks_usec() - t_mid
 			_built += 1
+
+			# THE LINE THE PUMP STOPS AT. Checked AFTER the chunk and not
+			# before it, for `far_upload.gd`'s rule 1 reason: a chunk is the
+			# atom, so the honest thing is to spend it and then stop. Checking
+			# first would let a frame with 0.1 ms left start one anyway, which
+			# is the same overrun with a less obvious cause.
+			if atom_chunk and Time.get_ticks_msec() - started >= budget:
+				break
+
+		in_flight["next"] = next
 		var col_us := Time.get_ticks_usec() - t_upload
 		_mesh_ms += col_us
+		# THE WORST SLICE, not the worst column, once the atom is a chunk -
+		# which is the point: this is the largest single thing one frame was
+		# made to pay for, and it is the number the hitch gate is about.
 		up_col_max_us = maxi(up_col_max_us, col_us)
+
+		if next < cys.size():
+			# The budget is gone and this column is half in. It stays in
+			# `_in_flight` with its cursor and nothing else is started.
+			break
+
+		_in_flight.erase(col)
+		_loaded_columns[col] = true
+		_column_landed(col)
+		_frontier_advanced = true
 		_columns_built += 1
 
 
@@ -1469,6 +1531,12 @@ func _face_neighbour_chunks(chunk_pos: Vector3i) -> Dictionary:
 ## the kind of bug that shows up once a month and never reproduces.
 func _drain_jobs() -> void:
 	for chunk_pos in _in_flight:
+		# NOT A SECOND WAIT. A column part-installed by the chunk-atom pump
+		# (Stage 1) was joined the frame its task finished; `cys` on the entry
+		# is the record of that, and waiting again on a task the pool has
+		# already released is not a question it can answer.
+		if _in_flight[chunk_pos].has("cys"):
+			continue
 		WorkerThreadPool.wait_for_task_completion(_in_flight[chunk_pos]["task"])
 	_in_flight.clear()
 	for col in _flora_in_flight:
