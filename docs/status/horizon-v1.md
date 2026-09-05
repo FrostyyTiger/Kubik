@@ -1630,6 +1630,32 @@ Recorded as a question rather than chased.
 
 ---
 
+## Stage 8 - docs
+
+**Green.**
+
+`README.md` § Running it gains the sprint probe with its whole summary line,
+`--tp` and `--fog off`, the view presets as the draw distance, the horizon
+self-test, and the parse gate that actually works. § 5 "Chunks and the
+two-scale world" gains the tile store, the ring ladder and the floating origin
+in three paragraphs, and loses its "until horizon v1 lands" parenthetical.
+
+`worldgen_config.gd` loses three comments that described a world with an edge:
+"beyond fog_end nothing is visible", the preset table's reasoning about seeing
+"the whole region", and the view-distance note's cost line, which now carries
+the measured number.
+
+The silences go to nine and the merge requests to three. `STATUS.md`,
+`TODO.md` and `CLAUDE.md` are not this lane's; the requests for them are in
+"For Marcel".
+
+**Checks**: `SELFTEST: all passed`, `SELFTEST-HORIZON: all passed` (ten tests),
+`CHARACTER SELFTEST: 36 tests, all passed`, canonical line unchanged -
+heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config
+`1d7c18c7`.
+
+---
+
 ## Stage 7 - the sprint line
 
 **The median gate is met. The hitch gate is not.**
@@ -1751,6 +1777,38 @@ push is rejected. Never force-push, never rewrite history, never merge a red or
 wrapped-early stage. `main` carries `feat/mesher-v1` (merged `2b93471`) and the
 docs commits to `c1bd01d`, so the merge brings the chunk mesher in and the
 GDExtension is rebuilt before the gates re-run.
+
+---
+
+## Every tunable this lane moved
+
+One table, because the per-stage sections have them scattered and the morning
+message asks for the list.
+
+| knob | was | now | why, and where the number came from |
+| --- | --- | --- | --- |
+| `VIEW_PRESETS` fog_end, Low | 400 m | **8,000 m** | Stage 3, grill Q21: the preset IS the reach |
+| ...Medium | 500 m | **16,000 m** | " |
+| ...High | 3,200 m | **32,000 m** | " |
+| ...Ultra | 3,200 m | **32,000 m** | the north star's 32 km (D84) |
+| `VIEW_PRESETS` far_tree, Ultra | 1,000 m | **800 m** | Q21; the other three presets are unchanged |
+| camera far plane | 4,000 m | **40,000 m** | derived from fog_end, printed at load |
+| `far_ring_div` | 4.0 | **2.0** | Stage 3, measured: at 32 km the divisor decides 1.78 M vertices against 6.51 M, and the budget is 2.0 M. **It costs 22 blocks off a summit at 600 m** - see "For Marcel" 8 |
+| day `fog_density` | 0.00018 | **0.00003** | Stage 5: the exponential term keeps the aerial tint, the ramp carries the distance |
+| evening `fog_density` | 0.00027 | **0.00003** | " |
+| `far_ramp` per keyframe | - | **1 day and evening, 0 dusk, night, eerie** | Stage 5, new |
+| `chunk_upload_budget_ms` | a constant, 8 | **a knob, 8.0** | Stage 7's shrink list asks for it by name; the value did not move because every smaller value measured worse |
+
+**Added and left at their plan values**: `far_reach_m` (32,000, kept equal to
+`fog_end_m`), `far_origin_rebase_m` (2,048), `fly_speed_mps` (18),
+`far_forest_blend` (0.7), `far_supersample` (2, and Stage 3 and Stage 4 both
+measured 4 and rejected it), `far_ring_recenter_frac` (0.25, and Stage 7
+measured 0.5 and rejected it), `far_tile_apron` (1).
+
+**Left the F4 panel, read by nothing**: `far_vote`, `far_zone_cell_m`,
+`far_zone_cell_ratio` - the four mechanisms Stage 4's material pyramid
+replaced. Their values are untouched in the config so a saved file does not
+lose fields on load.
 
 ---
 
