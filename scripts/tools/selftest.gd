@@ -2095,6 +2095,22 @@ func _test_far_parity():
 ## is exactly zero. Indices are integers and are compared for equality, which
 ## is a stronger statement than any tolerance: a mesh with the same vertices in
 ## a different order is a different mesh.
+## THE ONE TOLERANCE THE FAR PARITY GATES HAVE, and why it is not zero.
+## Marcel, 2026-09-05. On ganymede (gcc, x86-64) and on CI every far gate
+## below is exact to the bit. On Marcel's Mac (clang, arm64) the same
+## expressions round their last bit differently from the GDScript leg: the
+## pyramid functions by 2.8e-14 blocks over ten thousand samples, and the far
+## colour by 6e-8 on about 740 of 89,000 quads. Neither is visible - a colour
+## channel step is 1/255, four thousand times the colour figure - and neither
+## is a difference in an EXPRESSION, which is what these gates exist to catch;
+## a wrong branch or a wrong clamp shows up at 1e-3 or worse. So: positions,
+## normals and indices stay exact everywhere, a height or a slope is allowed
+## 1e-9, and a colour channel 1e-6. The max diff is still printed on every
+## run, so a number that creeps is seen long before it matters.
+const PARITY_HEIGHT_TOL := 1e-9
+const PARITY_COLOUR_TOL := 1e-6
+
+
 func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
 		with_colors: bool) -> Dictionary:
 	var a: Array = job.arrays
@@ -2143,7 +2159,7 @@ func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
 			dc = maxf(dc, maxf(absf(p.r - q.r),
 				maxf(absf(p.g - q.g), maxf(absf(p.b - q.b), absf(p.a - q.a)))))
 
-	var ok := dv == 0.0 and dn == 0.0 and bad_i == 0 and dc == 0.0
+	var ok := dv == 0.0 and dn == 0.0 and bad_i == 0 and dc <= PARITY_COLOUR_TOL
 	var text := "max diff pos %.9f normal %.9f colour %s, %d indices differ" % [
 		dv, dn, ("%.9f" % dc) if with_colors else "-", bad_i]
 	return {"ok": ok, "text": text}
@@ -2152,10 +2168,11 @@ func _far_parity_diff(job: FarFieldJob, mesher: FarMesher,
 ## THE PYRAMID CROSSES, EXPRESSION BY EXPRESSION. Distance v4 Stage 2.
 ##
 ## Ten thousand random (x, z, level) triples through five functions, C++ against
-## GDScript, and the gate is EXACT - not "close", not a tolerance. Both sides
-## compute in doubles off the same float32 arrays, and on one machine's libm the
-## same expression rounds the same way, so a difference here is a difference in
-## the expression and nothing else.
+## GDScript. Both sides compute in doubles off the same float32 arrays, and on
+## one machine's libm the same expression rounds the same way, so a difference
+## here is a difference in the expression and nothing else - exact to zero on
+## gcc and CI. Clang on arm64 rounds the last bit its own way (2.8e-14), which
+## is what `PARITY_HEIGHT_TOL` is for; the number is printed either way.
 ##
 ## THE SAMPLES DELIBERATELY GO OUTSIDE THE WORLD. Both implementations clamp,
 ## and a clamp is exactly the kind of edge a transcription gets subtly wrong -
@@ -2218,8 +2235,10 @@ func _test_far_pyramid_parity():
 
 	for key in worst:
 		if worst[key] != 0.0:
-			print("  %s differs: max %.17f over %d samples" % [key, worst[key], n])
-			bad += 1
+			print("  %s differs: max %.17f over %d samples%s" % [key, worst[key], n,
+				"" if worst[key] <= PARITY_HEIGHT_TOL else "  FAILED"])
+			if worst[key] > PARITY_HEIGHT_TOL:
+				bad += 1
 	print("far pyramid parity: %d samples x 5 functions, max diff %.17f" % [
 		n, maxf(maxf(worst["height"], worst["filtered"]),
 			maxf(worst["max"], maxf(worst["peak"], worst["slope"])))])
@@ -2732,7 +2751,10 @@ func _slice_quad_equal(va: PackedVector3Array, na: PackedVector3Array,
 			return false
 		if na[r * 4 + k] != n[q * 4 + k]:
 			return false
-		if ca[r * 4 + k] != c[q * 4 + k]:
+		var p := ca[r * 4 + k]
+		var s := c[q * 4 + k]
+		if absf(p.r - s.r) > PARITY_COLOUR_TOL or absf(p.g - s.g) > PARITY_COLOUR_TOL \
+				or absf(p.b - s.b) > PARITY_COLOUR_TOL or absf(p.a - s.a) > PARITY_COLOUR_TOL:
 			return false
 	return true
 
