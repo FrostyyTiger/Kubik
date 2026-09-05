@@ -221,10 +221,20 @@ func _compose_readout() -> String:
 		lines.append("config    %s" % config.hash_key())
 
 	if player != null:
-		var p := player.global_position
+		# WORLD METRES, horizon v1 Stage 6. `global_position` is render space
+		# and at 30 km the two differ by 30 km; a readout that showed the
+		# render value would be a readout of the floating origin rather than of
+		# where the player is. The offset is printed beside it so the two are
+		# never a mystery.
+		var p: Vector3 = player.world_position()
 		var bs: float = config.block_size if config != null else 1.0
 		var alt_blocks := p.y / bs
 		lines.append("pos       %.1f %.1f %.1f m" % [p.x, p.y, p.z])
+		var off := World.origin_m
+		if off != Vector3.ZERO:
+			lines.append("origin    %+.0f %+.0f m (%d, %d tiles)" % [
+				off.x, off.z, int(off.x / World.ORIGIN_TILE_M),
+				int(off.z / World.ORIGIN_TILE_M)])
 		lines.append("altitude  %.0f blk / %.1f m" % [alt_blocks, p.y])
 		lines.append("zone      %s" % _zone_name(alt_blocks))
 

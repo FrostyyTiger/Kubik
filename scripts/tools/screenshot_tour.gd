@@ -52,6 +52,9 @@ const EYE_HEIGHT := 26.0
 ## Frames to let the world settle after moving before taking the picture.
 ## Chunk streaming is budgeted per frame, so arriving somewhere and
 ## photographing it immediately gets you a picture of empty sky.
+## How long a `twice` shot stands still between its two frames.
+const STILL_GAP_MS := 1000
+
 const SETTLE_FRAMES := 8
 const MAX_WAIT_FRAMES := 5400
 
@@ -191,10 +194,11 @@ func _flythrough(shots: Array) -> void:
 	dir = dir.normalized() if dir.length() > 0.001 else Vector3.FORWARD
 	for f in n:
 		eye += dir * FLY_STEP_M
-		_player.global_position = eye
+		var off := _world.origin_offset_m()
+		_player.global_position = eye - off
 		_world.set_center_from_position(eye)
-		_camera.global_position = eye
-		_camera.look_at(look + dir * float(f) * FLY_STEP_M, Vector3.UP)
+		_camera.global_position = eye - off
+		_camera.look_at(look + dir * float(f) * FLY_STEP_M - off, Vector3.UP)
 		# NO SETTLE. One frame, then the shutter - which is the whole point.
 		await RenderingServer.frame_post_draw
 		var image := get_viewport().get_texture().get_image()
@@ -490,6 +494,10 @@ func _choose_vantages() -> Array:
 		# of anything so that a later relief change moves the ground under it
 		# and not the shot.
 		"eye_lift": 250.0,
+		# AND SHOT TWICE, a second apart - horizon v1 Stage 6's stability gate.
+		# This is the vantage furthest from the origin the tour has, so it is
+		# the one where a float32 would shimmer.
+		"twice": true,
 		"distance": 0.0, "height": 0.0,
 	})
 	# THE SPRINT LINE'S MIDPOINT, looking along it. The frame gate is measured
@@ -1217,7 +1225,13 @@ func _capture(index: int, shot: Dictionary) -> void:
 			target.y = eye.y
 
 	# Voxels exist near the PLAYER, so the player is what has to move.
-	_player.global_position = eye
+	#
+	# EVERY VANTAGE IN THIS FILE IS A WORLD POSITION - horizon v1 Stage 6 - and
+	# the scene tree is render space. `set_center_from_position` takes world;
+	# the two nodes take render. The settle frames below are also where the
+	# floating origin rebases, so the offset is re-read AFTER them and not
+	# before: a shot at 20 km moves the whole world once and then stands still.
+	_player.global_position = eye - _world.origin_offset_m()
 	_world.set_center_from_position(eye)
 
 	print("[Tour] %s - %s" % [shot["name"], shot["note"]])
@@ -1225,8 +1239,8 @@ func _capture(index: int, shot: Dictionary) -> void:
 	for i in SETTLE_FRAMES:
 		await get_tree().process_frame
 
-	_camera.global_position = eye
-	_camera.look_at(target, Vector3.UP)
+	_camera.global_position = eye - _world.origin_offset_m()
+	_camera.look_at(target - _world.origin_offset_m(), Vector3.UP)
 
 	# A SHOT MAY OWN ITS OWN HOUR. 11-forest-dusk is shot 7 again at 0.85, and
 	# the whole point of it is the light - so the tour's frozen time is moved
@@ -1266,6 +1280,40 @@ func _capture(index: int, shot: Dictionary) -> void:
 	var err := image.save_png(path)
 	if err != OK:
 		push_warning("[Tour] could not write %s: %s" % [path, error_string(err)])
+
+	# AND AGAIN A SECOND LATER, for a shot that asks - horizon v1 Stage 6.
+	#
+	# THE QUESTION IS TEMPORAL AND ONLY THIS CAN ASK IT. Two tour RUNS of the
+	# same vantage differ by the chunk queue's state and the far mesh's build
+	# order; two frames of the SAME run, a second apart, with nothing moving,
+	# differ by exactly what the world is doing on its own. That is the
+	# floating origin's gate: at thirty kilometres a stationary frame has to
+	# BE stationary, and a float32 that has run out of mantissa shows up here
+	# as a shimmer and nowhere else.
+	if shot.get("twice", false):
+		var until := Time.get_ticks_msec() + STILL_GAP_MS
+		while Time.get_ticks_msec() < until:
+			await get_tree().process_frame
+		await RenderingServer.frame_post_draw
+		var again := get_viewport().get_texture().get_image()
+		var path_b := "%s/%s-again.png" % [_out_dir, shot["name"]]
+		if again.save_png(path_b) != OK:
+			push_warning("[Tour] could not write %s" % path_b)
+		var moved := 0
+		var worst := 0
+		for y in image.get_height():
+			for x in image.get_width():
+				var a := image.get_pixel(x, y)
+				var b := again.get_pixel(x, y)
+				var d := int(round(maxf(maxf(absf(a.r - b.r), absf(a.g - b.g)),
+					absf(a.b - b.b)) * 255.0))
+				if d > 0:
+					moved += 1
+					worst = maxi(worst, d)
+		var total := image.get_width() * image.get_height()
+		print("[Tour]      %s STILL: %d of %d pixels moved (%.3f%%), worst %d/255, over %d ms" % [
+			shot["name"], moved, total, 100.0 * float(moved) / float(total),
+			worst, STILL_GAP_MS])
 	else:
 		print("[Tour]   -> %s (%dx%d)" % [path, image.get_width(), image.get_height()])
 	var cost := await _measure_frame_ms()

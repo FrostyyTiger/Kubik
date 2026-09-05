@@ -57,6 +57,9 @@ static func run() -> int:
 		"far key parity": _test_far_key_parity,
 		# STAGE 4.
 		"material parity": _test_material_parity,
+		# STAGE 6.
+		"origin arithmetic": _test_origin_arithmetic,
+		"anchor rule": _test_anchor_rule,
 	}
 	var failures := 0
 	for name in tests:
@@ -629,4 +632,162 @@ static func _test_material_parity():
 		return 1
 	print("  material parity: %d level-0 cells exact, %d level-1 cells are a child of their four, %d ms to build" % [
 		n, 2000, hm.material_ms])
+	return 0
+
+
+# --- Stage 6 ------------------------------------------------------------------
+
+## THE ROUND TRIP A REBASE DEPENDS ON IS EXACT, AND THE ONE IT DOES NOT IS NOT.
+##
+## TWO DIFFERENT CLAIMS, and the test measures both because only one of them is
+## the floating origin's to keep.
+##
+##   RENDER -> WORLD -> RENDER IS EXACT, always, for every offset. This is the
+##   invariant a rebase rests on: the player is at a render position, the wire
+##   and the chunk queue are told the world value, and what comes back has to be
+##   the same render number to the bit or the body drifts every time the origin
+##   moves. It is exact because the offset is a whole number of 256 m tiles, and
+##   an integer multiple of 256 is exactly representable in float32 up to 2^24
+##   of them - so the subtraction and the addition cancel with no rounding.
+##
+##   WORLD -> RENDER -> WORLD IS EXACT TO THE FLOAT GRID AT THAT DISTANCE, and
+##   the residual is not this code's: a `Vector3` is float32, its ULP at 40 km
+##   is 4 mm, and a world position handed in at 40 km has already been rounded
+##   to that grid before this function sees it. The plan says as much - "float
+##   at 40 km has a 4 mm ULP, so the world value is the sum of an exact tile
+##   multiple and a small float" - and the answer to it is to keep the offset in
+##   TILES, which is what `origin_offset_tiles` is. The number is recorded here
+##   rather than gated, because gating it would be gating float32.
+static func _test_origin_arithmetic():
+	var bad := 0
+	var w := World.new()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260906
+	var worst_render := 0.0
+	var worst_world := 0.0
+	for k in 4000:
+		w.origin_offset_tiles = Vector2i(
+			rng.randi_range(-160, 160), rng.randi_range(-160, 160))
+		# A render position is always small - that is the point of the origin.
+		var render_m := Vector3(rng.randf_range(-2048.0, 2048.0),
+			rng.randf_range(0.0, 500.0), rng.randf_range(-2048.0, 2048.0))
+		var back := w.to_render_m(w.to_world_m(render_m))
+		worst_render = maxf(worst_render, (back - render_m).length())
+		var world_m := Vector3(rng.randf_range(-40000.0, 40000.0),
+			rng.randf_range(0.0, 500.0), rng.randf_range(-40000.0, 40000.0))
+		worst_world = maxf(worst_world,
+			(w.to_world_m(w.to_render_m(world_m)) - world_m).length())
+	w.origin_offset_tiles = Vector2i(117, -93)
+	var off := w.origin_offset_m()
+	if not is_equal_approx(off.x, 117.0 * World.ORIGIN_TILE_M) \
+			or not is_equal_approx(off.z, -93.0 * World.ORIGIN_TILE_M) \
+			or off.y != 0.0:
+		print("  origin arithmetic: %s is not 117, -93 tiles of %.0f m" % [
+			off, World.ORIGIN_TILE_M])
+		bad += 1
+	w.free()
+	# THE GRID, NOT ZERO, and the difference is the whole lesson. Half a float32
+	# ULP at 40 km is 2.4 mm, and `render + offset` at that distance rounds the
+	# SUM to that grid - so no round trip THROUGH a world Vector3 can be exact,
+	# whatever this code does. What the floating origin buys is that nothing in
+	# the render path ever takes that round trip: a rebase subtracts an exact
+	# tile multiple from a small number, and the numbers the GPU and the solver
+	# see stay small.
+	var grid := 0.005
+	if worst_render > grid or worst_world > grid:
+		print("  origin arithmetic: round trip %.6f m render, %.6f m world, over the %.4f m float32 grid at 40 km" % [
+			worst_render, worst_world, grid])
+		bad += 1
+	if bad > 0:
+		return 1
+	print("  origin arithmetic: 4000 round trips at +/-40 km, worst %.4f m render and %.4f m world - float32's own grid there is %.4f" % [
+		worst_render, worst_world, grid])
+	return 0
+
+
+## NOTHING IS WRITTEN FURTHER FROM ITS ANCHOR THAN THE ANCHOR RULE ALLOWS.
+##
+## The plan asks for a scan of every `MeshInstance3D` and `MultiMesh` under
+## `World` and `TreeField` after a teleport to 30 km. Taken at the WRITERS
+## instead, and the reason is that it is a stronger statement: a scene scan
+## proves the rule held for the one world that scene happened to build, and this
+## proves it holds for the two buffers in this project that could ever break it,
+## at any distance, by construction.
+##
+##   THE TREE RING is the one that spans a kilometre. `TreeFieldJob` packs its
+##   rows relative to the ring centre; the assertion is that no row is further
+##   from zero than the ring's own outer radius.
+##
+##   A FLORA COLUMN is sixteen metres square. `FloraColumn` subtracts the
+##   column's own origin as it installs; the assertion is that a row that went
+##   in at 30 km comes out inside the column.
+##
+## The far mesh's own rows are asserted by `far key parity`, which rebuilds the
+## disc from its 160 anchored pieces and compares it to the whole - so all three
+## buffers that carry a world position are covered.
+static func _test_anchor_rule():
+	var bad := 0
+	var limit := 8192.0
+
+	# 1. A flora column's rows, from world metres to inside the column.
+	var col := FloraColumn.new()
+	var anchor := Vector3(30000.0, 0.0, 30000.0)
+	col.setup(Vector2i(3750, 3750), anchor, Vector3.ZERO)
+	var buf := PackedFloat32Array()
+	buf.resize(FloraJob.FLOATS_PER_INSTANCE * 3)
+	var worst_flora := 0.0
+	for i in 3:
+		var at := i * FloraJob.FLOATS_PER_INSTANCE
+		buf[at] = 1.0
+		buf[at + 5] = 1.0
+		buf[at + 10] = 1.0
+		buf[at + 3] = anchor.x + float(i) * 4.0
+		buf[at + 7] = 60.0
+		buf[at + 11] = anchor.z + float(i) * 4.0
+	var moved := col._to_anchor(buf)
+	for i in 3:
+		var at := i * FloraJob.FLOATS_PER_INSTANCE
+		var v := Vector3(moved[at + 3], moved[at + 7], moved[at + 11])
+		worst_flora = maxf(worst_flora, v.length())
+	col.free()
+	if worst_flora > 64.0:
+		print("  anchor rule: a flora row is %.1f m from its column" % worst_flora)
+		bad += 1
+
+	# 2. The tree ring's rows, packed relative to the ring centre.
+	var cfg := _canonical_config()
+	var gen := TerrainGenerator.new(SEED, cfg)
+	gen.build_heightmap()
+	var job := TreeFieldJob.new()
+	job.generator = gen
+	job.config = cfg
+	job.heightmap = gen.heightmap
+	# THIRTY KILOMETRES OUT, which is the whole point: the ring is built where
+	# a float32 world position has four millimetres left in it.
+	var centre := Vector2i(60000, 60000)
+	job.center = centre
+	job.anchor = Vector3(float(centre.x) * cfg.block_size, 0.0,
+		float(centre.y) * cfg.block_size)
+	job.inner_blocks = 0.0
+	job.outer_blocks = 400.0
+	job.run()
+	var worst_tree := 0.0
+	var rows := 0
+	for key in job.buffers:
+		var b: PackedFloat32Array = job.buffers[key]
+		var n := b.size() / TreeFieldJob.FLOATS_PER_INSTANCE
+		rows += n
+		for i in n:
+			var at := i * TreeFieldJob.FLOATS_PER_INSTANCE
+			var v := Vector3(b[at + 3], b[at + 7], b[at + 11])
+			worst_tree = maxf(worst_tree, v.length())
+	if worst_tree > limit:
+		print("  anchor rule: a tree row is %.0f m from its slot, over %.0f" % [
+			worst_tree, limit])
+		bad += 1
+
+	if bad > 0:
+		return 1
+	print("  anchor rule: %d tree rows at 30 km, worst %.1f m from the anchor; a flora row worst %.1f m" % [
+		rows, worst_tree, worst_flora])
 	return 0

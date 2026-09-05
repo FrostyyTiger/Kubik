@@ -128,6 +128,26 @@ var _config: WorldgenConfig = null
 ## seven variants at three rungs is up to twenty-one slots and one draw call
 ## each. See the note on TreeFieldJob.buffers.
 var _slots := {}
+
+## The world's origin offset as this node last saw it - horizon v1 Stage 6.
+var _origin_m := Vector3.ZERO
+
+
+## Every slot moved by -delta, and the offset remembered. Called by `Game` on a
+## rebase, with the same delta every other anchor in the world just took.
+func shift_anchors(delta: Vector3) -> void:
+	_origin_m += delta
+	for key in _slots:
+		var slot: Node3D = _slots[key]
+		if is_instance_valid(slot):
+			slot.position -= delta
+	# AND THE TRUNK COLLIDERS, which are shapes on one static body rather than
+	# nodes with anchors. A few hundred of them, and they are what the player
+	# walks into: leaving them a rebase behind would put an invisible trunk two
+	# kilometres from its tree until the next ring rebuild.
+	for cs in _shapes:
+		if is_instance_valid(cs):
+			cs.position -= delta
 var _trunks: StaticBody3D = null
 var _shapes: Array = []
 var _collider_count := 0
@@ -206,6 +226,12 @@ func _start_if_idle() -> void:
 	_has_pending = false
 	var job := TreeFieldJob.new()
 	job.center = _pending
+	# THE RING'S CENTRE IS THE SLOT'S ANCHOR, horizon v1 Stage 6. Every row the
+	# job packs is relative to it, and the slot node carries it - so the ring's
+	# rows are at most its own radius from their node at any distance from the
+	# origin. See TreeFieldJob.anchor.
+	job.anchor = Vector3(float(_pending.x) * _config.block_size, 0.0,
+		float(_pending.y) * _config.block_size)
 	job.generator = _generator
 	job.config = _config
 	# The heightmap the far mesh draws from, for the colour convergence in
@@ -330,6 +356,8 @@ func _apply_species(job: TreeFieldJob, key: String) -> void:
 	slot.multimesh.mesh = mesh
 	slot.multimesh.instance_count = n
 	slot.multimesh.buffer = buf
+	# THE SLOT SITS AT THE JOB'S ANCHOR, in render space.
+	slot.position = job.anchor - _origin_m
 	slot.visible = true
 	# Triangles the field actually draws, off the INDEX array - a library mesh
 	# is indexed and `surface_get_array_len` would give its vertex count, which
@@ -379,7 +407,10 @@ func _apply_colliders(job: TreeFieldJob) -> void:
 		var cyl: CylinderShape3D = cs.shape
 		cyl.radius = float(row[1])
 		cyl.height = float(row[2])
-		cs.position = row[0]
+		# The collider rows are world metres like the instance rows were; the
+		# shapes hang off THIS node, which is at the render origin, so the
+		# offset comes off here. Horizon v1 Stage 6.
+		cs.position = (row[0] as Vector3) - _origin_m
 		cs.disabled = false
 	_collider_count = want
 

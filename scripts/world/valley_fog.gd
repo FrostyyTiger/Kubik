@@ -150,7 +150,12 @@ func place(floor_m: float, at: Vector3, density_scale: float, albedo: Color,
 	for i in _bands.size():
 		var v := _bands[i]
 		# Each band sits on top of the one below it, centred on its own half.
-		v.global_position = Vector3(at.x, base + BAND_HEIGHT_M * (float(i) + 0.5), at.z)
+		# `at` IS A WORLD POSITION and these volumes are render space -
+		# horizon v1 Stage 6. Placed rather than shifted: the whole stack is
+		# re-placed every frame from the valley floor, so a rebase needs no
+		# special case here, only this one subtraction.
+		v.global_position = Vector3(at.x, base + BAND_HEIGHT_M * (float(i) + 0.5),
+			at.z) - World.origin_m
 		var m := v.material as FogMaterial
 		m.density = BAND_DENSITY[i] * density_scale
 		m.albedo = albedo
@@ -162,7 +167,8 @@ func place(floor_m: float, at: Vector3, density_scale: float, albedo: Color,
 	_lid.visible = eerie
 	if eerie:
 		_lid.global_position = Vector3(
-			at.x, floor_m + EERIE_LID_BASE_M + EERIE_LID_HEIGHT_M * 0.5, at.z)
+			at.x, floor_m + EERIE_LID_BASE_M + EERIE_LID_HEIGHT_M * 0.5,
+			at.z) - World.origin_m
 		var lm := _lid.material as FogMaterial
 		lm.density = EERIE_LID_DENSITY * density_scale
 		lm.albedo = albedo

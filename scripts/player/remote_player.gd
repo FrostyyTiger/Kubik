@@ -73,8 +73,28 @@ func _ready() -> void:
 ## Everything is optional except the position: a host running an older build,
 ## or a row written before that peer announced itself, still has to produce a
 ## character standing in the right place.
+## THE ROW IS WORLD METRES AND THIS NODE IS RENDER SPACE - horizon v1 Stage 6.
+##
+## The wire carries world positions and always has; what changed is that the
+## scene tree no longer agrees with them. The conversion happens once, here,
+## and `world_position()` is how anything that wants the world value asks.
+##
+## `_target_position` stays RENDER, so the glide in `_process` and the rebase
+## that moves every other anchor need no special case: a remote player is a
+## node like a chunk is.
+func world_position() -> Vector3:
+	return position + World.origin_m
+
+
+## The world moved under this capsule. Its glide target is a render position,
+## so it moves with everything else. Horizon v1 Stage 6.
+func rebase(delta: Vector3) -> void:
+	_target_position -= delta
+
+
 func set_target(st: Dictionary) -> void:
-	_target_position = st.get("p", _target_position)
+	if st.has("p"):
+		_target_position = (st["p"] as Vector3) - World.origin_m
 	_target_yaw = st.get("y", _target_yaw)
 	if not _has_target:
 		# First update: snap, do not glide in from the world origin.

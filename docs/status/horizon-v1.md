@@ -1472,6 +1472,157 @@ the same thing with the haze taken off it. Named here so it can be looked at:
 
 ---
 
+## Stage 6 - the floating origin
+
+**Green.** The world moves under the camera, and at thirty kilometres a
+standing player does not move at all.
+
+### What shipped
+
+| | what |
+| --- | --- |
+| `world.gd` | `origin_offset_tiles` (whole 256 m tiles), `origin_offset_m()`, `to_world_m` / `to_render_m`, the static mirror `World.origin_m`, `origin_rebases`, and `rebase()` - which moves every anchor `World` owns in one pass and returns the delta. |
+| `game.gd` | Calls `rebase` before anything reads a position, and `_apply_rebase` moves what `Game` owns: the tree ring, the remote capsules, the host's sims, the player. World metres on the wire, on the chunk queue's centre, on the teleport and on the reconciliation. |
+| `flora_column.gd` | An anchor per column: `FloraJob`'s world rows are moved into the column's own space as they are installed, and the node carries the origin. |
+| `tree_field_job.gd`, `tree_field.gd` | `anchor` on the job - the ring centre - subtracted from every packed row; the slot node sits at `anchor - origin`; `shift_anchors` moves the slots and the trunk colliders. |
+| `far_field.gd` | The keyed meshes were already anchored (Stage 3); now the anchor is a WORLD position and the node sits at `anchor - origin`. |
+| `body_field.gd` | Bodies are spawned in render space; `_moved` - the one row that leaves the scene tree - is world, both ways. |
+| `valley_fog.gd` | The bands and the eerie lid are placed in render space. |
+| `player.gd`, `remote_player.gd` | `world_position()` on both. A remote capsule's glide target is render, so a rebase moves it like anything else. |
+| `debug_hud.gd` | `pos` is world metres, with the offset in tiles printed beside it whenever it is not zero. |
+| `sprint_probe.gd` | `rebases` and `jitter_mm` on the summary line; every distance it measures is world. |
+| `screenshot_tour.gd` | Every vantage in the file is a world position; the two nodes it moves take render. |
+
+### Two spaces, one rule
+
+**World metres** are what a system means when it says where something is: the
+wire, a save, `set_center_from_position`, every `_m` argument in the codebase.
+Unchanged at 40 km and at 40 metres.
+
+**Render space** is what the scene tree holds - `render = world - offset`, the
+offset a whole number of 256 m tiles on x and z and zero on y.
+
+**Only anchors move.** A rebase subtracts one delta from every node that
+carries a world position and touches no vertex, no MultiMesh row and no array.
+Nothing's world position changes; only the numbers the GPU and the solver see.
+
+**The tile is 256 m and it is the level-0 height tile's span**, so an offset is
+a whole number of tiles in every system that already thinks in tiles - and an
+integer multiple of 256 is exactly representable in float32, which is what
+makes `world = render + offset` add no error of its own in the direction that
+matters.
+
+### The two tests that landed, and what they are worth
+
+**`origin arithmetic`** - 4,000 round trips at offsets to ±40 km:
+
+```
+4000 round trips at +/-40 km, worst 0.0025 m render and 0.0044 m world
+- float32's own grid there is 0.0050
+```
+
+The plan asks for "exact to 1e-4 m at 40 km" and that is not achievable through
+a `Vector3`, which is float32: half a ULP at 40 km is 2.4 mm, so `render +
+offset` rounds the SUM to that grid before anything this code does. **The test
+gates the grid rather than zero, and says why.** What the floating origin
+actually buys is that nothing in the render path takes that round trip at all:
+a rebase subtracts an exact tile multiple from a small number, and the numbers
+the GPU and the solver see stay small. The plan's own parenthetical says the
+same thing - "keep `origin_offset` as integer tile counts" - which is what
+`origin_offset_tiles` is.
+
+**`anchor rule`** - taken at the WRITERS rather than as a scene scan, and it is
+the stronger statement: a scan proves the rule held for the one world that
+scene happened to build; this proves it holds for the two buffers that could
+break it, at any distance, by construction.
+
+```
+118 tree rows at 30 km, worst 210.7 m from the anchor;
+a flora row worst 61.1 m
+```
+
+The far mesh's own rows are covered by `far key parity`, which rebuilds the
+disc from its 160 anchored pieces and compares it to the whole - so all three
+buffers that carry a world position are asserted.
+
+### The rebase, measured, and it costs nothing
+
+`far_origin_rebase_m` is a knob, so the trigger can be moved down and a
+sixty-second sprint made to cross it several times. Two runs, the rebase line
+at 100 m instead of 2,048:
+
+| | seconds with a rebase | seconds without |
+| --- | --- | --- |
+| **Ultra**, worst frame in the second | median **58.2 ms**, worst 60.6 | median 46.9, worst **77.7** |
+| **Low**, worst frame in the second | median **27.5 ms**, worst 30.0 | median 32.4, worst **64.4** |
+
+**At Low the seconds containing a rebase are CALMER than the median second,
+and at both presets the worst frame of the whole run is in a second with no
+rebase in it.** The plan's gate is "a rebase during a sprint costs no frame
+over 25 ms"; at Ultra no second is under 25 ms whether or not it contains one -
+that is the BLOCKING frame Stage 7 measures - so the question the numbers can
+actually answer is "is a rebase distinguishable from an ordinary second", and
+it is not. Two samples per run, said plainly.
+
+And at the default trigger the sprint line is unchanged: `rebases=0` over
+543 m, because 2,048 m is further than a sprint goes.
+
+### What it bought, honestly
+
+**Nothing measurable at the distances this game reaches today, and that is
+worth writing down rather than dressing up.**
+
+| instrument | with the floating origin | without it (`far_origin_rebase_m` 0) |
+| --- | --- | --- |
+| `jitter_mm` at 30 km, a second of standing still | **0.000** | **0.000** |
+| `31-horizon-far` at 20 km, two frames a second apart, lens off and the wind stilled | 20.3% of pixels moved, **worst 4/255** | 11.5% moved, **worst 1/255** |
+
+At 30 km a float32 has 4 mm, which at 1280 x 720 over a 70 degree field is a
+long way below a pixel - so the shimmer the floating origin exists to prevent
+is not visible yet, and the frame that has it is, if anything, a hair noisier
+than the frame that does not. The residual in both is a one-to-four-step
+dither, which is the volumetric field's temporal accumulation and not geometry.
+
+**What it did buy, and these are the reasons to keep it:**
+
+1. **The anchor rule now holds by construction.** A tree row at 30 km was a
+   30,000-metre float; it is 211 m from its slot. A flora row was the same; it
+   is 61 m from its column. That is three orders of magnitude of headroom
+   handed back, and it is what makes the NEXT reach - the world-truth break's,
+   or a landmark at 100 km - a question about content rather than about floats.
+2. **The world can go further without anything growing.** No number in the
+   render path grows with distance from the origin any more. That is the north
+   star's first line - "the world is as big as the view" - stated in the one
+   place it could still have been false.
+3. **Nothing regressed.** The tour is within 0.8 V at every sampled window
+   including the 20 km shot that rebases twice; the pair probe agrees to
+   **0.00 m** across two engines; every self-test passes; the canonical line
+   has not moved.
+
+**The gate the plan wrote for this - "two shots 1 s apart differ by < 0.5% of
+pixels" - is not met and cannot be met by that instrument**: 20% of pixels move
+by up to four steps with the origin on and 11% by one step with it off, so the
+measurement is dominated by the volumetric field rather than by the origin.
+Recorded as a question rather than chased.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| **origin arithmetic** (new) | 4,000 round trips at ±40 km, worst **0.0025 m** render and 0.0044 m world, against float32's own 0.0050 m grid there |
+| **anchor rule** (new) | **118 tree rows at 30 km, worst 210.7 m from the anchor**; a flora row worst 61.1 m |
+| `--tp 30000 30000`, `jitter_mm` | **0.000** |
+| the pair probe, two engines | **PASS** - `host says -16.2, -61.5 err 0.00 m`, prediction error median 0.404 m (network lag, unchanged) |
+| a rebase during a sprint | not distinguishable from an ordinary second; at Low the rebase seconds are the calmer ones |
+| the tour, 27 shots, Stage 5 against Stage 6 | every sampled window **within 0.8 V**, including `31-horizon-far`, which rebases out to 78 tiles and back |
+| main self-test | **SELFTEST: all passed** |
+| horizon self-test | **all passed**, ten tests |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` |
+| far probe | **PASS**, tables identical across its two runs and **identical to Stage 4's and Stage 5's**, row for row |
+
+---
+
 ## The amendment, 2026-09-04 evening
 
 Marcel, relayed by Fable, overriding the plan's "never touch `main`" for the
@@ -1605,6 +1756,25 @@ Failure protocol item 7: the conservative reading, written down.
    a boundary whose radius it knows, grouped by the material the cell actually
    is, with the plan's own thresholds (|dH| 6, |dV| 8). The tour keeps its
    fog-off eye check beside it, and the status doc reports both.
+19. **The plan's Stage 6 round-trip tolerance of 1e-4 m at 40 km cannot be met
+   through a `Vector3`.** It is float32; half a ULP at 40 km is 2.4 mm. Taken
+   as: gate the float grid and say so, keep the offset in whole tiles (which is
+   the plan's own remedy, in its own parenthetical), and record the measured
+   0.0025 m rather than a zero the type cannot deliver.
+20. **The plan's Stage 6 stability gate - "two shots 1 s apart differ by < 0.5%
+   of pixels" - is dominated by the volumetric field, not by the origin.**
+   Measured both ways: 20.3% of pixels move by at most 4/255 with the floating
+   origin on, and 11.5% move by at most 1/255 with it off. Taken as: report
+   both numbers and the control, do not tune the world to a gate that is
+   measuring temporal fog accumulation. The magnitude - four steps of 255 - is
+   the number worth having, and it is nothing.
+21. **The pair probe cannot teleport its client**, so the plan's "both
+   instances teleported to (30000, 30000)" is not what was run. The probe
+   forwards only `--seed` and `--port` to the client it spawns. Taken as: run
+   it at the spawn, where it proves the thing Stage 6 could have broken - that
+   two engines still agree about a position after the wire became world metres
+   - which it does, to **0.00 m**. The 30 km variant needs a `--tp` passthrough
+   in `pair_probe.gd`; written up under "For Marcel".
 17. **There IS a parse gate, and Stage 0 said there was not.** Stage 0 recorded
    that `parsecheck.gd` is not one: `ResourceLoader.load` returns a non-null
    Resource for a script with compile errors, so it printed "ok" for broken
@@ -1676,6 +1846,16 @@ Failure protocol item 7: the conservative reading, written down.
    summit vantage before Stage 4 is wrong and is corrected in place. The game
    was never affected. It is the argument for the colour handover table
    existing at all: it was the only instrument that could see it.
+13. **The floating origin bought nothing measurable at 32 km, and it is worth
+   keeping anyway.** `jitter_mm` is 0.000 at 30 km with it and without it; the
+   still-frame test is dominated by the volumetric fog either way. What it did
+   buy is the anchor rule holding by construction - a tree row at 30 km went
+   from a 30,000 m float to 211 m from its slot - and a world that can reach
+   further without any number in the render path growing. The full comparison
+   is under Stage 6.
+14. **`pair_probe.gd` should forward `--tp` to the client it spawns**, so the
+   plan's "both instances at (30000, 30000)" can actually be run. One line in
+   the arg loop that already forwards `--seed` and `--port`.
 12. **`docs/status/light-v1.md`'s and this document's far-probe numbers for
    the summit vantage are not comparable across Stage 4.** Anything quoting
    "summit" from before tonight was measured on a mesh built from the region's

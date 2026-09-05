@@ -144,7 +144,7 @@ func run(world: World, player: Player) -> void:
 	# rather than waited for, or the probe would measure how long a frozen
 	# character takes to cross 4 km.
 	_player.set_physics_process(true)
-	_world.set_center_from_position(_player.global_position)
+	_world.set_center_from_position(_player.world_position())
 	print("[Traverse] corner to corner: %.0f m, walk %.1f m/s, sprint %.1f m/s" % [
 		_start.distance_to(_target), Player.WALK_SPEED,
 		Player.WALK_SPEED * Player.SPRINT_MULTIPLIER])

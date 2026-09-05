@@ -124,6 +124,24 @@ func column_landed(col: Vector2i, bodies: Array) -> void:
 		_spawn(col, id, b["kind"], b["pos"], b["yaw"], b["scale"])
 
 
+## EVERY BODY MOVED BY -DELTA, horizon v1 Stage 6.
+##
+## A body's position is render space like every other node's, and a rebase
+## moves the render origin under it. `_moved` - the one thing about a body that
+## cannot be regenerated - holds WORLD positions and is deliberately not
+## touched: it is what a rejoining client is told, and the wire is world metres.
+##
+## Physics is told rather than asked: a `RigidBody3D` moved by writing
+## `position` keeps its velocity and its sleep state, which is what a rebase
+## must not disturb - the delta is the same for the body and for the ground
+## under it, so nothing has moved as far as the solver is concerned.
+func shift_anchors(delta: Vector3) -> void:
+	for id in _bodies:
+		var node: Node3D = _bodies[id]
+		if is_instance_valid(node):
+			node.position -= delta
+
+
 ## A column left the loaded set. Its bodies go with it.
 ##
 ## FREED, NOT PARKED, unlike a chunk. A chunk is expensive to rebuild - the
@@ -197,7 +215,19 @@ func _remember(id: int, node: Node3D) -> void:
 	var body := node as WorldBody
 	if body == null or not body.moved:
 		return
-	_moved[id] = body.to_row()
+	_moved[id] = _world_row(body)
+
+
+## A body's row in WORLD metres - horizon v1 Stage 6.
+##
+## `to_row()` reports the node's position, which is render space, and `_moved`
+## is the one place a body's position leaves the scene tree: it is sent to
+## clients, read back by `_spawn` when a column returns, and survives a rebase.
+## All three want world.
+func _world_row(body: WorldBody) -> Array:
+	var row: Array = body.to_row()
+	row[0] = (row[0] as Vector3) + World.origin_m
+	return row
 
 
 ## ONE PHYSICS TICK OF PUSHING (world feel v1 Stage 12).
@@ -264,7 +294,7 @@ func host_tick() -> void:
 					"from": FloraPlacement.column_of(id),
 				})
 		_last_move[id] = now
-		_moved[id] = body.to_row()
+		_moved[id] = _world_row(body)
 		var col := _column_of_node(body)
 		if col != _home.get(id, col):
 			rehome.append([id, col])
@@ -409,7 +439,8 @@ func apply_rows(rows: Dictionary) -> void:
 		_moved[id] = row
 		var view: WorldBodyView = _bodies.get(id)
 		if view != null:
-			view.set_target(row[0], row[1])
+			# The wire is world metres and a view is render space.
+			view.set_target((row[0] as Vector3) - World.origin_m, row[1])
 			view.rock_dir = row[2]
 	# A body that has stopped rocking simply stops appearing in the packet, so
 	# anything we are still tilting and did not hear about is finished.

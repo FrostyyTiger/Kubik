@@ -122,6 +122,18 @@ const FAR_PLANE_RATIO := 1.25
 var _pitch := deg_to_rad(-15.0)
 
 
+## WHERE THIS PLAYER IS IN THE WORLD, in metres - horizon v1 Stage 6.
+##
+## `global_position` is RENDER space and has been since the floating origin
+## landed: `render = world - World.origin_m`. Everything that leaves this
+## machine or is written down - the wire, a save, the chunk queue's centre, the
+## debug readout - wants the world value, and this is the one place it is
+## computed. Everything that draws or collides wants the render value and keeps
+## using `global_position`.
+func world_position() -> Vector3:
+	return global_position + World.origin_m
+
+
 func _ready() -> void:
 	_capture_mouse(true)
 	# The character Marcel made, or the default human on a machine that has

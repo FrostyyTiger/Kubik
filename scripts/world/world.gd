@@ -133,6 +133,147 @@ var generator: TerrainGenerator = null
 ## so it is stored here next to it rather than reached for globally.
 var config: WorldgenConfig = null
 
+# --- THE FLOATING ORIGIN, horizon v1 Stage 6 ---------------------------------
+#
+# TWO SPACES, AND EVERY POSITION IN THIS PROJECT IS IN ONE OF THEM.
+#
+#   WORLD METRES are what a system means when it says where something IS. They
+#   are what crosses the wire, what a save holds, what `set_center_from_position`
+#   is told, and what every `_m` argument in this codebase has always meant.
+#   Unchanged, at 40 km and at 40 metres.
+#
+#   RENDER SPACE is what the scene tree holds. `render = world - offset`, and
+#   the offset is a whole number of 256 m tiles on x and z, zero on y.
+#
+# WHY. A float32 has 24 bits of mantissa: 4 mm at 40 km, and a vertex position,
+# a MultiMesh row and a physics body are all float32. At 30 km a standing player
+# jitters, a tree's crown swims against its trunk, and a shadow map that spans
+# the same range quantises into stripes. The fix every engine uses is the same
+# one: keep the numbers the GPU sees small by moving the WORLD under the camera
+# rather than the camera through the world.
+#
+# ONLY ANCHORS MOVE, and that is the whole discipline. A rebase subtracts one
+# delta from every node that carries a world position - chunk nodes, flora
+# columns, the far mesh's 160 keyed meshes, the tree slots, the fog volumes,
+# bodies, the player and every remote player - in one frame, and touches no
+# vertex, no MultiMesh row and no array. The self-test in `selftest_horizon.gd`
+# asserts the other half: that nothing under `World` or `TreeField` holds a
+# position more than 8,192 m from its own node.
+#
+# THE TILE IS 256 m and it is not a coincidence: it is the level-0 height
+# tile's span, so an offset is always a whole number of tiles in every system
+# that thinks in tiles, and `world = render + offset` is exact in float64 and
+# in float32 for any offset a world this size can produce.
+
+## The offset, in whole 256 m tiles. Zero until the player has walked far
+## enough from the origin for `far_origin_rebase_m` to fire.
+var origin_offset_tiles := Vector2i.ZERO
+
+## How many times this world has rebased. The sprint probe prints it.
+var origin_rebases := 0
+
+## THE OFFSET IN METRES. `render = world - this`.
+func origin_offset_m() -> Vector3:
+	return Vector3(float(origin_offset_tiles.x * ORIGIN_TILE_M), 0.0,
+		float(origin_offset_tiles.y * ORIGIN_TILE_M))
+
+
+## World metres from a render-space position, and back.
+func to_world_m(render_m: Vector3) -> Vector3:
+	return render_m + origin_offset_m()
+
+
+func to_render_m(world_m: Vector3) -> Vector3:
+	return world_m - origin_offset_m()
+
+
+## The tile the offset counts in, in metres. The level-0 height tile's span.
+const ORIGIN_TILE_M := 256.0
+
+## THE OFFSET, MIRRORED AS A STATIC, in metres.
+##
+## `Player.world_position()`, `Game`'s wire conversion and `RemotePlayer` all
+## need it and none of them holds this node - the same reason `SkyCycle.fog_off`
+## and `Locomotion.fly_speed` are statics. Written by `setup()` and by `rebase`
+## and nowhere else, so there is one writer and the instance field is the truth
+## it mirrors.
+static var origin_m := Vector3.ZERO
+
+
+## REBASE IF THE PLAYER HAS WALKED FAR ENOUGH FROM THE RENDER ORIGIN.
+##
+## Takes the player's RENDER position, returns the delta that was applied - the
+## amount every anchor in the world just moved by - or zero. The caller applies
+## the same delta to everything it owns and nothing else changes: an anchor
+## moved by -delta and a world offset raised by +delta leave every WORLD
+## position exactly where it was.
+##
+## WHOLE TILES, AND `round` RATHER THAN `floor`. The delta is the tile multiple
+## NEAREST the player, so after a rebase the player is within half a tile of
+## the render origin whichever way they came from. Whole tiles are what make
+## `world = render + offset` exact: an integer number of 256s is exactly
+## representable in float32 up to 2^24 tiles, so the conversion adds no error
+## of its own at any distance this game can reach.
+func rebase(player_render_m: Vector3) -> Vector3:
+	var trigger: float = maxf(config.far_origin_rebase_m, 0.0) \
+		if config != null else 0.0
+	if trigger <= 0.0:
+		return Vector3.ZERO
+	if absf(player_render_m.x) <= trigger and absf(player_render_m.z) <= trigger:
+		return Vector3.ZERO
+	var tiles := Vector2i(
+		int(round(player_render_m.x / ORIGIN_TILE_M)),
+		int(round(player_render_m.z / ORIGIN_TILE_M)))
+	if tiles == Vector2i.ZERO:
+		return Vector3.ZERO
+	var delta := Vector3(float(tiles.x) * ORIGIN_TILE_M, 0.0,
+		float(tiles.y) * ORIGIN_TILE_M)
+	origin_offset_tiles += tiles
+	origin_m = origin_offset_m()
+	origin_rebases += 1
+	_shift_anchors(delta)
+	return delta
+
+
+## One column's world origin in metres - its low corner.
+func _column_origin_m(col: Vector2i) -> Vector3:
+	var m := float(Chunk.SIZE) * config.block_size
+	return Vector3(float(col.x) * m, 0.0, float(col.y) * m)
+
+
+## Every anchor this node owns, moved by -delta in one pass.
+##
+## ONE FRAME, ALL OF THEM. A rebase that moved half the world would be a visible
+## tear; there is no partial state here and no deferred half. The cost is one
+## loop over the chunk nodes and the flora columns - a few thousand `position`
+## writes at the very worst - and it happens once every two kilometres.
+func _shift_anchors(delta: Vector3) -> void:
+	for pos in _chunk_nodes:
+		var node: Node3D = _chunk_nodes[pos]
+		node.position -= delta
+	for col in _flora_nodes:
+		var node: Node3D = _flora_nodes[col]
+		node.position -= delta
+	for col in _flora_cache:
+		var node: Node3D = _flora_cache[col]
+		node.position -= delta
+	# AND THE PARKED ONES. A cached column's chunk nodes are still children of
+	# this node with a world position on them; they are simply hidden. A rebase
+	# that skipped them would restore a column two kilometres from where it
+	# belongs the moment the player walked back.
+	for col in _column_cache:
+		var entry: Dictionary = _column_cache[col]
+		for cy in entry["nodes"]:
+			var node: Node3D = entry["nodes"][cy]
+			node.position -= delta
+	if _water != null:
+		_water.position -= delta
+	if _far_field != null:
+		_far_field.shift_anchors(delta)
+	if body_field != null:
+		body_field.shift_anchors(delta)
+
+
 var _chunks := {}        # Vector3i -> Chunk
 var _chunk_nodes := {}   # Vector3i -> ChunkNode
 var _build_queue: Array[Vector2i] = []
@@ -366,6 +507,13 @@ var _far_vertices := 0
 ## Start building. Called once per session.
 func setup(p_seed: int, p_config: WorldgenConfig = null) -> void:
 	world_seed = p_seed
+	# A NEW WORLD STARTS AT THE ORIGIN, horizon v1 Stage 6. The static mirror
+	# goes with it: it is how `Player` and the wire read the offset without
+	# holding a reference to this node, and a stale one would put a reroll's
+	# spawn thirty kilometres from where it thinks it is.
+	origin_offset_tiles = Vector2i.ZERO
+	origin_rebases = 0
+	origin_m = Vector3.ZERO
 	# A SNAPSHOT, not the live tuning object. The panel writes into the config
 	# Game holds, and if the world read from that too, then moving a slider
 	# would change the terrain of chunks not yet streamed in while leaving the
@@ -1059,6 +1207,12 @@ func _collect_chunks(started: int, budget: int) -> void:
 
 			var node := ChunkNode.new()
 			node.setup(chunk, config, world_seed, job.zone)
+			# INTO RENDER SPACE, horizon v1 Stage 6. `ChunkNode.setup` puts the
+			# node at its chunk's WORLD origin - it is the mesher lane's file
+			# and it does not know about the offset - so the one subtraction
+			# happens here, where the node is adopted, and again in
+			# `_shift_anchors` when the offset moves.
+			node.position -= origin_offset_m()
 			add_child(node)
 			_chunk_nodes[chunk_pos] = node
 			if edited:
@@ -1116,7 +1270,10 @@ func _collect_flora(started: int, budget: int) -> void:
 					body_field.column_landed(col, node.bodies)
 			else:
 				node = FloraColumn.new()
-				node.setup(col)
+				# THE COLUMN'S OWN WORLD ORIGIN AS ITS ANCHOR, horizon v1
+				# Stage 6. `FloraJob` writes world metres; the node carries
+				# the origin and the rows are relative to it from here on.
+				node.setup(col, _column_origin_m(col), origin_offset_m())
 				add_child(node)
 			_flora_nodes[col] = node
 		_flora_instances -= node.instance_count

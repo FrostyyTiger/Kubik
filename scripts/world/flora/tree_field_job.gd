@@ -33,6 +33,19 @@ extends RefCounted
 ## Where the ring is centred, in blocks.
 var center := Vector2i.ZERO
 
+## THE SLOT NODE'S ANCHOR, in world metres - horizon v1 Stage 6.
+##
+## Every instance this job packs is written RELATIVE to it, and `TreeField`
+## puts the slot node at `anchor - origin`. The anchor is the ring's centre at
+## build time, so no row is ever further from its node than the ring's own
+## radius - 800 m at Ultra - whatever the offset is and however far the player
+## has walked. That is the anchor rule (plan § 3) for the one buffer in this
+## project that spans a kilometre.
+##
+## Zero leaves the rows in world metres, which is what the self-tests and the
+## tree probe expect of a job they built by hand.
+var anchor := Vector3.ZERO
+
 ## Pure and read-only once its heightmap is built.
 var generator: TerrainGenerator = null
 var config: WorldgenConfig = null
@@ -633,9 +646,12 @@ func _pack(instances: Array, key: String) -> PackedFloat32Array:
 			var myaw := WorldHash.hash01(cell0.x, cell0.y, 0, 931) * TAU
 			var mc := cos(myaw) * mxz
 			var msn := sin(myaw) * mxz
-			buf[i] = mc;       buf[i + 1] = 0.0; buf[i + 2] = msn; buf[i + 3] = pos.x
-			buf[i + 4] = 0.0;  buf[i + 5] = msy; buf[i + 6] = 0.0; buf[i + 7] = pos.y
-			buf[i + 8] = -msn; buf[i + 9] = 0.0; buf[i + 10] = mc; buf[i + 11] = pos.z
+			buf[i] = mc;       buf[i + 1] = 0.0; buf[i + 2] = msn
+			buf[i + 3] = pos.x - anchor.x
+			buf[i + 4] = 0.0;  buf[i + 5] = msy; buf[i + 6] = 0.0
+			buf[i + 7] = pos.y - anchor.y
+			buf[i + 8] = -msn; buf[i + 9] = 0.0; buf[i + 10] = mc
+			buf[i + 11] = pos.z - anchor.z
 			var mtint: Color = inst["tint"]
 			var mmul := _far_tree_grain(
 				_instance_color(base_lin, base_wire, mtint), cell0)
@@ -661,9 +677,12 @@ func _pack(instances: Array, key: String) -> PackedFloat32Array:
 		var c := cos(yaw) * sxz
 		var s := sin(yaw) * sxz
 
-		buf[i] = c;       buf[i + 1] = 0.0; buf[i + 2] = s;   buf[i + 3] = pos.x
-		buf[i + 4] = 0.0; buf[i + 5] = sy;  buf[i + 6] = 0.0; buf[i + 7] = pos.y
-		buf[i + 8] = -s;  buf[i + 9] = 0.0; buf[i + 10] = c;  buf[i + 11] = pos.z
+		buf[i] = c;       buf[i + 1] = 0.0; buf[i + 2] = s
+		buf[i + 3] = pos.x - anchor.x
+		buf[i + 4] = 0.0; buf[i + 5] = sy;  buf[i + 6] = 0.0
+		buf[i + 7] = pos.y - anchor.y
+		buf[i + 8] = -s;  buf[i + 9] = 0.0; buf[i + 10] = c
+		buf[i + 11] = pos.z - anchor.z
 		var tint: Color = inst["tint"]
 		var mul := _far_tree_grain(_instance_color(base_lin, base_wire, tint), cell)
 		buf[i + 12] = mul.r; buf[i + 13] = mul.g

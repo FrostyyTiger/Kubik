@@ -312,6 +312,22 @@ func _queue_upload(slices: Array, frontier: PackedInt32Array, verts: int) -> voi
 ## `Vector2i(ring, sector)` -> the MeshInstance3D holding it.
 var _key_nodes := {}
 
+## (ring, sector) -> the key's WORLD anchor, so a rebase can re-derive the
+## node's render position rather than accumulate deltas on it. Horizon v1
+## Stage 6.
+var _key_world := {}
+
+## The world's origin offset as this node last saw it.
+var _origin_m := Vector3.ZERO
+
+
+## Move every keyed mesh by -delta, and remember where the origin now is.
+func shift_anchors(delta: Vector3) -> void:
+	_origin_m += delta
+	for key in _key_nodes:
+		var node: Node3D = _key_nodes[key]
+		node.position -= delta
+
 ## The keys the build in flight was asked for, flat, as the job takes them.
 var _built_keys := PackedInt32Array()
 
@@ -373,7 +389,12 @@ func _apply_key(key: Vector2i, arrays: Array, anchor: Vector3) -> void:
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	m.surface_set_material(0, ChunkMesher.get_material())
 	node.mesh = m
-	node.position = anchor
+	# THE ANCHOR IS A WORLD POSITION AND THE NODE IS IN RENDER SPACE - horizon
+	# v1 Stage 6. The vertices inside the mesh are relative to the anchor
+	# already (Stage 3), so this one subtraction is the whole of the far mesh's
+	# floating origin; `shift_anchors` keeps it in step afterwards.
+	_key_world[key] = anchor
+	node.position = anchor - _origin_m
 
 
 func _commit_upload() -> void:
@@ -681,6 +702,8 @@ func clear_keys() -> void:
 		if is_instance_valid(node):
 			node.queue_free()
 	_key_nodes.clear()
+	_key_world.clear()
+	_origin_m = Vector3.ZERO
 	_ring_anchor.clear()
 	_pending_rings.clear()
 	_built_keys = PackedInt32Array()

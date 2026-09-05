@@ -134,6 +134,7 @@ var _sec_rebase := 0
 ## number in the session and it is not what is being measured.
 var _base_chunks := 0
 var _base_far := 0
+var _base_rebases := 0
 var _base_tree := 0
 var _base_uploaded := 0
 
@@ -206,6 +207,10 @@ func _process(delta: float) -> void:
 
 	if _sprint_from == -2.0:
 		_drive(false)
+		# THE SETTLE IS THE JITTER SAMPLE. A second of a body standing on the
+		# ground with no wish - which is exactly the plan's "the player's
+		# standing-still position delta per frame".
+		_track_jitter(false)
 		if _t - _settle_at < SETTLE_S:
 			return
 		_begin()
@@ -223,9 +228,10 @@ func _process(delta: float) -> void:
 ## delta.
 func _begin() -> void:
 	_sprint_from = _t
-	_start_m = _player.global_position
+	_start_m = _player.world_position()
 	_base_chunks = _world.built_chunk_count()
 	_base_far = _far_rebuilds()
+	_base_rebases = _rebases()
 	_base_tree = _tree_rebuilds()
 	_base_uploaded = _uploaded()
 	_last_far_rebuilds = _base_far
@@ -239,6 +245,10 @@ func _begin() -> void:
 func _step_sprint(delta: float) -> void:
 	_drive(true)
 	_check_stuck()
+	# A sprinting body is never standing still, so this records nothing here -
+	# it is the settle phase that feeds it. Called from both so the number is
+	# a property of the whole run.
+	_track_jitter(true)
 
 	var ms := delta * 1000.0
 	_frames.append(ms)
@@ -273,11 +283,36 @@ func _step_sprint(delta: float) -> void:
 		_finish(0)
 
 
-## HOW MANY TIMES THE ORIGIN HAS MOVED. Zero before Stage 6.
+## HOW MANY TIMES THE ORIGIN HAS MOVED. A field since Stage 6, not a method.
 func _rebases() -> int:
-	if _world != null and _world.has_method("origin_rebases"):
-		return int(_world.origin_rebases())
+	if _world != null:
+		return int(_world.origin_rebases)
 	return 0
+
+
+## THE JITTER, IN MILLIMETRES - horizon v1 Stage 6's gate.
+##
+## The plan asks for "the player's standing-still position delta per frame over
+## 2 s, must be 0.0". This is that number, kept as a running worst over the
+## whole run: every frame the probe is NOT pressing a wish and the body is on
+## the ground, how far the body moved. On a floating origin it is zero because
+## the numbers the solver sees are small; without one it is the float32 ULP at
+## the player's distance from the origin, which at 30 km is 4 mm and is exactly
+## what the north star's "the world is as big as the view" cannot afford.
+var jitter_mm := 0.0
+var _jitter_last := Vector3.ZERO
+var _jitter_have := false
+
+
+func _track_jitter(moving: bool) -> void:
+	var here: Vector3 = _player.global_position
+	if moving or not _player.is_on_floor():
+		_jitter_have = false
+		return
+	if _jitter_have:
+		jitter_mm = maxf(jitter_mm, (here - _jitter_last).length() * 1000.0)
+	_jitter_last = here
+	_jitter_have = true
 
 
 ## Hold the sprint key.
@@ -332,7 +367,7 @@ func _drive(sprinting: bool) -> void:
 func _check_stuck() -> void:
 	if _player == null or not is_instance_valid(_player):
 		return
-	var here := _player.global_position
+	var here: Vector3 = _player.world_position()
 	here.y = 0.0
 	if here.distance_to(_stuck_at) > STUCK_M:
 		_stuck_at = here
@@ -357,7 +392,7 @@ func _write_second() -> void:
 	if not sorted.is_empty():
 		med = sorted[sorted.size() / 2]
 		worst = sorted[sorted.size() - 1]
-	var moved := _player.global_position - _start_m
+	var moved: Vector3 = _player.world_position() - _start_m
 	moved.y = 0.0
 	var line := ("s=%02d frames=%d median_ms=%.2f worst_ms=%.2f "
 		+ "far=%d slices=%d rebase=%d moved_m=%.0f chunks=%d") % [
@@ -396,12 +431,13 @@ func _summary() -> void:
 	_say(("SPRINT label=%s seconds=%.0f frames=%d median_ms=%.2f p99_ms=%.2f "
 		+ "worst_ms=%.2f over25=%d chunks=%d far_rebuilds=%d far_ms_median=%d "
 		+ "tree_rebuilds=%d mem_mb=%.0f moved_m=%.0f jumps=%d "
-		+ "tiles=%d tile_mb=%.0f") % [
+		+ "tiles=%d tile_mb=%.0f rebases=%d jitter_mm=%.3f") % [
 		_label, _seconds, n, med, p99, worst, over,
 		_world.built_chunk_count() - _base_chunks,
 		_far_rebuilds() - _base_far, far_med,
 		_tree_rebuilds() - _base_tree, mem, _moved(), _jumps,
-		_tile_stat("tiles"), float(_tile_stat("bytes")) / 1048576.0])
+		_tile_stat("tiles"), float(_tile_stat("bytes")) / 1048576.0,
+		_rebases() - _base_rebases, jitter_mm])
 	# A RUN THAT DID NOT GO ANYWHERE IS NOT A SPRINT, and it is the one way
 	# this instrument can look green while measuring nothing: a player wedged
 	# against a rise builds no chunks, rebuilds no far country and holds a
@@ -466,7 +502,7 @@ func _tile_stat(key: String) -> int:
 func _moved() -> float:
 	if _player == null or not is_instance_valid(_player) or _sprint_from < 0.0:
 		return 0.0
-	var d := _player.global_position - _start_m
+	var d: Vector3 = _player.world_position() - _start_m
 	d.y = 0.0
 	return d.length()
 

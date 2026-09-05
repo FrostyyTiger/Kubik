@@ -334,13 +334,24 @@ func _process(delta: float) -> void:
 		if _join_retry <= 0.0:
 			_request_join_state()
 
-	# Voxels exist only near the player.
+	# THE FLOATING ORIGIN, horizon v1 Stage 6, before anything reads a position
+	# this frame. `World.rebase` moves every anchor it owns and returns the
+	# delta; everything Game owns takes the same delta in the same frame, so a
+	# rebase is invisible - no world position changes, only the numbers the GPU
+	# and the solver see.
 	if _world.has_seed():
-		_world.set_center_from_position(_player.global_position)
+		var rebase := _world.rebase(_player.global_position)
+		if rebase != Vector3.ZERO:
+			_apply_rebase(rebase)
+
+	# Voxels exist only near the player. WORLD metres: the chunk queue, the
+	# frontier and the far mesh all think in world blocks and always have.
+	if _world.has_seed():
+		_world.set_center_from_position(_player.world_position())
 		# And impostor trees exist only beyond them. Asked every frame and
 		# cheap when nothing has moved - TreeField decides for itself whether
 		# the player has gone far enough to be worth a rebuild.
-		_tree_field.update(_player.global_position)
+		_tree_field.update(_player.world_position())
 	_release_player_when_ground_exists()
 	# WHAT EVERYBODY IS STANDING ON, once a frame rather than once a tick.
 	# A zone lookup is a heightmap read and a noise sample, and a body crosses
@@ -348,12 +359,12 @@ func _process(delta: float) -> void:
 	# thing it describes, and per physics tick would be three times the cost
 	# for no difference anybody could see.
 	if _world.has_seed():
-		_player.ground_zone = _world.zone_at_m(
-			_player.global_position.x, _player.global_position.z)
+		var pw := _player.world_position()
+		_player.ground_zone = _world.zone_at_m(pw.x, pw.z)
 		for peer_id in _sims:
 			var sim: PlayerSim = _sims[peer_id]
-			sim.ground_zone = _world.zone_at_m(
-				sim.global_position.x, sim.global_position.z)
+			var sw: Vector3 = sim.global_position + World.origin_m
+			sim.ground_zone = _world.zone_at_m(sw.x, sw.z)
 	if Net.is_client():
 		_advance_correction(delta)
 
@@ -431,7 +442,10 @@ func _spawn_player() -> void:
 	# spawn that satisfies the acceptance test by construction - flat, dry, a
 	# mountain in view and water within a two-minute walk - rather than
 	# dropping the player at (0, 0) and hoping.
-	_player.global_position = _world.spawn_position_m(SPAWN_CLEARANCE)
+	# The spawn is world metres; the offset is zero on a fresh world, and this
+	# is written so it stays right if it ever is not.
+	_player.global_position = _world.spawn_position_m(SPAWN_CLEARANCE) \
+		- World.origin_m
 	_player.velocity = Vector3.ZERO
 	_player.set_physics_process(false)
 	_awaiting_ground = true
@@ -467,7 +481,7 @@ func _release_player_when_ground_exists() -> void:
 	# terrain v2, arrived at from the other direction. Reading the player's own
 	# position asks the question that was always meant: is there ground under
 	# the body about to be dropped?
-	var at := _player.global_position / config.block_size
+	var at := _player.world_position() / config.block_size
 	var bx := int(floor(at.x))
 	var bz := int(floor(at.z))
 	var ground := Vector3i(bx, _world.find_surface_y(bx, bz), bz)
@@ -729,7 +743,7 @@ func _hud_shot(name: String, time_of_day: float) -> void:
 func _hud_shot_party(name: String) -> void:
 	_sky.time_of_day = 0.5
 	_sky.apply()
-	var here := _player.global_position
+	var here := _player.world_position()
 	# KIRA, DUE EAST AND HURT. East is +X under NORTH_IS_MINUS_Z, so her
 	# chevron must land in the east half of the strip; at 60 health her icon
 	# must grow the hurt arc a healthy partner does not have.
@@ -925,6 +939,34 @@ func _cl_receive_join_state(seed_value: int, config_data: Dictionary,
 # somewhere else eases or snaps, and does not replay the inputs the host had
 # not yet processed. See _reconcile().
 
+## EVERY ANCHOR GAME OWNS, MOVED BY -DELTA - horizon v1 Stage 6.
+##
+## `World.rebase` has already moved everything under `World`: chunk nodes,
+## flora columns, the far mesh's keyed meshes, the water, the bodies. What is
+## left is what hangs off `Game`: the player, the tree ring, the remote player
+## capsules and the host's simulated bodies for them.
+##
+## ONE FRAME, AND THE PLAYER LAST. The player's own move is the reason the
+## rebase happened; doing it after the world means every position this frame
+## was read in one space, and the camera - which is a child of the player -
+## follows for free.
+func _apply_rebase(delta: Vector3) -> void:
+	if _tree_field != null:
+		_tree_field.shift_anchors(delta)
+	for pid in _players:
+		var node: Node3D = _players[pid]
+		if is_instance_valid(node):
+			node.position -= delta
+			node.rebase(delta)
+	for pid in _sims:
+		var sim: PlayerSim = _sims[pid]
+		if is_instance_valid(sim):
+			sim.position -= delta
+	_player.global_position -= delta
+	print("[Game] origin rebase %d: %+.0f, %+.0f m; offset now %s tiles" % [
+		_world.origin_rebases, delta.x, delta.z, _world.origin_offset_tiles])
+
+
 func _publish_local_state() -> void:
 	if Net.is_host():
 		# THE HOST'S OWN ROW IS STILL READ OFF ITS OWN BODY, and that is not an
@@ -934,7 +976,9 @@ func _publish_local_state() -> void:
 		# same reason: there is nobody to announce it to.
 		var st := _player.locomotion_state()
 		_merge_state(Net.local_peer_id(), {
-			"p": _player.global_position, "y": _player.rotation.y,
+			# WORLD METRES ON THE WIRE - horizon v1 Stage 6. It always was;
+			# what changed is that the scene tree no longer agrees with it.
+			"p": _player.world_position(), "y": _player.rotation.y,
 			"v": _player.velocity,
 			"s": st.to_state_byte(), "l": st.look_yaw,
 			"a": _player.appearance_bytes(), "n": _player.display_name(),
@@ -1024,7 +1068,9 @@ func _publish_sim_states() -> void:
 		var sim: PlayerSim = _sims[peer_id]
 		var st := sim.locomotion_state()
 		_merge_state(peer_id, {
-			"p": sim.global_position, "y": sim.rotation.y, "v": sim.velocity,
+			# World metres on the wire, like the local player's row.
+			"p": sim.global_position + World.origin_m,
+			"y": sim.rotation.y, "v": sim.velocity,
 			"s": st.to_state_byte(), "l": st.look_yaw})
 
 
@@ -1209,7 +1255,9 @@ const FIX_EASE_SECONDS := 0.1
 
 func _reconcile(row: Dictionary) -> void:
 	_last_authority = row
-	var authoritative: Vector3 = row.get("p", _player.global_position)
+	# The row is world metres and the body is render space.
+	var authoritative: Vector3 = (row.get("p", _player.world_position()) \
+		as Vector3) - World.origin_m
 	var error := _player.global_position.distance_to(authoritative)
 	if error < FIX_IGNORE_M:
 		return
@@ -1276,9 +1324,11 @@ func _on_peer_left(peer_id: int) -> void:
 ## counts: a rock only the host can see still has to reach the clients, or they
 ## would walk over later and find it somewhere else.
 func _sim_centres_m() -> Array:
-	var out := [_player.global_position]
+	# WORLD metres: this is what `BodyField.rows_for` measures a body's distance
+	# against, and a body's remembered row is world.
+	var out := [_player.world_position()]
 	for peer_id in _sims:
-		out.append((_sims[peer_id] as PlayerSim).global_position)
+		out.append((_sims[peer_id] as PlayerSim).global_position + World.origin_m)
 	return out
 
 
@@ -1289,7 +1339,7 @@ func _sim_columns() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for peer_id in _sims:
 		var sim: PlayerSim = _sims[peer_id]
-		var p := sim.global_position
+		var p: Vector3 = sim.global_position + World.origin_m
 		var bx := int(floor(p.x / config.block_size))
 		var bz := int(floor(p.z / config.block_size))
 		out.append(Vector2i(
@@ -1505,11 +1555,14 @@ func teleport_to(xz_m: Vector2) -> void:
 	var bx := int(floor(xz_m.x / config.block_size))
 	var bz := int(floor(xz_m.y / config.block_size))
 	var y := _world.surface_height_m(bx, bz) + SPAWN_CLEARANCE
-	_player.global_position = Vector3(xz_m.x, y, xz_m.y)
+	# WORLD metres in, render space onto the body - horizon v1 Stage 6. The
+	# rebase that this teleport is about to trigger happens on the next frame,
+	# in `_process`, with everything else.
+	_player.global_position = Vector3(xz_m.x, y, xz_m.y) - World.origin_m
 	_player.velocity = Vector3.ZERO
 	_player.set_physics_process(false)
 	_awaiting_ground = true
-	_world.set_center_from_position(_player.global_position)
+	_world.set_center_from_position(_player.world_position())
 	print("[Game] teleport to (%.0f, %.0f) m, ground %.1f m" % [
 		xz_m.x, xz_m.y, y])
 

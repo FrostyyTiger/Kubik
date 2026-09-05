@@ -46,9 +46,30 @@ var _counts := {}  # model id -> instances in the buffer (all of them)
 var _block_size := 0.5
 
 
-func setup(p_column: Vector2i) -> void:
+# --- THE ANCHOR, horizon v1 Stage 6 ------------------------------------------
+#
+# A COLUMN IS ITS OWN ANCHOR. `FloraJob` writes instance transforms in WORLD
+# metres - it is not this lane's file and it does not know about the floating
+# origin - so `apply_buffers` subtracts this column's own world origin from
+# every row as it installs it, and the node carries that origin instead.
+#
+# It is the cheapest possible place to do it: the loop is over the rows of one
+# column, on the main thread, in the same pass that was already copying them
+# into the rendering server. A column is sixteen metres square, so after the
+# subtraction no row is more than 23 m from its node - which is the anchor rule
+# with three orders of magnitude to spare, at any distance from the origin.
+
+## This column's world origin, in metres. The node's position is this minus the
+## world's origin offset.
+var anchor := Vector3.ZERO
+
+
+func setup(p_column: Vector2i, p_anchor := Vector3.ZERO,
+		p_origin := Vector3.ZERO) -> void:
 	column = p_column
 	name = "Flora%d_%d" % [p_column.x, p_column.y]
+	anchor = p_anchor
+	position = anchor - p_origin
 
 
 ## Install buffers built on a worker thread.
@@ -77,7 +98,7 @@ func apply_buffers(buffers: Dictionary, config: WorldgenConfig) -> void:
 				continue
 			_slots[model] = slot
 		slot.multimesh.instance_count = count
-		slot.multimesh.buffer = buf
+		slot.multimesh.buffer = _to_anchor(buf)
 		slot.visible = true
 		_counts[model] = count
 
@@ -108,6 +129,27 @@ func set_fraction(fraction: float) -> void:
 		mm.visible_instance_count = -1 if shown >= total else shown
 		instance_count += shown
 		triangle_count += shown * FloraModels.triangles_for(model, _block_size)
+
+
+## One buffer's rows moved from world metres into this column's anchor space.
+##
+## The 3D transform layout is twelve floats per instance, row-major, and the
+## translation is the last float of each row: indices 3, 7 and 11. Nothing else
+## in the row is touched - a rotation and a scale are the same in both spaces.
+##
+## A copy rather than an in-place edit, because the array handed in belongs to
+## the job and the flora self-tests compare against it.
+func _to_anchor(buf: PackedFloat32Array) -> PackedFloat32Array:
+	if anchor == Vector3.ZERO:
+		return buf
+	var out := buf.duplicate()
+	var n := out.size() / FloraJob.FLOATS_PER_INSTANCE
+	for i in n:
+		var at := i * FloraJob.FLOATS_PER_INSTANCE
+		out[at + 3] -= anchor.x
+		out[at + 7] -= anchor.y
+		out[at + 11] -= anchor.z
+	return out
 
 
 func _make_slot(model: int, config: WorldgenConfig) -> MultiMeshInstance3D:
