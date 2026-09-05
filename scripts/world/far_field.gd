@@ -731,6 +731,16 @@ func _exit_tree() -> void:
 	_print_wall_summary()
 
 
+## A FarField freed WITHOUT ever entering the tree - every `World.new()` +
+## `world.free()` in the self-test - never sees `_exit_tree`, so the tile
+## prepare queued by `request_rebuild` in `World.setup` would still be on the
+## pool, or still waiting for a thread, when this object is torn down under it.
+## Join it here as well; `drain` is idempotent.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		drain()
+
+
 ## What the far mesh cost over the whole session, printed once, at exit.
 ##
 ## Distance v3 Stage 4. The acceptance criterion is "wall rebuild under 5 s on
