@@ -2056,7 +2056,13 @@ Failure protocol item 7: the conservative reading, written down.
 14. **`pair_probe.gd` should forward `--tp` to the client it spawns**, so the
    plan's "both instances at (30000, 30000)" can actually be run. One line in
    the arg loop that already forwards `--seed` and `--port`.
-12. **`docs/status/light-v1.md`'s and this document's far-probe numbers for
+15. **The next frame win is the upload, and it is measured.** With both lanes
+   merged the same sprint streams 12,870 chunks instead of 5,900 and the frame
+   goes 16.67 -> 22.1 ms. Generation and meshing are both off the main thread
+   now; what is left on it is `add_surface_from_arrays` and a collision shape
+   per column, 214 columns a second. Stage 7 has the table, and the obvious
+   lever - a smaller upload slice - makes both numbers worse.
+16. **`docs/status/light-v1.md`'s and this document's far-probe numbers for
    the summit vantage are not comparable across Stage 4.** Anything quoting
    "summit" from before tonight was measured on a mesh built from the region's
    clamped rim.
