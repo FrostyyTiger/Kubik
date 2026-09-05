@@ -21,8 +21,9 @@ The spine. Nothing from a later phase is pulled forward except where
 | 0 | Housekeeping: the house generator and its outputs into `Kubik-assets`, the seller fields in the licence records, the asset mount synced | in progress |
 | 1 | **Real light** - the engine's sun, soft sky-tinted shadows, sky ambient, filmic tonemap, four hours plus eerie, volumetric fog's three jobs, the bible palette, the film lens (D40), reflective water | **done**, merged 2026-09-04 |
 | 1b | **The chunk mesher in C++** (D56) - voxels in, arrays out, one flat colour per material plus per-cube noise, no baked corner shading | **done**, merged 2026-09-04 |
-| 1c | **Horizon v1** (D41, D44, D84) - the tile store, voxels anywhere, the far field to 32 km in persistent per-ring and per-sector pieces, one material source for every level, the fog ramp, a floating origin, the sprint probe | running from 2026-09-04 |
-| 2 | **The world-truth break** (D56, timing amended by D84) - real relief (D45), rings measured from the capital (D44), the tiled heightmap store, lakes and zones per tile, the generator's truth in C++ | next, the day 1c lands |
+| 1c | **Horizon v1** (D41, D44, D84) - the tile store, voxels anywhere, the far field to 32 km in persistent per-ring and per-sector pieces, one material source for every level, the fog ramp, a floating origin, the sprint probe  | **done**, merged 2026-09-05 |
+| 1d | **Upload v1** (D85) - the chunk and flora upload off the frame thread: `add_surface_from_arrays` plus a collision shape per column is the whole hitch column of horizon v1's sprint line, and a smaller slice makes it worse. Look-only; changes nothing a seed produces | **next**, alone; plan not yet written |
+| 2 | **The world-truth break** (D56, timing amended by D84 and D85) - real relief (D45), rings measured from the capital (D44), the tiled heightmap store, lakes and zones per tile, the generator's truth in C++  | right after 1d lands |
 | 3 | **People and fire** - the bought templates as the character path (D1), two players at a campfire, the campfire as the first warm light | queued |
 | 4 | **Buildings** - the `BuildingModels` loader, placement, the landmark gate (D43, D47, D48) | queued |
 | 5 | **The round 3 scene and its report** (`../../Kubik-bible/ROUND-3-BRIEF.md`) | queued |
@@ -35,6 +36,17 @@ horizon the north star and moves the world-truth break to right after it,
 before people and fire, because both of them are cheapest to change before any
 content is authored on a seed. The scene slips by about a month; Marcel's
 call.
+
+**Why it changed again on 2026-09-05.** Horizon v1 landed with the median
+half of the frame gate met (16.67 ms at Ultra with the view at 32 km, from
+41.67 at 3.2 km) and the hitch half open: 171 to 233 frames of about 3,340
+over 25 ms, and every rung of the plan's shrink list made both numbers worse.
+The cause is measured: with generation and meshing off the main thread, what
+is left on it is the upload, `add_surface_from_arrays` plus a collision shape
+per column, 214 columns a second. D85 puts upload v1 between horizon v1 and
+the world-truth break, because "the frame holds" is the north star's third
+sentence, the upload touches nothing a seed produces, and real relief would
+only put more columns through the same door.
 
 ## 2. The list as given, and where each item lands
 
@@ -250,9 +262,12 @@ per wave - the other lanes add a new file plus a one-line hook that Marcel
 merges by hand.
 
 ```
-NOW  (2026-09-04)
-  1c. Horizon v1 -------- 3 nights   feat/horizon-v1, ganymede tmux horizon-v1
-  (1b. Mesher v1 merged 2026-09-04; 1. Light v1 merged 2026-09-04)
+NOW  (2026-09-05)
+  1d. Upload v1 ---------- nights    the chunk and flora upload off the
+                                        frame thread (D85); plan not yet
+                                        written
+  (1c. Horizon v1 merged 2026-09-05; 1b. Mesher v1 and 1. Light v1 merged
+   2026-09-04)
 
 NEXT - one epic, alone, because it changes what a seed produces
   2.  The world-truth break --- weeks   real relief (D45), rings from the
@@ -292,7 +307,7 @@ AFTER THE SCENE - three lanes, zero overlap
   K. Director v1 (quests) -- 2+ nights  needs H (sites) and v0
 ```
 
-**Critical path: horizon v1 -> the world-truth break -> people and fire ->
+**Critical path: upload v1 -> the world-truth break -> people and fire ->
 buildings -> the scene.** Everything lettered hangs off the far end of it. The
 campfire (E) is the single most unblocking piece after the scene: death, the
 journal's most interesting events and the director's whole cadence sit on it.

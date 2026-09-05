@@ -7,23 +7,25 @@ disagrees, the bible wins.
 
 **The queue is the reconciliation's phases now** (`../RECONCILIATION.md` § 9,
 `../CLAUDE.md` § Working order), reordered by Marcel on 2026-09-04 for the
-north star (D84). This list stopped being seeded from the pillars and started
+north star (D84) and on 2026-09-05 for the frame (D85). This list stopped being seeded from the pillars and started
 being the translation of the bible into the game; from here on it is filled by
 what a phase report and a playtest teach us.
 
-1. **Horizon v1 - the view to the horizon, and a world with no edge**
-   (phase 1c; D41, D44, D84). Launched 2026-09-04 on ganymede,
-   [plans/horizon-v1.md](plans/horizon-v1.md). The north star in three
-   things: the world is as big as the view, the view reaches 32 km, and the
-   frame holds at 60 FPS on an RTX 3070 Ti while sprinting through forest.
-   The tile store, voxels anywhere, the far field to 32 km in persistent
-   per-ring and per-sector pieces, one material source for every level, a fog
-   ramp normalised to the draw distance, a floating origin, and the sprint
-   probe. **Changes nothing a seed produces.**
-   *Answers:* is the engine the limit, or was it the build?
+1. **Upload v1 - the frame thread stops touching the mesh** (phase 1d;
+   D85). Horizon v1 landed on 2026-09-05 ([status/horizon-v1.md](status/horizon-v1.md))
+   with the median half of the frame gate met - 16.67 ms at Ultra with the
+   view at 32 km - and the hitch half open: 171 to 233 frames of about 3,340
+   over 25 ms while sprinting, and every rung of the shrink list made it
+   worse. Generation and meshing are off the main thread now; what is left on
+   it is `add_surface_from_arrays` plus a collision shape per column, 214
+   columns a second. Fewer, larger surfaces per column, or a mesh handed to
+   the rendering server without the frame thread touching it. **Changes
+   nothing a seed produces.** Plan not yet written.
+   *Answers:* does the frame hold at 60 FPS on an RTX 3070 Ti with no frame
+   over 25 ms, sprinting through forest, with the view at 32 km?
 
-2. **The world-truth break** (phase 2; D45, D44, D56 as amended by D84).
-   Starts the day horizon v1 lands, before people and fire, before any content
+2. **The world-truth break** (phase 2; D45, D44, D56 as amended by D84 and D85).
+   Starts the day upload v1 lands (D85), before people and fire, before any content
    is authored on a seed: **real relief** (1,400 to 2,500 m, D45), **rings
    measured from the capital** rather than from the map centre (D44), the
    tiled heightmap store, lakes and zones per tile, and the generator's truth

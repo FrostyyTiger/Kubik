@@ -70,12 +70,12 @@ adapted or is ripped, and in what order, is
 [RECONCILIATION.md](RECONCILIATION.md). What is queued is [TODO.md](TODO.md)
 and [docs/IDEAS.md](docs/IDEAS.md).
 
-> **Status: walkable, lit by the engine, meshed in C++, and about to get big.**
+> **Status: walkable, lit by the engine, meshed in C++, and as big as the view.**
 > An alpine landscape with no edge - generated on demand in origin-anchored
-> tiles and drawn to the horizon once horizon v1 lands
-> (`docs/plans/horizon-v1.md`, running from 2026-09-04; until then one home
-> 3 x 3 km, and the relief stays a quarter of real until the world-truth
-> break) - meadow valleys, seven tree species that clump and leave clearings,
+> tiles and drawn to the horizon, 32 km on a clear day, since horizon v1
+> landed (`docs/status/horizon-v1.md`, merged 2026-09-05; the home 3 km is
+> bookkeeping now, and the relief stays a quarter of real until the
+> world-truth break, which follows upload v1, D85) - meadow valleys, seven tree species that clump and leave clearings,
 > bare rock, snow peaks, lakes in real basins, 8.7 M pieces of ground cover,
 > fireflies after dark. **Lit since light v1** (merged 2026-09-04) by a real
 > sun with soft sky-tinted shadows, a physical sky, four hours plus eerie,
@@ -861,15 +861,16 @@ the point where they need replacing.
 The queue is [TODO.md](TODO.md); the order and the reasons are
 [RECONCILIATION.md](RECONCILIATION.md) § 9 and
 [docs/ROADMAP.md](docs/ROADMAP.md). The phases, from the reconciliation as
-reordered by D84 on 2026-09-04:
+reordered by D84 on 2026-09-04 and D85 on 2026-09-05:
 
 | | Phase | State |
 | --- | --- | --- |
 | 0 | Housekeeping: the house generator into `Kubik-assets`, the licence records, the asset mount | in progress |
 | 1 | **Real light** | **done**, merged 2026-09-04 |
 | 1b | **The chunk mesher in C++** (D56) | **done**, merged 2026-09-04 |
-| 1c | **Horizon v1** - the view to the horizon and a world with no edge (D41, D44, D84) | running from 2026-09-04 |
-| 2 | The world-truth break (D56 as amended by D84): real relief (D45), rings from the capital (D44), lakes and zones per tile, the generator's truth in C++ | next, right after 1c |
+| 1c | **Horizon v1** - the view to the horizon and a world with no edge (D41, D44, D84) | **done**, merged 2026-09-05 |
+| 1d | **Upload v1** - the chunk and flora upload off the frame thread (D85); the hitch half of the frame gate horizon v1 left open | next, alone |
+| 2 | The world-truth break (D56 as amended by D84 and D85): real relief (D45), rings from the capital (D44), lakes and zones per tile, the generator's truth in C++ | right after 1d |
 | 3 | People and fire: the bought templates as the character path, two players at a campfire | queued |
 | 4 | Buildings: the loader, placement, the landmark gate | queued |
 | 5 | The round 3 scene and its report | queued |

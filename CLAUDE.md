@@ -1,8 +1,9 @@
 # Kubik
 
 Rewritten 2026-09-03 against the bible, amended 2026-09-04 for the north star
-(D84). Everything below agrees with the bible as of D84; where an older
-document in this repo disagrees, it is stale and the bible wins.
+(D84) and 2026-09-05 for the upload (D85). Everything below agrees with the
+bible as of D85; where an older document in this repo disagrees, it is stale
+and the bible wins.
 
 ## What decides things
 
@@ -123,15 +124,15 @@ the queue.
   real size (D21), one ratio everywhere. The vista rule: from every campfire,
   village and pass, a whole mountain and the next landmark fit in frame at the
   default field of view. Sightlines are a worldgen rule. Lands with the
-  world-truth break, the lane right after horizon v1 (D84).
+  world-truth break, the lane after upload v1 (D84, D85).
 - **Heightmap terrain, placed volumes (D47).** No overhangs from the generator.
   Gates and dungeons are models against a cliff with a separate interior volume
   stitched in behind the door.
 - **World truth changes once (D56).** Anything that changes what a seed
   produces (relief, rings from the capital, the tiled heightmap store, the
   generator in C++) lands in one epic, the world-truth break, which runs
-  right after horizon v1 and before people and fire (D84 amends D56's timing,
-  not its bundle), before any content is authored on a seed. Terrain is never networked; both machines
+  right after upload v1 and before people and fire (D84 and D85 amend D56's
+  timing, not its bundle), before any content is authored on a seed. Terrain is never networked; both machines
   regenerate it from the seed and only edits travel.
 
 ## Engine rules
@@ -150,8 +151,8 @@ the queue.
   buildings draw to 32 km on a clear day as coarse meshes from persistent
   tiles; fog is a ramp normalised to that distance and never a wall; nothing
   pops in; positions live on a floating origin, so the world is unbounded in
-  practice and not only in principle. `docs/plans/horizon-v1.md` is the work
-  order.
+  practice and not only in principle. `docs/plans/horizon-v1.md` was the work
+  order; it landed on 2026-09-05 (`docs/status/horizon-v1.md`).
 - **The public checkout is source, not a runnable game (D50).** Purchased art
   lives in the private `Kubik-assets` repo and is mounted by
   `scripts/tools/sync_assets.py`; it is never committed here, and its colours
@@ -213,13 +214,25 @@ forward except where the table says so.
    renderer out; the engine's sun, soft sky-tinted shadows, sky ambient,
    filmic tonemap; the four hours plus eerie; volumetric fog's three jobs; the
    bible palette; the film lens (D40); reflective water.
-1b. The chunk mesher in C++ (D56) - `docs/plans/mesher-v1.md`, running from
-   2026-09-04 in parallel with 1c, zero-overlap file lists in both plans.
+1b. The chunk mesher in C++ (D56) - **done** (`feat/mesher-v1`, merged
+   2026-09-04, `docs/status/mesher-v1.md`), in parallel with 1c.
 1c. Horizon v1 - the view to the horizon and a world with no edge (D41, D44,
-   D84) - `docs/plans/horizon-v1.md`, running from 2026-09-04.
-2. The world-truth break (D56, timing amended by D84): real relief (D45),
-   rings from the capital (D44), lakes and zones per tile, the generator's
-   truth in C++. Right after 1c lands. Plan not yet written.
+   D84) - **done** (`feat/horizon-v1`, merged 2026-09-05,
+   `docs/status/horizon-v1.md`): the median sprint frame 41.67 -> 16.67 ms at
+   Ultra with the view 3.2 -> 32 km. The hitch half of the frame gate is open
+   and is 1d's.
+1d. Upload v1 (D85) - the chunk and flora upload off the frame thread. With
+   generation and meshing off the main thread, what is left on it is
+   `add_surface_from_arrays` plus a collision shape per column, 214 columns a
+   second, and that is the whole hitch column of horizon v1's sprint line;
+   a smaller upload slice makes it worse (measured, Stage 7). Fewer, larger
+   surfaces per column, or a mesh handed to the rendering server without the
+   frame thread touching it. Look-only: changes nothing a seed produces. Runs
+   next, alone. Plan `docs/plans/upload-v1.md`, not yet written.
+2. The world-truth break (D56, timing amended by D84 and D85): real relief
+   (D45), rings from the capital (D44), lakes and zones per tile, the
+   generator's truth in C++. Right after 1d lands. Draft at
+   `docs/plans/world-truth-v1.md`.
 3. People and fire: the viking templates as the character path, two players
    at a campfire, the campfire as the first warm light.
 4. Buildings: the loader, placement, the landmark gate.

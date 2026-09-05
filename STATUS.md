@@ -1,13 +1,59 @@
 # Status
 
-**Running now (launched 2026-09-04):** horizon v1 (`feat/horizon-v1`,
-`docs/plans/horizon-v1.md`), on ganymede in tmux `horizon-v1`; its status doc
-is `docs/status/horizon-v1.md`. Marcel's north star for it (D84): the world as
-big as the view, the view to 32 km, 60 FPS at max settings on mid hardware.
-**Next after it: the world-truth break** - real relief (D45), rings measured
-from the capital (D44), lakes and zones per tile, the generator's truth in C++
-(D56, timing amended by D84). Then people and fire, buildings, the round 3
-scene.
+**Running now:** nothing. **Next: upload v1** (phase 1d, D85, decided
+2026-09-05) - the chunk and flora upload off the frame thread, alone, plan
+`docs/plans/upload-v1.md` not yet written. **Then the world-truth break** -
+real relief (D45), rings measured from the capital (D44), lakes and zones per
+tile, the generator's truth in C++ (D56, timing amended by D84 and D85). Then
+people and fire, buildings, the round 3 scene.
+
+**Open for Marcel:** `far_ring_div`, 2 or 4. Horizon v1 set it to 2 for the
+vertex budget at 32 km (1.8 M against 6.5 M); at 2 the twenty highest summits
+lose up to 23 blocks, at 4 they lose 1.3. One F4 spinbox, redraws in place.
+`docs/status/horizon-v1.md` § For Marcel, items 6 and 8.
+
+**Merged 2026-09-05: horizon v1**, three nights in one 15.5-hour session,
+unattended on ganymede, on `feat/horizon-v1`, self-merged per Marcel's
+amendment: `docs/status/horizon-v1.md`.
+**The world is as big as the view, and the view reaches 32 km.**
+
+The tile store (origin-anchored height tiles at every level, the region
+reduced to bookkeeping), voxels anywhere, the far field to 32 km in persistent
+per-ring and per-sector pieces with only what moved rebuilt, one material
+source for every level with the far paint a lookup, the fog as a ramp on the
+draw distance, the floating origin, and the sprint probe - the instrument the
+north star's frame gate is measured by. **The median half of that gate is met:
+16.67 ms at Ultra with the view at 32 km, three runs, spread 0.00%, against
+41.67 ms at 3.2 km on `main` the morning before.** The view presets are the
+reach now: Low 8 km, Medium 16, High and Ultra 32.
+
+**The hitch half is not met, and it is D85's reason.** 171 to 233 frames of
+about 3,340 over 25 ms on the sprint line, and every rung of the plan's shrink
+list made both numbers worse - a smaller upload slice lengthens the queue. With
+the C++ chunk mesher merged the same sprint streams 12,870 chunks instead of
+5,900 and the median rises to 22.1 ms: generation and meshing are off the main
+thread, so what is left on it, `add_surface_from_arrays` plus a collision
+shape per column at 214 columns a second, is the whole hitch column. That is
+upload v1.
+
+The canonical world line did not move: heightmap `4782edac`, spawn
+`(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7`, two lanes and one
+world. `far_ring_div` went 4 to 2 (above). Nine silences for the world-truth
+break and three merge requests are listed at the end of the status doc.
+
+**Marcel's Mac, 2026-09-05 - the macOS gate.** CI runs the self-test on Linux
+only, so the Mac is the project's only macOS gate, and on the merged tree it
+crashed: `World.setup` queues the far field's tile prepare on the worker pool,
+every self-test World is `World.new()` plus `free()` without entering the tree,
+so the exit-from-tree drain never ran and the job executed on a freed
+`FarField`. Fixed by draining on pre-delete as well (`far_field.gd`); Linux
+had passed by timing alone. With the crash gone, two parity gates failed on
+macOS by the last bit - the pyramid functions by 2.8e-14 blocks, the far
+colour by 6e-8 on about 740 of 89,000 quads, positions, normals and indices
+exact - where gcc and CI are exact to zero. Marcel's ruling: a tolerance,
+1e-9 on heights and slopes and 1e-6 on a colour channel, the max diff still
+printed on every run (`selftest.gd`, `PARITY_HEIGHT_TOL`, `PARITY_COLOUR_TOL`).
+The suite passes on macOS with both.
 
 **Merged 2026-09-04: mesher v1** (phase 1b, D56), the lane that ran in
 parallel with horizon v1 on `feat/mesher-v1`. The chunk mesher is a third

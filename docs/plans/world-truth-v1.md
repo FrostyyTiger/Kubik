@@ -10,8 +10,8 @@ The direction is the bible: **D45** (real relief, 1,400 to 2,500 m from valley
 floor to peak, and the vista rule), **D44** (unbounded terrain, content ringed
 and measured from the Engineers' capital), **D56** (everything that changes
 what a seed produces lands in ONE break, before any content is authored on a
-seed), **D84** (the north star, and the order: this lane starts the day horizon
-v1 lands), with **D1** (the four grains; the world cube stays 0.5 m), **D21**
+seed), **D84** and **D85** (the north star, and the order: this lane starts
+the day upload v1 lands, which itself follows horizon v1), with **D1** (the four grains; the world cube stays 0.5 m), **D21**
 (trees are real size and already are), **D47** (heightmap terrain, placed
 volumes), **D52**, **D55**, **D57** (the camera the vista rule is measured
 through), **D63** (magic is distance, not altitude), **D73** and **D81** (the
@@ -69,8 +69,8 @@ are **tables** (habit 1); nothing here touches the journal or the mutation path.
 
 **Who and where.** One agent, Opus, on ganymede, **Forward+ only**, in tmux
 session `world-truth`, worktree `~/Kubik-world-truth`, branch
-`feat/world-truth-v1` cut from `main` **after horizon v1 has been merged into
-it**. Ganymede: Ubuntu 24.04, RTX 3070 Ti 8 GB, driver 595, `~/bin/godot`
+`feat/world-truth-v1` cut from `main` **after horizon v1 and upload v1 have
+both been merged into it** (D85). Ganymede: Ubuntu 24.04, RTX 3070 Ti 8 GB, driver 595, `~/bin/godot`
 4.7.2, `~/godot-cpp` (pinned `26fb7ab`, API dumped), `~/bin/scons` (venv
 `~/.venvs/scons`), `~/.venvs/kubik/bin/python` for PIL; windowed commands under
 `xvfb-run -a -s "-screen 0 1280x720x24"` with `XDG_RUNTIME_DIR` exported to a

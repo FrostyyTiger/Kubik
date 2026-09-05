@@ -583,8 +583,8 @@ world, it reads as a broken one.
 
 **This has not landed yet.** `world_scale` is still 4 and the relief is still
 about 350 m. Real relief is world truth - it changes what a seed produces - so
-it belongs to **the world-truth break**, the lane right after horizon v1
-(D56 as amended by D84), together with rings measured from the capital, the
+it belongs to **the world-truth break**, the lane after upload v1
+(D56 as amended by D84 and D85), together with rings measured from the capital, the
 tiled heightmap store, lakes and zones per tile, and the generator's truth in
 C++. They happen once and together, before any content is authored on a seed.
 
