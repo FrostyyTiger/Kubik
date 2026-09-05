@@ -4,8 +4,11 @@
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/core/math.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/vector2.hpp>
+
+#include "far_world.h"
 
 using namespace godot;
 
@@ -108,7 +111,34 @@ public:
 	// than only that they do.
 	double height_at_block(double p_bx, double p_bz) const;
 
+	// THE MATERIAL PYRAMID'S LEVEL 0, horizon v1 Stage 4.
+	//
+	// The zone rules, not the height rules - so this class carries a `World`
+	// rather than a second copy of `surface_zone_at`. `World` is the far
+	// mesher's struct and every zone expression in the project's C++ lives on
+	// it exactly once; what is held here is a second INSTANCE of it, filled
+	// with the four things the zone rules read (the thresholds, the seed, the
+	// jitter noise and the config) and nothing else. Read-only after
+	// `setup_zones`, so a dozen chunk workers may fill materials at once for
+	// the same reason they may build heights at once.
+	//
+	// IT IS HERE AND NOT IN GDSCRIPT BECAUSE IT IS 17 MILLION EVALUATIONS. The
+	// first spelling of this stage tallied materials in `heightmap.gd` and put
+	// the self-test's tile build from 10.5 s to 74; the same loop here is a
+	// fraction of a second. Measured, in docs/status/horizon-v1.md.
+	void setup_zones(const Dictionary &p_world);
+	bool zones_ready() const { return zones_set; }
+
+	// One grid's materials: `cols` x `rows` cells from block (`bx0`, `bz0`),
+	// `step` apart, with `heights` the same grid's altitudes. The slope is the
+	// central difference over the grid, edge-clamped - at `step` 4 that is
+	// exactly `Heightmap.slope_deg_at`.
+	PackedByteArray build_materials(const Dictionary &p_args) const;
+
 private:
+	kubik::World zones;
+	bool zones_set = false;
+
 	double raw_height(double p_bx, double p_bz) const;
 	double ridge(double n) const { return (1.0 - Math::abs(n)) * (1.0 - Math::abs(n)); }
 	double wildness_at(double bx, double bz) const;

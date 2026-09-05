@@ -11,6 +11,55 @@ void KubikHeightTiles::_bind_methods() {
 			&KubikHeightTiles::build_tile);
 	ClassDB::bind_method(D_METHOD("height_at_block", "bx", "bz"),
 			&KubikHeightTiles::height_at_block);
+	ClassDB::bind_method(D_METHOD("setup_zones", "world"),
+			&KubikHeightTiles::setup_zones);
+	ClassDB::bind_method(D_METHOD("zones_ready"), &KubikHeightTiles::zones_ready);
+	ClassDB::bind_method(D_METHOD("build_materials", "args"),
+			&KubikHeightTiles::build_materials);
+}
+
+void KubikHeightTiles::setup_zones(const Dictionary &d) {
+	zones.setup(d);
+	zones_set = zones.zone_thresholds.size() > 0 && zones.jitter_noise.is_valid();
+}
+
+PackedByteArray KubikHeightTiles::build_materials(const Dictionary &args) const {
+	PackedByteArray out;
+	if (!zones_set) {
+		return out;
+	}
+	int64_t bx0 = (int64_t)args.get("bx0", 0);
+	int64_t bz0 = (int64_t)args.get("bz0", 0);
+	int64_t cols = (int64_t)args.get("cols", 0);
+	int64_t rows = (int64_t)args.get("rows", 0);
+	int64_t step = (int64_t)args.get("step", 4);
+	PackedFloat32Array heights = args.get("heights", PackedFloat32Array());
+	if (cols <= 1 || rows <= 1 || heights.size() != cols * rows) {
+		return out;
+	}
+	out.resize(cols * rows);
+	uint8_t *p = out.ptrw();
+	const float *h = heights.ptr();
+	double inv = 1.0 / (2.0 * (double)step);
+	double edge = 1.0 / (double)step;
+	for (int64_t j = 0; j < rows; j++) {
+		int64_t bz = bz0 + j * step;
+		int64_t row = j * cols;
+		int64_t up = (j > 0 ? j - 1 : j) * cols;
+		int64_t dn = (j < rows - 1 ? j + 1 : j) * cols;
+		double jscale = (j > 0 && j < rows - 1) ? inv : edge;
+		for (int64_t i = 0; i < cols; i++) {
+			int64_t i0 = i > 0 ? i - 1 : i;
+			int64_t i1 = i < cols - 1 ? i + 1 : i;
+			double iscale = (i > 0 && i < cols - 1) ? inv : edge;
+			double gx = ((double)h[row + i1] - (double)h[row + i0]) * iscale;
+			double gz = ((double)h[dn + i] - (double)h[up + i]) * jscale;
+			double slope = Math::rad_to_deg(Math::atan(Math::sqrt(gx * gx + gz * gz)));
+			p[row + i] = (uint8_t)zones.surface_zone_with(bx0 + i * step, bz,
+					(double)h[row + i], slope);
+		}
+	}
+	return out;
 }
 
 static double cfg_f(const Dictionary &d, const char *key, double fallback) {

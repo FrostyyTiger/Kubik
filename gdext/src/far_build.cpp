@@ -63,7 +63,6 @@ static constexpr double INV_LN2 = 1.4426950408889634;
 static constexpr int CHUNK_SIZE = 16;
 static constexpr int FRONTIER_SECTORS = 16;
 static constexpr double SKIRT_SHADE = 0.7;
-static constexpr int VOTE_SPLIT = 2;
 
 // FarFieldJob.ring_div / base_step_blocks.
 static int ring_div(const Config &c) {
@@ -145,8 +144,8 @@ struct Mesher {
 	std::vector<float> t_hq;
 	std::vector<float> t_t;
 	std::vector<float> sector_exclude;
-	bool voting = false;
-	std::unordered_map<int64_t, int> vote_memo;
+	// The material pyramid level the ring being built paints from.
+	int mat_level = 0;
 
 	// The output. `sinks[0]` is the whole mesh when not slicing, and one
 	// sector each when slicing - see `slicing` and far_field_job.gd's `slice`.
@@ -394,75 +393,11 @@ struct Mesher {
 		return d_sq >= hole * hole;
 	}
 
-	// _vote_level
-	int vote_level(int cell) const {
-		double sub = Math::max((double)cell / (double)VOTE_SPLIT, 1.0);
-		double l = Math::log(sub / (double)w.hm_step) * INV_LN2 + c.far_filter_bias;
-		int v = (int)Math::floor(l);
-		return v < 0 ? 0 : (v > TILE_MAX_LEVEL ? TILE_MAX_LEVEL : v);
-	}
-
-	// _zone_vote - the mode of four sub-cell zones, shore excluded, first
-	// sample winning ties. Memoised per zone cell, cleared per ring.
-	int zone_vote(int64_t cx, int64_t cz, int cell) {
-		int64_t key = cx * 131071 + cz;
-		auto hit = vote_memo.find(key);
-		if (hit != vote_memo.end()) {
-			return hit->second;
-		}
-		int64_t q = cell / 4 > 1 ? cell / 4 : 1;
-		int level = vote_level(cell);
-		double gain = c.far_peak_gain;
-		int zones[4] = { 0, 0, 0, 0 };
-		int k = 0;
-		const int64_t offs[2] = { -q, q };
-		for (int a = 0; a < 2; a++) {
-			for (int b = 0; b < 2; b++) {
-				int64_t bx = cx + offs[b];
-				int64_t bz = cz + offs[a];
-				double h = w.bilinear((double)bx, (double)bz, level, false);
-				if (gain > 0.0) {
-					h = Math::lerp(h,
-							w.bilinear((double)bx, (double)bz, level, true), gain);
-				}
-				zones[k] = w.backdrop_zone(bx, bz, h);
-				k++;
-			}
-		}
-		int best = -1;
-		int best_n = 0;
-		for (int a = 0; a < 4; a++) {
-			if (zones[a] == ZONE_SHORE) {
-				continue;
-			}
-			int n = 0;
-			for (int b = 0; b < 4; b++) {
-				if (zones[b] == zones[a]) {
-					n++;
-				}
-			}
-			if (n > best_n) {
-				best_n = n;
-				best = zones[a];
-			}
-		}
-		if (best < 0) {
-			best = ZONE_SHORE;
-		}
-		vote_memo[key] = best;
-		return best;
-	}
-
-	// _far_zone
-	int far_zone(int64_t bx, int64_t bz, double altitude, int ring, int cell) {
-		if (ring == 0) {
-			return w.surface_zone_at(bx, bz, altitude);
-		}
-		if (!voting) {
-			return w.backdrop_zone(bx, bz, altitude);
-		}
-		return zone_vote(bx, bz, cell);
-	}
+	// STAGE 4 DELETED `vote_level`, `zone_vote` and `far_zone` from here, and
+	// `_vote_level`, `_zone_vote` and `_far_zone` from far_field_job.gd in the
+	// same commit. Both legs read `World::material_at` now - see the note by
+	// `Heightmap.materials`. The pair of deletions is one change: a leg that
+	// kept its own rule would be the disagreement the parity gate exists for.
 
 	// _push_quad. The normal is derived from the winding unless a lighting
 	// normal is handed in, so the identity the whole mesher rests on -
@@ -550,9 +485,9 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 		t_geo = Math::clamp(c.far_geomorph_cells, 0.0, 8.0) * (double)step;
 	}
 	t_detail = band <= 0.0 ? c.far_detail : 0.0;
-	// Per ring, because the cell grid is per ring and a key from the last ring
-	// could collide with a cell of this one.
-	vote_memo.clear();
+	// The material pyramid level this ring paints from - the level whose cell
+	// is this ring's cell. Once per ring, as in far_field_job.gd.
+	mat_level = w.material_level(step);
 	t_full = t_amount >= 1.0 && band <= 0.0;
 	if (t_amount > 0.0) {
 		t_ridge = RIDGE_SPAN_BLOCKS / step;
@@ -653,35 +588,22 @@ void Mesher::build_ring(int ring, int step, double inner, double outer,
 			Vector3 p3((real_t)px0,
 					(real_t)corner_y(bx0, bz1, h01, band, y_offset), (real_t)pz1);
 
-			// Colour from the same zone rules the voxels use, sampled at the
-			// quad's middle - see far_field_job.gd for why the zone reads the
-			// UNQUANTISED height and why the cell coarsens past ring 1.
-			double mid_h = (h00 + h10 + h11 + h01) * 0.25;
-			int64_t zone_bx = bx0 + step / 2;
-			int64_t zone_bz = bz0 + step / 2;
-			double zone_h = mid_true;
-			double zone_d_m = 0.0;
-			if (ring > 0) {
-				double zdx = (double)(bx0 + step / 2 - ring_cx);
-				double zdz = (double)(bz0 + step / 2 - ring_cz);
-				zone_d_m = Math::sqrt(zdx * zdx + zdz * zdz) * bs;
-			}
-			int zone_cell = step;
-			if (ring > 1 && c.far_zone_cell_m > 0.0) {
-				double cell_m = Math::max(c.far_zone_cell_m,
-						c.far_zone_cell_ratio * zone_d_m);
-				int zc = (int)Math::round(cell_m / bs);
-				zone_cell = zc > step ? zc : step;
-				zone_bx = floor_div(bx0, zone_cell) * zone_cell + zone_cell / 2;
-				zone_bz = floor_div(bz0, zone_cell) * zone_cell + zone_cell / 2;
-				// NOT TAKEN WHEN THE VOTE IS ON - the vote reads its own four
-				// heights at its own level and this sample would be thrown away.
-				if (!voting) {
-					zone_h = filtered(zone_bx, zone_bz, 0.0);
+			// THE COLOUR IS A LOOKUP - horizon v1 Stage 4, and the GDScript
+			// leg's quad loop says the same in the same place.
+			double qbx = (double)(bx0 + step / 2);
+			double qbz = (double)(bz0 + step / 2);
+			int mat = w.material_at(qbx, qbz, mat_level);
+			Color color = w.zone_colors[(size_t)mat];
+			// AND THE FOREST OVER IT - far_field_job.gd's own note.
+			// And never on rock or snow - far_field_job.gd's own note.
+			if (c.far_forest_blend > 0.0 && ring > 0 && mat != ZONE_ROCK
+					&& mat != ZONE_SNOW) {
+				double cov = w.cover_at(qbx, qbz, mat_level);
+				if (cov > 0.0) {
+					double t = cov * Math::clamp(c.far_forest_blend, 0.0, 1.0);
+					color = color.lerp(w.canopy_color, (real_t)t);
 				}
 			}
-			int zone = far_zone(zone_bx, zone_bz, zone_h, ring, zone_cell);
-			Color color = w.zone_colors[(size_t)zone];
 
 			Vector3 flank = flank_normal(bx0 + step / 2, bz0 + step / 2);
 			push_quad(p0, p1, p2, p3, color, flank);
@@ -801,7 +723,6 @@ void Mesher::run(const Dictionary &args) {
 	far_radius = far_radius_local;
 	t_amount = Math::clamp(c.far_terrace, 0.0, 1.0);
 	t_step_y = Math::max(c.far_step_y_blocks, 0.0);
-	voting = c.far_vote > 0.0;
 	int tlr = TERRACE_LEVEL_RING < 0 ? 0
 									 : (TERRACE_LEVEL_RING > RING_COUNT - 1 ? RING_COUNT - 1
 																			: TERRACE_LEVEL_RING);
@@ -907,6 +828,14 @@ Dictionary build_far_mesh(World &p_world, const Dictionary &p_args) {
 	Variant tiles = p_args.get("tiles", Variant());
 	if (tiles.get_type() == Variant::ARRAY) {
 		p_world.add_tiles(tiles);
+	}
+	// AND DROP WHAT THE PUBLISHED VIEW NO LONGER HOLDS, horizon v1 Stage 4.
+	// The store evicts by distance and nothing used to tell this side, so the
+	// two legs drifted the moment anything was evicted - see far_mesher.gd's
+	// `_view_keys` for the whole story and for how it was found.
+	Variant keep = p_args.get("tile_keep", Variant());
+	if (keep.get_type() == Variant::PACKED_INT32_ARRAY) {
+		p_world.prune_tiles((PackedInt32Array)keep);
 	}
 
 	Mesher m(p_world);

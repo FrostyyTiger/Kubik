@@ -402,6 +402,15 @@ var _seam_radius := 0.0
 var _ring_cx := 0
 var _ring_cz := 0
 
+## The material pyramid level the ring currently being built paints from - see
+## `material_level`, and `_build_ring` which sets it.
+var _mat_level := 0
+
+## `far_forest_blend` and the canopy colour it blends towards, read once per
+## job like every other knob the ring loop reads.
+var _forest_blend := 0.0
+var _canopy := Color(0.0284, 0.0782, 0.0482)
+
 ## 1 / ln(2). GDScript has log() and no log2().
 const INV_LN2 := 1.4426950408889634
 
@@ -724,10 +733,8 @@ func run() -> void:
 	# the distance look: flat cell tops stay, the shelf goes. Read once per job
 	# for the same reason far_terrace is.
 	_t_step_y = maxf(config.far_step_y_blocks, 0.0)
-	# DISTANCE V3 STAGE 1. Read once per job for the same reason far_terrace is:
-	# it is a knob on a shared config the main thread can write while this worker
-	# runs, and a value that changed half way through would vote on half a mesh.
-	_voting = config.far_vote > 0.0 and generator != null and heightmap != null
+	_forest_blend = clampf(config.far_forest_blend, 0.0, 1.0)
+	_canopy = canopy_color()
 	# ONE LEVEL FOR THE WHOLE JOB - see _t_level. heightmap.step is 4 blocks, so
 	# at the default far_step of 8 the three rings' cells are 8, 16 and 32 blocks
 	# and this picks 32: log2(32/4) + far_filter_bias = 4.
@@ -923,6 +930,10 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 	var cz := int(floor(float(center.y) / float(step))) * step
 	_ring_cx = cx
 	_ring_cz = cz
+	# THE MATERIAL PYRAMID LEVEL THIS RING PAINTS FROM, horizon v1 Stage 4:
+	# the level whose cell is this ring's cell. Once per ring rather than once
+	# per quad, because it is a property of the ring.
+	_mat_level = material_level(heightmap, step)
 	# THE RING'S ANCHOR, and every vertex of a keyed build is relative to it.
 	#
 	# All sixteen sectors of a ring share it, because they share the snapped
@@ -970,9 +981,6 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 		_t_geo = clampf(config.far_geomorph_cells, 0.0, 8.0) * float(step)
 	# Rule 2: far rings only. `band` is non-zero on ring 0 and nowhere else.
 	_t_detail = config.far_detail if band <= 0.0 else 0.0
-	# Per ring, because the cell grid is per ring and a key from the last ring
-	# could collide with a cell of this one.
-	_vote_memo.clear()
 	_t_full = _t_amount >= 1.0 and band <= 0.0
 	if _t_amount > 0.0:
 		# The margin is the RIDGE reach PLUS ONE, not one cell. A quad asks its
@@ -1113,71 +1121,49 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 			var p2 := Vector3(x1, _corner_y(bx1, bz1, h11, band, y_offset), z1)
 			var p3 := Vector3(x0, _corner_y(bx0, bz1, h01, band, y_offset), z1)
 
-			# Colour from the same zone rules the voxels use, sampled at the
-			# quad's middle. Anything else and the treeline would be in a
-			# different place near and far.
-			var mid_h := (h00 + h10 + h11 + h01) * 0.25
-			var zone_bx := bx0 + step / 2
-			var zone_bz := bz0 + step / 2
-			# THE ZONE READS THE UNQUANTISED HEIGHT, distance v2 - and it read
-			# the quantised one from Stage 2 until an agent looking at the
-			# pictures noticed a meadow had turned to rock.
+			# THE COLOUR IS A LOOKUP NOW, horizon v1 Stage 4.
 			#
-			# `mid_h` is the height the quad is DRAWN at, which since Stage 2 is
-			# the cell's shelf. Deciding the zone from it means a cell whose
-			# true altitude sits just under a zone threshold, and whose shelf
-			# rounds up across it, is repainted as the zone above - so the
-			# treeline and the snow line move by up to half a step, 2 m at
-			# ring 0 and 4 m at ring 1. The comment below says exactly why the
-			# inner rings may not do that: "the first so the treeline agrees
-			# with the voxels at the seam".
+			# WHAT THIS REPLACES, because the deletion is the change. Until
+			# tonight this block re-derived a zone at every quad: the altitude
+			# it had just drawn, run through `surface_zone_at`'s dither at ring
+			# 0 and through `backdrop_zone`'s fixed 0.5 dither past it, sampled
+			# on a zone cell that grew with distance (`far_zone_cell_m`,
+			# `far_zone_cell_ratio`), with distance v3's four-sample majority
+			# vote bolted on to stop the result fizzing. Five mechanisms, four
+			# knobs, and none of them the rule the voxels use.
 			#
-			# WHAT a place is made of is not this epic's to change - hard rule
-			# 7 in spirit, the same reason the heightmap hash may not move. The
-			# terrace changes how the far country is DRAWN and never what it IS,
-			# and a zone is what it is. At far_terrace 0 mid_true is mid_h
-			# exactly, so this is a no-op there.
-			var zone_h := mid_true
-			# BEYOND THE FIRST RING THE ZONE IS SAMPLED ON A COARSER CELL, look
-			# v1. Zone boundaries are noise, so quad by quad a far peak comes
-			# out as a speckle of rock, snow and turf; sampled once per
-			# far_zone_cell_m it comes out in blocks, which is how a poster
-			# paints a mountainside. The two inner rings keep the exact sample:
-			# the first so the treeline agrees with the voxels at the seam, the
-			# second because at 200 m a 24 m cell is still a visible square,
-			# and the postcard showed a checkerboard of meadow on the shore.
-			# Rendering only: the zones themselves do not move.
-			# THE CELL GROWS WITH DISTANCE, distance v1 Stage 4. One constant
-			# paints a mountainside at 600 m in the same 24 m fields as one at
-			# 200 m, and at 600 m a 24 m field is a couple of pixels.
-			var zone_d_m := 0.0
-			if ring > 0:
-				var zdx := float(bx0 + step / 2 - _ring_cx)
-				var zdz := float(bz0 + step / 2 - _ring_cz)
-				zone_d_m = sqrt(zdx * zdx + zdz * zdz) * bs
-			# THE ZONE CELL'S OWN WIDTH IN BLOCKS, which distance v3's vote needs
-			# and the single-sample path never had to name: the vote's four
-			# sub-samples sit at the quarter points of THIS square.
-			var zone_cell := step
-			if ring > 1 and config.far_zone_cell_m > 0.0:
-				var cell_m := maxf(config.far_zone_cell_m,
-					config.far_zone_cell_ratio * zone_d_m)
-				zone_cell = maxi(int(round(cell_m / bs)), step)
-				zone_bx = Chunk.floor_div(bx0, zone_cell) * zone_cell + zone_cell / 2
-				zone_bz = Chunk.floor_div(bz0, zone_cell) * zone_cell + zone_cell / 2
-				# THE ZONE READS THE FILTERED HEIGHT TOO. It decided the quad's
-				# colour off the raw 2 m grid while the quad's own corners came
-				# off the pyramid, so the paint was sampled from a surface the
-				# geometry no longer had.
-				#
-				# NOT TAKEN WHEN THE VOTE IS ON - the vote reads its own four
-				# heights at its own level and this sample would be thrown away.
-				# It is two pyramid reads per quad, which is most of what pays
-				# for the vote.
-				if not _voting:
-					zone_h = _filtered(zone_bx, zone_bz, 0.0)
-			var zone := _far_zone(zone_bx, zone_bz, zone_h, ring, zone_cell)
-			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
+			# The material pyramid answers all of it in one read. The cell's
+			# material IS the mode of the materials under it, computed once
+			# when the pyramid or the tile was built, from `surface_zone_at`
+			# itself at level 0 - so the far country and the ground agree by
+			# construction rather than by two rules kept in step by hand, it
+			# cannot fizz because nothing is resampled per frame, and the
+			# colour of a 512 m cell is the commonest thing actually in it.
+			var qbx := float(bx0 + step / 2)
+			var qbz := float(bz0 + step / 2)
+			var mat := heightmap.far_material_at(qbx, qbz, _mat_level, _view)
+			var color := Block.color_of(TerrainGenerator.ZONE_SURFACE[mat])
+			# AND THE FOREST OVER IT. A far cell that is meadow with trees on
+			# it is not meadow-coloured: the canopy is what the eye sees. So
+			# the cell's colour is pulled towards the species canopy mid by the
+			# cover, at `far_forest_blend` of full - the plan's 0.7 - which is
+			# what stops a forested flank at 10 km reading as the ground under
+			# it. Never at ring 0, where the real trees are drawn and this
+			# would tint the ground under them a second time.
+			# AND NEVER ON ROCK OR SNOW. The cover grid is coarser than the
+			# material - `Heightmap.COVER_STRIDE` - so a snow cell beside a
+			# forest reads the forest's sample and would come out tinted
+			# green. `TreePlacement.cover_at` already answers 0 on rock and
+			# snow; this is the same statement made where the coarse read
+			# could otherwise smear it across a boundary. It was measured, not
+			# guessed: the colour handover at the summit vantage failed on
+			# snow by 33.5 points of V and on nothing else.
+			if _forest_blend > 0.0 and ring > 0 \
+					and mat != TerrainGenerator.ZONE_ROCK \
+					and mat != TerrainGenerator.ZONE_SNOW:
+				var cover := heightmap.far_cover_at(qbx, qbz, _mat_level, _view)
+				if cover > 0.0:
+					color = color.lerp(_canopy, cover * _forest_blend)
 
 			# THE BACKDROP, look v1. One altitude band per quad - so the band
 			# edges are the quad edges, a hard stepped contour rather than a
@@ -1289,164 +1275,18 @@ func _build_ring(ring: int, step: int, inner: float, outer: float, y_offset: flo
 					riser_color, w_verts, w_normals, w_colors, w_indices)
 
 
-## The zone of one far-field quad.
-##
-## NO DITHER AND NO JITTER PAST THE FIRST RING, distance v1 Stage 4.
-##
-## `surface_zone_at()` hashes a per-column jitter and a per-patch dither so the
-## two zones INTERLEAVE across a boundary. At 0.5 m per block that reads as a
-## gradient, which is what it is for. At 16 m per quad the same mechanism reads
-## as tetris - a camouflage of small hard-edged patches instead of the three or
-## four large fields the poster is supposed to paint - and it is the single
-## most likely cause of the mosaic in `6-postcard.png`.
-##
-## So past ring 0 the zone is decided by ALTITUDE ALONE: zone_at() with no
-## jitter and a dither of exactly 0.5, which promotes a cell the moment its
-## altitude passes the threshold and never before. Ring 0 keeps the exact
-## sample, because it touches the voxels at the seam and the treeline has to
-## agree with the trees.
-##
-## The SLOPE override is kept - snow does not sit on a cliff, and dropping it
-## past ring 0 would put white on every far spire. It is deterministic at
-## slope_zone_strength 1.0 (the roll can never exceed 1), so it is a function
-## of the ground and not another hash.
-##
-## Rendering only: the zones themselves do not move, and nothing here is read
-## by anything that decides what the world is.
-func _far_zone(bx: int, bz: int, altitude: float, ring: int, cell: int) -> int:
-	if ring == 0:
-		return generator.surface_zone_at(bx, bz, altitude, true, _view)
-	if not _voting:
-		return backdrop_zone(generator, bx, bz, altitude, _view)
-	return _zone_vote(bx, bz, cell)
-
-
-# --- THE MODE VOTE, distance v3 Stage 1 --------------------------------------
+# --- WHAT STAGE 4 DELETED ----------------------------------------------------
 #
-# DISTANT HORIZONS NEVER AVERAGES A COLOUR WHEN IT COARSENS. Merging four fine
-# columns into one coarse column, it takes the MOST COMMON block id at the
-# slice midpoints and keeps that block's colour at full saturation, with air
-# excluded so a hollow structure cannot become a hole and ties falling through
-# to the first sub-column. `docs/research/distant-horizons.md` §2c has the code.
-# The consequence is the one this epic is named for: two adjacent coarse cells
-# over a mixed forest floor come out LEAVES and DIRT rather than as two shades
-# of brown-green soup, and the arbitrariness of the tie-break is free
-# high-frequency texture rather than error.
+# `_far_zone`, `_zone_vote`, `_vote_memo`, `_vote_level`, `VOTE_SPLIT` and
+# `_voting` lived here: distance v1's per-ring dither rule and distance v3's
+# four-sample majority vote, about 150 lines between them. Both were ways of
+# guessing what a coarse cell is made of from the height the far mesh had just
+# drawn. The material pyramid knows, so both are gone - see the block by
+# `Heightmap.materials` and the colour lookup in `_build_ring`'s quad loop.
 #
-# WHAT WE HAD INSTEAD, and it is worth saying plainly because it is not
-# averaging either. Past ring 0 the far field asks `backdrop_zone` for the zone
-# at ONE point - the zone cell's centre - at an altitude read off the pyramid at
-# a level chosen from the distance to the player. One sample of a smooth
-# surface, so neighbouring cells read neighbouring altitudes and agree with each
-# other; the mush is not a blend, it is a LOW-PASS. Nothing in the picture ever
-# says "this cell is forest and the one beside it is rock" unless the smoothed
-# altitude happens to cross a threshold between them.
-#
-# So the port is: four samples at the sub-cell midpoints, EACH AT THE FINER
-# LEVEL - which is exactly what DH is doing when it votes over four fine
-# columns - and the mode of what they answer.
-#
-#   * The level is the one whose cells are the SUB-cell's width, so the four
-#     samples read a surface that has detail at the scale they are spaced at.
-#     Voting over four reads of a surface too smooth to disagree is four times
-#     the cost of the old path and none of the benefit; this is the whole
-#     mechanism.
-#   * SHORE NEVER WINS, which is DH's "air never wins" in our world. A cell
-#     that is three parts meadow and one part lake margin is meadow: a shore
-#     fleck floating on a hillside is the artefact the rule exists to stop, and
-#     shore is the only zone in this world that belongs to a place rather than
-#     to an altitude. A cell whose four samples are ALL shore is shore.
-#   * TIES RESOLVE TO THE FIRST SAMPLE, deterministically. Two-two splits are
-#     common on a boundary and the arbitrariness is the texture.
-#
-# COST. Four bilinear pyramid reads per zone CELL where there was one trilinear
-# per quad - and past ring 1 the zone cell is coarser than the quad, so the
-# memo below serves several quads from one vote and the vote is cheaper than
-# what it replaced. Ring 1 pays in full: its zone cell is its quad.
-
-## HOW MANY SUB-CELLS ON A SIDE. Two, which is DH's four sub-columns, and it is
-## a constant rather than a knob because three would not be a mode over a power
-## of two and five would be a blur.
-const VOTE_SPLIT := 2
-
-## config.far_vote > 0 and the generator can answer. Read once per job, like
-## every other knob the ring loop reads.
-var _voting := false
-
-## THE VOTE MEMO, one entry per zone cell, cleared per ring.
-##
-## Past ring 1 the zone cell grows with distance - `far_zone_cell_ratio * d` -
-## so at 1.5 km one cell covers a couple of dozen quads and the single-sample
-## path was answering the same question for every one of them. Keyed on the
-## cell's own centre, which is snapped to the cell grid, so two quads in one
-## cell hash to one entry by construction.
-var _vote_memo := {}
-
-
-## The mode of the four sub-cell zones. See the block comment above.
-func _zone_vote(cx: int, cz: int, cell: int) -> int:
-	var key := cx * 131071 + cz
-	var hit = _vote_memo.get(key)
-	if hit != null:
-		return hit
-	# The quarter points of the cell: the centres of the four sub-cells, at
-	# least one block apart even if a ring's cell ever became tiny.
-	var q := maxi(cell / 4, 1)
-	var level := _vote_level(cell)
-	var gain: float = config.far_peak_gain
-	var zones := [0, 0, 0, 0]
-	var k := 0
-	for dz in [-q, q]:
-		for dx in [-q, q]:
-			var bx: int = cx + dx
-			var bz: int = cz + dz
-			var h := heightmap.far_height_at_level(float(bx), float(bz), level, _view)
-			if gain > 0.0:
-				# THE PEAK GAIN IS IN THE VOTE, for the reason the zone reads a
-				# filtered height at all: the snow line has to sit where the
-				# DRAWN summit is, and the drawn summit is the mean pyramid
-				# pulled towards the maxima. A vote off the mean alone would
-				# paint the snow line tens of blocks below the ridge it is on.
-				h = lerpf(h, heightmap.far_height_max_at_level(
-					float(bx), float(bz), level, _view), gain)
-			zones[k] = backdrop_zone(generator, bx, bz, h, _view)
-			k += 1
-	# The mode, with shore excluded and the first sample winning ties. Four
-	# values, so a histogram is more code than a double loop and slower.
-	var best := -1
-	var best_n := 0
-	for a in 4:
-		if zones[a] == TerrainGenerator.ZONE_SHORE:
-			continue
-		var n := 0
-		for b in 4:
-			if zones[b] == zones[a]:
-				n += 1
-		if n > best_n:
-			best_n = n
-			best = zones[a]
-	if best < 0:
-		best = TerrainGenerator.ZONE_SHORE
-	_vote_memo[key] = best
-	return best
-
-
-## THE PYRAMID LEVEL THE VOTE READS, an integer, from the sub-cell's width.
-##
-## `level = log2(sub-cell / heightmap.step) + far_filter_bias`, floored - the
-## same expression `_t_level` uses for the terrace, asked about a different cell
-## and rounded DOWN rather than left continuous. Floored because the vote wants
-## the finer of the two levels it sits between: a vote is only worth taking over
-## a surface that still has something to disagree about, and it is an integer so
-## the read is one bilinear instead of a trilinear's two.
-##
-## The bias is included so the paint follows the shape: far_filter_bias is the
-## far country's smoothness dial and a vote that ignored it would keep flecking
-## a mountain the geometry had smoothed flat.
-func _vote_level(cell: int) -> int:
-	var sub := maxf(float(cell) / float(VOTE_SPLIT), 1.0)
-	var l := log(sub / float(heightmap.step)) * INV_LN2 + config.far_filter_bias
-	return clampi(int(floor(l)), 0, Heightmap.TILE_MAX_LEVEL)
+# `far_vote`, `far_zone_cell_m` and `far_zone_cell_ratio` are now read by
+# nothing. They stay in the config for one more epic so a saved file does not
+# lose fields on load, and the F4 panel no longer offers them.
 
 
 ## THE MIP LEVEL AT ONE VERTEX, distance v1 Stage 2.
@@ -1898,13 +1738,33 @@ static func filtered_height(heightmap: Heightmap, config: WorldgenConfig,
 	return lerpf(mean, heightmap.far_height_max_filtered(bx, bz, level, view), gain)
 
 
-## The zone the far mesh paints past ring 0: altitude alone, no jitter and a
-## dither of exactly 0.5, with the slope override kept. See _far_zone above,
-## which carries the reasoning.
+## ALTITUDE ALONE, NO JITTER, A DITHER OF EXACTLY 0.5, and the slope override
+## kept. What the far mesh painted with until Stage 4 replaced it.
+##
+## NOTHING IN THE RENDER PATH CALLS THIS ANY MORE. It stays because
+## `scripts/tools/selftest.gd`'s cross-leg parity test calls it - eight hundred
+## positions, this against `KubikFarMesher.z_backdrop`, asserting the two
+## meshers agree about a zone - and this lane may add exactly one line to that
+## file (plan § 0). Deleting the function would break a green gate in a file it
+## may not fix. So both legs keep it, both legs keep answering the same, and
+## the request to retire the pair together is written in the status doc under
+## "For the merge".
 static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 		altitude: float, view := {}) -> int:
 	return generator._slope_zone(bx, bz,
 		generator.zone_at(altitude, 0.0, 0.5), true, view)
+
+
+## The material the far mesh paints at one place and one ring cell - horizon v1
+## Stage 4, and the whole of what `backdrop_zone` used to compute.
+##
+## `cell` is the ring's cell in blocks; the level is the one whose cell matches
+## it. The altitude argument is gone with the rule that needed it: a material
+## is read, not derived from a height.
+static func backdrop_material(heightmap: Heightmap, bx: int, bz: int,
+		cell: int, view := {}) -> int:
+	return heightmap.far_material_at(float(bx), float(bz),
+		material_level(heightmap, cell), view)
 
 
 ## THE WHOLE BACKDROP COLOUR AT ONE PLACE, in LINEAR, before the wire
@@ -1925,11 +1785,55 @@ static func backdrop_zone(generator: TerrainGenerator, bx: int, bz: int,
 static func backdrop_color(heightmap: Heightmap, generator: TerrainGenerator,
 		config: WorldgenConfig, bx: int, bz: int, d_m: float,
 		band_treeline: int) -> Color:
-	var view := heightmap.far_view()
-	var h := filtered_height(heightmap, config, float(bx), float(bz),
-		level_at_distance(config, d_m), view)
-	var zone := backdrop_zone(generator, bx, bz, h, view)
-	return Block.color_of(TerrainGenerator.ZONE_SURFACE[zone])
+	var mat := backdrop_material(heightmap, bx, bz,
+		ring_step_blocks(config, d_m), heightmap.far_view())
+	return Block.color_of(TerrainGenerator.ZONE_SURFACE[mat])
+
+
+## THE COLOUR THE FAR FOREST BLENDS TOWARDS, in LINEAR - horizon v1 Stage 4.
+##
+## The mean canopy colour of every tree variant the library holds, so the far
+## forest is the colour of THIS world's trees rather than of a number written
+## down once. With no assets mounted the library is empty and the fallback is
+## `TreeModels.canopy_color`'s own - the same constant that file falls back to,
+## for the same reason - so a public checkout draws a plausible conifer green
+## and the two never disagree about which constant it is.
+##
+## No asset colour is committed here (D50): this reads the mounted library at
+## run time and names nothing.
+static func canopy_color() -> Color:
+	var variants := TreeModels.variants()
+	if variants.is_empty():
+		return Color(0.0284, 0.0782, 0.0482)
+	var r := 0.0
+	var g := 0.0
+	var b := 0.0
+	for v: StringName in variants:
+		var c := TreeModels.canopy_color(v)
+		r += c.r
+		g += c.g
+		b += c.b
+	var n := float(variants.size())
+	return Color(r / n, g / n, b / n)
+
+
+## WHICH MATERIAL PYRAMID LEVEL HAS THIS RING'S CELL, horizon v1 Stage 4.
+##
+## The ladder was built for exactly this: a ring's cell is `base_step x 2^r`
+## blocks and a pyramid level's cell is `heightmap.step x 2^L`, so the level
+## whose cell matches the ring's is `log2(step / heightmap.step)`. At
+## `far_ring_div` 2 the base step IS `heightmap.step`, so ring r paints from
+## level r; at 4 the base step is half a cell and rings 0 and 1 both paint from
+## level 0, which is the finest the world has.
+##
+## Clamped nowhere here: `far_material_at` clamps per SOURCE, because the
+## region has five levels and a tile has nine, and only it knows which one a
+## position is in.
+static func material_level(heightmap: Heightmap, step: int) -> int:
+	var s: int = maxi(heightmap.step, 1)
+	if step <= s:
+		return 0
+	return int(round(log(float(step) / float(s)) * INV_LN2))
 
 
 ## THE RING'S CELL WIDTH AT ONE DISTANCE, in blocks - which is also that ring's

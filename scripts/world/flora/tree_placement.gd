@@ -537,6 +537,61 @@ static func _old_growth_species(gen: TerrainGenerator, cell_x: int, cell_z: int,
 	return species
 
 
+## HOW MUCH FOREST IS HERE, 0 to 1 - horizon v1 Stage 4's forest cover.
+##
+## THE PROBABILITY, NOT THE TREES. `decide()` answers "is there a trunk in this
+## lattice cell", which is a roll; this answers "how likely is one", which is
+## the density the roll is tested against. The far country wants the second: a
+## 512 m cell holds thousands of lattice cells and what its colour needs to
+## know is what fraction of them came up trees, which is the probability, not a
+## sample of it.
+##
+## The plan's words are "the placement density of TreeFieldJob at the cell
+## centre (the same noise, the same thresholds, evaluated without the
+## crown-spacing pass)". So: the same product `decide()` tests its roll
+## against - base x spawn x density_scale x grove - times the two binary gates
+## that decide whether anything can stand here at all, and none of the terms
+## that are about ONE tree (the jitter, the hero roll, the species, the old
+## growth thinning, the crown spacing).
+##
+## NORMALISED BY `max_probability`, so 1.0 is "as dense as this world's trees
+## ever get" rather than a bare probability whose scale moves with a config
+## knob. The far colour blends towards the canopy by this fraction.
+##
+## `surface` and `zone` are handed in because every caller already has them -
+## the material pyramid computes the zone for the same cell in the same pass -
+## and asking the generator again is the expensive half of this function.
+static func cover_at(gen: TerrainGenerator, bx: int, bz: int, surface: float,
+		zone: int, slope_deg: float, masks: Masks = null) -> float:
+	var config := gen.config
+	var ceiling := max_probability(config)
+	if ceiling <= 0.0:
+		return 0.0
+	var base := _base_probability(gen, zone, surface, bx, bz)
+	if base <= 0.0:
+		return 0.0
+	if masks == null:
+		masks = masks_for(gen)
+	if _glade(masks, bx, bz) <= 0.0:
+		return 0.0
+	# THE SLOPE IS HANDED IN AND THAT IS NOT AN OPTIMISATION. `_slope_ok` asks
+	# `heightmap.slope_deg_at`, and outside the home region that reads the tile
+	# store - which is where this function is called FROM while a tile is being
+	# built. The first spelling recursed until the stack ran out. The caller has
+	# the slope off the grid it is building; it is the same number, computed
+	# once, and it cannot re-enter the store.
+	var limit := config.tree_max_slope_deg
+	if zone == TerrainGenerator.ZONE_ALPINE or zone == TerrainGenerator.ZONE_HEATH:
+		limit = float(TreeSpecies.SPECIES[TreeSpecies.KRUMMHOLZ]["slope"])
+	if limit > 0.0 and slope_deg >= limit:
+		return 0.0
+	if _bench_ok(gen, surface, bx, bz) <= 0.0:
+		return 0.0
+	var p := base * _spawn_ok(gen, bx, bz) * config.tree_density_scale \
+		* _grove(masks, bx, bz)
+	return clampf(p / ceiling, 0.0, 1.0)
+
+
 ## The highest probability any candidate anywhere can reach.
 ##
 ## The ceiling the first roll is tested against. It has to be a true upper

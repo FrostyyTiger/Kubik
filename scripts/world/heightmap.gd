@@ -145,8 +145,7 @@ func height_at(bx: float, bz: float) -> float:
 	# is a multiple of `step` for every world this config can describe. So the
 	# cell at block -3000 is the same cell in both, the bilinear is continuous
 	# across the boundary, and there is no seam to hide.
-	if bx < float(min_block) or bx > float(_max_block) \
-			or bz < float(min_block) or bz > float(_max_block):
+	if outside_region(bx, bz):
 		return _tile_bilinear(0, bx, bz, false, {})
 	return _region_bilinear(bx, bz)
 
@@ -290,6 +289,309 @@ var _max_levels: Array[PackedFloat32Array] = []
 ## How long build_pyramid() took, in milliseconds. 0 until it has run.
 var pyramid_ms := 0
 
+
+# --- THE MATERIAL PYRAMID, horizon v1 Stage 4 --------------------------------
+#
+# ONE BYTE PER CELL PER LEVEL: the material `block.gd` would paint on the
+# surface there. Level 0 is `TerrainGenerator.surface_zone_at` at the cell
+# centre - the same function the chunk mesher picks a top face with, not a
+# re-implementation - and level L is the MODE of its four children, ties to the
+# lower id.
+#
+# WHY A PYRAMID AND NOT A RULE. Until tonight the far mesh re-derived a zone at
+# every quad from the altitude it had just drawn, with its own dither, its own
+# jitter rule per ring and a majority vote bolted on at distance v3 to stop the
+# result fizzing. Four mechanisms, none of them the one the voxels use, and a
+# colour that could differ from the ground under it at any distance. A mode
+# pyramid answers all four at once: the coarse cell's colour is the commonest
+# material actually under it, it cannot fizz because it is not resampled, and
+# it agrees with the voxel surface at level 0 by construction.
+#
+# THE MODE IS THE POINT AND THE MEAN WOULD BE WRONG. Averaging materials is
+# meaningless - there is no half-way between rock and snow - and averaging
+# their COLOURS is the soup this epic's research names as the thing to avoid
+# (docs/research/distant-horizons.md § 2c). Four cells of meadow and four of
+# rock come out as one or the other and never as mud.
+#
+# TIES TO THE LOWER ID, always, because the id order is the altitude order:
+# a tie between meadow and snow paints meadow, so a summit gains its snow one
+# level later rather than one level early. Deterministic, and it errs towards
+# the ground the player is standing on.
+
+## Level 0 over the region grid, `cols` x `cols`, one byte per cell. Empty
+## until `build_material_pyramid()` has run.
+var materials := PackedByteArray()
+
+## Levels 1..MAX_LEVEL, the same shape as `_levels`.
+var _mat_levels: Array[PackedByteArray] = []
+
+## How long the material pyramid took, in milliseconds.
+var material_ms := 0
+
+var _material_mutex := Mutex.new()
+var _material_ready := false
+
+
+# --- THE FOREST COVER, horizon v1 Stage 4 ------------------------------------
+#
+# ONE BYTE PER COARSE CELL: how much forest is here, 0 to 255, from
+# `TreePlacement.cover_at` - the placement probability the trees themselves are
+# rolled against, without the crown-spacing pass. The far colour blends towards
+# the canopy by it, so a forested flank at 10 km reads green rather than as the
+# meadow underneath it.
+#
+# COARSER THAN THE MATERIAL, ON PURPOSE AND BY A MEASURED FACTOR. A material is
+# an id and a wrong one is a wrong colour; cover is a smooth density and a
+# blend weight, and 8 m of it looks exactly like 2 m of it from a kilometre
+# away. It is also the expensive one - three noise samples per evaluation
+# against the material's one, and no C++ leg, because porting the tree
+# placement is a different epic - so it is sampled every COVER_STRIDE cells and
+# read nearest. At stride 4 that is one evaluation per 16 blocks in the region
+# and per tile cell x 4 outside, which turned 9 seconds of region build into
+# half of one.
+const COVER_STRIDE := 4
+
+## The region's cover grid, `_cover_cols` on a side, one byte per sample.
+var cover := PackedByteArray()
+var _cover_cols := 0
+
+## And per tile, the same stride: (TILE_CELLS / COVER_STRIDE + 1) squared.
+var _tiles_cover := {}
+var _far_tiles_cover := {}
+
+
+## How many cover samples a side, given a cell count.
+static func cover_cols_for(cells_side: int) -> int:
+	return (cells_side + COVER_STRIDE - 1) / COVER_STRIDE + 1
+
+
+## The forest cover at one place, 0 to 1. Nearest, like the material.
+func far_cover_at(bx: float, bz: float, level: int, view := {}) -> float:
+	if outside_region(bx, bz):
+		var got := _tile_cover(mini(level, TILE_MAX_LEVEL), bx, bz, view)
+		if got >= 0.0:
+			return got
+	return _region_cover(bx, bz)
+
+
+func _region_cover(bx: float, bz: float) -> float:
+	if cover.is_empty() or _cover_cols <= 0:
+		return 0.0
+	var pitch := float(step * COVER_STRIDE)
+	var i := clampi(int(round((clampf(bx, float(min_block), float(_max_block))
+		- float(min_block)) / pitch)), 0, _cover_cols - 1)
+	var j := clampi(int(round((clampf(bz, float(min_block), float(_max_block))
+		- float(min_block)) / pitch)), 0, _cover_cols - 1)
+	return float(cover[i + j * _cover_cols]) / 255.0
+
+
+func _tile_cover(level: int, bx: float, bz: float, view: Dictionary) -> float:
+	var span := tile_span_blocks(level)
+	var pitch := float(cell_step_blocks(level) * COVER_STRIDE)
+	var tx := Chunk.floor_div(int(floor(bx)), span)
+	var tz := Chunk.floor_div(int(floor(bz)), span)
+	var key := Vector3i(level, tx, tz)
+	var data: PackedByteArray
+	if not view.is_empty():
+		var held: Dictionary = view.get("cover", {})
+		data = held.get(key, PackedByteArray())
+	else:
+		_tiles_mutex.lock()
+		data = _tiles_cover.get(key, PackedByteArray())
+		_tiles_mutex.unlock()
+	var n := cover_cols_for(TILE_CELLS)
+	if data.size() != n * n:
+		return -1.0
+	var i := clampi(int(round((bx - float(tx * span)) / pitch)), 0, n - 1)
+	var j := clampi(int(round((bz - float(tz * span)) / pitch)), 0, n - 1)
+	return float(data[i + j * n]) / 255.0
+
+
+## The region's cover grid. One `TreePlacement.cover_at` per strided cell, off
+## the heights and the materials this pass has already computed.
+func _region_cover_grid(gen: TerrainGenerator) -> PackedByteArray:
+	var n := cover_cols_for(cols)
+	var out := PackedByteArray()
+	out.resize(n * n)
+	var masks := TreePlacement.masks_for(gen)
+	var inv := 1.0 / (2.0 * float(step))
+	for j in n:
+		var cj: int = mini(j * COVER_STRIDE, cols - 1)
+		var bz := cell_to_block(cj)
+		var row := cj * cols
+		var up := (cj - 1 if cj > 0 else cj) * cols
+		var dn := (cj + 1 if cj < cols - 1 else cj) * cols
+		var jscale := inv if cj > 0 and cj < cols - 1 else 1.0 / float(step)
+		for i in n:
+			var ci: int = mini(i * COVER_STRIDE, cols - 1)
+			var i0 := ci - 1 if ci > 0 else ci
+			var i1 := ci + 1 if ci < cols - 1 else ci
+			var iscale := inv if ci > 0 and ci < cols - 1 else 1.0 / float(step)
+			var gx := (cells[row + i1] - cells[row + i0]) * iscale
+			var gz := (cells[dn + ci] - cells[up + ci]) * jscale
+			out[i + j * n] = int(round(255.0 * TreePlacement.cover_at(gen,
+				cell_to_block(ci), bz, cells[row + ci], materials[row + ci],
+				rad_to_deg(atan(sqrt(gx * gx + gz * gz))), masks)))
+	return out
+
+
+## One tile's cover grid, off the tile's own heights and materials.
+func _tile_cover_grid(gen: TerrainGenerator, heights: PackedFloat32Array,
+		mats: PackedByteArray, bx0: int, bz0: int, cstep: int) -> PackedByteArray:
+	var n := cover_cols_for(TILE_CELLS)
+	var out := PackedByteArray()
+	out.resize(n * n)
+	if mats.is_empty():
+		return out
+	var stride := TILE_CELLS + 1
+	var masks := TreePlacement.masks_for(gen)
+	var inv := 1.0 / (2.0 * float(cstep))
+	for j in n:
+		var cj: int = mini(j * COVER_STRIDE, TILE_CELLS)
+		var bz := bz0 + cj * cstep
+		var row := cj * stride
+		var up := (cj - 1 if cj > 0 else cj) * stride
+		var dn := (cj + 1 if cj < TILE_CELLS else cj) * stride
+		var jscale := inv if cj > 0 and cj < TILE_CELLS else 1.0 / float(cstep)
+		for i in n:
+			var ci: int = mini(i * COVER_STRIDE, TILE_CELLS)
+			var i0 := ci - 1 if ci > 0 else ci
+			var i1 := ci + 1 if ci < TILE_CELLS else ci
+			var iscale := inv if ci > 0 and ci < TILE_CELLS else 1.0 / float(cstep)
+			var gx := (heights[row + i1] - heights[row + i0]) * iscale
+			var gz := (heights[dn + ci] - heights[up + ci]) * jscale
+			out[i + j * n] = int(round(255.0 * TreePlacement.cover_at(gen,
+				bx0 + ci * cstep, bz, heights[row + ci], mats[row + ci],
+				rad_to_deg(atan(sqrt(gx * gx + gz * gz))), masks)))
+	return out
+
+
+## Build the region's material pyramid. Idempotent, safe from any thread.
+##
+## Needs the generator - the zone thresholds, the jitter noise and the slope
+## rule all live there - so it does nothing until `set_tile_source` has handed
+## one over, which `TerrainGenerator.build_heightmap` does before anything can
+## ask.
+func build_material_pyramid() -> void:
+	# THE HEIGHT PYRAMID FIRST, always. The material pyramid has the same shape
+	# and reads `_level_cols` for it rather than carrying a second copy, so a
+	# material read before any height read would index an empty array. Outside
+	# the material lock, and idempotent, so this is one comparison once it has
+	# run.
+	build_pyramid()
+	_material_mutex.lock()
+	if _material_ready:
+		_material_mutex.unlock()
+		return
+	var gen: TerrainGenerator = _generator_ref.get_ref() \
+		if _generator_ref != null else null
+	if gen == null or cells.is_empty():
+		_material_mutex.unlock()
+		return
+	var t0 := Time.get_ticks_msec()
+	materials = _region_materials(gen)
+	cover = _region_cover_grid(gen)
+	_cover_cols = cover_cols_for(cols)
+	_mat_levels = []
+	var prev := materials
+	var prev_cols := cols
+	for level in range(1, MAX_LEVEL + 1):
+		var n := (prev_cols + 1) / 2
+		prev = _mode_down(prev, prev_cols, n)
+		prev_cols = n
+		_mat_levels.append(prev)
+	material_ms = Time.get_ticks_msec() - t0
+	_material_ready = true
+	_material_mutex.unlock()
+
+
+## Level 0: one `surface_zone_at` per cell of the region grid.
+##
+## THE SLOPE COMES OFF THE GRID rather than out of `slope_deg_at`, and that is
+## not an approximation: `slope_deg_at` reads `height_at` at plus and minus one
+## `step`, `step` is exactly the cell pitch, and `height_at` on a grid point is
+## that grid point. So the central difference over two neighbouring cells IS
+## the function, computed once instead of four times through a bilinear.
+##
+## THE OUTERMOST RING OF CELLS IS THE ONE EXCEPTION and it is clamped rather
+## than exact: its neighbour is outside the region, where `height_at` goes to
+## the tile store, so the difference is one-sided there. Six thousand cells of
+## two and a quarter million, all of them at the rim the world-truth break
+## deletes, and both legs clamp identically - which is what the parity test
+## needs, since a leg that took the exact door at the edge and one that clamped
+## would disagree on exactly those cells.
+func _region_materials(gen: TerrainGenerator) -> PackedByteArray:
+	var count := cells.size()
+	# THE C++ LEG, when the tile builder has its zone rules - see
+	# height_tiles.gd. Two and a quarter million cells; in GDScript this loop is
+	# seconds and there it is a fraction of one.
+	if _tile_builder != null and _tile_builder.zones_ready():
+		var got := _tile_builder.build_materials(min_block, min_block,
+			cols, cols, step, cells)
+		if got.size() == count:
+			return got
+	var out := PackedByteArray()
+	out.resize(count)
+	var inv := 1.0 / (2.0 * float(step))
+	var edge := 1.0 / float(step)
+	for j in cols:
+		var bz := cell_to_block(j)
+		var row := j * cols
+		var up := (j - 1 if j > 0 else j) * cols
+		var dn := (j + 1 if j < cols - 1 else j) * cols
+		var jscale := inv if j > 0 and j < cols - 1 else edge
+		for i in cols:
+			var i0 := i - 1 if i > 0 else i
+			var i1 := i + 1 if i < cols - 1 else i
+			var iscale := inv if i > 0 and i < cols - 1 else edge
+			var gx := (cells[row + i1] - cells[row + i0]) * iscale
+			var gz := (cells[dn + i] - cells[up + i]) * jscale
+			out[row + i] = gen.surface_zone_with(cell_to_block(i), bz,
+				cells[row + i], rad_to_deg(atan(sqrt(gx * gx + gz * gz))))
+	return out
+
+
+## One level of the mode reduction. `n` is the width of the level being made.
+##
+## The odd-width rule is the height pyramid's, one line up: a cell whose second
+## parent does not exist takes the mode of the two or one that do. The height
+## pyramid carries analytic weights for the same reason and this needs none -
+## a mode over three cells is a mode over three cells.
+func _mode_down(prev: PackedByteArray, prev_cols: int, n: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(n * n)
+	var tally := PackedInt32Array()
+	tally.resize(TerrainGenerator.ZONE_COUNT)
+	for j in n:
+		var j0 := j * 2
+		var j1 := j0 + 1
+		var have_j1 := j1 < prev_cols
+		var row0 := j0 * prev_cols
+		var row1 := j1 * prev_cols
+		var at := j * n
+		for i in n:
+			var i0 := i * 2
+			var i1 := i0 + 1
+			var have_i1 := i1 < prev_cols
+			tally.fill(0)
+			tally[prev[row0 + i0]] += 1
+			if have_i1:
+				tally[prev[row0 + i1]] += 1
+			if have_j1:
+				tally[prev[row1 + i0]] += 1
+				if have_i1:
+					tally[prev[row1 + i1]] += 1
+			# Ties to the LOWER id: the scan runs upward and only a strictly
+			# greater count replaces the winner.
+			var best := 0
+			var best_n := tally[0]
+			for z in range(1, TerrainGenerator.ZONE_COUNT):
+				if tally[z] > best_n:
+					best_n = tally[z]
+					best = z
+			out[at + i] = best
+	return out
+
 ## BUILT LAZILY, UNDER A MUTEX, and it is worth saying why rather than at
 ## startup with the heightmap.
 ##
@@ -405,6 +707,26 @@ func pyramid_level_cols() -> PackedInt32Array:
 	return _level_cols
 
 
+## The material pyramid, the same way. `build_material_pyramid()` first; level 0
+## IS copied here, unlike the height's, because it is not `cells` and the C++
+## side has no other way to it.
+func pyramid_materials() -> PackedByteArray:
+	build_material_pyramid()
+	return materials
+
+
+func pyramid_material_levels() -> Array[PackedByteArray]:
+	build_material_pyramid()
+	return _mat_levels
+
+
+## The forest cover grid, built with the material pyramid. An accessor and not
+## the field, so the marshal cannot read it before the pass that fills it.
+func pyramid_cover() -> PackedByteArray:
+	build_material_pyramid()
+	return cover
+
+
 ## Cells per side at one level.
 func level_cols(level: int) -> int:
 	if level <= 0:
@@ -445,8 +767,7 @@ func _bilinear(bx: float, bz: float, level: int, use_max: bool) -> float:
 	# would be a door nothing walks through that could still disagree with the
 	# C++ leg. Level 0 is different and keeps its building door, because the
 	# VOXEL world reads it and the ground has to follow the player.
-	if bx < float(min_block) or bx > float(_max_block) \
-			or bz < float(min_block) or bz > float(_max_block):
+	if outside_region(bx, bz):
 		return _tile_bilinear(mini(level, MAX_LEVEL), bx, bz, use_max, far_view())
 	if not _pyramid_ready:
 		build_pyramid()
@@ -602,6 +923,10 @@ const TILE_CELLS := 128
 var _tiles := {}
 var _tiles_max := {}
 
+## And the material id per cell, one byte each - horizon v1 Stage 4. Same keys,
+## same shape, built in the same pass.
+var _tiles_mat := {}
+
 ## THE FAR MESH'S VIEW OF THE STORE, AND WHY IT IS A SECOND DICTIONARY.
 ##
 ## The far mesh has two legs and they must read the SAME tiles. The C++ leg is
@@ -622,6 +947,7 @@ var _tiles_max := {}
 ## would show up as a far mesh with one wrong quad.
 var _far_tiles := {}
 var _far_tiles_max := {}
+var _far_tiles_mat := {}
 
 ## THE LOCK, AND WHAT IT DOES NOT COVER. Workers read this store - every chunk
 ## column job calls `height_at` - and the main thread writes it. The mutex
@@ -732,6 +1058,8 @@ func ensure_tile(level: int, tx: int, tz: int) -> bool:
 	if not _tiles.has(key):
 		_tiles[key] = built[0]
 		_tiles_max[key] = built[1]
+		_tiles_mat[key] = built[3]
+		_tiles_cover[key] = built[4]
 		tiles_built += 1
 		tile_build_ms += built[2]
 	_tiles_mutex.unlock()
@@ -758,6 +1086,24 @@ func _build_tile_cells(level: int, tx: int, tz: int) -> Array:
 	mean.resize(count)
 	high.resize(count)
 	var inv := 1.0 / float(s * s)
+	# THE MATERIAL, horizon v1 Stage 4. One tally per cell across the s x s
+	# sub-samples, resolved to the mode at the end - the plan's "mode of four
+	# children" at s = 2, which is what a tile's children are: the store cannot
+	# reduce from level 0 the way the region pyramid does (a level-8 cell has
+	# 65,536 of them under it and no tile to read them from), so the sub-samples
+	# ARE the children and `far_supersample` is how many.
+	var gen: TerrainGenerator = _generator_ref.get_ref() \
+		if _generator_ref != null else null
+	var zones := TerrainGenerator.ZONE_COUNT
+	var tally := PackedByteArray()
+	# NOT UNTIL THE ZONE THRESHOLDS EXIST. They are percentiles of the region's
+	# own altitudes and are resolved one phase after the heightmap; a tile built
+	# before that would bake a material from thresholds that were still zero.
+	# An empty material array is the store's own signal for "ask the region" -
+	# see `_tile_material` - and `TerrainGenerator` drops the handful of tiles
+	# built during the resolution so none of them is kept.
+	if gen != null and gen.zones_resolved:
+		tally.resize(count * zones)
 	for kz in s:
 		for kx in s:
 			# The sub-sample's offset, in whole blocks. `cstep` is 4 << level
@@ -778,6 +1124,18 @@ func _build_tile_cells(level: int, tx: int, tz: int) -> Array:
 				for i in count:
 					mean[i] += part[i] * inv
 					high[i] = maxf(high[i], part[i])
+			if not tally.is_empty():
+				var mat_part := PackedByteArray()
+				if _tile_builder != null and _tile_builder.zones_ready():
+					mat_part = _tile_builder.build_materials(bx0 + ox, bz0 + oz,
+						n, n, cstep, part)
+				if mat_part.size() == count:
+					for i in count:
+						var at := i * zones + mat_part[i]
+						tally[at] = tally[at] + 1
+				else:
+					_tally_materials(gen, tally, part, n, cstep,
+						bx0 + ox, bz0 + oz, zones)
 	# QUANTISED LAST, exactly as `height_at_block` quantises last and for the
 	# same reason: 1/1024 of a block is half a millimetre of world and fifteen
 	# orders of magnitude larger than the ULP two compilers can differ by, so
@@ -787,7 +1145,60 @@ func _build_tile_cells(level: int, tx: int, tz: int) -> Array:
 	if s > 1:
 		for i in count:
 			mean[i] = TerrainGenerator.quantise_height(mean[i])
-	return [mean, high, Time.get_ticks_msec() - t0]
+	var mats := _resolve_materials(tally, count, zones)
+	var cov := PackedByteArray()
+	if gen != null and not tally.is_empty():
+		cov = _tile_cover_grid(gen, mean, mats, bx0, bz0, cstep)
+	return [mean, high, Time.get_ticks_msec() - t0, mats, cov]
+
+
+## One sub-sample's worth of votes into the tile's tally.
+##
+## The slope is the central difference over the sub-sample grid, whose pitch is
+## `cstep`. At level 0 `cstep` is the region's own `step` and this is exactly
+## `slope_deg_at`; above it the difference is taken at the cell's own scale,
+## which is the right question to ask of a 512 m cell and the only one the tile
+## can answer without four more generator calls per sample.
+func _tally_materials(gen: TerrainGenerator, tally: PackedByteArray,
+		part: PackedFloat32Array, n: int, cstep: int,
+		bx0: int, bz0: int, zones: int) -> void:
+	var inv := 1.0 / (2.0 * float(cstep))
+	for j in n:
+		var bz := bz0 + j * cstep
+		var row := j * n
+		var up := (j - 1 if j > 0 else j) * n
+		var dn := (j + 1 if j < n - 1 else j) * n
+		var jscale := inv if j > 0 and j < n - 1 else 1.0 / float(cstep)
+		for i in n:
+			var i0 := i - 1 if i > 0 else i
+			var i1 := i + 1 if i < n - 1 else i
+			var iscale := inv if i > 0 and i < n - 1 else 1.0 / float(cstep)
+			var gx := (part[row + i1] - part[row + i0]) * iscale
+			var gz := (part[dn + i] - part[up + i]) * jscale
+			var z := gen.surface_zone_with(bx0 + i * cstep, bz, part[row + i],
+				rad_to_deg(atan(sqrt(gx * gx + gz * gz))))
+			var at := (row + i) * zones + z
+			# A byte is enough: s is 2 or 4, so at most 16 votes.
+			tally[at] = tally[at] + 1
+
+
+## The tally to one id per cell, ties to the lower id.
+func _resolve_materials(tally: PackedByteArray, count: int,
+		zones: int) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.resize(count)
+	if tally.is_empty():
+		return out
+	for c in count:
+		var base := c * zones
+		var best := 0
+		var best_n := tally[base]
+		for z in range(1, zones):
+			if tally[base + z] > best_n:
+				best_n = tally[base + z]
+				best = z
+		out[c] = best
+	return out
 
 
 ## `n` x `n` raw heights from a block corner, `cstep` apart. The C++ builder
@@ -879,6 +1290,8 @@ func publish_far_view() -> void:
 	_tiles_mutex.lock()
 	_far_tiles = _tiles.duplicate()
 	_far_tiles_max = _tiles_max.duplicate()
+	_far_tiles_mat = _tiles_mat.duplicate()
+	_far_tiles_cover = _tiles_cover.duplicate()
 	_tiles_mutex.unlock()
 
 
@@ -902,7 +1315,8 @@ func publish_far_view() -> void:
 ## holds a complete, immutable view for as long as it needs it.
 func far_view() -> Dictionary:
 	_tiles_mutex.lock()
-	var out := {"mean": _far_tiles, "max": _far_tiles_max}
+	var out := {"mean": _far_tiles, "max": _far_tiles_max,
+		"mat": _far_tiles_mat, "cover": _far_tiles_cover}
 	_tiles_mutex.unlock()
 	return out
 
@@ -922,10 +1336,93 @@ func far_view_arrays(key: Vector3i) -> Array:
 	_tiles_mutex.lock()
 	var a: PackedFloat32Array = _far_tiles.get(key, PackedFloat32Array())
 	var b: PackedFloat32Array = _far_tiles_max.get(key, PackedFloat32Array())
+	var m: PackedByteArray = _far_tiles_mat.get(key, PackedByteArray())
+	var c: PackedByteArray = _far_tiles_cover.get(key, PackedByteArray())
 	_tiles_mutex.unlock()
 	if a.is_empty():
 		return []
-	return [a, b]
+	return [a, b, m, c]
+
+
+## THE MATERIAL AT ONE PLACE AND ONE LEVEL, horizon v1 Stage 4.
+##
+## NEAREST, NEVER INTERPOLATED, and that is not a shortcut. A material is an
+## id: there is no value between rock and snow to lerp to, and the mode pyramid
+## exists precisely so that the coarse answer is a real material rather than a
+## blend of two. So the read is "which cell is this position in", and the cell
+## boundary is where the colour changes - the same hard edge the voxels have,
+## drawn at the level's own scale.
+##
+## The two sources are the height's two sources and they clamp the same way:
+## the region's pyramid answers inside the region up to MAX_LEVEL, the level-L
+## tile answers outside up to TILE_MAX_LEVEL, and a far read whose tile is not
+## in its view falls back to the region's clamped rim exactly as a height read
+## does - see `_tile_bilinear`. A material that fell back to a different rule
+## than the height it paints would put snow on a valley floor at the seam.
+func far_material_at(bx: float, bz: float, level: int, view := {}) -> int:
+	if outside_region(bx, bz):
+		return _tile_material(mini(level, TILE_MAX_LEVEL), bx, bz, view)
+	return _region_material(mini(level, MAX_LEVEL), bx, bz)
+
+
+## Is this position outside the home region's grid? The height door's own test,
+## named once so the material and the height cannot drift apart.
+func outside_region(bx: float, bz: float) -> bool:
+	return bx < float(min_block) or bx > float(_max_block) \
+		or bz < float(min_block) or bz > float(_max_block)
+
+
+func _region_material(level: int, bx: float, bz: float) -> int:
+	if materials.is_empty():
+		build_material_pyramid()
+		if materials.is_empty():
+			return 0
+	if level <= 0:
+		var i := clampi(int(round((clampf(bx, float(min_block), float(_max_block))
+			- float(min_block)) / float(step))), 0, cols - 1)
+		var j := clampi(int(round((clampf(bz, float(min_block), float(_max_block))
+			- float(min_block)) / float(step))), 0, cols - 1)
+		return materials[i + j * cols]
+	var l := mini(level, _mat_levels.size())
+	var n := _level_cols[l - 1]
+	# The same origin the pyramid's bilinear uses: cell 0 of level L is centred
+	# half a level-0 step past min_block plus half its own extra width.
+	var lstep := float(step << l)
+	var origin := float(min_block) + (lstep - float(step)) * 0.5
+	var i := clampi(int(round((bx - origin) / lstep)), 0, n - 1)
+	var j := clampi(int(round((bz - origin) / lstep)), 0, n - 1)
+	return _mat_levels[l - 1][i + j * n]
+
+
+func _tile_material(level: int, bx: float, bz: float, view: Dictionary) -> int:
+	var span := tile_span_blocks(level)
+	var cstep := cell_step_blocks(level)
+	var tx := Chunk.floor_div(int(floor(bx)), span)
+	var tz := Chunk.floor_div(int(floor(bz)), span)
+	var key := Vector3i(level, tx, tz)
+	var data := _tile_mat_lookup(key, view)
+	if data.is_empty():
+		if not view.is_empty():
+			return _region_material(mini(level, MAX_LEVEL), bx, bz)
+		if not ensure_tile(level, tx, tz):
+			return _region_material(mini(level, MAX_LEVEL), bx, bz)
+		data = _tile_mat_lookup(key, view)
+		if data.is_empty():
+			return _region_material(mini(level, MAX_LEVEL), bx, bz)
+	var n := TILE_CELLS + 1
+	var i := clampi(int(round((bx - float(tx * span)) / float(cstep))), 0, TILE_CELLS)
+	var j := clampi(int(round((bz - float(tz * span)) / float(cstep))), 0, TILE_CELLS)
+	return data[i + j * n]
+
+
+func _tile_mat_lookup(key: Vector3i, view: Dictionary) -> PackedByteArray:
+	if not view.is_empty():
+		var held: Dictionary = view.get("mat", {})
+		return held.get(key, PackedByteArray())
+	_tiles_mutex.lock()
+	var out: PackedByteArray = _tiles_mat.get(key, PackedByteArray())
+	_tiles_mutex.unlock()
+	return out
 
 
 ## The rim, as this file read it before tonight. What a far-mesh read gets when
@@ -954,8 +1451,7 @@ func _region_clamped(bx: float, bz: float, level: int, use_max: bool) -> float:
 # this project shipped, byte for byte, and the far parity gate says so.
 
 func far_height_at(bx: float, bz: float, view := {}) -> float:
-	if bx < float(min_block) or bx > float(_max_block) \
-			or bz < float(min_block) or bz > float(_max_block):
+	if outside_region(bx, bz):
 		return _tile_bilinear(0, bx, bz, false,
 			view if not view.is_empty() else far_view())
 	return _region_bilinear(bx, bz)
@@ -984,8 +1480,7 @@ func far_height_max_at_level(bx: float, bz: float, level: int, view := {}) -> fl
 ## because asking for level 8 inside the region would index `_levels[7]` of a
 ## five-level pyramid - a crash rather than a coarse mountain.
 func far_max_level(bx: float, bz: float) -> int:
-	if bx < float(min_block) or bx > float(_max_block) \
-			or bz < float(min_block) or bz > float(_max_block):
+	if outside_region(bx, bz):
 		return TILE_MAX_LEVEL
 	return MAX_LEVEL
 
@@ -994,8 +1489,7 @@ func _far_bilinear(bx: float, bz: float, level: int, use_max: bool,
 		view := {}) -> float:
 	if level <= 0:
 		return far_height_at(bx, bz, view)
-	if bx < float(min_block) or bx > float(_max_block) \
-			or bz < float(min_block) or bz > float(_max_block):
+	if outside_region(bx, bz):
 		return _tile_bilinear(mini(level, TILE_MAX_LEVEL), bx, bz, use_max,
 			view if not view.is_empty() else far_view())
 	if not _pyramid_ready:
@@ -1110,6 +1604,8 @@ func evict_beyond(level: int, centre_block: Vector2i, radius_blocks: float) -> i
 	for k in doomed:
 		_tiles.erase(k)
 		_tiles_max.erase(k)
+		_tiles_mat.erase(k)
+		_tiles_cover.erase(k)
 		# AND OUT OF THE PUBLISHED VIEW, or the far mesh would keep drawing
 		# ground the store has forgotten and the C++ side would keep its copy
 		# of it forever. The next `publish_far_view` would do this anyway;
@@ -1117,8 +1613,32 @@ func evict_beyond(level: int, centre_block: Vector2i, radius_blocks: float) -> i
 		# next rebuild.
 		_far_tiles.erase(k)
 		_far_tiles_max.erase(k)
+		_far_tiles_mat.erase(k)
+		_far_tiles_cover.erase(k)
 	_tiles_mutex.unlock()
 	return doomed.size()
+
+
+## Drop every tile and every published view of one.
+##
+## Called once, by `TerrainGenerator.build_heightmap`, between resolving the
+## zone thresholds and building the rim: the tiles built before the thresholds
+## existed have no material and would keep answering the region for their
+## colour forever. A handful of tiles at the region's edge, rebuilt in the same
+## breath. Nothing else in the project clears the store - eviction is by
+## distance and is `evict_beyond`.
+func clear_tiles() -> void:
+	_tiles_mutex.lock()
+	_tiles.clear()
+	_tiles_max.clear()
+	_tiles_mat.clear()
+	_tiles_cover.clear()
+	_far_tiles = {}
+	_far_tiles_max = {}
+	_far_tiles_mat = {}
+	_far_tiles_cover = {}
+	_pinned.clear()
+	_tiles_mutex.unlock()
 
 
 ## How many tiles are held, and how much they weigh. The sprint probe's memory
@@ -1127,11 +1647,14 @@ func tile_stats() -> Dictionary:
 	_tiles_mutex.lock()
 	var n := _tiles.size()
 	_tiles_mutex.unlock()
-	var per := (TILE_CELLS + 1) * (TILE_CELLS + 1) * 4
+	var cells_per := (TILE_CELLS + 1) * (TILE_CELLS + 1)
+	var per := cells_per * 4
 	return {
 		"tiles": n,
-		# Two arrays per tile - the mean and the max.
-		"bytes": n * per * 2,
+		# Two float arrays per tile - the mean and the max - and one byte
+		# array, the material.
+		"bytes": n * (per * 2 + cells_per
+			+ cover_cols_for(TILE_CELLS) * cover_cols_for(TILE_CELLS)),
 		"built": tiles_built,
 		"build_ms": tile_build_ms,
 	}
@@ -1150,10 +1673,12 @@ func tile_arrays(key: Vector3i) -> Array:
 	_tiles_mutex.lock()
 	var a: PackedFloat32Array = _tiles.get(key, PackedFloat32Array())
 	var b: PackedFloat32Array = _tiles_max.get(key, PackedFloat32Array())
+	var m: PackedByteArray = _tiles_mat.get(key, PackedByteArray())
+	var c: PackedByteArray = _tiles_cover.get(key, PackedByteArray())
 	_tiles_mutex.unlock()
 	if a.is_empty():
 		return []
-	return [a, b]
+	return [a, b, m, c]
 
 
 # --- The determinism guard --------------------------------------------------

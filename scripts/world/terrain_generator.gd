@@ -150,6 +150,11 @@ var heightmap_builder := "gdscript"
 ## world it gets is the same world, because both legs quantise.
 var _tiles: HeightTiles = null
 
+## Have the zone thresholds been resolved? False while `build_heightmap` is
+## still solving them, which is when a tile built at the region's edge would
+## bake a material from thresholds that are all zero. Horizon v1 Stage 4.
+var zones_resolved := false
+
 ## Force the reference implementation, for the one probe that measures what the
 ## QUANTUM does rather than what the crossing does.
 var force_gdscript_tiles := false
@@ -284,14 +289,24 @@ func build_heightmap() -> int:
 	# strong reference back would be a RefCounted cycle and a leaked eight
 	# megabytes per reroll.
 	heightmap.set_tile_source(self, _tiles, int(config.far_supersample))
-	# AND THE RIM IS BUILT NOW, not on demand. See `Heightmap.ensure_region_rim`
-	# for why: the far mesh has two legs, one of them cannot build a tile, and
-	# the quads at the region's edge sample past it.
-	var rim := heightmap.ensure_region_rim()
 	# The zones are percentiles of THIS world's altitudes, so they cannot be
 	# known until the altitudes are. Everything downstream - voxels, the far
 	# mesh, trees, the probe - reads them from here.
 	_resolve_zone_thresholds()
+	zones_resolved = true
+	# THE MATERIAL PYRAMID NEEDS THE THRESHOLDS, so the tile builder learns the
+	# zone rules here and not at `setup()` - horizon v1 Stage 4, and see
+	# height_tiles.gd for the two phases. The handful of tiles the threshold
+	# solver built at the region's edge while it was resolving carry no
+	# material, so they are dropped rather than kept half-built.
+	if _tiles != null:
+		_tiles.setup_zones(self, config)
+	heightmap.clear_tiles()
+	# AND THE RIM IS BUILT NOW, not on demand. See `Heightmap.ensure_region_rim`
+	# for why: the far mesh has two legs, one of them cannot build a tile, and
+	# the quads at the region's edge sample past it. After the thresholds, so
+	# every rim tile is built once and with its material.
+	var rim := heightmap.ensure_region_rim()
 	var total := Time.get_ticks_msec() - started
 	if not tile_ms.is_empty():
 		var sorted := tile_ms.duplicate()
@@ -805,17 +820,31 @@ func zone_band(zone: int) -> Vector2:
 ## Zone of the surface at one block column.
 ## `far` picks the height door - see `detail_at`.
 func surface_zone_at(bx: int, bz: int, altitude: float, far := false, view := {}) -> int:
-	# Hashed on a coarser grid than the blocks themselves, so the interleave at
-	# a zone boundary happens in patches rather than per block. See
-	# zone_dither_blocks: per-block dither reads as a gradient on a hillside and
-	# as confetti on a plain, and Stage 9 made a great many plains.
+	if config.slope_zone_strength <= 0.0 or heightmap == null:
+		return _dithered_zone(bx, bz, altitude)
+	return surface_zone_with(bx, bz, altitude,
+		heightmap.slope_deg_at(float(bx), float(bz), far, view))
+
+
+## THE WHOLE OF `surface_zone_at` WITH THE SLOPE HANDED IN, horizon v1 Stage 4.
+## The material pyramid's one entry point; see `slope_zone_with`.
+func surface_zone_with(bx: int, bz: int, altitude: float, slope: float) -> int:
+	return slope_zone_with(bx, bz, _dithered_zone(bx, bz, altitude), slope)
+
+
+## The altitude's zone before the slope has a say.
+##
+## Hashed on a coarser grid than the blocks themselves, so the interleave at
+## a zone boundary happens in patches rather than per block. See
+## zone_dither_blocks: per-block dither reads as a gradient on a hillside and
+## as confetti on a plain, and Stage 9 made a great many plains.
+func _dithered_zone(bx: int, bz: int, altitude: float) -> int:
 	var patch: int = maxi(config.zone_dither_blocks, 1)
-	var zone := zone_at(
+	return zone_at(
 		altitude,
 		zone_jitter_at(float(bx), float(bz)),
 		WorldHash.hash01(Chunk.floor_div(bx, patch), Chunk.floor_div(bz, patch),
 			world_seed, SALT_ZONE_DITHER))
-	return _slope_zone(bx, bz, zone, far, view)
 
 
 ## Let the STEEPNESS of the ground override what its altitude said.
@@ -839,8 +868,22 @@ func surface_zone_at(bx: int, bz: int, altitude: float, far := false, view := {}
 func _slope_zone(bx: int, bz: int, zone: int, far := false, view := {}) -> int:
 	if config.slope_zone_strength <= 0.0 or heightmap == null:
 		return zone
+	return slope_zone_with(bx, bz, zone,
+		heightmap.slope_deg_at(float(bx), float(bz), far, view))
 
-	var slope := heightmap.slope_deg_at(float(bx), float(bz), far, view)
+
+## THE SAME RULE WITH THE SLOPE HANDED IN, horizon v1 Stage 4.
+##
+## The material pyramid evaluates this over millions of cells, and it already
+## HAS the slope: it is building a grid of heights and the finite difference
+## between two of them is free, where `slope_deg_at` would go back through the
+## height door four times per cell. Splitting the function is the whole of the
+## saving and it changes nothing about the answer - `_slope_zone` is now this
+## function with one argument computed the way it always was, and the parity
+## test in the horizon self-test compares the two paths on ten thousand cells.
+func slope_zone_with(bx: int, bz: int, zone: int, slope: float) -> int:
+	if config.slope_zone_strength <= 0.0:
+		return zone
 
 	# The strength knob is a probability rather than a blend, because a zone is
 	# an integer and there is no half-way between rock and snow. Hashed from

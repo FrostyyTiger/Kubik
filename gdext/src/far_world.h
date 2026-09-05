@@ -35,6 +35,7 @@
 
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace kubik {
@@ -114,6 +115,7 @@ struct Config {
 	double far_vote = 0.0;
 	double far_filter_bias = 1.0;
 	double far_peak_gain = 0.60;
+	double far_forest_blend = 0.70;
 	double far_level_ref_m = 100.0;
 	// far_normal_m STAYS. A flank-averaged normal is a coarse mesh's CORRECT
 	// normal under real light - it is shape, not paint, and it is the reason a
@@ -227,16 +229,21 @@ struct World {
 	std::unordered_map<TileKey, Tile, TileKeyHash> tiles;
 	int tile_blocks = 512;
 
-	// MATERIAL TILES, Stage 4. Named here and empty until then, so the struct
-	// the marshal fills has one shape for the whole lane.
+	// MATERIAL TILES, Stage 4: one byte per cell, same keys and same stride as
+	// `tiles`, built in the same pass on the GDScript side.
 	std::unordered_map<TileKey, std::vector<uint8_t>, TileKeyHash> material_tiles;
 
 	// Take one tile off the wire. Called from setup() and from build().
 	void add_tile(int level, int tx, int tz, const PackedFloat32Array &mean,
-			const PackedFloat32Array &high);
+			const PackedFloat32Array &high, const PackedByteArray &mat,
+			const PackedByteArray &cov);
 
-	// The wire form: [level, tx, tz, mean, high, ...], flat.
+	// The wire form: [level, tx, tz, mean, high, mat, cover, ...], flat.
 	void add_tiles(const Array &p_tiles);
+
+	// Keep only the tiles whose (level, tx, tz) is in this flat triple list -
+	// the published view's whole key set. See far_mesher.gd's `_view_keys`.
+	void prune_tiles(const PackedInt32Array &p_keep);
 
 	// Heightmap.tile_of / Chunk.floor_div, for a tile index.
 	static inline int64_t tile_index(int64_t b, int64_t span) {
@@ -292,6 +299,22 @@ struct World {
 	std::vector<std::vector<float>> max_levels;
 	std::vector<int> level_cols;
 	int max_level = 5;
+
+	// THE MATERIAL PYRAMID, horizon v1 Stage 4. `materials` is level 0 over the
+	// region grid, one byte per cell; `material_levels` is 1..max_level, the
+	// same shape as `levels`. Both are built once in heightmap.gd and sent
+	// whole at setup - they are data, so there is no second implementation here
+	// to disagree with the first.
+	std::vector<uint8_t> materials;
+	std::vector<std::vector<uint8_t>> material_levels;
+
+	// THE FOREST COVER, Stage 4: one byte per COVER_STRIDE cells, region and
+	// tiles, read nearest. See the note by `Heightmap.cover` for why it is
+	// coarser than the material.
+	std::vector<uint8_t> cover;
+	int cover_cols = 0;
+	std::unordered_map<TileKey, std::vector<uint8_t>, TileKeyHash> cover_tiles;
+	Color canopy_color = Color(0.0284f, 0.0782f, 0.0482f);
 
 	// The generator's resolved zone thresholds, and its seed.
 	std::vector<float> zone_thresholds;
@@ -483,7 +506,15 @@ struct World {
 		if (config.slope_zone_strength <= 0.0) {
 			return zone;
 		}
-		double slope = slope_deg_at((double)bx, (double)bz);
+		return slope_zone_with(bx, bz, zone, slope_deg_at((double)bx, (double)bz));
+	}
+
+	// TerrainGenerator.slope_zone_with - the same rule with the slope handed
+	// in, horizon v1 Stage 4. The material pyramid has the slope already.
+	int slope_zone_with(int64_t bx, int64_t bz, int zone, double slope) const {
+		if (config.slope_zone_strength <= 0.0) {
+			return zone;
+		}
 		double roll = hash01(bx, bz, world_seed, SALT_SLOPE_ZONE);
 		if (roll > Math::clamp(config.slope_zone_strength, 0.0, 1.0)) {
 			return zone;
@@ -511,10 +542,158 @@ struct World {
 		return slope_zone(bx, bz, zone);
 	}
 
+	// TerrainGenerator.surface_zone_with - the whole of surface_zone_at with
+	// the slope handed in. The material pyramid's one entry point.
+	int surface_zone_with(int64_t bx, int64_t bz, double altitude,
+			double slope) const {
+		int64_t patch = config.zone_dither_blocks > 1 ? config.zone_dither_blocks : 1;
+		int zone = zone_at(altitude,
+				zone_jitter_at((double)bx, (double)bz),
+				hash01(floor_div(bx, patch), floor_div(bz, patch), world_seed,
+						SALT_ZONE_DITHER));
+		return slope_zone_with(bx, bz, zone, slope);
+	}
+
 	// FarFieldJob.backdrop_zone - altitude alone, no jitter, a dither of
 	// exactly 0.5, and the slope override kept.
 	int backdrop_zone(int64_t bx, int64_t bz, double altitude) const {
 		return slope_zone(bx, bz, zone_at(altitude, 0.0, 0.5));
+	}
+
+	// Heightmap.far_material_at - horizon v1 Stage 4.
+	//
+	// NEAREST, NEVER INTERPOLATED: a material is an id and there is nothing
+	// between rock and snow to lerp to. The two sources clamp separately, the
+	// region's pyramid to `max_level` and a tile to TILE_MAX_LEVEL, and a
+	// missing tile falls back to the region exactly as a height read does -
+	// every line of this is heightmap.gd's function in the other language, and
+	// the far parity gate compares the two on whole meshes.
+	int material_at(double bx, double bz, int level) const {
+		if (outside_region(bx, bz)) {
+			int l = level > TILE_MAX_LEVEL ? TILE_MAX_LEVEL : level;
+			int got = tile_material(l, bx, bz);
+			if (got >= 0) {
+				return got;
+			}
+		}
+		return region_material(level > max_level ? max_level : level, bx, bz);
+	}
+
+	int region_material(int level, double bx, double bz) const {
+		if (materials.empty() || cols <= 0) {
+			return 0;
+		}
+		if (level <= 0) {
+			double cx = Math::clamp(bx, (double)min_block, (double)max_block);
+			double cz = Math::clamp(bz, (double)min_block, (double)max_block);
+			int i = (int)Math::round((cx - (double)min_block) / (double)hm_step);
+			int j = (int)Math::round((cz - (double)min_block) / (double)hm_step);
+			i = i < 0 ? 0 : (i > cols - 1 ? cols - 1 : i);
+			j = j < 0 ? 0 : (j > cols - 1 ? cols - 1 : j);
+			return materials[(size_t)(i + j * cols)];
+		}
+		int l = level;
+		if (l > (int)material_levels.size()) {
+			l = (int)material_levels.size();
+		}
+		if (l <= 0) {
+			return region_material(0, bx, bz);
+		}
+		int n = level_cols[(size_t)(l - 1)];
+		double lstep = (double)(hm_step << l);
+		double origin = (double)min_block + (lstep - (double)hm_step) * 0.5;
+		int i = (int)Math::round((bx - origin) / lstep);
+		int j = (int)Math::round((bz - origin) / lstep);
+		i = i < 0 ? 0 : (i > n - 1 ? n - 1 : i);
+		j = j < 0 ? 0 : (j > n - 1 ? n - 1 : j);
+		return material_levels[(size_t)(l - 1)][(size_t)(i + j * n)];
+	}
+
+	// -1 when the tile is not in this build's view, which is the caller's cue
+	// to fall back to the region.
+	int tile_material(int level, double bx, double bz) const {
+		int64_t span = (int64_t)tile_blocks << level;
+		int64_t cstep = (int64_t)hm_step << level;
+		TileKey key;
+		key.level = level;
+		key.tx = (int)tile_index((int64_t)Math::floor(bx), span);
+		key.tz = (int)tile_index((int64_t)Math::floor(bz), span);
+		auto hit = material_tiles.find(key);
+		if (hit == material_tiles.end()) {
+			return -1;
+		}
+		const std::vector<uint8_t> &data = hit->second;
+		if (data.size() != (size_t)TILE_STRIDE * (size_t)TILE_STRIDE) {
+			return -1;
+		}
+		int i = (int)Math::round((bx - (double)(key.tx * span)) / (double)cstep);
+		int j = (int)Math::round((bz - (double)(key.tz * span)) / (double)cstep);
+		i = i < 0 ? 0 : (i > TILE_CELLS ? TILE_CELLS : i);
+		j = j < 0 ? 0 : (j > TILE_CELLS ? TILE_CELLS : j);
+		return data[(size_t)(i + j * TILE_STRIDE)];
+	}
+
+	// Heightmap.COVER_STRIDE and cover_cols_for.
+	static constexpr int COVER_STRIDE = 4;
+	static inline int cover_cols_for(int cells_side) {
+		return (cells_side + COVER_STRIDE - 1) / COVER_STRIDE + 1;
+	}
+
+	// Heightmap.far_cover_at - 0 to 1.
+	double cover_at(double bx, double bz, int level) const {
+		if (outside_region(bx, bz)) {
+			int l = level > TILE_MAX_LEVEL ? TILE_MAX_LEVEL : level;
+			double got = tile_cover(l, bx, bz);
+			if (got >= 0.0) {
+				return got;
+			}
+		}
+		return region_cover(bx, bz);
+	}
+
+	double region_cover(double bx, double bz) const {
+		if (cover.empty() || cover_cols <= 0) {
+			return 0.0;
+		}
+		double pitch = (double)(hm_step * COVER_STRIDE);
+		double cx = Math::clamp(bx, (double)min_block, (double)max_block);
+		double cz = Math::clamp(bz, (double)min_block, (double)max_block);
+		int i = (int)Math::round((cx - (double)min_block) / pitch);
+		int j = (int)Math::round((cz - (double)min_block) / pitch);
+		i = i < 0 ? 0 : (i > cover_cols - 1 ? cover_cols - 1 : i);
+		j = j < 0 ? 0 : (j > cover_cols - 1 ? cover_cols - 1 : j);
+		return (double)cover[(size_t)(i + j * cover_cols)] / 255.0;
+	}
+
+	double tile_cover(int level, double bx, double bz) const {
+		int64_t span = (int64_t)tile_blocks << level;
+		double pitch = (double)(((int64_t)hm_step << level) * COVER_STRIDE);
+		TileKey key;
+		key.level = level;
+		key.tx = (int)tile_index((int64_t)Math::floor(bx), span);
+		key.tz = (int)tile_index((int64_t)Math::floor(bz), span);
+		auto hit = cover_tiles.find(key);
+		if (hit == cover_tiles.end()) {
+			return -1.0;
+		}
+		int n = cover_cols_for(TILE_CELLS);
+		if (hit->second.size() != (size_t)n * (size_t)n) {
+			return -1.0;
+		}
+		int i = (int)Math::round((bx - (double)(key.tx * span)) / pitch);
+		int j = (int)Math::round((bz - (double)(key.tz * span)) / pitch);
+		i = i < 0 ? 0 : (i > n - 1 ? n - 1 : i);
+		j = j < 0 ? 0 : (j > n - 1 ? n - 1 : j);
+		return (double)hit->second[(size_t)(i + j * n)] / 255.0;
+	}
+
+	// FarFieldJob.material_level - which pyramid level has this ring's cell.
+	int material_level(int step) const {
+		int s = hm_step > 1 ? hm_step : 1;
+		if (step <= s) {
+			return 0;
+		}
+		return (int)Math::round(Math::log((double)step / (double)s) / Math::log(2.0));
 	}
 
 	// FarFieldJob.filtered_height / _filtered's tail: the peak gain.

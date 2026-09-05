@@ -138,6 +138,16 @@ static func _world_data(heightmap: Heightmap, generator: TerrainGenerator,
 		"max_levels": heightmap.pyramid_max_levels(),
 		"level_cols": heightmap.pyramid_level_cols(),
 		"max_level": Heightmap.MAX_LEVEL,
+		# THE MATERIAL PYRAMID, horizon v1 Stage 4. Level 0 over the region
+		# grid and levels 1..MAX_LEVEL above it, one byte per cell. Data, sent
+		# whole once per world - so the two legs paint from the same bytes and
+		# there is no second rule here to disagree with the first.
+		"materials": heightmap.pyramid_materials(),
+		"material_levels": heightmap.pyramid_material_levels(),
+		# And the forest cover beside it - coarser, one grid, no pyramid.
+		"cover": heightmap.pyramid_cover(),
+		"cover_cols": heightmap.cover_cols_for(heightmap.cols),
+		"canopy_color": FarFieldJob.canopy_color(),
 		# The generator's zone tables. Thresholds are resolved once at world
 		# load from a histogram, so they are data by the time anyone asks.
 		"zone_thresholds": generator.zone_thresholds,
@@ -171,6 +181,10 @@ static func _zone_colors() -> PackedColorArray:
 ## A Dictionary rather than a hand-written struct because the list is long, it
 ## moves every epic, and a name that is missing is then a lookup that returns
 ## the default rather than a silent zero. The C++ side names each one once.
+static func config_data(config: WorldgenConfig) -> Dictionary:
+	return _config_data(config)
+
+
 static func _config_data(config: WorldgenConfig) -> Dictionary:
 	var out := {}
 	for key in CONFIG_KEYS:
@@ -188,7 +202,8 @@ const CONFIG_KEYS: PackedStringArray = [
 	"block_size", "world_blocks_xz", "coarse_step", "far_step",
 	"voxel_radius_chunks", "fog_end_m",
 	"far_terrace", "far_step_y_blocks", "far_ring_div", "far_vote",
-	"far_filter_bias", "far_peak_gain", "far_level_ref_m", "far_normal_m",
+	"far_filter_bias", "far_peak_gain", "far_forest_blend",
+	"far_level_ref_m", "far_normal_m",
 	"far_zone_cell_m", "far_zone_cell_ratio",
 	# DISTANCE V5 STAGES 3 AND 6.
 	"far_geomorph_cells", "far_detail",
@@ -247,7 +262,7 @@ func build(config: WorldgenConfig, center: Vector2i,
 	elapsed_ms = 0
 	if not _ready:
 		return false
-	var out: Dictionary = _impl.build({
+	var args := {
 		"center_x": center.x,
 		"center_z": center.y,
 		# ONLY THE TILES THIS MESHER HAS NOT SEEN. See `_sent_tiles`.
@@ -268,7 +283,20 @@ func build(config: WorldgenConfig, center: Vector2i,
 		# while a worker builds, and a value that changed half way through
 		# would terrace half a mesh.
 		"config": _config_data(config),
-	})
+	}
+	# AND EVERY KEY THE PUBLISHED VIEW HOLDS, so the other side can drop what
+	# has been evicted - horizon v1 Stage 4. See `_view_keys`.
+	#
+	# THE KEY IS ABSENT WHEN THERE IS NO HEIGHTMAP TO ASK, and that is the
+	# whole reason it is added here rather than in the literal. The member is
+	# assigned by the caller and some callers do not -
+	# `scripts/tools/selftest.gd` builds a mesher for its parity cases and this
+	# lane may not edit that file. Absent means "no statement about the view";
+	# an EMPTY array would mean "the view is empty" and would drop every tile
+	# the mesher was set up with.
+	if heightmap != null:
+		args["tile_keep"] = _view_keys(heightmap)
+	var out: Dictionary = _impl.build(args)
 	arrays = out.get("arrays", [])
 	slices = out.get("slices", [])
 	key_anchors = out.get("anchors", PackedVector3Array())
@@ -306,11 +334,62 @@ var _sent_tiles := {}
 ## Takes the heightmap EXPLICITLY. `setup`'s parameter shadows the member of
 ## the same name and the member is null until a build is submitted, so a
 ## caller that let this reach for the member would silently send nothing.
+## THE PUBLISHED VIEW'S WHOLE KEY SET, flat, as (level, tx, tz) triples.
+##
+## WHY THE OTHER SIDE NEEDS IT, and it is a bug this stage found rather than a
+## feature. Tiles are sent INCREMENTALLY - `_sent_tiles` makes sure a tile
+## crosses the seam once - and nothing ever told the C++ side about an
+## EVICTION. So the two legs drifted apart the moment the store evicted
+## anything: the GDScript leg read the published view and fell back to the
+## region's rim for a tile that was gone, and the C++ leg still had it and
+## answered from the tile. Both answers are correct ground; they are not the
+## same answer, and two legs that disagree are the one thing this seam may not
+## do.
+##
+## It surfaced as a colour, not as a height: Stage 4's colour handover found
+## seven thousand rock and snow quads at the summit vantage painted a colour
+## that was not their palette's, because the material the mesher looked up and
+## the material this probe looked up came from different tile sets.
+##
+## The published view is the contract, so it is sent whole. Three ints per
+## tile, a couple of hundred tiles: a few kilobytes against a mesh of two
+## million vertices.
+func _view_keys(hm: Heightmap) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if hm == null:
+		return out
+	for key in hm.far_view_keys():
+		var k: Vector3i = key
+		out.push_back(k.x)
+		out.push_back(k.y)
+		out.push_back(k.z)
+	return out
+
+
 func _new_tiles(hm: Heightmap) -> Array:
 	if hm == null:
 		return []
 	var out := []
-	for key in hm.far_view_keys():
+	var keys := hm.far_view_keys()
+	# AND FORGET WHAT IS NO LONGER PUBLISHED. Without this a tile that was
+	# evicted and then built again would never cross the seam a second time -
+	# `_sent_tiles` would still say it had - and the C++ side, which prunes to
+	# the published view on every build, would answer the region's rim there
+	# while this side answered the tile.
+	#
+	# UNCONDITIONALLY, and the first spelling's `if size > size` guard is the
+	# bug this comment exists for: a view that evicts two tiles and gains two
+	# has the same size and a different set, which is exactly what a probe
+	# walking twenty summits does. It cost two runs of the colour handover -
+	# eight hundred rock quads at the summit vantage painted from a tile one
+	# leg had and the other did not.
+	var live := {}
+	for key in keys:
+		live[key] = true
+	for key in _sent_tiles.keys():
+		if not live.has(key):
+			_sent_tiles.erase(key)
+	for key in keys:
 		if _sent_tiles.has(key):
 			continue
 		var arrays := hm.far_view_arrays(key)
@@ -322,6 +401,8 @@ func _new_tiles(hm: Heightmap) -> Array:
 		out.append(k.z)
 		out.append(arrays[0])
 		out.append(arrays[1])
+		out.append(arrays[2])
+		out.append(arrays[3])
 		_sent_tiles[key] = true
 	return out
 

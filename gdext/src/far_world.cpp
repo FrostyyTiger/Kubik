@@ -31,6 +31,7 @@ void Config::read(const Dictionary &d) {
 	far_vote = cfg_f(d, "far_vote", far_vote);
 	far_filter_bias = cfg_f(d, "far_filter_bias", far_filter_bias);
 	far_peak_gain = cfg_f(d, "far_peak_gain", far_peak_gain);
+	far_forest_blend = cfg_f(d, "far_forest_blend", far_forest_blend);
 	far_level_ref_m = cfg_f(d, "far_level_ref_m", far_level_ref_m);
 	far_normal_m = cfg_f(d, "far_normal_m", far_normal_m);
 	far_zone_cell_m = cfg_f(d, "far_zone_cell_m", far_zone_cell_m);
@@ -90,7 +91,35 @@ void World::setup(const Dictionary &d) {
 	// store can be wrong rather than merely absent.
 	tiles.clear();
 	material_tiles.clear();
+	cover_tiles.clear();
 	add_tiles(d.get("tiles", Array()));
+
+	// THE MATERIAL PYRAMID, Stage 4. Data, sent whole once per world.
+	materials.clear();
+	PackedByteArray mat0 = d.get("materials", PackedByteArray());
+	materials.resize((size_t)mat0.size());
+	for (int64_t i = 0; i < mat0.size(); i++) {
+		materials[(size_t)i] = mat0[i];
+	}
+	cover.clear();
+	PackedByteArray cv = d.get("cover", PackedByteArray());
+	cover.resize((size_t)cv.size());
+	for (int64_t i = 0; i < cv.size(); i++) {
+		cover[(size_t)i] = cv[i];
+	}
+	cover_cols = (int)(int64_t)d.get("cover_cols", 0);
+	canopy_color = d.get("canopy_color", Color(0.0284f, 0.0782f, 0.0482f));
+
+	material_levels.clear();
+	Array ml = d.get("material_levels", Array());
+	for (int64_t i = 0; i < ml.size(); i++) {
+		PackedByteArray one = ml[i];
+		std::vector<uint8_t> v((size_t)one.size());
+		for (int64_t k = 0; k < one.size(); k++) {
+			v[(size_t)k] = one[k];
+		}
+		material_levels.push_back(v);
+	}
 
 	levels.clear();
 	max_levels.clear();
@@ -150,7 +179,8 @@ void World::setup(const Dictionary &d) {
 // marshalling bug is a far mesh that looks like the old one instead of a
 // crash - which is the same trade `is_ready()` makes for the pyramid.
 void World::add_tile(int level, int tx, int tz, const PackedFloat32Array &mean,
-		const PackedFloat32Array &high) {
+		const PackedFloat32Array &high, const PackedByteArray &mat,
+		const PackedByteArray &cov) {
 	const int64_t want = (int64_t)TILE_STRIDE * (int64_t)TILE_STRIDE;
 	if (mean.size() != want || high.size() != want) {
 		return;
@@ -169,17 +199,66 @@ void World::add_tile(int level, int tx, int tz, const PackedFloat32Array &mean,
 		t.high[(size_t)i] = hp[i];
 	}
 	tiles[key] = t;
+	// The material rides with the heights and is stored only when it is whole:
+	// a short array is a tile whose material has not been built, and
+	// `tile_material` answering -1 sends the read to the region rather than to
+	// a byte that is not there.
+	if (mat.size() == want) {
+		std::vector<uint8_t> m((size_t)want);
+		const uint8_t *bp = mat.ptr();
+		for (int64_t i = 0; i < want; i++) {
+			m[(size_t)i] = bp[i];
+		}
+		material_tiles[key] = m;
+	}
+	const int64_t cwant = (int64_t)cover_cols_for(TILE_CELLS)
+			* (int64_t)cover_cols_for(TILE_CELLS);
+	if (cov.size() == cwant) {
+		std::vector<uint8_t> c((size_t)cwant);
+		const uint8_t *cp = cov.ptr();
+		for (int64_t i = 0; i < cwant; i++) {
+			c[(size_t)i] = cp[i];
+		}
+		cover_tiles[key] = c;
+	}
 }
 
-// The wire form: a flat Array of [level, tx, tz, mean, high, ...]. Flat rather
-// than an Array of Dictionaries because a build sends up to a few dozen of
-// these and five Variants each is cheaper than five hash lookups each.
+// The wire form: a flat Array of [level, tx, tz, mean, high, mat, cover, ...].
+// Flat rather than an Array of Dictionaries because a build sends up to a few
+// dozen of these and seven Variants each is cheaper than seven hash lookups.
 void World::add_tiles(const Array &p_tiles) {
-	for (int64_t i = 0; i + 4 < p_tiles.size(); i += 5) {
+	for (int64_t i = 0; i + 6 < p_tiles.size(); i += 7) {
 		add_tile((int)(int64_t)p_tiles[i], (int)(int64_t)p_tiles[i + 1],
 				(int)(int64_t)p_tiles[i + 2],
 				(PackedFloat32Array)p_tiles[i + 3],
-				(PackedFloat32Array)p_tiles[i + 4]);
+				(PackedFloat32Array)p_tiles[i + 4],
+				(PackedByteArray)p_tiles[i + 5],
+				(PackedByteArray)p_tiles[i + 6]);
+	}
+}
+
+void World::prune_tiles(const PackedInt32Array &p_keep) {
+	// An empty list is "the view is empty", which is a real state at world
+	// load and before the first publish - and dropping everything is the right
+	// answer to it, because the GDScript leg would read the region's rim for
+	// every position too.
+	std::unordered_set<TileKey, TileKeyHash> live;
+	live.reserve((size_t)(p_keep.size() / 3 + 1));
+	for (int64_t i = 0; i + 2 < p_keep.size(); i += 3) {
+		TileKey k;
+		k.level = p_keep[i];
+		k.tx = p_keep[i + 1];
+		k.tz = p_keep[i + 2];
+		live.insert(k);
+	}
+	for (auto it = tiles.begin(); it != tiles.end();) {
+		if (live.find(it->first) == live.end()) {
+			material_tiles.erase(it->first);
+			cover_tiles.erase(it->first);
+			it = tiles.erase(it);
+		} else {
+			++it;
+		}
 	}
 }
 

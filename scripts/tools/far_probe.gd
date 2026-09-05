@@ -427,6 +427,7 @@ func _ring_table() -> void:
 			_cpp_mesher.frontier = PackedInt32Array()
 			_cpp_mesher.slice = true
 			_cpp_mesher.keys = keys
+			_cpp_mesher.heightmap = _heightmap
 			_cpp_mesher.run()
 			verts = _cpp_mesher.vertex_count
 			ms = _cpp_mesher.elapsed_ms
@@ -605,10 +606,19 @@ func _measure() -> PackedStringArray:
 	var shelf_rows := PackedStringArray()
 	var seam_rows := PackedStringArray()
 	var hand_rows := PackedStringArray()
+	var colour_rows := PackedStringArray()
 
 	for v in vantages:
 		var centre: Vector2i = v["centre"]
 		var a: Surface = await _surface(centre)
+		# THE COLOUR ROWS FIRST, and the order is the measurement. They read
+		# the material through the PUBLISHED VIEW, and `_surface` republishes
+		# it for every centre it is given - so asking after `b` and `walked`
+		# would classify this mesh's quads against a view built for a place
+		# 200 m away. It cost a run to find: the summit's snow came out 33.5
+		# points of V apart across a boundary, which was not a colour problem at
+		# all but a lookup answering for the wrong tile set.
+		var colour_here := _colour_rows(a, centre, String(v["name"]))
 		var b: Surface = await _surface(centre + Vector2i(FIZZ_OFFSET_BLOCKS, 0))
 		var fizz := _fizz(a, b, centre)
 		var rough := _roughness(a, centre)
@@ -640,6 +650,7 @@ func _measure() -> PackedStringArray:
 		# probe's build count, and one far mesh is most of a minute.
 		hand_rows.append("[FarProbe] %-14s %s" % [
 			v["name"], _handover_row_set(a, centre)])
+		colour_rows.append_array(colour_here)
 
 	print("[FarProbe]   ... %d meshes built so far" % _builds)
 	var total_rms := sqrt(fizz_sq / maxf(float(fizz_n), 1.0))
@@ -683,6 +694,11 @@ func _measure() -> PackedStringArray:
 		+ "gate rms <= 0.5 x the inner cell, max <= 1.0 x, ! marks a fail")
 	out.append_array(hand_rows)
 
+	# --- THE COLOUR HANDOVER, horizon v1 Stage 4 ------------------------------
+	out.append("[FarProbe] colour across a boundary, per material - "
+		+ "gate |dH| <= 6 deg and |dV| <= 8 points, ! marks a fail")
+	out.append_array(colour_rows)
+
 	# --- PEAK LOSS, and its mirror --------------------------------------------
 	out.append_array(await _extrema_rows(1, "peak loss",
 		"positive = the drawn summit is LOWER than the truth"))
@@ -722,6 +738,118 @@ func _ring_range() -> Vector2i:
 ## OFF A SURFACE THE CALLER ALREADY BUILT. The probe builds forty-nine far
 ## meshes per run already; a handover loop with its own builds would have made
 ## the instrument cost more than the stage it measures.
+## THE COLOUR ACROSS EVERY RING BOUNDARY, PER MATERIAL - horizon v1 Stage 4.
+##
+## The plan asks for this as a pixel measurement on a tour shot: 9 x 9 windows
+## either side of a boundary, fog off, for rock, meadow, snow and forest. Taken
+## HERE INSTEAD, off the mesh's own vertex colours, and the reason is that the
+## pixel version cannot answer the question it asks. A screenshot does not know
+## where ring 6 ends; it does not know which pixels are rock and which are
+## snow; and it has the sun, the tonemap, the lens and the fog between the
+## colour and the number. This reads the colour the mesher WROTE, either side
+## of a boundary it knows the radius of, grouped by the material the cell
+## actually is - which is the quantity the gate is about.
+##
+## The tour keeps its own fog-off eye check on `30-horizon-peak`; the two are
+## different instruments and the status doc reports both.
+##
+## HSV of the LINEAR colour, which is what the wire carries. Hue is in degrees
+## and value in points of 100, so the plan's 6 and 8 are read straight off.
+## Materials with fewer than MIN samples on either side are skipped and said
+## to be skipped: two quads of snow at 19 km is not a measurement.
+func _colour_rows(s: Surface, centre: Vector2i,
+		name: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var bs: float = _config.block_size
+	var half := BOUNDARY_HALF_M / bs
+	var zones := TerrainGenerator.ZONE_COUNT
+	var rings := _ring_range()
+	# Once, not once per quad: `far_view` takes the store's mutex.
+	var view := _heightmap.far_view()
+	var stray := 0
+	var stray_by := PackedInt32Array()
+	stray_by.resize(zones)
+	for i in range(rings.x, mini(rings.y + 1, FarFieldJob.RING_OUTER_M.size())):
+		var r: float = FarFieldJob.RING_OUTER_M[i] / bs
+		# Two accumulators per material: inside the boundary and outside it.
+		var sum := PackedFloat64Array()
+		sum.resize(zones * 6)
+		var n := PackedInt32Array()
+		n.resize(zones * 2)
+		for q in s.qx.size():
+			var step := s.qstep[q]
+			var cx := float(s.qx[q] + step / 2) - float(centre.x)
+			var cz := float(s.qz[q] + step / 2) - float(centre.y)
+			var d := sqrt(cx * cx + cz * cz)
+			if d < r - half or d > r + half:
+				continue
+			var side := 0 if d < r else 1
+			var mat := _heightmap.far_material_at(
+				float(s.qx[q] + step / 2), float(s.qz[q] + step / 2),
+				FarFieldJob.material_level(_heightmap, step), view)
+			var c := s.qcolor[q]
+			# THE PAINT AGAINST THE PALETTE, on the two materials the forest
+			# blend never touches. If a rock or snow quad is not exactly its
+			# palette colour, the leg that painted it and the door this probe
+			# reads disagree about what that cell is - which is a cross-leg
+			# fault and not a look one.
+			if mat == TerrainGenerator.ZONE_ROCK \
+					or mat == TerrainGenerator.ZONE_SNOW:
+				# THE WIRE COLOUR, not the palette one: `_push_quad` runs
+				# `Look.to_wire` over every colour it emits, so the palette
+				# value is not what is in the array.
+				var want := Look.to_wire(
+					Block.color_of(TerrainGenerator.ZONE_SURFACE[mat]))
+				if absf(c.r - want.r) + absf(c.g - want.g) \
+						+ absf(c.b - want.b) > 0.004:
+					stray += 1
+					stray_by[mat] += 1
+			var at := (mat * 2 + side) * 3
+			sum[at] += c.r
+			sum[at + 1] += c.g
+			sum[at + 2] += c.b
+			n[mat * 2 + side] += 1
+		var parts := PackedStringArray()
+		for z in zones:
+			var ni := n[z * 2]
+			var no := n[z * 2 + 1]
+			if ni < COLOUR_MIN_QUADS or no < COLOUR_MIN_QUADS:
+				continue
+			var ci := _mean_color(sum, (z * 2) * 3, ni)
+			var co := _mean_color(sum, (z * 2 + 1) * 3, no)
+			var dh := absf(ci.h - co.h) * 360.0
+			dh = minf(dh, 360.0 - dh)
+			var dv := absf(ci.v - co.v) * 100.0
+			var bad := dh > 6.0 or dv > 8.0
+			# THE SAMPLE COUNTS RIDE WITH THE FAIL. A dV of thirty on one
+			# material is either a colour that moved or a bucket with the
+			# wrong quads in it, and the two look identical until you know
+			# how many quads each side had.
+			parts.append("%s dH %.1f dV %.1f%s" % [
+				TerrainGenerator.ZONE_NAMES[z], dh, dv,
+				" (%d|%d)!" % [ni, no] if bad else ""])
+		if parts.is_empty():
+			continue
+		out.append("[FarProbe] %-14s %5.0f m  %s" % [
+			name, FarFieldJob.RING_OUTER_M[i], String("   ").join(parts)])
+	if stray > 0:
+		out.append("[FarProbe] %-14s %d rock/snow quads off palette (rock %d, snow %d)" % [
+			name, stray, stray_by[TerrainGenerator.ZONE_ROCK],
+			stray_by[TerrainGenerator.ZONE_SNOW]])
+	return out
+
+
+func _mean_color(sum: PackedFloat64Array, at: int, n: int) -> Color:
+	var inv := 1.0 / float(n)
+	return Color(float(sum[at]) * inv, float(sum[at + 1]) * inv,
+		float(sum[at + 2]) * inv)
+
+
+## How many quads of one material a side needs before its colour is a
+## measurement rather than an anecdote.
+const COLOUR_MIN_QUADS := 8
+
+
 func _handover_row_set(s: Surface, centre: Vector2i) -> String:
 	var bs: float = _config.block_size
 	var base := FarFieldJob.base_step_blocks(_config)
@@ -865,10 +993,19 @@ func _prepare_far_tiles(centre: Vector2i) -> void:
 		var r := minf(top_m / bs, reach)
 		r = maxf(r, ring0) + apron * float(_heightmap.tile_span_blocks(level))
 		_heightmap.ensure_disc(level, centre, r)
-		# EVICTED AT TWICE THE RADIUS, as `World` and `FarField` both do. The
-		# probe visits twenty summits and three vantages; without this it would
-		# hold every tile of every one of them at once.
-		_heightmap.evict_beyond(level, centre, r * 2.0)
+		# EVICTED AT EXACTLY THE RADIUS IT PREPARED, and that is the probe's
+		# rule rather than the game's. `World` and `FarField` evict at twice
+		# the radius, because holding a tile the player may walk back onto is
+		# cheaper than rebuilding it. Here it would make the published view -
+		# and therefore the mesh, and therefore every number in this table -
+		# depend on WHICH VANTAGE WAS VISITED BEFORE THIS ONE: a tile between r
+		# and 2r survives from the last centre, so run 2 of the determinism
+		# check starts with tiles run 1 did not have.
+		#
+		# Measured: roughness 1.0340 against 1.0344 and four terrace quads,
+		# from a warm store. Evicting at r makes the view a pure function of
+		# the centre, which is what "the same table twice" needs.
+		_heightmap.evict_beyond(level, centre, r)
 	_heightmap.publish_far_view()
 
 
@@ -1257,6 +1394,13 @@ func _surface(centre: Vector2i) -> Surface:
 		_cpp_mesher.config = _config
 		_cpp_mesher.center = centre
 		_cpp_mesher.frontier = PackedInt32Array()
+		# THE MESHER'S OWN HEIGHTMAP, and `setup()` does not assign it: its
+		# first parameter shadows the member. Without this the C++ leg is sent
+		# no tiles after setup and no view to prune to, so it draws the
+		# region's clamped rim wherever the store has ground - which is most of
+		# the summit vantage, 20 km of the disc, and the reason this probe's
+		# summit seam read 465 blocks.
+		_cpp_mesher.heightmap = _heightmap
 		_cpp_mesher.run()
 	else:
 		var gd := FarFieldJob.new()
@@ -1289,6 +1433,11 @@ class Surface extends RefCounted:
 	var qz := PackedInt32Array()
 	var qstep := PackedInt32Array()
 	var qy := PackedFloat32Array()
+
+	## And the colour the mesher painted it - horizon v1 Stage 4. One per quad:
+	## `_push_quad` gives all four corners the same colour, so the first is the
+	## quad's. LINEAR, as everything on the wire is.
+	var qcolor := PackedColorArray()
 
 	# DISTANCE V2 STAGE 1. What a terrace check has to know: where the disc was
 	# centred, the constant y_offset every ground corner carries (taken back off
@@ -1339,6 +1488,8 @@ class Surface extends RefCounted:
 			* FarFieldJob.TERRACE_FADE_CELLS
 		var verts: PackedVector3Array = job.arrays[Mesh.ARRAY_VERTEX] \
 			if not job.arrays.is_empty() else PackedVector3Array()
+		var cols: PackedColorArray = job.arrays[Mesh.ARRAY_COLOR] \
+			if not job.arrays.is_empty() else PackedColorArray()
 
 		var q := 0
 		while q + 3 < verts.size():
@@ -1365,6 +1516,7 @@ class Surface extends RefCounted:
 			qy.push_back(p1.y * inv)
 			qy.push_back(p2.y * inv)
 			qy.push_back(p3.y * inv)
+			qcolor.push_back(cols[q - 4] if q - 4 < cols.size() else Color.BLACK)
 			# EVERY QUAD, keyed by its own corner at its own step - see the
 			# note by `fine`. The flat grid this used to share the work with
 			# went in Stage 3: it was sized to the REACH, `2 * far_radius / 8`

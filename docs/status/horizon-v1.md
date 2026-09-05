@@ -822,6 +822,10 @@ seam  rms  0.46 max   2.19 / 4
 7/8   rms 216.08 max 436.87 / 512 rms passes, max passes
 ```
 
+*(The spawn vantage. Its rows are unchanged by Stage 4's fix to the probe's
+mesher - see "Everything that blew up was one uninitialised member" - and the
+summit vantage's, which that fix moved a long way, are reported there.)*
+
 **Three readings, and only the third is new.**
 
 1. **The near boundaries are what they were on `main`.** The Stage 0 baseline
@@ -847,6 +851,12 @@ The plan says: "Where a boundary fails and `far_supersample` 4 fixes it, take
 4 and record." Measured, a whole probe run at Ultra with
 `--set far_supersample=4`, diffed against the same run at 2:
 
+**Re-measured in Stage 4** after the probe's C++ mesher was found to be
+drawing the summit vantage off the region's clamped rim (see "Everything that
+blew up was one uninitialised member"). The conclusion below was reached on
+the earlier table; the spawn vantage's rows - the ones it rests on - are
+identical in both, and Stage 4's re-run is reported in its own section.
+
 **Three numbers move in seventy-eight rows, and all three are the same
 number.** The summit vantage's fizz max goes 34.890 -> 35.239, the 150 m ring
 boundary's max fizz goes 34.89 -> 35.24, and its handover RMS goes 36.77 ->
@@ -865,6 +875,14 @@ makes a 512 m box agree with a 256 m one on a mountain. The boundaries fail
 because real Alpine relief has more than half a cell of height in it at every
 scale, which is a statement about the terrain and the LOD chooser, not about
 the tile store.
+
+**Re-measured in Stage 4 on the repaired probe, and the answer did not
+change.** Nineteen lines of seventy-eight move and every one of them is a
+tenth: the summit's fizz max `9.61 -> 9.18`, roughness `1.2869 -> 1.2873`, the
+seam handover rms `2.38 -> 2.75` (slightly WORSE), and not one boundary
+crosses its gate in either direction. Peak loss, valley gain, the colour
+handover and every spawn and lake row are identical. Tile build `13.1 s ->
+36.5 s`, the same 2.8x.
 
 **Taken as: stay at 2, record the numbers, do not spend 2.8x on nothing.**
 The knob keeps its place on F4. The thing that would actually move these rows
@@ -918,38 +936,49 @@ this is, is the price of the horizon written down in the one place it is
 visible: **one spinbox, 4.8 M vertices, and 22 blocks off every summit at
 600 m.** Stage 7 measures the frame at both. **For Marcel.**
 
-### Everything that blew up is at the home region's rim
+### Everything that blew up was one uninitialised member - CORRECTED IN STAGE 4
 
-The summit vantage is the highest cell in the world and it sits about 48
-blocks from the region's edge; its seam circle has a radius of 510 blocks, so
-nine tenths of it is outside the region. That is the whole explanation of the
-one alarming row in the tables:
+**This section said something else when Stage 3 was committed, and it was
+wrong.** It read "everything that blew up is at the home region's rim", blamed
+the two doors' different fallbacks, and left the seam number as a silence for
+the world-truth break. Stage 4's colour handover found the real cause, and it
+is worth leaving both the wrong reading and the right one here, because the
+wrong one was plausible and specific and it was still wrong.
 
-| seam, far mesh against the voxel surface | max | rms | samples |
-| --- | --- | --- | --- |
-| spawn | 2.24 | 0.47 | 720 |
-| **summit** | **465.33** | **160.93** | 720 |
-| lake | 0.45 | 0.35 | 720 |
+**`FarMesher.setup()`'s first parameter is named `heightmap` and shadows the
+member of the same name, and `setup` never assigns the member.** So a mesher
+whose caller does not assign it by hand is handed the store's tiles ONCE, at
+setup, and never again: `build()`'s `_new_tiles(heightmap)` reads a null
+member and sends nothing. `far_field.gd` assigns it (Stage 3 found the same
+bug in the game's path and fixed it there); `far_probe.gd` and
+`selftest_horizon.gd` did not.
 
-At the Stage 0 baseline the same row read `max 5.835 rms 1.069 over 417
-samples`: the far mesh was culled outside the region, so 303 of the 720
-samples had no far mesh to disagree with and were not counted. Stage 3 draws
-there, so they are counted now, and they disagree.
+**What that did to the probe.** At the spawn vantage nothing, because the
+world had already been loaded around the player and setup carried those tiles.
+At the summit vantage - 1.4 km away, at the region's edge - the C++ leg had no
+tiles at all for the ground it was drawing, so it fell back to the region's
+clamped rim and drew an extruded edge where there is a mountain.
 
-**The mechanism, as far as this lane can see it.** Outside the region,
-`height_at` reads the level-0 tile through the LIVE store and may build it;
-the far mesh reads the FROZEN view and, when a tile is not in it, falls back
-to `_region_clamped` - the extruded rim, which at 48 blocks from a 416 m
-summit is several hundred blocks of nothing. The two doors have different
-fallbacks and only one of them can build. 465.33 is very close to
-832.2 - 366.9, a rim altitude.
+| the summit vantage | before | after |
+| --- | --- | --- |
+| seam against the voxel surface, max | **465.33 blocks** | **17.45** |
+| seam, rms | 160.93 | **3.57** |
+| handover `seam@0` rms | 20.50 | **2.38** |
+| handover `0/1` rms | 36.77 | **12.37** |
+| handover `1/2` rms | 83.03 | **25.39** |
+| rock and snow quads not painted their own palette colour | 2,399 | **0** |
 
-**It is not fixed in this lane and here is why.** The fallback is correct for
-what it is: a far read may not build, and it must answer something. The right
-answer - the coarsest tile the view does hold over that position - is a change
-to the far read's fallback chain, which is Stage 4's file and the world-truth
-break's problem: **the region stops existing in phase 2**, and with it both
-doors and both fallbacks. Written up under "For the world-truth break".
+**The spawn and lake vantages are unchanged, character for character**, which
+is the confirmation: the bug was never about the rim, it was about which
+vantage the mesher had been told about. The coarse-ring handover failures at
+those two vantages - `4/5`, `5/6`, `6/7` - are therefore real and stand as
+written above.
+
+**The game was never affected.** `far_field.gd` sets the member; the far
+parity gate and the horizon self-test both build meshes at the origin, where
+setup's tiles cover everything. It was the INSTRUMENTS that were blind, which
+is the worse of the two places for it to be and the reason the fix is written
+up at this length.
 
 ### The far probe had to be taught the reach twice
 
@@ -1036,6 +1065,251 @@ reach moved. It is replaced by the exact per-step index Stage 0 added for the
 inner rings, extended to every ring: one entry per ground quad, bounded by the
 mesh rather than by the reach, and a lookup walks the steps finest-first and
 takes the first hit. `LOOKUP_CELL_BLOCKS` is retired with it.
+
+---
+
+## Stage 4 - one colour at every distance
+
+**Green.** The far country's colour is a lookup, and what it looks up is the
+same material the chunk mesher would put on the top face.
+
+### What shipped
+
+| | what |
+| --- | --- |
+| `heightmap.gd` | **The material pyramid.** `materials` is level 0 over the region grid, one byte per cell, from `surface_zone_at`; `_mat_levels` is 1 to 5, each the MODE of its four children with ties to the lower id. Per tile, the same byte per cell, the mode over the `far_supersample` sub-samples. |
+| `heightmap.gd` | **The forest cover.** One byte per `COVER_STRIDE` cells - four - region and tiles, from `TreePlacement.cover_at`. Read nearest, like the material. |
+| `terrain_generator.gd` | `surface_zone_with` and `slope_zone_with`: `surface_zone_at` with the slope handed in. Same answer, one argument instead of four height reads. |
+| `tree_placement.gd` | `cover_at`: the placement probability without the crown-spacing pass, normalised by `max_probability`. |
+| `height_tiles.{h,cpp}`, `height_tiles.gd` | `setup_zones` and `build_materials`: the material grid in C++, using a second instance of the far mesher's own `World` for the zone rules rather than a third copy of them. |
+| `far_field_job.gd`, `far_build.cpp` | The quad's colour is `material_at` then the forest blend. **`_far_zone`, `_zone_vote`, `_vote_memo`, `_vote_level`, `VOTE_SPLIT`, `_voting` and their C++ twins are deleted** - about 250 lines between the two legs. |
+| `far_field_job.gd` | `canopy_color()`: the mean canopy colour of the mounted tree library, with `TreeModels`' own fallback when there is none. No asset colour is committed (D50). |
+| `far_probe.gd` | The colour handover table: the mesh's own vertex colours either side of every ring boundary, per material. |
+| `far_field.gd`, `debug_hud.gd` | `far_vote`, `far_zone_cell_m` and `far_zone_cell_ratio` leave `FAR_ONLY_PROPERTIES` and the F4 panel. Nothing reads them. |
+
+### What the far colour used to be, and it is worth writing down
+
+Five mechanisms, four knobs, none of them the rule the voxels use:
+
+1. `surface_zone_at` at ring 0 - the exact voxel rule, with its jitter and its
+   per-patch dither.
+2. `backdrop_zone` past ring 0 - altitude alone, no jitter, a dither of exactly
+   0.5.
+3. A zone cell that grew with distance (`far_zone_cell_m`,
+   `far_zone_cell_ratio`), so the paint was sampled on a coarser grid than the
+   geometry.
+4. Distance v3's four-sample majority vote (`far_vote`), memoised per zone
+   cell, to stop the result fizzing.
+5. All of it re-derived from the height the far mesh had just drawn - so a
+   terrace that moved the ground moved the snow line with it.
+
+**All five were ways of guessing what a coarse cell is made of.** The pyramid
+knows: the cell's material is the mode of the materials under it, computed once
+when the pyramid or the tile was built. It cannot fizz, because nothing is
+resampled per frame; it agrees with the voxels at level 0, because level 0 IS
+`surface_zone_at`; and the colour of a 512 m cell is the commonest thing
+actually in it rather than a sample of the middle.
+
+### Level 0 is the mesher's own choice, ten thousand times
+
+`material parity`, the new horizon self-test:
+
+```
+material parity: 10000 level-0 cells exact,
+                 2000 level-1 cells are a child of their four,
+                 1435 ms to build
+```
+
+**And it is a cross-leg test without looking like one.** The pyramid's level 0
+is filled by `KubikHeightTiles.build_materials` - C++ - and `surface_zone_at`
+is GDScript. Ten thousand cells, exact, means the two zone implementations
+agree; the far parity gate then means both legs read the same bytes.
+
+The outermost ring of cells is excluded from the test and says why: its slope
+is clamped, because its neighbour is outside the region where `height_at` goes
+to the tile store. Six thousand cells of two and a quarter million, all of them
+at the rim the world-truth break deletes, and **both legs clamp identically** -
+which is the property the test needs.
+
+### The cost, measured twice, and one of them sent a loop to C++
+
+The horizon self-test's tile-store case builds 1,041 tiles. Before and after:
+
+| | 1,041 tiles | region pyramid |
+| --- | --- | --- |
+| Stage 3 | **10.5 s** | - |
+| material, first spelling (GDScript tally) | **74.0 s** | - |
+| material, in C++ | **13.8 s** | 631 ms |
+| material + forest cover | **24.9 s** | 1,435 ms |
+
+**The material went to C++ and the cover did not, and the difference is a
+port.** The zone rules already exist in this project's C++ - `zone_at`,
+`_slope_zone`, `wildness_at`, all on the far mesher's `World` struct - so
+`KubikHeightTiles` holds a second INSTANCE of that struct and the loop moved
+with no new implementation to keep in step. The tree placement does not exist
+in C++ at all, and porting it is a different epic; so the cover stays in
+GDScript and pays for it by being COARSE - one sample per four cells, which is
+16 blocks in the region. That is the whole of `COVER_STRIDE`, and it is
+defensible on its own terms: a material is an id and a wrong one is a wrong
+colour, while cover is a blend weight and 8 m of it looks exactly like 2 m of
+it from a kilometre away.
+
+### The cover recursed until the stack ran out
+
+`TreePlacement.cover_at` asked `_ground_ok`, which asks `_slope_ok`, which asks
+`heightmap.slope_deg_at`, which outside the region reads the tile store, which
+builds the tile - **which is what was calling `cover_at`**. A thousand frames
+of `_build_tile_cells` in the backtrace.
+
+The slope is handed in now, from the grid the tile is already building. It is
+the same number, computed once instead of four times, and it cannot re-enter
+the store. The same split had already been made for the material an hour
+earlier and for the same reason; the second one is written down here because
+the failure mode - a self-test that runs for eleven minutes and then dies in
+the flora - looks nothing like the first.
+
+### `backdrop_zone` survives, and it should not
+
+Both legs keep `FarFieldJob.backdrop_zone` / `World::backdrop_zone`, unused by
+anything that draws. `scripts/tools/selftest.gd` has a cross-leg parity test
+that calls it on eight hundred positions, and **this lane may add exactly one
+line to that file** (plan § 0). Deleting the function would turn a green gate
+red in a file it may not fix. Written up under "For the merge".
+
+The same file's `vote` case - `far_vote = 1.0` - now exercises nothing: both
+legs ignore the knob. It still passes, because it is a comparison of the two
+legs and they agree; it is simply no longer a test of anything. Same request.
+
+### The colour across a boundary, and what it caught
+
+The plan's gate: |dH| <= 6 degrees and |dV| <= 8 points either side of every
+ring boundary, per material. Measured off the mesh's own vertex colours - see
+question 16 for why not off pixels - at three vantages, every boundary the
+rings reach:
+
+```
+spawn            150 m  meadow dH 0.0 dV 0.0   forest dH 0.5 dV 2.2   alpine dH 0.1 dV 0.1   heath dH 0.0 dV 0.0
+spawn            300 m  shore dH 0.0 dV 0.0   meadow dH 0.0 dV 0.0   forest dH 0.0 dV 0.0   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0
+spawn            600 m  meadow dH 0.1 dV 0.1   forest dH 0.0 dV 0.0   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0
+spawn           1200 m  meadow dH 0.1 dV 0.1   forest dH 0.0 dV 0.0   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0
+spawn           2400 m  shore dH 0.0 dV 0.0   meadow dH 0.5 dV 0.3   forest dH 0.1 dV 0.4   alpine dH 0.9 dV 0.5   heath dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+spawn           4800 m  meadow dH 0.9 dV 0.7
+spawn           9600 m  meadow dH 0.4 dV 0.3
+spawn          19200 m  meadow dH 0.1 dV 0.1
+summit           150 m  forest dH 0.5 dV 2.2   alpine dH 0.1 dV 0.1   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+summit           300 m  forest dH 0.0 dV 0.0   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+summit           600 m  shore dH 0.1 dV 0.0   meadow dH 0.0 dV 0.0   forest dH 0.0 dV 0.0   alpine dH 0.7 dV 0.5   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+summit          1200 m  shore dH 0.0 dV 0.0   meadow dH 0.1 dV 0.1   forest dH 0.1 dV 0.4   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+summit          2400 m  meadow dH 0.2 dV 0.2   forest dH 0.1 dV 0.4   alpine dH 1.4 dV 0.9   heath dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+summit          4800 m  meadow dH 0.5 dV 0.3   forest dH 0.1 dV 0.6
+lake             150 m  shore dH 0.0 dV 0.0   meadow dH 0.0 dV 0.0
+lake             300 m  meadow dH 0.1 dV 0.0   forest dH 0.0 dV 0.2   alpine dH 0.0 dV 0.0
+lake             600 m  meadow dH 0.2 dV 0.1   forest dH 0.1 dV 0.4   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0   snow dH 0.0 dV 0.0
+lake            1200 m  shore dH 0.0 dV 0.0   meadow dH 0.1 dV 0.1   forest dH 0.1 dV 0.3   alpine dH 0.0 dV 0.0   heath dH 0.0 dV 0.0   rock dH 0.0 dV 0.0
+lake            2400 m  meadow dH 0.0 dV 0.0   forest dH 0.1 dV 0.5   alpine dH 0.2 dV 0.2   heath dH 0.1 dV 0.0
+lake            4800 m  shore dH 4.6 dV 0.2   meadow dH 0.2 dV 0.1   forest dH 0.0 dV 0.3
+lake            9600 m  meadow dH 0.4 dV 0.3
+```
+
+**The first run of it failed, and what it had found was not a colour.** Snow at
+the summit vantage: `dV 11.7` at 150 m, `33.5` at 300 m, `13.6` at 600 m, and
+nothing else anywhere over 4.6. A material is one flat colour, so two snow
+quads cannot differ - unless one of them is not snow.
+
+The table grew a second number to answer that: how many rock or snow quads -
+the two materials the forest blend never touches, so their colour must be
+exactly their palette's - are painted something else. **2,399 at the summit,
+none at the spawn or the lake.** That is not a look fault; it is the mesher
+and the probe disagreeing about what a cell is made of, and it led to
+`FarMesher.setup()`'s shadowed parameter, written up under Stage 3.
+
+**After the fix: zero strays, and every boundary passes** - the worst number
+anywhere is `dH 0.7` and `dV 2.2`, against gates of 6 and 8.
+
+Three smaller things were fixed on the way, all of them real and none of them
+the cause:
+
+1. **The forest blend is never applied to rock or snow.** The cover grid is
+   coarser than the material, so a snow cell beside a forest read the forest's
+   sample and came out tinted. `TreePlacement.cover_at` already answers 0 on
+   rock and snow; this says it again where the coarse read could smear it.
+2. **The C++ leg is told what the published view no longer holds.** Tiles are
+   sent incrementally and nothing ever told it about an EVICTION, so the two
+   legs drifted apart the moment the store evicted anything - one reading the
+   region's rim for a tile that was gone, the other still holding it.
+   `tile_keep` carries the view's whole key set and `World::prune_tiles`
+   applies it.
+3. **`_sent_tiles` forgets what is no longer published**, unconditionally. The
+   first spelling guarded it with `if size > size`, and a view that evicts two
+   tiles and gains two has the same size and a different set.
+
+### And the probe had to be made deterministic again
+
+Fixing the mesher's tile set made the probe's own table depend on history: it
+evicted at twice the radius it prepared, as the game does, so a tile between r
+and 2r survived from the previous vantage and run 2 of the determinism check
+started with tiles run 1 did not have. Measured: roughness `1.0340` against
+`1.0344`, and four terrace quads.
+
+The probe now evicts at exactly the radius it prepares, which makes the
+published view a pure function of the vantage. It costs time - a full table
+went from 85 s to 416 s per run, because every vantage rebuilds its own tiles -
+and it buys the one property the instrument exists for. **Tables identical.**
+
+### Checks
+
+| check | result |
+| --- | --- |
+| **material parity** (new, horizon self-test) | **10,000 level-0 cells exact**, 2,000 level-1 cells are a child of their four. Cross-leg: the pyramid is filled in C++ and the reference is GDScript's `surface_zone_at`. |
+| **colour handover** (new, far probe) | **every boundary, every material, every vantage passes.** Worst anywhere: `dH 4.6` (shore at 4.8 km from the lake) and `dV 2.2` (forest at 150 m from the spawn), against gates of 6 and 8. **0 rock or snow quads off palette**, from 2,399. |
+| far probe, twice | **identical**, and each run internally identical across its own two passes. Both `PASS`. |
+| far parity, far pyramid, zone, slice, layer, dispatch | **green** - `SELFTEST: all passed` |
+| horizon self-test | **all passed**, eight tests |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7` |
+| the summit's seam | **17.45 blocks** from 465.33, rms **3.57** from 160.93 - the uninitialised member, above |
+| peak loss at 600 m | +22.97 mean (was +23.02 with the broken probe); the divisor's bill is unchanged and is question 8's |
+
+### The eye check, fog off, and the far country is dark for a reason
+
+`30-horizon-peak`, `--fog off`, 9 x 9 windows:
+
+| window | H | S | V |
+| --- | --- | --- | --- |
+| lit snow, near `(760, 560)` | 29.5 | 9.6 | **73.4** |
+| lit snow, mid `(980, 470)` | 28.7 | 10.0 | **72.2** |
+| lit snow, far `(1180, 395)` | 28.3 | 13.0 | 42.5 |
+| shadowed flank `(200, 480)` | 24.8 | 36.9 | **4.8** |
+| shadowed flank `(400, 430)` | 23.4 | 10.5 | 18.3 |
+| horizon ridge `(700, 357)` | 39.6 | 3.0 | 44.6 |
+| sky `(640, 120)` | 3.7 | 1.3 | 50.2 |
+
+**The plan asks whether the same flank at 500 m, 2 km and 8 km is within the
+same window. Lit snow at three distances: V 73.4, 72.2, 42.5 and H within
+1.2 degrees.** The first two are the same surface; the third is a flank turned
+further from the sun as well as further away, which is what the shot has to
+offer - a mountain does not present the same face at three ranges. **The
+rigorous version of this question is the probe's colour handover**, which asks
+it of the same material either side of every ring boundary out to 19 km and
+answers within 4.6 degrees of hue and 2.2 points of value everywhere.
+
+**And the far country's darkness is not fog.** Stage 3 recorded "the far
+country reaches the horizon and arrives there almost black" and left it for
+Stage 5 to answer with air. With the fog switched off entirely the shadowed
+flank still reads **V 4.8**, and the lit ground beside it reads **73.4**. So
+the darkness is the sun: it is the shaded side of a massif at 09:00, drawn
+with a flank normal, and it is correct. What Stage 5 can change is how much
+of the AIR sits in front of it - which will raise the shadowed flank towards
+the fog colour rather than leave it at 4.8 - and the sentence to re-read after
+Stage 5 is that one, not "the colour table is wrong".
+
+**Against Stage 3, same shot, fog on:** the far mass reads V 11.9 / 19.9 /
+14.7 at the three sampled windows against Stage 3's 11.6 / 17.8 / 22.4, and
+the near snow and the sky are unmoved (V 68.9 and 53.1). The material pyramid
+did not change what the far country is made of - it changed how it is decided,
+and the picture agrees.
+
+
 
 ---
 
@@ -1146,6 +1420,51 @@ Failure protocol item 7: the conservative reading, written down.
    `screenshot_tour.gd`, and say so in its note. Conservative in the sense
    that matters - it changes where the camera stands, never what the world is,
    and every other vantage in the file is untouched.
+14. **"Level L = mode of four children" cannot be taken literally in a tile.**
+   A level-8 tile cell has 65,536 level-0 cells under it and no level-0 tiles
+   to read them from - the store builds on demand from the seed and a true
+   reduction would build the whole world at level 0. Taken as: **inside the
+   region, where the pyramid IS a reduction, the mode is exact over the four
+   children; in a tile, the `far_supersample` sub-samples ARE the children** and
+   the mode is over those - four of them at the shipped value, which is the
+   plan's own number. The one place the two differ is written here rather than
+   hidden behind a shared phrase.
+15. **The forest cover is one coarse grid, not a pyramid.** The plan says "one
+   byte per cell" beside the material. Taken as: one byte per FOUR cells
+   (`COVER_STRIDE`), one grid per source, read nearest, no levels. Two
+   reasons, both measured: it is the expensive one (three noise samples per
+   evaluation against the material's one, and no C++ leg because porting the
+   tree placement is a different epic), and it is a blend weight rather than an
+   id, so 8 m of it looks exactly like 2 m from a kilometre away. The knob is
+   one constant and the stride is stated wherever the grid is.
+16. **The colour handover is measured off the mesh, not off pixels.** The plan
+   asks for 9 x 9 windows either side of a boundary on a fog-off tour shot, for
+   rock, meadow, snow and forest. A screenshot cannot answer it: it does not
+   know where ring 6 ends, it does not know which pixels are snow, and it has
+   the sun, the tonemap and the lens between the colour and the number. Taken
+   as: the far probe reads the vertex colours the mesher WROTE, either side of
+   a boundary whose radius it knows, grouped by the material the cell actually
+   is, with the plan's own thresholds (|dH| 6, |dV| 8). The tour keeps its
+   fog-off eye check beside it, and the status doc reports both.
+17. **There IS a parse gate, and Stage 0 said there was not.** Stage 0 recorded
+   that `parsecheck.gd` is not one: `ResourceLoader.load` returns a non-null
+   Resource for a script with compile errors, so it printed "ok" for broken
+   files. `godot --headless --path . --check-only --script <file>` does report
+   a real `Parse Error` with its line, and it is the gate this lane needed -
+   `far_probe.gd` has now cost two long runs to a parse error found only when a
+   thirty-minute probe hung on it, once in Stage 3 and once in Stage 4
+   (`var r := FarFieldJob.RING_OUTER_M[i] / bs`: an untyped Array's element has
+   no inferred type). The COMPILE errors it also prints are noise - autoloads
+   are not registered in that mode, so every script that names `Net` reports
+   one - so the gate is `grep -c 'Parse Error'` and nothing else. Used before
+   every long run from here on. **For Marcel:** worth putting in `README.md`
+   § The probes beside `parsecheck`.
+18. **`scripts/world/flora/tree_placement.gd` is in neither column of the
+   ownership table.** Taken as: editable, additively. It is flora - three of
+   its siblings are in this lane's OWNS column - the mesher lane has not
+   touched it on `origin/feat/mesher-v1`, and the change is one new static
+   function with no existing behaviour altered. Flagged under "For the merge"
+   rather than assumed silently.
 
 ---
 
@@ -1186,10 +1505,22 @@ Failure protocol item 7: the conservative reading, written down.
    530, and the plan asks for 12. The quantity worth bounding is far worker
    time per second of play, which fell by a third while the reach grew
    tenfold. Question 12 has the numbers.
-10. **The far country reaches the horizon and arrives there almost black.**
-   Measured, and left alone on purpose: grill Q24 says Stage 3 may look worse
-   before Stage 4 gives it colour and Stage 5 gives it air. If it is still
-   black after Stage 5, that is a real finding and not a stage in progress.
+10. **The far country's darkness is the sun, not the fog.** Stage 3 recorded
+   it as "almost black" and left it for Stage 5's air. Stage 4 measured the
+   same shot with the fog switched off: the shadowed flank is still V 4.8 and
+   the lit ground beside it is 73.4. It is the shaded side of a massif at
+   09:00, and it is correct. Stage 5 will raise it towards the fog colour;
+   it will not "fix" it, because nothing is broken.
+11. **The far probe's instruments were blind at every vantage but the
+   player's, and had been since the tile store landed.** One shadowed
+   parameter in `FarMesher.setup()`. Every number this lane published for the
+   summit vantage before Stage 4 is wrong and is corrected in place. The game
+   was never affected. It is the argument for the colour handover table
+   existing at all: it was the only instrument that could see it.
+12. **`docs/status/light-v1.md`'s and this document's far-probe numbers for
+   the summit vantage are not comparable across Stage 4.** Anything quoting
+   "summit" from before tonight was measured on a mesh built from the region's
+   clamped rim.
 
 ---
 
@@ -1233,26 +1564,42 @@ does NOT change, because changing it would change what a seed produces.
    recomputed from `world_blocks_xz`**, so the home region is still a
    configured size. D44's ringed content replaces the whole idea; until then
    it is bookkeeping, and no system culls against it any more.
-7. **The two doors outside the region have different fallbacks, and one of
-   them draws the rim.** `height_at` reads the LIVE tile store and may build
-   the tile it needs; the far mesh reads the FROZEN view and may not, so when
-   a tile is missing from the view it answers `_region_clamped` - the home
-   region's edge cell, extruded. Near a summit at the rim that is several
-   hundred blocks of wrong ground, which is where the summit vantage's seam
-   number of 465 blocks comes from. The honest fallback is the coarsest tile
-   the view DOES hold over that position, and only the region after that; the
-   world-truth break deletes the region and with it the whole fallback chain,
-   so it is written here rather than patched now.
+7. **The two doors outside the region have different fallbacks.** `height_at`
+   reads the LIVE tile store and may build the tile it needs; the far mesh
+   reads the FROZEN view and may not, so when a tile is missing from the view
+   it answers `_region_clamped` - the home region's edge cell, extruded. The
+   honest fallback would be the coarsest tile the view DOES hold over that
+   position, and only the region after that. **The 465-block seam this item
+   originally cited as its evidence was a different bug** - see "Everything
+   that blew up was one uninitialised member" under Stage 3 - so what is left
+   here is the design point without a measurement behind it: no number in this
+   run is known to be caused by it. The world-truth break deletes the region
+   and with it the whole fallback chain.
    `scripts/world/heightmap.gd`, `_tile_bilinear`.
 
 ---
 
 ## For the merge
 
-One-line requests into files the mesher lane owns. Nothing here is done by
+One-line requests into files this lane may not edit. Nothing here is done by
 this lane.
 
-*(none yet)*
+1. **`scripts/tools/selftest.gd`: retire the `backdrop_zone` cross-leg case.**
+   Horizon v1 Stage 4 replaced the far colour with a material-pyramid lookup;
+   `FarFieldJob.backdrop_zone` and `World::backdrop_zone` are kept ALIVE IN
+   BOTH LEGS solely because that test calls them, and this lane may add exactly
+   one line to that file. Delete the case and both functions in the same
+   commit.
+2. **`scripts/tools/selftest.gd`: the `vote` case tests nothing now.**
+   `far_vote` is read by neither leg after Stage 4, so the case compares two
+   legs that both ignore it. It passes and is no longer evidence. Retire it
+   with item 1, and `far_vote`, `far_zone_cell_m` and `far_zone_cell_ratio`
+   with it - they stay in `worldgen_config.gd` for one epic so a saved file
+   does not lose fields on load.
+3. **`scripts/world/flora/tree_placement.gd` gained `cover_at`**, and that file
+   is in neither column of the plan's ownership table. It is flora, the mesher
+   lane has not touched it on `origin/feat/mesher-v1`, and the function is
+   additive - no existing behaviour changed. Flagged rather than assumed.
 
 ---
 

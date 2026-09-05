@@ -74,7 +74,6 @@ const LOCAL_TUNING_ROWS := [
 	["grain_sparse", "light: grain sparse", 0.0, 0.5, 0.05],
 	["grain_step", "light: grain step", 0.0, 0.25, 0.01],
 	["far_normal_m", "poster: far normal (m)", 4.0, 256.0, 8.0],
-	["far_zone_cell_m", "poster: far zone cell (m)", 0.0, 128.0, 4.0],
 	["flora_radius_m", "flora radius (m)", 0.0, 160.0, 8.0],
 	["flora_far_m", "flora far ring (m)", 0.0, 320.0, 8.0],
 	["flora_far_fraction", "flora far density", 0.0, 1.0, 0.05],

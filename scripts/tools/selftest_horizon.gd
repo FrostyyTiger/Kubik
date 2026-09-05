@@ -55,6 +55,8 @@ static func run() -> int:
 		"tile threads": _test_tile_threads,
 		# STAGE 3.
 		"far key parity": _test_far_key_parity,
+		# STAGE 4.
+		"material parity": _test_material_parity,
 	}
 	var failures := 0
 	for name in tests:
@@ -450,6 +452,8 @@ static func _test_far_key_parity():
 
 	if FarMesher.class_present():
 		var m := FarMesher.new()
+		# The member, which `setup` does not assign - see far_mesher.gd.
+		m.heightmap = hm
 		if m.setup(hm, gen, cfg):
 			var cpp_keys := _cpp_build(m, cfg, centre, keys)
 			bad += _compare_verts(gd_keys, cpp_keys, "gdscript keys vs c++ keys")
@@ -537,3 +541,92 @@ static func _parse_kv(line: String) -> Dictionary:
 		if eq > 0:
 			out[token.substr(0, eq)] = token.substr(eq + 1)
 	return out
+
+
+# --- Stage 4 ------------------------------------------------------------------
+
+## THE MATERIAL PYRAMID'S LEVEL 0 IS THE MESHER'S OWN CHOICE, ten thousand
+## samples, exactly. The plan's Stage 4 check.
+##
+## WHY IT IS THE ONE TEST THIS STAGE NEEDS. Every other claim of the stage
+## follows from it: the far colour is a lookup into this pyramid, the coarse
+## levels are modes of it, and the C++ leg reads the same bytes the GDScript
+## leg does. What could still be wrong is the pyramid's own foundation - that
+## the byte at a cell is the material the chunk mesher would put on that
+## column's top face - and that is `TerrainGenerator.surface_zone_at` at the
+## cell, which is what this compares against.
+##
+## AND IT IS A CROSS-LEG TEST WITHOUT LOOKING LIKE ONE. The pyramid's level 0
+## is filled by `KubikHeightTiles.build_materials` on a machine with the
+## extension built, and `surface_zone_at` is GDScript. So a C++ zone rule that
+## drifted from the GDScript one fails here, on ten thousand cells, with the
+## first disagreement printed.
+##
+## Cells, not arbitrary positions: a material is read NEAREST, so the only
+## place the two can be compared without an interpolation argument in the way
+## is the cell centre - which is where the pyramid stores it and where
+## `surface_zone_at` is asked.
+##
+## The outermost ring of cells is excluded and says so: its slope is clamped
+## (the neighbour is outside the region), which is a deliberate difference
+## written up beside `Heightmap._region_materials`.
+static func _test_material_parity():
+	var bad := 0
+	var cfg := _canonical_config()
+	var gen := TerrainGenerator.new(SEED, cfg)
+	gen.build_heightmap()
+	var hm: Heightmap = gen.heightmap
+	hm.build_material_pyramid()
+	if hm.materials.size() != hm.cells.size():
+		print("  material parity: the pyramid is %d cells and the map is %d" % [
+			hm.materials.size(), hm.cells.size()])
+		return 1
+
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260904
+	var n := 10000
+	var first := ""
+	for k in n:
+		var i := rng.randi_range(1, hm.cols - 2)
+		var j := rng.randi_range(1, hm.cols - 2)
+		var bx := hm.cell_to_block(i)
+		var bz := hm.cell_to_block(j)
+		var want := gen.surface_zone_at(bx, bz, hm.cells[i + j * hm.cols])
+		var got := hm.far_material_at(float(bx), float(bz), 0)
+		if got != want:
+			bad += 1
+			if first.is_empty():
+				first = "(%d, %d) pyramid %s, surface_zone_at %s" % [
+					bx, bz, TerrainGenerator.ZONE_NAMES[got],
+					TerrainGenerator.ZONE_NAMES[want]]
+
+	# 2. THE MODE HOLDS UPWARD. Level L over the region is the mode of its four
+	# children, so a level-1 cell must be one of the four level-0 materials
+	# under it - never a fifth. Cheap, and it catches an index that walks the
+	# wrong array far more directly than a colour ever would.
+	var not_a_child := 0
+	var cols1 := hm.pyramid_level_cols()[0]
+	for k in 2000:
+		var i := rng.randi_range(0, cols1 - 2)
+		var j := rng.randi_range(0, cols1 - 2)
+		var lstep := float(hm.step << 1)
+		var origin := float(hm.min_block) + (lstep - float(hm.step)) * 0.5
+		var got := hm.far_material_at(origin + float(i) * lstep,
+			origin + float(j) * lstep, 1)
+		var seen := false
+		for dj in 2:
+			for di in 2:
+				var ci := mini(i * 2 + di, hm.cols - 1)
+				var cj := mini(j * 2 + dj, hm.cols - 1)
+				if hm.materials[ci + cj * hm.cols] == got:
+					seen = true
+		if not seen:
+			not_a_child += 1
+
+	if bad > 0 or not_a_child > 0:
+		print("  material parity: %d of %d level-0 cells differ (%s), %d level-1 cells are not a child" % [
+			bad, n, first, not_a_child])
+		return 1
+	print("  material parity: %d level-0 cells exact, %d level-1 cells are a child of their four, %d ms to build" % [
+		n, 2000, hm.material_ms])
+	return 0

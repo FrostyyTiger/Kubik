@@ -113,3 +113,52 @@ func build_tile(bx0: int, bz0: int, cols: int, rows: int,
 ## disagree and never where.
 func height_at_block(bx: float, bz: float) -> float:
 	return _impl.height_at_block(bx, bz)
+
+
+# --- THE MATERIAL PYRAMID'S LEVEL 0, horizon v1 Stage 4 -----------------------
+#
+# A SECOND SETUP, AND IT IS DELIBERATELY SEPARATE FROM THE FIRST. The heights
+# are world truth and are built the moment the world is; the zone thresholds are
+# percentiles of those heights and do not exist until afterwards. So the tile
+# builder learns to answer heights at `setup()` and learns to answer materials
+# at `setup_zones()`, one phase later, and `zones_ready()` is how the store
+# knows which of the two it may ask for.
+#
+# THE ZONE RULES ARE NOT REIMPLEMENTED. The C++ side holds a second instance of
+# the far mesher's own `World` struct - the one place in this project's C++
+# where `zone_at`, `_slope_zone` and `wildness_at` are written - filled with the
+# four things they read. See height_tiles.h.
+
+
+## Hand over the zone thresholds, the seed, the jitter noise and the config,
+## after `_resolve_zone_thresholds()` has run.
+func setup_zones(generator: TerrainGenerator, config: WorldgenConfig) -> bool:
+	if _impl == null or not _ready:
+		return false
+	if not ClassDB.class_has_method(CLASS_NAME, "setup_zones"):
+		return false
+	_impl.setup_zones({
+		"zone_thresholds": generator.zone_thresholds,
+		"world_seed": generator.world_seed,
+		"jitter_noise": generator._jitter,
+		"config": FarMesher.config_data(config),
+	})
+	return _impl.zones_ready()
+
+
+func zones_ready() -> bool:
+	if _impl == null or not ClassDB.class_has_method(CLASS_NAME, "zones_ready"):
+		return false
+	return _impl.zones_ready()
+
+
+## One grid's materials, the same shape as `build_tile`'s heights and taking
+## them as its input. Empty if the zone rules are not set up yet.
+func build_materials(bx0: int, bz0: int, cols: int, rows: int, step: int,
+		heights: PackedFloat32Array) -> PackedByteArray:
+	if not _ready:
+		return PackedByteArray()
+	return _impl.build_materials({
+		"bx0": bx0, "bz0": bz0, "cols": cols, "rows": rows, "step": step,
+		"heights": heights,
+	})
