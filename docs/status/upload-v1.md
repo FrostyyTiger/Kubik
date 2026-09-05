@@ -275,8 +275,8 @@ chunk occasionally being very expensive, and the shape is 59% of a chunk.
 | **atom knob** (new) | `upload_atom_chunk` in `LOCAL_PROPERTIES`, not in `PROPERTIES`, **config hash `1d7c18c7` unmoved** when it is flipped |
 | **atom parity** (new) | **36 chunks compared, 0 bad.** Two worlds on the canonical seed, one per atom, pumped to completion: every installed surface and every collision shape identical, and the same set of landed columns. |
 | **atom invariants** (new) | **122 pumps, 4 mid-column observations, 0 bad.** While a column is half installed it is never in `_loaded_columns`, and every chunk behind the cursor has its node. The test FAILS if it never catches the pump mid-column, so it cannot quietly measure nothing. |
-| thread-guard errors | **none** |
-| the tour | green, `Forward+` on the RTX 3070 Ti, no seam and no missing chunk |
+| thread-guard errors | **none.** The only lines matching `thread` in the stage's logs are the horizon suite's own `tile threads` test name. |
+| the tour | **green, 28 images**, `Vulkan 1.4.329 - Forward+ - Using Device #0: NVIDIA GeForce RTX 3070 Ti`. `32-horizon-walk` is forest interior with its ground cover, trunks and mushrooms intact - no hole, no seam. |
 | the load line | 16,325 / 16,027 / 16,257 ms wall against base 16,780 / 15,988 / 17,567. Inside noise. |
 | `jumps`, `moved_m` | **9 to 10 and 543 m in every run of both sides** - unchanged, so nothing arrived late under the player |
 
