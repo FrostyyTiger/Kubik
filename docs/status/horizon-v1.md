@@ -1778,6 +1778,32 @@ wrapped-early stage. `main` carries `feat/mesher-v1` (merged `2b93471`) and the
 docs commits to `c1bd01d`, so the merge brings the chunk mesher in and the
 GDExtension is rebuilt before the gates re-run.
 
+### Done, and what it took
+
+**One conflict, in `README.md`, and it is the trivial kind the amendment
+allows.** `main` had rewritten § 5 around the north star while Stage 8 was
+adding the tile store, the ring ladder and the floating origin to the old § 5.
+Resolved by keeping both sides' substance: `main`'s header, its north-star
+list and its D44 paragraph stand as written, and this lane's three paragraphs
+replace the two sentences they supersede - the "until horizon v1 lands"
+parenthetical, and "positions beyond 10 km use a floating origin", which is
+now a description of what shipped rather than of what was planned. Nothing was
+dropped from either side.
+
+Everything else merged clean, including the two files both lanes touched:
+`scripts/tools/selftest.gd` and `scripts/ui/debug_hud.gd`.
+
+**The gates, re-run on the merged tree with the extension rebuilt:**
+
+| | |
+| --- | --- |
+| `scons` and `gdext/check.gd` | `class exists: true`, C++ 18x GDScript |
+| main self-test | **SELFTEST: all passed** - this lane's far parity and the mesher lane's chunk parity in the same run |
+| horizon self-test | **all passed**, ten tests |
+| character self-test | **36 tests, all passed** |
+| canonical world line | **unchanged** - heightmap `4782edac`, spawn `(-44, -124)`, 53 lakes, 15,218 trees, config `1d7c18c7`. **Two lanes, one world.** |
+| far probe | **PASS**, tables identical across its two runs and **identical to the pre-merge table**, row for row - the chunk mesher and the far mesher do not see each other |
+
 ---
 
 ## Every tunable this lane moved
