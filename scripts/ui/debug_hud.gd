@@ -364,6 +364,7 @@ func _compose_readout() -> String:
 		lines.append("far mesher: %s%s" % [
 			ff.get("mesher", "gdscript"),
 			"" if ff.get("cpp_available", false) else " (no c++ library)"])
+	lines.append("mesher:   %s" % ChunkMesher.backend_name())
 
 	# UI V1. The Status crib's permanent line moved here (Decision 5) - it
 	# was a dev convenience from before there was a HUD, and the HUD replacing

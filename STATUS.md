@@ -1,14 +1,27 @@
 # Status
 
 **Running now (launched 2026-09-04):** horizon v1 (`feat/horizon-v1`,
-`docs/plans/horizon-v1.md`) and mesher v1 (`feat/mesher-v1`,
-`docs/plans/mesher-v1.md`), in parallel on ganymede in tmux `horizon-v1` and
-`mesher-v1`; their status docs are `docs/status/horizon-v1.md` and
-`docs/status/mesher-v1.md` once each lane's Stage 0 lands. Marcel's north star
-for them (D84): the world as big as the view, the view to 32 km, 60 FPS at max
-settings on mid hardware. Next after them: the world-truth break.
+`docs/plans/horizon-v1.md`), on ganymede in tmux `horizon-v1`; its status doc
+is `docs/status/horizon-v1.md`. Marcel's north star for it (D84): the world as
+big as the view, the view to 32 km, 60 FPS at max settings on mid hardware.
+**Next after it: the world-truth break** - real relief (D45), rings measured
+from the capital (D44), lakes and zones per tile, the generator's truth in C++
+(D56, timing amended by D84). Then people and fire, buildings, the round 3
+scene.
 
-The latest run is **light v1**, two nights, unattended on ganymede, on
+**Merged 2026-09-04: mesher v1** (phase 1b, D56), the lane that ran in
+parallel with horizon v1 on `feat/mesher-v1`. The chunk mesher is a third
+class in the GDExtension, `KubikChunkMesher`: **0.061 ms a chunk against the
+GDScript twin's 6.443, 106x, over the 1,910 chunks of the seed-42 spawn
+disc**, and the world at spawn loads in **12.4 s against 30.9 s**. It is
+look-only in the strongest sense this project has - the mesher decides how a
+chunk looks and never what it is - and the gate is exact all the same: `chunk
+parity` compares every vertex, normal, index and colour component to the bit,
+at both AO settings, and it is exact zero on MSVC as well. `--mesher gdscript`
+forces the twin for an A/B; the GDScript implementation stays in the tree as
+the reference until it is deliberately retired. `docs/status/mesher-v1.md`.
+
+**Merged 2026-09-04: light v1**, two nights, unattended on ganymede, on
 `feat/light-v1`: `docs/status/light-v1.md`.
 **The engine lights the world, and the poster is gone.**
 

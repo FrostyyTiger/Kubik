@@ -1,19 +1,76 @@
 # Ideas
 
+Rewritten 2026-09-04 against the bible as of D84; where an older document
+disagrees, the bible wins.
+
 ## Next 3
 
-Seeded once from the pillars, then re-ordered when terrain v1 was scoped. From
-here on this list is filled by what a playtest taught us.
+**The queue is the reconciliation's phases now** (`../RECONCILIATION.md` § 9,
+`../CLAUDE.md` § Working order), reordered by Marcel on 2026-09-04 for the
+north star (D84). This list stopped being seeded from the pillars and started
+being the translation of the bible into the game; from here on it is filled by
+what a phase report and a playtest teach us.
 
+1. **Horizon v1 - the view to the horizon, and a world with no edge**
+   (phase 1c; D41, D44, D84). Launched 2026-09-04 on ganymede,
+   [plans/horizon-v1.md](plans/horizon-v1.md). The north star in three
+   things: the world is as big as the view, the view reaches 32 km, and the
+   frame holds at 60 FPS on an RTX 3070 Ti while sprinting through forest.
+   The tile store, voxels anywhere, the far field to 32 km in persistent
+   per-ring and per-sector pieces, one material source for every level, a fog
+   ramp normalised to the draw distance, a floating origin, and the sprint
+   probe. **Changes nothing a seed produces.**
+   *Answers:* is the engine the limit, or was it the build?
 
-**Horizon v1 and mesher v1** launched 2026-09-04 in parallel on ganymede, after
-Marcel's north star ruling (D84): the world as big as the view, the view to
-32 km, 60 FPS at max settings on mid hardware. Horizon v1 builds the tile store,
-voxels anywhere, the far field to 32 km in persistent pieces, one colour
-source, the fog ramp, the floating origin and the sprint probe;
-mesher v1 is phase 1b, the chunk mesher in C++. Next after them: the
-world-truth break (real relief D45). [plans/horizon-v1.md](plans/horizon-v1.md),
-[plans/mesher-v1.md](plans/mesher-v1.md).
+2. **The world-truth break** (phase 2; D45, D44, D56 as amended by D84).
+   Starts the day horizon v1 lands, before people and fire, before any content
+   is authored on a seed: **real relief** (1,400 to 2,500 m, D45), **rings
+   measured from the capital** rather than from the map centre (D44), the
+   tiled heightmap store, lakes and zones per tile, and the generator's truth
+   in C++. Every one of these changes what a seed produces, so they happen
+   once and together. Plan not yet written.
+   *Answers:* does a real-sized Alps hold the vista rule - a whole mountain
+   and the next landmark in frame from every campfire, village and pass?
+
+3. **People and fire** (phase 3). Promote `../scripts/character/purchased_view.gd`
+   to the character path, load two bought templates (D1), drive the sit pose
+   from the packs' own clips, and build the campfire prop with an emissive core
+   and a point light. Rip the four races and the parts kit behind a flag first
+   (D37, D51, D70), delete after the round 3 scene passes.
+   *Answers:* is reaching the fire a relief, is warm light rare enough to
+   mean something, and do two people at a fire read as the tone's second song?
+
+Behind those: **buildings** (phase 4), **the round 3 scene and its report**
+(phase 5, `../../Kubik-bible/ROUND-3-BRIEF.md`), and then **the journal with
+typed facts and IDs, the nouveau UI, creatures, combat and death** (phase 6).
+
+**Look v3, "the painted world", is OUT.** It was the next look epic here and
+in `../docs/ROADMAP.md`, a register change named Art Deco fantasy with the
+KNIGHT TEST and the BELONGING TEST as its gates. The bible replaces it
+outright: pillar 2 is real light on flat cubes through a film lens with no
+textures on anything ever, pillar 5 puts deco on the built and never on
+nature, and Art Nouveau is on paper only (D2). Light v1 built pillar 2, and
+what look v3 was going to prove is proved instead by **the round 3 test
+scene** (`../RECONCILIATION.md` § 8 and § 9 phase 5). The number is kept so
+it is not reused.
+
+**Sites v1 is not a landmark table any more; it is the bible's built world.**
+When it comes it inherits the four building families
+(`../../Kubik-bible/style-bible/30-architecture.md`), the rings (D44, D26) and
+the building pipeline: generated at the tree grain and baked with three
+level-of-detail rungs (D43, D48), placed as models against terrain with a pass
+that owns roads, footprints and flattening, and gates and dungeons as **placed
+volumes** with a separate interior stitched in behind the door (D47).
+
+**Fog, the film lens and the far view are engine items, not ideas.** They were
+queued here as look work; they are the renderer and the horizon lane. Fog does
+three jobs and needs a volume (built in light v1); the lens is D40 (built in
+light v1); the far view is D41 as raised by D84 and is horizon v1.
+
+## What has landed, and what the old queue said
+
+Kept as the record. Every run has a status doc with the numbers; these are the
+one-paragraph versions and the findings worth not rediscovering.
 
 **Trees v3 - the forest becomes models, the whole way out** ran in one night,
 2026-09-01/02, on `feat/trees-v3`, all eleven stages.
@@ -45,7 +102,8 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    [plans/terrain-v1.md](plans/terrain-v1.md).
 
    **Terrain v2 - the shape of the land** followed it on `feat/terrain-v2`:
-   3 x 3 km at a coherent 1:4 scale, seven elevation zones resolved as shares
+   3 x 3 km at one coherent land scale - a quarter of real, which D45 has
+   since retired - seven elevation zones resolved as shares
    of map area, real flat ground, baked ambient occlusion, LOD rings, and a
    spawn that satisfies the postcard test by construction.
    [plans/terrain-v2.md](plans/terrain-v2.md).
@@ -62,11 +120,11 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    forest does not stop at 96 m, and fireflies and glowing mushrooms after
    dark. Trees went from 34,925 to 73,675 on seed 42 and the terrain under them
    did not move - same heightmap hash, same zone shares, same spawn.
-   `docs/status/foliage-v1.md` has every number and the list of things tuned
+   `status/foliage-v1.md` has every number and the list of things tuned
    on the wrong renderer.
 
    **Water and rivers** is the other half and is still not written. What
-   foliage v1 leaves ready for it is at the end of `docs/status/foliage-v1.md`:
+   foliage v1 leaves ready for it is at the end of `status/foliage-v1.md`:
    the placement
    product takes another `base` case and another binary gate almost for free,
    the decoration layer takes water plants without changing, and reeds already
@@ -84,7 +142,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    that: the time-of-day sets as a table with dawn and a dusk that is actually
    reached, shade as an ink, fog that holds hue, monotonic far-field bands,
    grain instead of jitter, the re-authored palette, solid eyes and hair that
-   breaks the head box, and a UI with a title band. `docs/status/look-v2.md`
+   breaks the head box, and a UI with a title band. `status/look-v2.md`
    has every number, every check that failed and why, and one BLOCKING finding
    for the Windows box.
 
@@ -95,11 +153,13 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    knee, not for detail, since a 16-voxel leg split in two has segments half the
    thickness of their own joint. A fixed dark LINER slot between skin and cloth
    retired look v2's tunic rule, which had exactly one solution and it was that
-   all four races wore black. The lizardfolk was rebuilt rather than adjusted
-   and the human/lizardfolk silhouette went 0.913 to 0.664, so **no race pair
-   overlaps by more than 0.70 for the first time**. Six armour slots on a bumped
+   all four races wore black. The reptilian fourth race was rebuilt rather
+   than adjusted and its silhouette against the human went 0.913 to 0.664, so
+   **no race pair overlapped by more than 0.70 for the first time** - a gate
+   about four races that D37 and D70 have since removed, and whose original
+   words [status/character-v2.md](status/character-v2.md) keeps. Six armour slots on a bumped
    wire format, a tier ladder counted rather than judged, and a walk with a
-   contact pose in it. `docs/status/character-v2.md` has every number, the four
+   contact pose in it. `status/character-v2.md` has every number, the four
    `TODO(marcel)` exercises, and the three places the run did not meet its own
    gate.
 
@@ -114,7 +174,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    sprint samples to zero and made "never a hole, at any speed" a hard rule
    rather than a hope. Trees are drawn at 1:2 against the player with a third
    of groves at 1:1.33 old growth, and the ground under a closed canopy takes
-   the shade ink. `docs/status/world-feel-v1.md` has every number, three bugs
+   the shade ink. `status/world-feel-v1.md` has every number, three bugs
    worth reading about, and three open items in `STATUS.md`.
 
    **Distance v1 - the far country holds still, and the forest recedes** ran
@@ -131,7 +191,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    ROUGHNESS -44%, the worst re-cut at a ring boundary -35%, and the drawn
    summit is higher than it was before the epic. Same heightmap hash, same
    spawn, same 28,383 trees, every stage: this epic changed how the far country
-   is DRAWN and never what it IS. `docs/status/distance-v1.md` has every number
+   is DRAWN and never what it IS. `status/distance-v1.md` has every number
    with a provenance column, three gates that could not be met as written and
    what was run instead, and a **"Carried forward"** section at the end.
 
@@ -174,7 +234,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    **It ships OFF, on one knob.** `far_terrace` is on F4 at 0.0, 0.0 is
    `f23c3f0` byte for byte at every stage, and moving it rebuilds the far mesh
    and the impostor ring in place - no reroll, no voxel chunk, the player
-   standing still. `docs/status/distance-v2.md` has every number with a
+   standing still. `status/distance-v2.md` has every number with a
    provenance column, four gates that could not be met as written, and a
    **"Carried forward"** section at the end.
 
@@ -198,7 +258,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    **Trees v1 - no two alike, and the ziggurat arrives** ran in one night,
    2026-08-29/30, on `feat/trees-v1`, all seven stages.
    [plans/trees-v1.md](plans/trees-v1.md), with the taste in
-   `docs/research/art-direction.md` §2.5 and the machinery in
+   `research/art-direction.md` §2.5 and the machinery in
    [research/trees.md](research/trees.md). Marcel's ask: "no variation, they're
    all symmetrical, a bit boring - let's sort of nail this so we won't have to
    think about it for a while." Stage 0 measured exactly that and it was worse
@@ -215,7 +275,7 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    one floating block left in the forest. Same heightmap hash, same 28,383
    trees, same spawn, same mix, every stage: this epic changed what a tree
    LOOKS like and never where one stands. `DESIGN.md` rule 4 stops saying "not
-   yet". `docs/status/trees-v1.md` has every number with a provenance tag, the
+   yet". `status/trees-v1.md` has every number with a provenance tag, the
    judge rounds, and **one failed gate**: canopy closure fell where the design
    said fuller (old growth 0.694 -> 0.648, grove 0.523 -> 0.481), because
    §2.5's spire proportion narrowed old-growth crowns by ~30% of disc area and
@@ -223,27 +283,13 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
    placement - the open `TODO(marcel)` at `WorldgenConfig.grove_floor`, now
    with a second measurement feeding it.
 
-   **Look v3 - the painted world (direction settled 2026-08-31, re-cut
-   2026-09-01)** is the next look epic, and it is a register change recorded
-   in `DESIGN.md` § Art direction. The 2026-08-31 cut made the near world a
-   painting and kept the poster at distance; the 2026-09-01 ruling retires
-   the poster as a rendering register entirely - trees v3 makes near and
-   far one geometry family, so ONE surface language runs from boots to fog:
-   sculpted painted voxels, coarser with distance. The direction is named
-   **Art Deco fantasy**: Deco is the grammar of everything BUILT (monuments,
-   gates, gear ornament, UI) and never of nature, which stays sculpted-vox
-   naturalism - the contrast is deliberate - and the poster era survives as
-   the colour discipline (warm light, ink shade, the swatch gates, one gold
-   accent). Scope: characters, gear, weapons, creatures, trees, flora,
-   terrain dressing, lighting, the far field. Structures excluded - nothing
-   is built yet, so Sites v1 arrives at this fidelity rather than being
-   converted to it. The bar is Marcel's nine-render reference set (kept
-   off-repo; DESIGN.md carries the description) and the gates are the
-   KNIGHT TEST and the BELONGING TEST. A demo at the bar,
-   `kubik-knight-demo.bbmodel`, went to his desktop the day of the ruling;
-   Blockbench becomes the character authoring surface and the plan owes the
-   import half of the round trip. Concept then tech plan after distance v5
-   and trees v3 land, so the trio is modelled once, in the new register.
+
+**What the old items 2 and 3 were, and where they went.** Both are still
+wanted and both moved down the queue: the first enemy is phase 6, behind the
+world-truth break, people and fire, buildings and the scene; the campfire is
+phase 3, and it grew - under D35 it is the pacing origin of the whole world,
+under the tone it is where every dread beat ends, and under the director it is
+the cadence.
 
 2. **First enemy and the light attack.** One enemy type, one attack, shaped so
    two bodies beat it and one struggles.
@@ -264,105 +310,101 @@ and was found by a swatch gate reporting "13 of 16 families reachable".
 
 Terrain moved to the front because items 2 and 3 both need somewhere to happen -
 readable geography with flat valley floors to fight and camp on. It is a
-prerequisite, not a detour.
 
-**Character v1 ran on its own branch for the same reason.** It is not on this
-list and it jumped the queue, on the argument that items 2 and 3 both need it
-first: the first enemy needs an animated rig pipeline that is provably not
-humanoid-only, and the campfire is sold on "your character sitting at the fire
-IS the progress screen", which needs a character, a sit pose and gear sockets.
-All three exist now, plus four races, a creation screen and appearance sync. See
-`docs/plans/character-v1.md` and `docs/status/character-v1.md`.
+**Terrain came first because items 2 and 3 both needed somewhere to happen** -
+readable geography with flat valley floors to fight and camp on. A
+prerequisite, not a detour. The same argument now puts horizon v1 and the
+world-truth break in front of both: a real-sized world with no edge is the
+ground everything after it stands on, and it is cheapest to change before any
+content is authored on a seed (D56).
 
-**Look v1 ran next, on `feat/look-v1`, 2026-08-25**, and it is not on this
-list either. The argument: an art direction is not a feature, it is the same
-kind of decision as the art pipeline - cheap to make now and dearer with every
-part, plant and screen authored under the old look - and the character half
-was urgent, because the first enemy and the first gear are parts, and every
-part authored at the old resolution and proportions would be a part to redo.
-It settled the direction (Art Deco Alpine poster, `DESIGN.md` "Art
-direction"), put one lighting ramp under everything drawn, gave the sky rays
-and the far field bands, re-authored every character at 1/16 of a block in
-stocky proportions, and gave the UI its typography. See
-`docs/plans/look-v1.md` and `docs/status/look-v1.md`. What it deliberately did
-NOT do: trees. Rule 4 wants cones and ziggurats where there are stacked
-squares, and that was content work parked behind items 2 and 3 - until trees v1
-jumped them on 2026-08-29, on the same argument look v1 made for itself.
+**Character v1 and look v1 both jumped the queue**, on the same argument: an
+art direction and an art pipeline are not features, they are the kind of
+decision that is cheap now and dearer with every part, plant and screen
+authored under the old one. Both were right to jump and both have been
+overtaken. Character v1's four races, its creation screen's race row and the
+generated-parts kit are on the rip list (D1, D37, D51, D70); look v1's Art
+Deco Alpine poster is retired by pillar 2 and by light v1. What survives of
+them is the mechanism and not the content: parts as data, the `.vox` drop-in
+rule, the swatch and transfer gates, and the animator.
+See `plans/character-v1.md`, `status/character-v1.md`, `plans/look-v1.md`.
 
-Terrain v1 delivered a walking third-person player as a side effect, and v2
-added sprint, but both on **local physics only**. Rewiring it into the
-host-authoritative input path is a carried ticket, not done.
+**The playtest trio still stands** (from the creature design of 2026-08-25):
+one creature per layer of the world - the **wolf** (the rusher archetype: the
+threat), the **marmot** (whistle-and-burrow: ground texture and the
+information layer), and the **eagle** (a slow orbit on the ridgelines and one
+cry: sky texture). The marmot and the eagle are the creature pipeline tested
+in the quiet register; the wolf is that pipeline plus a bite. Nothing in it is
+cute (D38). `../docs/DESIGN.md`, Creatures.
 
-**Candidate for the next playtest, from the creature design of 2026-08-25:**
-item 2 becomes a TRIO rather than one enemy - one creature per layer of the
-world. The **wolf** (the rusher archetype: the threat), the **marmot**
-(whistle-and-burrow: ground texture and the information layer), and the
-**eagle** (a slow orbit on the ridgelines and one cry: sky texture). The
-marmot and the eagle are the creature pipeline tested in the cozy register;
-the wolf is that pipeline plus a bite. `DESIGN.md`, Creatures.
-
-Deliberately not here:
+Deliberately not on the list:
 
 - **Gathering.** Foliage v1 built the identity and the removal path for it and
   stopped short of the RPC, deliberately - the comment at
   `World.remove_flora_local()` writes out the call it is waiting for. Gathering
-  is a launch skill in `DESIGN.md`, but it is a SKILL, and skills are not on
-  this list until something is worth gathering for.
-- **Day/night as a danger axis.** The cycle shipped in terrain v1, but visual
-  only. Pillar 2 wants darkness to mean something; that needs the enemy first.
-  Foliage v1 added the first thing that exists only after dark - fireflies and
-  glowing mushrooms - and they are deliberately on the cozy side of the
-  register, not the tense one.
-- **Breaking terrain.** Unsettled in DESIGN.md. Settle it before building it.
+  is a launch skill in `../docs/DESIGN.md`, but it is a SKILL, and skills are
+  not on this list until something is worth gathering for.
+- **Day/night as a danger axis.** The cycle shipped in terrain v1 and light v1
+  made it a real forty-minute day (D52) with four hours plus eerie. Pillar 2
+  wants darkness to mean something; that needs the enemy first. Foliage v1
+  added the first things that exist only after dark - fireflies and glowing
+  mushrooms - and they are deliberately on the warm side of the register, not
+  the tense one.
+- **Breaking terrain.** Settled in `../docs/DESIGN.md`: no, in v1. It stays
+  settled.
 
 ## Someday
 
-Not rejected, not queued. Nothing moves up from here without a playtest saying
-it should.
-
-- **A GDExtension for chunk generation and meshing.** World feel v1 measured
-  what everything else is bounded by: GDScript is serialised across the worker
-  pool, so 3,742 chunks x 7.6 ms of work took 29.5 s of wall clock on about one
-  effective thread. Every streaming improvement in that plan came from doing
-  less work, because doing it in parallel is not available. Moving the two hot
-  loops to a GDExtension is the only lever left that changes the shape of the
-  curve, and it would pay for the second that "never a hole" costs several
-  times over.
+Not rejected, not queued. Nothing moves up from here without a playtest or a
+phase report saying it should.
 
 - **The shore's width.** `SHORE` is one block of grey gravel round every lake,
-  and look v2 made it a colour that reads (`#91948E`) rather than a sandy tan -
-  which showed that the *width* is the real problem: a one-block rim reads as a
-  drawn line at 20 m and as nothing at 60 m. A shore that widened with the
-  lake's size would give the postcard shot a foreground. Worldgen, so not look
-  v2's to touch.
+  and the *width* is the real problem: a one-block rim reads as a drawn line at
+  20 m and as nothing at 60 m. A shore that widened with the lake's size would
+  give the postcard shot a foreground. Worldgen, so it waits for the
+  world-truth break.
 
-- **Meadow patches.** Look v2 put the meadow tuft density back to 0.50 and the
-  close-up is busy with it - the "confetti" look v1 named. The interesting
-  version is not a density number at all: drifts, the way `_meadow()` already
-  clusters flowers, so a meadow is patches of tall grass in a shorter field
-  rather than an even scatter at any density.
+- **Meadow patches.** The close-up is busy with an even scatter - the
+  "confetti" look v1 named. The interesting version is not a density number at
+  all: drifts, the way `_meadow()` already clusters flowers, so a meadow is
+  patches of tall grass in a shorter field rather than an even scatter at any
+  density.
 
-- Explosions that destroy terrain. Wanted, but it drags two roadmap items
+- **Explosions that destroy terrain.** Wanted, but it drags two roadmap items
   forward with it: the edit log grows without bound and is sent in full to
-  every joining player, and remeshing eight chunks is a visible hitch. Greedy
-  meshing landed in terrain v1; edit-log compaction is still needed.
-- Found cozy places - villages, hot springs
-- Mounts
-- Taming / befriending select creatures. The design feeds the mount system:
-  the *táltos*-horse pattern - the shabby nag that is secretly great - is the
-  north star for mounts.
-- Full night system: area-dependent night fauna, aggro nights, raids on the
-  campfire - a blood-moon-style dial on the existing time/danger grammar
-  (`DESIGN.md`, Creatures: Night).
-- Megafauna encounter design (`DESIGN.md`, Creatures: Megafauna).
-- Deeper mimics: boulder, copse, hillside - the distance-escalation of
-  "seeming frays" (`DESIGN.md`, Creatures: Mimics).
-- The eagle as information layer - circling marks large creatures and
+  every joining player, and remeshing eight chunks is a visible hitch.
+  Edit-log compaction is still needed. It also has to answer "breaking terrain
+  is decided: no, in v1" first.
+
+- **Found warm places** - villages, hot springs. Under the tone these are rare
+  on purpose: a lit window in a valley at dusk should land like the song's
+  swell, and never a carpet of lit villages.
+
+- **Taming or befriending select creatures.** The mountain folk's small ways
+  include calling and calming beasts (D72), so this has a home in the fiction
+  now. The *táltos*-horse pattern - the shabby nag that is secretly great - is
+  the north star if a mount ever exists; the world's own traversal answer is
+  rails, cable cars, ferries and airships (D24, D73, D81).
+
+- **Megafauna encounter design** - witnessed more than fought
+  (`../docs/DESIGN.md`, Creatures: Megafauna). The tone's cosmic dread at the
+  edges: scale and indifference, never horror dressing.
+
+- **Deeper mimics**: boulder, copse, hillside - the distance-escalation of
+  "seeming frays" (`../docs/DESIGN.md`, Creatures: Mimics).
+
+- **The eagle as information layer** - circling marks large creatures and
   carrion - and the eagle-luck superstition in lore fragments.
-- Sound asset acquisition list. The alpine raptor cry is priority #1
-  (freesound / Kenney; licence-check everything for an open-source repo -
-  CC0 or CC-BY with attribution recorded, never NC or ND).
-- More races
+
+- **A ward rune** - a small safe circle for the co-op revive. Named as a
+  Someday by D65; the two runes are the whole of v1.
+
+- **Sound asset acquisition list.** The alpine raptor cry is priority #1
+  (freesound / Kenney; licence-check everything for an open-source repo - CC0
+  or CC-BY with attribution recorded, never NC or ND). The bible's sound line
+  (`../../Kubik-bible/00-TONE.md`): slow builds, strings and synth, wordless
+  choir, the alphorn, one motif that grows the further out you go.
+
 - Full class system *(contradicts a pillar)*
 - Skill trees *(contradicts a pillar)*
 - Base building *(contradicts a pillar)*
@@ -372,61 +414,75 @@ The tagged entries contradict a pillar as written. That is fine as a parking
 space, but building one means amending the pillar first, deliberately and in
 writing - not discovering halfway through a branch that the design moved.
 
-## Second Age: The Sea (post-1.0 expansion arc, not before)
+**Struck from Someday by the bible, so nobody re-adds them:**
 
-Bigger than a Someday item - an expansion arc, so it gets its own section.
+- **More races.** There is one people and nobody changes (D37, D70). Body
+  types are not races and never carry a perk (D51).
+- **A full night system: aggro nights, attacks on the fire, a hostility dial
+  on a timer.** The fire is where dread ENDS (D39). A fire that gets attacked
+  stops
+  being the warm register, and a dial that makes the whole world hostile on a
+  timer is the frantic survival the tone forbids. What night is allowed to be
+  is darker, quieter and further from help.
+- **A texture atlas.** No textures, on anything, ever (pillar 2).
 
-The launch world is Alpine. Long-term, the land in one compass direction
-descends past the far ranges to a COAST, and the game's second act opens: the
-sea.
+## The sea, and everything beyond the Alps
 
-*Amended 2026-08-31 with the unbounded-world ruling (`DESIGN.md` § World):
-this section used to say "bounded" and "one world edge". An unbounded world
-has no edges, so the coast becomes macro-structure instead - a direction the
-land falls toward - which is, if anything, truer to the fantasy: you range
-toward the sea, you don't bump into it.*
+**This is not a second act and not an expansion; it is rings 2 to 4 of the one
+world (D26, D44).** The section that stood here framed the sea as a named
+post-1.0 expansion arc, with island kingdoms as a new far-zone content tier
+and a water-race homeland across the water explaining why that race lived in
+the mountains. All of that is gone: there is one people and nobody changes
+(D37, D70), so no race needs a homeland; there is no second act; and the sea
+is not a sequel - it is what ring 2 becomes as you keep walking outward from
+the capital.
 
-- **Coast in ONE compass direction.** The macro-terrain is asymmetric: ranges
-  rise in most directions, the land descends to water in one.
-- **Interactive water.** Swimming ships here, and with it the lizardfolk swim
-  perk (replaces the fish-shadow placeholder in `DESIGN.md`).
-- **Sailing.** Boat controller, wind matters. Valheim-school: sailing should be
-  a skill and a feeling, not a fast-travel skin.
-- **Ocean and island generation.** Island kingdoms as the new far-zone content
-  tier.
-- **The lizardfolk homeland lies across the water** - the answer to "why is a
-  water-race in the mountains".
+What the bible actually has
+(`../../Kubik-bible/lore/10-geography.md`): a long thin continent with the
+Alps as its spine, the north side green and the south side drying into desert,
+two seas - the north cold with fjords and ice islands, the south warm with
+sand islands and reefs. Ring 2 is the continent's edges, desert and coasts,
+with nomads and fisher folk. Ring 3 is the near islands, and the end of the
+airships' range (D73). Ring 4 is the far islands: uninhabited, the worst
+weather, eerie by default, made of crystal, with the Builders' city at the
+farthest point - a whole black-and-gold city, intact, empty, mountain-sized.
+**That is the end of the map: the last authored place, not a wall.** Beyond it
+the seeded terrain goes on as sea and eerie weather with nothing in it.
+
+What that means for the code today, and it is the only thing it means:
+
+- **Never hardcode "far away = mountains".** Direction and edge treatment stay
+  configurable. This is unchanged and it is why the rule was recorded in the
+  first place.
+- **Ring, not region.** Wildness is distance from the capital in metres,
+  driving a ring table - biome, weather, ruin size, lit windows, how strong the
+  magic is (D44, D63). That is an adapt of `wildness_at`, listed in
+  `../RECONCILIATION.md` § 7 as the highest-leverage one in the world, and it
+  lands in the world-truth break.
+- **Interactive water is still Water v1's**, and swimming is still not v1.
+  Wading, shores and rivers into the basin lakes are the near work; nothing
+  about the sea is needed for them.
+- **Foreshadowing is free and lore fragments are the vehicle**: shells in high
+  ruins, salt references, a lighthouse beam on the horizon. Longing is free;
+  water physics are not.
+
 - **Trailer moment to build toward:** two players crest the last ridge and see
   open water for the first time.
 
-Scope honesty: this is an expansion-sized arc (2.0 energy), not a feature.
-Nothing here before the Alpine game is complete and shipped. BUT the sea may be
-foreshadowed from day one via lore fragments, which are cheap: shells in high
-ruins, lizardfolk graves facing away from the mountains, salt references.
-Longing is free; water physics are not.
+## The Director
 
-What it asks of the code today is one thing only, recorded in `CLAUDE.md`: do
-not hardcode "far away = mountains" anywhere - direction treatment stays
-configurable.
-
-## The Director (the fourth pillar, arriving late)
-
-Noted 2026-08-25 from a conversation Marcel had about where LLMs actually
-belong in games, and promoted the same day to the fourth pillar - THE WORLD
-ANSWERS, in `README.md` and `CLAUDE.md`. The doctrine - two layers, the verb
-list, the cadence, graceful degradation, the quest model - is `DIRECTOR.md`;
-architecture decision 6 in the README is what the code does about it now.
-What follows is the argument that got it there, kept because the reasoning
-is worth more than the summary. It has its own section in the Second Age's
-shape because it is a direction and not an item, and with the same scope
-honesty: the director is built on top of a game that is complete without
-it, and the base game's milestones always come first.
+**The doctrine moved out of this repo.** It is
+`../../Kubik-bible/director/` - eight principles, eight hardening rules (D34),
+the five verbs with their real field shapes, and the v0/v1/v2 roadmap -
+pointed at by `../docs/DIRECTOR.md`. What follows is the argument that got the
+director promoted to a pillar, kept because the reasoning is worth more than
+the summary.
 
 **The opportunity.** LLMs in games are not chatbot NPCs or generated dialogue.
 The unit of value is *goal-directed improvisation under constraints* - a
 tabletop game master. The destination and the stakes are authored; the path
-there is invented fresh in response to what the players actually do, the way
-a coding agent holds the requirements and routes creatively.
+there is invented fresh in response to what the players actually do, the way a
+coding agent holds the requirements and routes creatively.
 
 **The architecture: two layers.** Authored truth underneath - what is real,
 what characters know and want, which outcomes are possible. Generative
@@ -434,19 +490,18 @@ intelligence on top - how it is expressed, how the middle unfolds. The model
 never invents the world's facts; it only performs within them. Applications:
 NPCs with fixed goals but adaptive tactics, companions with real memory,
 quests with fixed beats but emergent connective tissue, and a *semantic
-director* that reads what the journey means - not the health bars - and
-shapes events accordingly.
+director* that reads what the journey means - not the health bars - and shapes
+events accordingly.
 
 **The delivery doctrine.** Subtle and invisible, the way physics engines
-became. Market the experience ("suspects who keep their secrets"), never the
-technology. Steer through opportunity, never railroad - Westworld's
-capability without its manipulation.
+became. Market the experience, never the technology. Steer through opportunity,
+never railroad - Westworld's capability without its manipulation.
 
 **The timing claim.** The 2023-25 AI-NPC wave failed because it was chatbots
 in costumes on immature tech; the failures mark infancy, not a ceiling. The
-conversational quality now exists, costs are collapsing, and the unsolved
-part is game design, not capability - so the field is open for whoever ships
-the first non-tacky version, probably a small game built entirely around one
+conversational quality now exists, costs are collapsing, and the unsolved part
+is game design, not capability - so the field is open for whoever ships the
+first non-tacky version, probably a small game built entirely around one
 constrained instance of the idea.
 
 **Against the pillars.** It serves pillar 3 directly - a director that makes
@@ -455,33 +510,37 @@ serve pillar 1 (a companion that remembers what the two of you did). It
 touches nothing in pillar 2. What it must not become: a menu, a chat window,
 or a source of facts the world did not author.
 
-**What it asks of the code today** is the three habits in `CLAUDE.md` and
-architecture decision 6 in the README: facts as data, the host's journal, and
-the director acting only through the verb list, via the one mutation path.
-Nothing to build now; nothing to hardcode against later.
+**What it asks of the code today** is the three habits in `../CLAUDE.md` and
+architecture decision 6 in `../README.md`: facts as data read by ID, the
+host's journal, and the director acting only through the verb list, via the
+one mutation path. Nothing to build now; nothing to hardcode against later.
 
-### Director ladder
+### The ladder
 
-The rungs, in order. Each is gated on the base game beneath it; none is on
-the Next 3 until its prerequisites exist.
+**The rungs are the bible's** (`../../Kubik-bible/director/30-roadmap.md`), not
+this file's, and two of the old rungs were wrong. v2's stranger is not the
+storm-scholar - the *garabonciás* went with the old setting, and the bible's
+stranger is a masked figure whose people is open, with the Engineer expedition
+(D79) as a candidate. And the pivot's knowledge ladder (D74, D80) **adds no
+rung and no verb**: a Builder fragment is a `place_fragment` at an authored
+site the game owns, and it enters at v1, not v0.
 
-- **Prerequisites (base game):** the wolf / marmot / eagle playtest working,
-  the host's event journal, the campfire as a rest. Facts as data from the
-  creature plan onward.
-- **v0 - "the world remembers."** At the campfire, fragments and rumours
-  generated from the true event log. Read-only reflection, no quest logic.
-  Verbs: `place_fragment`, `spawn_rumor`.
-- **v1 - "the world beckons."** Rumour-driven quest routing on authored beat
-  spines. Verbs: `mark_site`, `advance_beat`, `reroute_beat`.
-- **v2 - "the stranger speaks."** One NPC - the storm-scholar, the
-  *garabonciás* archetype - with fixed goals, knowledge bounds and generative
-  speech. Uncanny is lore-correct for him.
-- **Someday rungs**, in no order:
-  - The semantic director reading long-horizon patterns - sessions, not
-    minutes: what this party keeps doing, what it avoids, what it has never
-    seen.
-  - Director-aware fragments in worldgen: sites placed at generation that
-    the director may later fill (a `site_type` the verbs can address).
-  - Companions with real memory; NPCs with fixed goals and adaptive tactics.
+- **Prerequisites (base game):** the trio playtest working, the host's event
+  journal as typed facts with IDs, the campfire as a rest. That is phase 6.
+- **v0 - the world remembers.** Fragments and rumours from the true event log,
+  at the fire, read-only. Verbs: `place_fragment`, `spawn_rumor`. The
+  template path alone must produce one first (D34 rule 5).
+- **v1 - the world beckons.** Rumour-driven quest routing on authored beat
+  spines. Verbs: `mark_site`, `advance_beat`, `reroute_beat`. The knowledge
+  ladder's Builder fragments enter here.
+- **v2 - the stranger speaks.** One NPC with fixed goals, knowledge bounds by
+  fact and rumour ID, speech tagging (D34 rule 8) and an "I don't know"
+  default.
+- **Someday rungs**, in no order: the semantic director reading long-horizon
+  patterns - sessions, not minutes; director-aware sites placed at generation
+  that the verbs can address by ID; companions with real memory.
 
-Marketed as the experience, never the technology, at every rung.
+**Always, at every rung:** the Engineers' frontier (D77), the small falls
+(D83) and every step of the knowledge ladder (D74) run with the director OFF.
+The director only points. And it is marketed as the experience, never as the
+technology.

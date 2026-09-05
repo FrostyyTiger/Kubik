@@ -4,25 +4,43 @@
 # "setup-godot" action: those actions lag behind Godot releases, and an export
 # template that does not exactly match the engine version silently produces a
 # broken build. Pinning the version here means the build can never drift.
+#
+# Since the .gdextension landed, this job also CROSS-COMPILES the extension for
+# Windows with mingw-w64 before exporting. It has to: gdext/bin/ is gitignored,
+# so a fresh clone has no library, and Godot's export copies every library named
+# in kubik.gdextension next to the exe - it does not skip a missing one, it fails
+# the export ("Failed to copy shared object ... libkubik.windows.template_release
+# .x86_64.dll"). That is why this workflow was red from the day the .gdextension
+# was added until 2026-09-04.
 
 name: build
 
 on:
   push:
-    branches: [main]
+    # AND ci/** so a change to this file can be proven on its own branch. There
+    # is no other way to test a workflow: it only ever runs from a pushed ref.
+    branches: [main, "ci/**"]
   # Lets you trigger a build from the Actions tab without pushing anything.
   workflow_dispatch:
 
 env:
   GODOT_VERSION: "4.7.2"
+  # THE SAME PIN selftest.yml uses. Both jobs build the same sources against the
+  # same godot-cpp against the same engine API; if these two ever disagree, the
+  # library the self-test proved is not the library the player runs.
+  GODOT_CPP_COMMIT: "26fb7ab5821e6a1096f62c22f7462d1d70caa332"
 
 jobs:
   windows:
     # A Linux runner cross-building a Windows exe is normal and intended: the
     # Windows export template *is* a Windows binary, and exporting just staples
     # our packed game data onto it. Linux runners are also faster and GitHub
-    # bills them at a third of the Windows rate.
+    # bills them at a third of the Windows rate. The extension is cross-built
+    # the same way, with mingw-w64 - godot-cpp has supported that for years.
     runs-on: ubuntu-latest
+    # A cold godot-cpp Windows build is the long pole, about the same eleven
+    # minutes selftest.yml budgets for its Linux one. Warm, this job is ~4 min.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -63,16 +81,122 @@ jobs:
 
           godot --version
 
+      # ---------------------------------------------------------------- gdext
+
+      - name: Install the cross-compiler and SCons
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64
+          pipx install scons
+          x86_64-w64-mingw32-g++ --version | head -1
+
+      # Same shape as selftest.yml's Linux cache, and deliberately a DIFFERENT
+      # key: this one holds a Windows template_release build of godot-cpp, and
+      # handing it to the Linux editor job (or the reverse) would be silent
+      # nonsense. The key carries both pins plus the platform and target.
+      - name: Restore cached godot-cpp
+        id: cpp
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-cpp
+          key: godot-cpp-${{ env.GODOT_CPP_COMMIT }}-godot-${{ env.GODOT_VERSION }}-windows-mingw-template_release
+
+      # The API json must be dumped from EXACTLY the pinned binary above, not a
+      # close-enough one - the same rule selftest.yml states at stage 0. It is
+      # dumped into ~/godot-cpp so the cache carries it to the warm runs too.
+      #
+      # lto=none, against godot-cpp's default of full for a release target: full
+      # LTO through mingw-w64 on a four-core runner costs more wall clock than
+      # the whole rest of this job, and MSVC - which is what Marcel's Windows box
+      # actually builds with - has no LTO by default either, so this is the build
+      # closer to the one the game is played on.
+      - name: Build godot-cpp for Windows
+        if: steps.cpp.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/godotengine/godot-cpp.git ~/godot-cpp
+          cd ~/godot-cpp
+          git checkout "$GODOT_CPP_COMMIT"
+          godot --headless --dump-extension-api
+          scons platform=windows arch=x86_64 use_mingw=yes target=template_release \
+            lto=none custom_api_file=extension_api.json -j"$(nproc)"
+
+      # Only template_release: this job runs --export-release and nothing else,
+      # and Godot picks exactly one library out of kubik.gdextension per export,
+      # by feature tag. A template_debug build here would double the cold compile
+      # to ship a file no export in this repo ever asks for.
+      - name: Build the extension for Windows
+        run: |
+          cd gdext
+          GODOT_CPP=~/godot-cpp scons platform=windows arch=x86_64 use_mingw=yes \
+            target=template_release lto=none \
+            custom_api_file="$HOME/godot-cpp/extension_api.json" -j"$(nproc)"
+          ls -l bin/
+
+      # The name is not cosmetic: kubik.gdextension asks for exactly this file,
+      # and godot-cpp's suffix (".windows.template_release.x86_64") plus scons'
+      # mingw .dll suffix are what produce it. If a godot-cpp bump ever renames
+      # it, the export failure downstream is a mile of log; this is one line.
+      #
+      # The other three checks are about a .dll that SHIPS BUT WILL NOT LOAD -
+      # the one failure this whole job cannot otherwise see. Nothing on a Linux
+      # runner ever executes this library, so a missing entry symbol or a
+      # dangling MinGW runtime dependency would sail past every gate below and
+      # land on the player's machine as a silent fall back to the GDScript
+      # mesher. objdump is the only witness available here, so use it.
+      - name: The library is named, exports and depends on what it must
+        run: |
+          want=gdext/bin/libkubik.windows.template_release.x86_64.dll
+          test -f "$want" || {
+            echo "::error::$want was not built - got: $(ls gdext/bin/ 2>&1)"
+            exit 1
+          }
+          file -b "$want"
+          case "$(file -b "$want")" in
+            *PE32+*DLL*|*PE32+*dynamically*) ;;
+            *) echo "::error::$want is not a 64-bit Windows DLL"; exit 1 ;;
+          esac
+
+          info=$(x86_64-w64-mingw32-objdump -p "$want")
+
+          # entry_symbol in kubik.gdextension. Godot looks it up by name and
+          # refuses the library with a one-line error if it is not there.
+          # (here-string, not a pipe: grep -q exits on the first match and
+          # leaves echo writing into a closed pipe, which prints a broken-pipe
+          # line that reads exactly like a failure and is not one.)
+          if ! grep -q "kubik_library_init" <<< "$info"; then
+            echo "::error::$want does not export kubik_library_init"
+            exit 1
+          fi
+
+          # use_static_cpp is godot-cpp's default and this depends on it: a
+          # player has no libstdc++-6.dll, and Windows fails the load with a
+          # dialog box that names no cause.
+          deps=$(grep -E "^\s*DLL Name:" <<< "$info" || true)
+          echo "$deps"
+          if grep -qiE "libstdc\+\+|libgcc_s|libwinpthread" <<< "$deps"; then
+            echo "::error::the library wants a MinGW runtime .dll no player has"
+            exit 1
+          fi
+
+      # ---------------------------------------------------------------- export
+
       # .godot/ is gitignored, so a fresh clone has no import cache and the block
       # texture is not yet a usable resource. Without this pass the export
       # succeeds but ships a game with missing textures.
+      #
+      # The extension loader will complain here that it cannot find a
+      # linux.editor library, and that is correct and harmless: this job builds
+      # the Windows library only, and the editor pass needs no mesher.
       - name: Import assets
         run: godot --headless --editor --quit --path .
 
       - name: Export Kubik.exe
         run: |
+          set -o pipefail
           mkdir -p build
-          godot --headless --path . --export-release "Windows Desktop" build/Kubik.exe
+          godot --headless --path . --export-release "Windows Desktop" build/Kubik.exe \
+            2>&1 | tee /tmp/export.log
+          ls -l build/
 
       # Godot has been known to report export failures on stderr while still
       # exiting 0, which would upload an empty or stub artifact and look like a
@@ -99,6 +223,35 @@ jobs:
             exit 1
           fi
 
+      # AND THE EXTENSION IS IN IT. Godot does not embed a GDExtension in the
+      # pck; it copies the .dll next to the exe and packs the .gdextension that
+      # points at it. Both halves have to be there or the player gets the
+      # GDScript fallback - which still plays, silently, at a fraction of the
+      # speed, which is exactly the failure nobody notices.
+      - name: Verify the extension shipped
+        run: |
+          dll=build/libkubik.windows.template_release.x86_64.dll
+          test -f "$dll" || {
+            echo "::error::the extension .dll was not copied next to the exe - got: $(ls build/)"
+            exit 1
+          }
+          echo "$(basename "$dll") is $(( $(stat -c%s "$dll") / 1024 )) KB"
+
+          # The config that names it has to be in the pck, or the exe never
+          # looks for the file sitting beside it. The pck's file table is plain
+          # text, same as the parts-data gate above.
+          if [ "$(grep -ac "kubik.gdextension" build/Kubik.exe)" = "0" ]; then
+            echo "::error::kubik.gdextension is not in the pck - nothing will load the .dll"
+            exit 1
+          fi
+
+          # And the export itself must not have quietly declined to find it.
+          if grep -qiE "No GDExtension library found|Failed to copy shared object" /tmp/export.log; then
+            echo "::error::the export log says the extension library was missing:"
+            grep -iE "No GDExtension library found|Failed to copy shared object" /tmp/export.log
+            exit 1
+          fi
+
       # Both players must run the SAME build. Kubik never sends terrain, only a
       # seed, so two slightly different builds generate two different worlds from
       # that seed and neither machine reports an error. Stamping the commit into
@@ -114,6 +267,7 @@ jobs:
             echo "commit:  ${{ github.sha }}"
             echo "branch:  ${{ github.ref_name }}"
             echo "godot:   ${GODOT_VERSION}"
+            echo "gdext:   godot-cpp ${GODOT_CPP_COMMIT} (mingw-w64, template_release)"
             echo "run:     ${{ github.run_number }}"
           } > build/BUILD_INFO.txt
           cat build/BUILD_INFO.txt

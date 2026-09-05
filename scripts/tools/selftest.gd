@@ -44,6 +44,9 @@ func _ready() -> void:
 		"ao cost": _measure_ao_cost,
 		"cover determinism": _test_cover_determinism,
 		"chunk determinism": _test_chunk_determinism,
+		# MESHER V1 STAGE 0, appended beside the determinism test it borrows
+		# its chunks from.
+		"chunk parity": _test_chunk_parity,
 		"edit during generation": _test_edit_during_generation,
 		"facing": _test_facing,
 		"day cycle": _test_day_cycle,
@@ -160,33 +163,49 @@ func _test_winding():
 			cfg.ao_strength = ao
 			# The per-vertex tints this used to switch off left the mesher in
 			# light v1 Stage 3; there is nothing to turn off any more.
-			var arrays := ChunkMesher.build_arrays(
-				chunk, func(_a, _b, _c): return false, cfg, 0)
-			if arrays.is_empty():
-				print("winding %s: EMPTY - nothing was meshed" % case)
-				bad += 1
-				continue
-			var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
-			var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
-			quads += v.size() / 4
-			var i := 0
-			while i < idx.size():
-				var p0 := v[idx[i]]
-				var p1 := v[idx[i + 1]]
-				var p2 := v[idx[i + 2]]
-				var cross := (p1 - p0).cross(p2 - p0)
-				var want := -n[idx[i]]
-				checked += 1
-				if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+			var solid := func(_a, _b, _c): return false
+			var arrays := ChunkMesher.build_arrays_gd(chunk, solid, cfg, 0)
+			# MESHER V1 STAGE 1: BOTH MESHERS, EVERY SHAPE. The C++ port emits
+			# its own index buffer and its own two corner tables, and a winding
+			# rule proved on the twin says nothing about a transcription of it.
+			# The parity gate would catch a difference, but this says WHAT is
+			# wrong when one appears - "the world is inside out" rather than
+			# "vertex 4,118 differs".
+			var legs := [["gdscript", arrays]]
+			if ChunkMesher.class_present():
+				var impl: Object = ClassDB.instantiate(ChunkMesher.CPP_CLASS)
+				impl.setup(ChunkMesher.setup_args(cfg))
+				legs.append(["c++", ChunkMesher.arrays_from_cpp(impl.build(
+					ChunkMesher.borders_from_callable(chunk, solid)))])
+			for leg in legs:
+				var who: String = leg[0]
+				var got: Array = leg[1]
+				if got.is_empty():
+					print("winding %s (%s): EMPTY - nothing was meshed" % [case, who])
 					bad += 1
-					if bad <= 3:
-						print("  BAD %s ao=%.2f: cross %s want %s" % [
-							case, ao, cross.normalized(), want])
-				i += 3
-			per_case["%s@%.2f" % [case, ao]] = v.size() / 4
-			print("  %-8s ao=%.2f %5d verts, %5d tris" % [
-				case, ao, v.size(), idx.size() / 3])
+					continue
+				var v: PackedVector3Array = got[Mesh.ARRAY_VERTEX]
+				var n: PackedVector3Array = got[Mesh.ARRAY_NORMAL]
+				var idx: PackedInt32Array = got[Mesh.ARRAY_INDEX]
+				quads += v.size() / 4
+				var i := 0
+				while i < idx.size():
+					var p0 := v[idx[i]]
+					var p1 := v[idx[i + 1]]
+					var p2 := v[idx[i + 2]]
+					var cross := (p1 - p0).cross(p2 - p0)
+					var want := -n[idx[i]]
+					checked += 1
+					if cross.length() < 0.0001 or cross.normalized().distance_to(want) > 0.001:
+						bad += 1
+						if bad <= 3:
+							print("  BAD %s %s ao=%.2f: cross %s want %s" % [
+								case, who, ao, cross.normalized(), want])
+					i += 3
+				if who == "gdscript":
+					per_case["%s@%.2f" % [case, ao]] = v.size() / 4
+				print("  %-8s %-8s ao=%.2f %5d verts, %5d tris" % [
+					case, who, ao, v.size(), idx.size() / 3])
 
 	print("winding: %d triangles checked, %d wrong, %d quads emitted" % [checked, bad, quads])
 
@@ -891,13 +910,28 @@ func _measure_ao_cost():
 	var solid := func(wx: int, wy: int, wz: int) -> bool:
 		return gen.is_solid_at(wx, wy, wz)
 
+	# 0.45 NAMED, NOT `WorldgenConfig.new().ao_strength`, AND THAT IS A FIX.
+	#
+	# Light v1 Q9 took the shipped `ao_strength` to 0. This list read
+	# `[0.0, WorldgenConfig.new().ao_strength]`, so from that commit on it has
+	# compared zero against zero and its "+0.0%" line has been measuring
+	# NOTHING - which is also where mesher v1's Q27 ("baked AO off did not
+	# widen the merge") came from. 0.45 is the value the winding test names for
+	# the same reason: it is the strength the photograph path uses.
+	const AO_ON := 0.45
 	var results := []
-	for ao in [0.0, WorldgenConfig.new().ao_strength]:
+	for ao in [0.0, AO_ON]:
 		cfg.ao_strength = ao
 		var quads := 0
 		var started := Time.get_ticks_usec()
 		for c in chunks:
-			var arrays := ChunkMesher.build_arrays(c, solid, cfg, 31337)
+			# THE TWIN BY NAME (mesher v1 Stage 3). This line is the AO
+			# cost OF THE GDSCRIPT MESHER and is quoted against `mesh_bench`'s
+			# C++ column; once `build_arrays()` started dispatching it would
+			# otherwise have quietly become a measurement of the port plus a
+			# shell built per chunk through a Callable, which is a different
+			# question with a very different answer.
+			var arrays := ChunkMesher.build_arrays_gd(c, solid, cfg, 31337)
 			if not arrays.is_empty():
 				quads += (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).size() / 4
 		results.append({
@@ -3609,3 +3643,153 @@ func _test_tree_swatches():
 		print("  WARNING: no vertex colours in the sample - this proved nothing")
 		return 1
 	return bad
+
+
+## THE CHUNK PARITY GATE. Mesher v1, Q8.
+##
+## IDENTICAL ARRAYS OR NOTHING. `KubikChunkMesher` is a transcription of
+## `ChunkMesher.build_arrays_gd()` and the only useful question about a
+## transcription is whether it says the same thing, so this compares every
+## vertex, every normal, every index and every colour component TO THE BIT, and
+## insists the quads come out in the same order as well. The sweep order is
+## `d`, `slice`, `jv`, `iu` in both, so no canonical re-sort is needed; if a
+## stage ever needs one, the status doc says so and why.
+##
+## EXACT ZERO IS REACHABLE HERE AND IT IS NOT AN ACCIDENT (Q3). The far mesher's
+## gate has always allowed two ULPs on Windows, because it computes colour in
+## C++ and gcc and MSVC round the last bit differently. This mesher computes no
+## colour at all: GDScript builds a table of every colour that can be emitted
+## and the C++ writes entries out of it by index. So the colour column reads
+## 0.000000000 on every platform, and if it ever does not, something crossed the
+## seam that should not have.
+##
+## THE CHUNKS ARE THE ONES THE OTHER TESTS ALREADY TRUST: the 5 x 5 x 3 window of
+## seed 31337 that `ao cost` measures, which is real terrain at the altitudes
+## terrain actually passes through, plus the four hand-built shapes
+## `_test_winding` uses - `single` for a free-standing cube, `slab` for one big
+## merge, `checker` for the worst case for merging, and `ledge` for the AO split.
+## Both AO settings, because with AO on the mesher emits a DIFFERENT set of
+## rectangles out of the same voxels and the splitting path is the new one.
+func _test_chunk_parity():
+	if not ClassDB.class_exists(ChunkMesher.CPP_CLASS):
+		print("chunk parity: no c++ chunk mesher in this build, 0 checks")
+		return 0
+	if not ChunkMesher.class_present():
+		print("chunk parity: c++ mesher stub, 0 checks")
+		return 0
+
+	var chunks: Array[Chunk] = []
+	var solids: Array[Callable] = []
+
+	var cfg := WorldgenConfig.new()
+	var gen := TerrainGenerator.new(31337, cfg)
+	gen.build_heightmap()
+	for cx in range(-2, 3):
+		for cz in range(-2, 3):
+			var span := gen.column_surface_range(cx, cz)
+			var cy := Chunk.floor_div(int(span.x), Chunk.SIZE)
+			for k in 3:
+				var c := Chunk.new(Vector3i(cx, cy + k, cz))
+				gen.generate_into(c)
+				chunks.append(c)
+				solids.append(func(wx: int, wy: int, wz: int) -> bool:
+					return gen.is_solid_at(wx, wy, wz))
+
+	for case in ["single", "slab", "checker", "ledge"]:
+		var c := Chunk.new(Vector3i(0, 0, 0))
+		for y in Chunk.SIZE:
+			for z in Chunk.SIZE:
+				for x in Chunk.SIZE:
+					var solid := false
+					match case:
+						"single": solid = (x == 8 and y == 8 and z == 8)
+						"slab": solid = y < 6
+						"checker": solid = ((x + y + z) % 2 == 0)
+						"ledge": solid = (y < 6) or (x < 3 and y < 10)
+					if solid:
+						c.set_voxel(x, y, z, Block.STONE)
+		chunks.append(c)
+		solids.append(func(_a: int, _b: int, _c: int) -> bool: return false)
+
+	var impl: Object = ClassDB.instantiate(ChunkMesher.CPP_CLASS)
+	var compare_colours := bool(impl.has_colors())
+
+	var bad := 0
+	var checked := 0
+	var quads := 0
+	var worst_pos := 0.0
+	var worst_normal := 0.0
+	var worst_colour := 0.0
+	var index_diffs := 0
+	var count_diffs := 0
+	var reported := 0
+
+	# Both AO settings and 0.45 named outright - see `_measure_ao_cost`'s note
+	# on why the config's own default is not the value to reach for here.
+	for ao in [0.0, 0.45]:
+		cfg.ao_strength = ao
+		impl.setup(ChunkMesher.setup_args(cfg))
+		for i in chunks.size():
+			var chunk: Chunk = chunks[i]
+			var solid: Callable = solids[i]
+			# THE DISPATCHER'S OWN BORDER BUILDER, not a private one written for
+			# the test: a harness that marshals its own arguments proves the
+			# sweep and leaves the seam untested, and the seam is where a port
+			# goes wrong.
+			var borders := ChunkMesher.borders_from_callable(chunk, solid)
+			var want := ChunkMesher.build_arrays_gd(chunk, solid, cfg, 31337)
+			var got := ChunkMesher.arrays_from_cpp(impl.build(borders))
+			checked += 1
+			if want.is_empty() or got.is_empty():
+				if not (want.is_empty() and got.is_empty()):
+					count_diffs += 1
+					bad += 1
+					if reported < 3:
+						reported += 1
+						print("  chunk %s ao=%.2f: one mesher drew nothing (twin %s, c++ %s)" % [
+							chunk.chunk_pos, ao,
+							"empty" if want.is_empty() else "full",
+							"empty" if got.is_empty() else "full"])
+				continue
+			var av: PackedVector3Array = want[Mesh.ARRAY_VERTEX]
+			var bv: PackedVector3Array = got[Mesh.ARRAY_VERTEX]
+			var an: PackedVector3Array = want[Mesh.ARRAY_NORMAL]
+			var bn: PackedVector3Array = got[Mesh.ARRAY_NORMAL]
+			var ac: PackedColorArray = want[Mesh.ARRAY_COLOR]
+			var bc: PackedColorArray = got[Mesh.ARRAY_COLOR]
+			var ai: PackedInt32Array = want[Mesh.ARRAY_INDEX]
+			var bi: PackedInt32Array = got[Mesh.ARRAY_INDEX]
+			quads += av.size() / 4
+			if av.size() != bv.size() or ai.size() != bi.size():
+				count_diffs += 1
+				bad += 1
+				if reported < 3:
+					reported += 1
+					print("  chunk %s ao=%.2f: %d verts / %d indices against %d / %d" % [
+						chunk.chunk_pos, ao, av.size(), ai.size(),
+						bv.size(), bi.size()])
+				continue
+			for k in av.size():
+				worst_pos = maxf(worst_pos, _component_diff(av[k], bv[k]))
+				worst_normal = maxf(worst_normal, _component_diff(an[k], bn[k]))
+				if compare_colours:
+					worst_colour = maxf(worst_colour, maxf(
+						maxf(absf(ac[k].r - bc[k].r), absf(ac[k].g - bc[k].g)),
+						maxf(absf(ac[k].b - bc[k].b), absf(ac[k].a - bc[k].a))))
+			for k in ai.size():
+				if ai[k] != bi[k]:
+					index_diffs += 1
+	if worst_pos > 0.0 or worst_normal > 0.0 or worst_colour > 0.0 or index_diffs > 0:
+		bad += 1
+
+	print("chunk parity: %d chunks, %d quads, max diff pos %.9f normal %.9f colour %s, %d indices differ%s (this run dispatches to %s)" % [
+		checked, quads, worst_pos, worst_normal,
+		("%.9f" % worst_colour) if compare_colours else "skipped (stage 1)",
+		index_diffs,
+		"" if count_diffs == 0 else ", %d chunks differ in COUNT" % count_diffs,
+		ChunkMesher.backend_name()])
+	return 1 if bad > 0 else 0
+
+
+static func _component_diff(a: Vector3, b: Vector3) -> float:
+	return maxf(maxf(absf(a.x - b.x), absf(a.y - b.y)), absf(a.z - b.z))

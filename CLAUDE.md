@@ -40,7 +40,8 @@ the tone and beside the five art pillars.
   written for two, and there is no party frame, ever. Solo is a dev
   convenience, never a balanced mode.
 - **TENSE OUT, WARM AT THE FIRE.** Danger and pacing scale with distance from
-  the current campfire, with altitude, and with eerie weather (D35). Firelight
+  the current campfire, with eerie weather, and with distance from the capital
+  (D35, D63). Firelight
   and daylight are the warm register: light, regen, respawn. Every dread beat
   ends at a fire. Death costs time, not progress, and is quiet and remembered
   (D39). No base building: players place objects (campfire, torch, marker),
@@ -195,8 +196,10 @@ the queue.
   footprints and flattening. Player-placed things stay at 0.5 m.
 - **Armour is a tech level (D27).** Mountain folk in leather, fur, wool, felt,
   mail, wood and horn; plate is the Engineers' guard. No tier ladder to plate.
-- **Player magic (D54).** A fire bolt and a frost bolt, a spark and a chill,
-  never a storm; weak or absent in the dead valleys, stronger with altitude.
+- **Player magic (D54, D65).** A fire rune and a frost rune, a spark and a
+  chill, never a storm; weak in the thin centre, stronger with every ring
+  outward (D63); a rune stone is a crystal that dims with use and is recharged
+  at a magic site (D76).
 
 ## Working order
 
@@ -233,23 +236,43 @@ not, failure protocol, gates), run it, and write the status into
 
 ## Where things live
 
+Rewritten 2026-09-04 by the docs-only sync, which brought every file below
+into line with the bible as of D84. No file here is marked "pending rewrite"
+any more; the one paragraph still owed is named at the end.
+
 - `../Kubik-bible/` - the direction; read it before anything here
-- `RECONCILIATION.md` - the audit, the decisions it raised, the order of work
-- `docs/reconciliation/` - the four detailed audits
-- `README.md` - the architecture contract (host authority, one mutation path,
-  terrain never sent, the transport seam, chunk format), running it, the
-  probes, the C++ build. Its pitch, pillars, status paragraph, "unbounded"
-  section and hard rule one are stale and pending rewrite.
-- `docs/DESIGN.md` - the game's technical truth: the colour pipeline, the
-  resolution ladder as engine grains, the frontier rule, physics, traversal,
-  multiplayer, camera, saves, placeables, the creature behaviour stance. Its
-  setting, races, scale ratio, unbounded ruling, art rules and fantastic
-  roster are superseded by the bible and pending removal.
-- `docs/DIRECTOR.md` - superseded by `../Kubik-bible/director/`; its verb
-  signatures are wrong under D34; pending rewrite as a pointer.
+- `RECONCILIATION.md` - the audit of 2026-09-03, the twelve decisions it
+  raised (D44 to D55), and § 9, the order of work, reordered for D84
+- `docs/reconciliation/` - the four detailed audits, with every file:line
+- `README.md` - the pitch and the four gameplay pillars under the tone; the
+  architecture contract (host authority, one mutation path, terrain never
+  sent, the transport seam, the world as big as the view, the director's
+  five verbs); running it, the probes, the C++ build; builds and the public
+  checkout (D50); the provisional list; the phases
+- `docs/DESIGN.md` - the game's TECHNICAL truth and nothing else: the
+  renderer as light v1 built it, the colour pipeline, the four grains and the
+  resolution ladder, the frontier rule, physics, traversal, camera (D57),
+  saves, placeables, multiplayer, the creature behaviour stance. Setting,
+  peoples, art rules and scale point into the bible rather than restating it
+- `docs/DIRECTOR.md` - a pointer to `../Kubik-bible/director/`, plus the four
+  things this repo must not get wrong and what the pivot changed (D74, D77,
+  D79, D80, D83)
 - `docs/IDEAS.md`, `TODO.md`, `docs/ROADMAP.md` - the queue and why it is in
-  that order; the "Second Age", campfire raids, more races and Look v3 "the
-  painted world" are out; pending rewrite around the phases.
+  that order, built around the phases. Out for good and recorded as out: the
+  sea as a separate age (D26, D44), attacks on the fire and a night-hostility
+  dial (D39), more races (D37, D70), Look v3 "the painted world" (pillars 2
+  and 5, D2), and a texture atlas (pillar 2)
+- `docs/research/` - evidence, never authority. `art-direction.md` carries a
+  reading note saying so; its method and its colour-transfer finding stand
 - `docs/plans/`, `docs/status/` - one plan and one status per epic; the look
-  plans are history, `look-v2-tech.md` is the work-order template.
-- `STATUS.md` - the latest run.
+  plans are history and carry a superseded header, and `look-v2-tech.md`'s
+  SHAPE is still the work-order template
+- `STATUS.md` - what is running and what last merged
+
+**Still owed, and deliberately not touched on 2026-09-04:** `README.md`
+§ Running it, which the horizon v1 and mesher v1 lanes own. Its "Three things
+are C++, and you do not need any of them" heading and its "you can ignore all
+of this and the game works" paragraph are the last of the retired hard rule
+one (D49: the compiled library is a build requirement on every platform, and
+each GDScript twin is deleted as its C++ path lands). Rewrite it when the
+lanes are done with the file.
