@@ -365,7 +365,26 @@ including base. This lane cannot move it and never claimed it would.
 ### A run is "clean" if its p99 is at or under 10 ms, and that is not a
 ### judgement call
 
-**There is another lane on this box after all.** `tmux ls` shows `bauplan`,
+**And one of the things on the box was MINE.** A headless
+`scenes/selftest.tscn` from Stage 0's first gate run - the one killed when the
+new `class_name` turned out to need an `--import` - survived its shell: the
+`pkill` matched the parent and the child reparented to init and kept running.
+It was found and killed at the very end of the run, **8 h 35 m old**, which
+means it was on the box from about 18:13 UTC onward - through essentially every
+sprint in this document. Average 0.5% of a core and about 400 MB, so it was
+idling in its main loop rather than working, but it was there.
+
+**It does not invalidate a comparison and it does inflate the noise.** Every
+number here is an ABAB pair taken minutes apart, so both legs saw it equally;
+what it does is help explain why a quantity of one to three frames kept
+throwing 30-to-50-frame outliers, and why Stage 2 needed 33 sprints to decide
+something the plan budgeted six for. Recorded because "the box was not quiet"
+is only honest if it also says who made it noisy. **The lesson is narrower than
+the bauplan one and just as real: `pkill -f` on a pattern that matches a shell
+does not kill the engine the shell launched** - and the pattern matched this
+lane's own command line twice, killing the edit that was meant to run next.
+
+**There is also another lane on this box.** `tmux ls` shows `bauplan`,
 `bauplan-babysit` and `bauplan-watch` (the last created at 18:35, an hour after
 this lane started), a `claude` process at 14.6% CPU with 31 hours on it, and the
 Navigo test server's `next-server` and `uvicorn`. None of them is this lane's
@@ -935,14 +954,17 @@ down. In stage order.
    the quietness of the box, and the ABAB against a base worktree is what makes
    it honest.** Both of tonight's contended runs (`base-s0-3`, `s0-3`) show the
    same effect inside this lane's own table.
-3. **THE BOX WAS NOT THIS LANE'S.** The plan's § 0 says "no second lane runs
-   these nights"; `tmux ls` shows the `bauplan` lane's three sessions, one of
-   them started an hour after this one, plus the Navigo test server. Nothing
-   was killed - none of it is this lane's - and every frame number here is an
-   ABAB median with contended runs separated out and printed. It cost this lane
-   a lot of extra runs: Stage 2's decision needed 33 sprints where the plan
-   budgeted six. **If a frame lane is worth an unattended night, the box has to
-   actually be reserved.**
+3. **THE BOX WAS NOT THIS LANE'S, AND PART OF THAT WAS THIS LANE'S FAULT.** The
+   plan's § 0 says "no second lane runs these nights"; `tmux ls` shows the
+   `bauplan` lane's three sessions, one started an hour after this one, plus the
+   Navigo test server - none of it mine to kill. **But an orphaned headless
+   Godot of my own also ran for 8 h 35 m of it**, a `scenes/selftest.tscn` whose
+   shell was killed while the engine under it was not; see Stage 2. Every number
+   here is an ABAB pair minutes apart so both legs saw both, but it is why a
+   one-to-three-frame quantity kept throwing 30-to-50-frame outliers and why
+   Stage 2 needed 33 sprints where the plan budgeted six. **If a frame lane is
+   worth an unattended night the box has to actually be reserved - and the agent
+   running it has to check that what it killed actually died.**
 4. **A C++ rung for the collision shape would not help.** Q5's measurement says
    the main-thread cost is not building the resource - that moves to a worker
    cleanly, 8,600 times over - it is the assignment to the body, inside Jolt.
