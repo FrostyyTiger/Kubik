@@ -653,6 +653,125 @@ would show up differently.
 
 ---
 
+## Stage 7 - the sprint line
+
+```
+SPRINT: 6.90 ms median at Ultra, 32 km - the gate is 16.7 and it is met
+        with a 2.4x margin, on main and on this branch alike.
+        Frames over 25 ms: base median 2, this branch median 1,
+        over 23 clean runs each. The gate is 0. BLOCKING.
+```
+
+### The line, pooled over the whole night
+
+**Every clean sprint of the night, both sides, interleaved throughout.** The
+plan asks for three runs ABAB; this lane took 23 clean runs of each because the
+quantity being measured is a handful of frames out of 8,590 and the box has
+another lane on it (Stage 2's note). Base and branch were never run in
+different sittings - every batch alternated - so the pool is an ABAB pool and
+not two samples taken at different times.
+
+| | clean runs | frames over 25 ms, sorted | **median** | mean | frame median |
+| --- | --- | --- | --- | --- | --- |
+| **base** (`main` at `146f061`) | 23 | 0,0,0,0,1,1,1,1,1,1,1,2,2,3,3,3,3,3,4,5,5,6,7 | **2** | 2.30 | **6.90 ms** |
+| **this branch** | 23 | 0,0,0,0,0,0,1,1,1,1,1,1,2,2,2,3,3,3,3,4,4,5,5 | **1** | **1.83** | **6.90 ms** |
+
+**Median 2 -> 1, mean 2.30 -> 1.83 (-20%), worst run 7 -> 5, and six runs at
+zero against four.** Modest, consistent, and the direction the lane exists to
+move. **Neither number is worse**, which is what the merge rule of § 0 asks.
+
+### What each rung bought, one at a time
+
+Each shipped rung turned off by its knob on the branch, everything else as it
+ships:
+
+| configuration | clean runs | over 25 ms | median |
+| --- | --- | --- | --- |
+| **the branch as it ships** | 23 | see above | **1** |
+| `upload_atom_chunk=0` (the column atom) | 4 | 1,2,3,5 | 2.5 |
+| `collision_budget_ms=0` (no queue) | 4 | 1,1,3,4 | 2 |
+| `chunk_upload_budget_ms=8` (the old budget) | 8 | 0,1,1,1,3,4,4,5 | 2 |
+| `column_node=1` (not shipped) | 5 | 1,2,2,4,4 | 2 |
+| `thread_model=2` (not shipped) | 3 | 1,2,2 | 2 |
+
+**Every rung turned off lands back on base's median of 2, and all three
+together give 1.** No single one of them is the result; they are three small
+things and the frame notices the sum.
+
+### The frame median is 6.90 ms on every clean run ever taken tonight
+
+Base, branch, every knob position, both meshers, both thread models: **6.90 ms**,
+without exception, on 60-odd clean sprints. That is not this lane holding
+something steady - it is the instrument's floor on this hardware for this walk.
+The north star's median rule is met with a 2.4x margin and **there is nothing
+here for any rung to improve**; the only number this lane could move was the
+count, and it moved it.
+
+### The gate
+
+**MEDIAN: PASS.** 6.90 ms against 16.7.
+
+**NO FRAME OVER 25 ms: FAIL, and it is the BLOCKING line.** A median of 1 frame
+of about 8,590, ranging 0 to 5. Six of 23 runs meet the gate outright.
+
+### The residual has a name, and it is not the upload's total
+
+The plan asks for the split of the best configuration beside the residual, so
+the residual has a name. Here it is, the shipped branch, milliseconds of frame
+thread over sixty seconds, median of four runs:
+
+| part | ms | share |
+| --- | --- | --- |
+| `up_shape_ms` | 1,500 | 61% |
+| `up_node_ms` | 381 | 16% |
+| `up_flora_ms` | 270 | 11% |
+| `up_mesh_ms` | 275 | 11% |
+| `up_edit_ms` | 15 | 0.6% |
+| `up_bodies_ms` | 12 | 0.5% |
+| **total** | **2,453** | **4.1% of the sprint** |
+
+`up_col_max_ms` 0.98 to 4.89 (from 6.68 at Stage 0), `coll_peak` 9 to 11.
+
+**And the honest reading of that table is that it is NOT the residual.** Stage 3
+removed 278 ms of it - a ninth - and the count got worse; Stage 2's win came
+from capping the per-frame total rather than from making anything cheaper. Four
+per cent of the sprint is spent installing the world and one frame in 8,590 is
+over 25 ms, and this lane's instrument cannot show that the second is made of
+the first. **The next lane that wants this gate should start by measuring what a
+hitch IS** - a frame-level trace of the two or three frames rather than a
+per-second sum - because every per-second number this lane can print is now
+flat.
+
+### The twin, once (grill Q10)
+
+`--mesher gdscript`, one run, not a gate:
+
+```
+SPRINT label=s7-gdscript median_ms=6.90 p99_ms=11.11 worst_ms=44.06 over25=21
+  chunks=6440 up_node_ms=211.8 up_mesh_ms=146.4 up_shape_ms=741.9
+  up_col_max_ms=1.18 coll_peak=6
+```
+
+**The twin's path through the new arrival works.** Half the chunks in the same
+sixty seconds (6,440 against 13,000) because the GDScript mesher is the
+bottleneck again, which is mesher v1's whole point and not this lane's business;
+the collision queue, the chunk atom and the split all behave, and `moved_m` is
+the same 543 m.
+
+### The load at spawn (grill Q11)
+
+| | wall | main thread | upload per chunk |
+| --- | --- | --- | --- |
+| base | 16,267 / 16,148 ms | 1,253 / 1,246 ms | 0.11 ms |
+| branch | 16,812 / 16,852 ms | 1,412 / 1,442 ms | 0.13 ms |
+
+**+4.0% on the wall, inside Q11's 10% fence**, and recorded rather than waved
+past: the collision queue costs a little at load, where thousands of shapes are
+owed at once and the pump's bookkeeping is paid per shape. It is the one place
+this lane is measurably slower and it is a place nobody is looking at a frame.
+
+---
+
 ## Questions taken alone
 
 Plan § 5 item 9: where this file does not answer, the conservative reading -
