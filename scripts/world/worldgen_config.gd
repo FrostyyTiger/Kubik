@@ -1571,6 +1571,25 @@ const FOG_START_RATIO := 0.4
 ## LOCAL and unhashed.
 @export var shape_on_worker := 0
 
+## ONE `ChunkNode` PER COLUMN, OR ONE PER CHUNK? Upload v1 Stage 3, grill Q6.
+##
+## Stage 0 measured node creation - `ChunkNode.new()`, the `StaticBody3D`, the
+## `CollisionShape3D`, `add_child` and the broadphase insert - at 17.0% of a
+## column's arrival, which is over the 15% line Q2 draws, so the rung is
+## attempted. 1 gives a column one node, one body and one `ArrayMesh` with a
+## surface per chunk; 0 gives every chunk its own three, which is what this
+## project did until Stage 3.
+##
+## SURFACES STAY PER CHUNK either way, and that is not an implementation detail:
+## an edit remeshes ONE chunk on the twin (mesher v1 Q7, 6.4 ms) and replaces
+## ONE surface, where a column-wide merged surface would make every broken block
+## a 40 ms hitch.
+##
+## The price is that a surface cannot carry a transform, so at 1 the arrays are
+## offset by the chunk's height in `ColumnJob` - on the worker. LOCAL and
+## unhashed: it changes the shape of the scene graph, never what a seed makes.
+@export var column_node := 0
+
 ## Real seconds per in-game day.
 ## D52, light v1 Stage 1: A FULL DAY IS ABOUT FORTY MINUTES.
 ##
@@ -1903,7 +1922,7 @@ const LOCAL_PROPERTIES: PackedStringArray = [
 	# the world - the failure this file warns about twice and that has happened
 	# twice.
 	"upload_atom_chunk", "collision_budget_ms", "collision_now_radius",
-	"shape_on_worker",
+	"shape_on_worker", "column_node",
 	# DISTANCE V5 STAGE 2. The impostor ring's rebuild cadence.
 	"far_tree_step_m",
 	# DISTANCE V5 STAGE 3. The ring-boundary geomorph.

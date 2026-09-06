@@ -248,8 +248,17 @@ func _column_origin_m(col: Vector2i) -> Vector3:
 ## loop over the chunk nodes and the flora columns - a few thousand `position`
 ## writes at the very worst - and it happens once every two kilometres.
 func _shift_anchors(delta: Vector3) -> void:
+	# ONCE PER NODE, NOT ONCE PER CHUNK - upload v1 Stage 3. In column mode one
+	# `ChunkNode` answers to every chunk key of its column, so walking
+	# `_chunk_nodes` and subtracting would move a four-chunk column four
+	# kilometres instead of one. The `seen` set is what makes this loop mean
+	# "every node this world owns" in both modes.
+	var seen := {}
 	for pos in _chunk_nodes:
 		var node: Node3D = _chunk_nodes[pos]
+		if seen.has(node):
+			continue
+		seen[node] = true
 		node.position -= delta
 	for col in _flora_nodes:
 		var node: Node3D = _flora_nodes[col]
@@ -265,6 +274,9 @@ func _shift_anchors(delta: Vector3) -> void:
 		var entry: Dictionary = _column_cache[col]
 		for cy in entry["nodes"]:
 			var node: Node3D = entry["nodes"][cy]
+			if seen.has(node):
+				continue
+			seen[node] = true
 			node.position -= delta
 	if _water != null:
 		_water.position -= delta
@@ -811,7 +823,7 @@ func is_chunk_pending(chunk_pos: Vector3i) -> bool:
 func is_chunk_collidable(chunk_pos: Vector3i) -> bool:
 	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
 	if node != null:
-		return node.collision_applied
+		return node.is_collidable(chunk_pos.y)
 	# A CHUNK THAT WAS NEVER BUILT BECAUSE IT IS ALL AIR answers true once its
 	# column has landed (world feel v1 Stage 2). There is nothing to stand on
 	# in it and nothing missing from it, and the alternative - answering false
@@ -839,8 +851,15 @@ func reset() -> void:
 		# not reach them, and a reroll would otherwise leave the old world's
 		# far country standing under the new one's.
 		_far_field.clear_keys()
+	# Once per NODE - see _shift_anchors. A column node answers to every chunk
+	# key of its column and queue_free() is not a thing to call four times.
+	var freeing := {}
 	for pos in _chunk_nodes:
-		_chunk_nodes[pos].queue_free()
+		var node: Node = _chunk_nodes[pos]
+		if freeing.has(node):
+			continue
+		freeing[node] = true
+		node.queue_free()
 	_chunk_nodes.clear()
 	_chunks.clear()
 	for col in _flora_nodes:
@@ -1144,9 +1163,9 @@ func _drain_upgrades() -> void:
 		var col: Vector2i = _upgrade_queue.pop_front()
 		for cy in _column_chunk_range(col.x, col.y):
 			var node: ChunkNode = _chunk_nodes.get(Vector3i(col.x, cy, col.y))
-			if node == null or node.mesh_built:
+			if node == null or node.is_mesh_built(cy):
 				continue
-			node.rebuild(Callable(self, "is_solid_world"))
+			node.rebuild(cy, Callable(self, "is_solid_world"))
 		done += 1
 
 
@@ -1401,6 +1420,11 @@ func _collect_chunks(started: int, budget: float) -> void:
 			_worker_border_ms += job.border_usec
 		var cys: Array = in_flight["cys"]
 		var next: int = in_flight["next"]
+		# THE COLUMN'S ONE NODE, upload v1 Stage 3, carried across frames on the
+		# in-flight entry because the chunk atom of Stage 1 can install a
+		# column's chunks over several of them.
+		var one_node: bool = config != null and config.column_node != 0
+		var column_node: ChunkNode = in_flight.get("node")
 
 		var t_upload := Time.get_ticks_usec()
 		while next < cys.size():
@@ -1429,16 +1453,28 @@ func _collect_chunks(started: int, budget: float) -> void:
 			up_edit_us += Time.get_ticks_usec() - t_part
 
 			# Part 2: the node, the body, the collider and the adoption.
+			#
+			# ONE NODE FOR THE WHOLE COLUMN when `column_node` is on - upload v1
+			# Stage 3. The first chunk of the column builds it and every later
+			# chunk is added to it, which is why this looks for one before it
+			# makes one; `_chunk_nodes` still keys by CHUNK, so every reader
+			# outside this loop is unchanged and simply finds the same node
+			# under several keys.
 			t_part = Time.get_ticks_usec()
-			var node := ChunkNode.new()
-			node.setup(chunk, config, world_seed, job.zone)
-			# INTO RENDER SPACE, horizon v1 Stage 6. `ChunkNode.setup` puts the
-			# node at its chunk's WORLD origin - it is the mesher lane's file
-			# and it does not know about the offset - so the one subtraction
-			# happens here, where the node is adopted, and again in
-			# `_shift_anchors` when the offset moves.
-			node.position -= origin_offset_m()
-			add_child(node)
+			var node: ChunkNode = column_node if column_node != null else null
+			if node == null:
+				node = ChunkNode.new()
+				node.setup(chunk, config, world_seed, job.zone, one_node)
+				# INTO RENDER SPACE, horizon v1 Stage 6. `ChunkNode.setup` puts
+				# the node at its chunk's (or column's) WORLD origin, so the one
+				# subtraction happens here, where the node is adopted, and again
+				# in `_shift_anchors` when the offset moves.
+				node.position -= origin_offset_m()
+				add_child(node)
+				if one_node:
+					column_node = node
+			else:
+				node.add_chunk(chunk)
 			_chunk_nodes[chunk_pos] = node
 			up_node_us += Time.get_ticks_usec() - t_part
 
@@ -1448,13 +1484,13 @@ func _collect_chunks(started: int, budget: float) -> void:
 				# plan can move; folding it into `up_mesh_us` would make the
 				# mesh share depend on how much digging happened.
 				t_part = Time.get_ticks_usec()
-				node.rebuild(Callable(self, "is_solid_world"))
+				node.rebuild(cy, Callable(self, "is_solid_world"))
 				up_edit_us += Time.get_ticks_usec() - t_part
 			else:
 				# Parts 3 and 4: the mesh and the shape, apart - which is the
 				# whole reason `apply_arrays` was split in two.
 				t_part = Time.get_ticks_usec()
-				node.apply_mesh(entry["arrays"], job.mesh)
+				node.apply_mesh(cy, entry["arrays"], job.mesh)
 				var t_mid := Time.get_ticks_usec()
 				up_mesh_us += t_mid - t_part
 				var faces: PackedVector3Array = entry["faces"]
@@ -1472,7 +1508,7 @@ func _collect_chunks(started: int, budget: float) -> void:
 					# no mesh, so `_restore_column`'s derive-from-the-mesh
 					# fallback has nothing to derive from, and it would promise
 					# ground it did not install.
-					node.apply_collision(faces, entry.get("shape"))
+					node.apply_collision(cy, faces, entry.get("shape"))
 				else:
 					_queue_collision(chunk_pos, faces, entry.get("shape"))
 				up_shape_us += Time.get_ticks_usec() - t_mid
@@ -1487,6 +1523,7 @@ func _collect_chunks(started: int, budget: float) -> void:
 				break
 
 		in_flight["next"] = next
+		in_flight["node"] = column_node
 		var col_us := Time.get_ticks_usec() - t_upload
 		_mesh_ms += col_us
 		# THE WORST SLICE, not the worst column, once the atom is a chunk -
@@ -1657,7 +1694,7 @@ func _install_collision(chunk_pos: Vector3i) -> bool:
 	var node: ChunkNode = _chunk_nodes.get(chunk_pos)
 	if node == null:
 		return false
-	node.apply_collision(owed[0], owed[1])
+	node.apply_collision(chunk_pos.y, owed[0], owed[1])
 	_collision_installed += 1
 	return true
 
@@ -2327,8 +2364,8 @@ func _restore_column(col: Vector2i) -> bool:
 		_chunk_nodes[pos] = node
 		node.set_parked(false)
 		if _replay_edits_for(chunk):
-			node.rebuild(Callable(self, "is_solid_world"))
-		elif not node.collision_applied:
+			node.rebuild(cy, Callable(self, "is_solid_world"))
+		elif not node.is_collidable(cy):
 			# PARKED BEFORE ITS SHAPE LANDED, upload v1 Stage 2. The faces were
 			# dropped with the debt, so the shape is derived from the node's
 			# own mesh here - the same `create_trimesh_shape()` the edit path
@@ -2336,7 +2373,7 @@ func _restore_column(col: Vector2i) -> bool:
 			# mesh the faces were derived from. Rare by construction: it takes
 			# walking away from a column inside the frame or two its shape was
 			# queued for.
-			node.apply_collision()
+			node.apply_collision(cy)
 		_cache_chunks -= 1
 	_loaded_columns[col] = true
 	_column_landed(col)
@@ -2352,10 +2389,16 @@ func _evict_cache() -> void:
 		_column_cache.erase(col)
 		if entry == null:
 			continue
+		var queued := {}
 		for cy in entry["nodes"]:
 			# Spread over frames: freeing 600 columns' nodes in one frame is
 			# the hitch this stage exists to remove.
-			_pending_frees.append(entry["nodes"][cy])
+			#
+			# Once per NODE - see _shift_anchors.
+			var node: ChunkNode = entry["nodes"][cy]
+			if not queued.has(node):
+				queued[node] = true
+				_pending_frees.append(node)
 			_collision_pending.erase(Vector3i(col.x, cy, col.y))
 			_cache_chunks -= 1
 
@@ -2663,7 +2706,7 @@ func _flora_dirty_at_block(world_block_pos: Vector3i) -> void:
 func _remesh(cpos: Vector3i) -> void:
 	var node: ChunkNode = _chunk_nodes.get(cpos)
 	if node != null:
-		node.rebuild(Callable(self, "is_solid_world"))
+		node.rebuild(cpos.y, Callable(self, "is_solid_world"))
 
 
 ## Y of the highest solid block in this column, in BLOCKS. Used for putting

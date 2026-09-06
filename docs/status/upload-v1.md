@@ -445,6 +445,128 @@ lowering it to 1 did nothing either (median 3 over 2 clean runs).
 
 ---
 
+## Stage 3 - one node per column
+
+**Green, measured, and it DOES NOT SHIP.** `column_node` stays at 0. The rung
+does exactly what Q6 designed it to do - it takes 62% off the node share and
+278 ms of frame-thread work off the sprint - and the over-25 count gets
+slightly worse anyway. Plan § 5 item 4 decides it, and the finding underneath
+it is the more interesting half.
+
+### Why it was attempted
+
+Stage 0's split put node creation at **17.0%**, over the 15% line grill Q2
+draws. That is the whole of the entry condition and it was met.
+
+### What was built (and stays in the tree, behind the knob at 0)
+
+`ChunkNode` is now keyed by chunk-y in BOTH modes, which is what keeps them one
+file rather than two: per chunk the dictionaries hold one entry. At
+`column_node` 1 the node sits at the column's origin, carries one `ArrayMesh`
+with **one surface per chunk**, one `StaticBody3D`, and one `CollisionShape3D`
+per chunk under it. `World` still keys `_chunk_nodes` by CHUNK and simply finds
+the same node under several keys - so `is_chunk_collidable`, the collision
+queue, the upgrade drain, the edit path and the cache all read as they did.
+
+**Surfaces stay per chunk and that is not an implementation detail** (Q6, mesher
+v1 Q7): an edit remeshes one chunk on the twin at 6.4 ms and replaces ONE
+surface, where a merged column surface would make every broken block a 40 ms
+hitch.
+
+**The offset is the job's.** A surface cannot carry a transform, so a chunk
+three up a column must be packed three chunks higher than its node.
+`ColumnJob` does that addition on the worker, before `faces_from`, so the faces
+come out in the same space for free and `built[cy]` stays exactly the thing the
+arrival installs and the parity gate compares against.
+
+### Two aliasing traps, and one real bug the gates caught
+
+- **`_shift_anchors` would have moved a four-chunk column four kilometres.** In
+  column mode one node answers to every chunk key of its column, so the loop
+  over `_chunk_nodes` had to dedupe on the node. Same for `reset()`'s
+  `queue_free` and the cache's `_pending_frees`.
+- **`_set_surface` was adding the new surface to an orphaned `ArrayMesh`.**
+  `_drop_surface` sets `mesh` to null when it removes the LAST surface, and the
+  reference had been taken before the drop. **Every column whose only faces are
+  in its top chunk hits this on the first edit, which is most of them**, and the
+  symptom is a chunk that goes invisible and loses its collision the moment you
+  break a block in it. `column node edit` found it on the first run.
+
+### The bench: the rung works
+
+```
+UPLOAD_BENCH mesher=cpp config=shipped         columns=197 chunks=841 col_median_us=263 col_p99_us=987 col_max_us=1121 arrival_us=151 node_us=72 mesh_us=32 shape_us=123 per_chunk_us=61 passes=3 spread=+-0.4%
+UPLOAD_BENCH mesher=cpp config=column_node=1   columns=197 chunks=841 col_median_us=211 col_p99_us=948 col_max_us=1054 arrival_us=102 node_us=28 mesh_us=30 shape_us=126 per_chunk_us=49 passes=3 spread=+-1.7%
+```
+
+**`node_us` 72 -> 28, `arrival_us` 151 -> 102, the whole column 263 -> 211.**
+A fifth off the arrival, and the plan's "not worth a sprint" bar is cleared
+comfortably.
+
+### The sprint: and it is worse
+
+Five runs each, all five clean on every leg, interleaved base / on / off.
+
+| configuration | over 25 ms | **median** | `up_node_ms` | `up_col_max_ms` |
+| --- | --- | --- | --- | --- |
+| base | 0, 0, 1, 2, 5 | **1** | - | - |
+| `column_node=1` | 1, 2, 2, 4, 4 | **2** | **141.7** | **1.72** |
+| `column_node=0` (shipped) | 0, 0, 1, 3, 3 | **1** | 377.1 | 2.86 |
+
+The frame median is 6.90 ms on all fifteen runs.
+
+**The rung's own instrument agrees with the bench and disagrees with the
+gate.** `up_node_ms` falls 377 -> 142, the worst arrival slice falls 2.86 ->
+1.72 ms, and the whole upload falls from about 2,510 ms to 2,232 - **278
+milliseconds of frame thread removed from a sixty-second sprint** - and the
+count of frames over 25 ms goes UP. It is not only the median: the shipped leg
+and base each have two runs at zero and the rung has none, and its five runs sum
+to 13 against 7 and 8.
+
+**So it does not ship** (§ 5 item 4, and Q15: the count is the gate). The code
+stays in the tree at `column_node` 0, reachable for one epic, as § 3 asks.
+
+### What that says, which is worth more than the rung
+
+**The hitches are not made of the arrival's total cost.** A rung can remove a
+ninth of the frame-thread work the world costs and leave the hitch count where
+it was or worse. Whatever the two-to-five frames over 25 ms are, they are not
+"the upload is too much work per second" - Stage 2 already showed the same thing
+from the other side, where the win came from capping the per-frame TOTAL at
+8 ms rather than from making anything cheaper.
+
+**The suspicion, and it is a suspicion and not a measurement:** one
+`StaticBody3D` per column with N `CollisionShape3D` children means every
+`apply_collision` adds a shape to a body already in the broadphase, so Jolt
+updates that body's compound and its bounds again for each one - a cost that
+grows with the shapes already on it, where N separate bodies are N independent
+constant-cost inserts. The totals fit (`up_shape_ms` is flat at ~1,500 either
+way, so it is the distribution and not the sum), but nothing here measures the
+inside of the physics server. Flagged "For Marcel" rather than asserted.
+
+### Checks
+
+| check | result |
+| --- | --- |
+| main self-test | **SELFTEST: all passed** |
+| upload self-test | **SELFTEST-UPLOAD: all passed** - eleven tests |
+| horizon self-test | **SELFTEST-HORIZON: all passed** |
+| character self-test | **36 tests, all passed** |
+| canonical line | **unchanged**, character for character |
+| upload parity | **0 bad, both meshers** |
+| collision honesty, collision queue, collision never early | **0 bad** |
+| **column node parity** (new) | **36 chunks, 36 nodes per-chunk -> 9 per-column, 0 bad.** Every vertex and every collision face compared in WORLD space - node position plus array - between the two modes, because the two modes put the same geometry in different pairs of numbers. It also fails if the column mode does not actually make fewer nodes, so the knob cannot quietly not reach the world. |
+| **column node edit** (new) | **3 siblings held, 1 edited chunk changed, 0 bad.** `surface_remove` renumbers every later surface; this is the gate on the index map, and it caught the orphaned-mesh bug above. |
+| thread-guard errors | **none** |
+| the tour, both modes | green on Forward+; `6-postcard` and `32-horizon-walk` identical to the eye between `column_node` 0 and 1 - no seam, no missing chunk, no double-drawn chunk |
+| `jumps`, `moved_m` | 9 and 543 m throughout |
+
+### Tunables moved
+
+None. `column_node` is added and stays at **0**.
+
+---
+
 ## Questions taken alone
 
 Plan § 5 item 9: where this file does not answer, the conservative reading -
@@ -580,7 +702,23 @@ down. In stage order.
    cleanly, 8,600 times over - it is the assignment to the body, inside Jolt.
    Anything written in front of the physics server, in any language, is
    optimising the 2% rather than the 98%. Stage 2 has the numbers.
-5. **Stages 4 and 5 will not be attempted, by the plan's own rule.** The mesh is
+5. **Stage 3's rung does not ship, and the reason is the interesting part.**
+   One node per column takes 62% off the node share and **278 ms of frame
+   thread off a sixty-second sprint**, and the over-25 count gets slightly
+   worse anyway (median 2 against 1, and no zero runs where base and the
+   shipped path each have two). So the hitches are not made of the arrival's
+   total cost. Stage 2 said the same thing from the other side: its win came
+   from capping the per-frame TOTAL at 8 ms, not from making anything cheaper.
+   **The next person to chase this frame should measure what a hitch IS before
+   making anything faster.**
+6. **A suspicion worth one experiment, not a finding.** The column node puts one
+   `StaticBody3D` under a column with a `CollisionShape3D` per chunk, so each
+   shape is added to a body already in the broadphase and Jolt updates that
+   body's compound and bounds again each time - where N separate bodies are N
+   independent constant-cost inserts. `up_shape_ms` is flat at ~1,500 ms either
+   way, so if this is real it is in the distribution and not the sum. Nothing
+   here measures the inside of the physics server.
+7. **Stages 4 and 5 will not be attempted, by the plan's own rule.** The mesh is
    11.0% of the arrival and flora plus bodies is 12.5%; grill Q2 binds anything
    under 15%. Stage 2 (the shape, 58.9%) and Stage 3 (the node, 17.0%) are.
 

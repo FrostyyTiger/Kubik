@@ -201,6 +201,17 @@ func run() -> void:
 		else:
 			arrays = ChunkMesher.build_arrays_gd(
 				chunk, _solid_at, config, world_seed)
+		# THE COLUMN NODE'S OFFSET, upload v1 Stage 3, and it happens HERE
+		# because here is a worker thread. A surface cannot carry a transform
+		# of its own, so a chunk three chunks up a column must be packed three
+		# chunks higher than the node that draws it. Doing it before
+		# `faces_from` means the collision faces come out in the same space for
+		# free, and it means `built[cy]` is what it has always been - the thing
+		# the arrival installs and the parity gate compares against - rather
+		# than something the main thread has to fix up.
+		if config.column_node != 0:
+			arrays = ChunkNode.offset_arrays(
+				arrays, float(cy * Chunk.SIZE) * config.block_size)
 		var faces := ChunkMesher.faces_from(arrays)
 		built[cy] = {
 			"chunk": chunk,

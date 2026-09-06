@@ -44,6 +44,9 @@ static func run() -> int:
 		"collision queue": _test_collision_queue,
 		"collision never early": _test_collision_never_early,
 		"worker shape stress": _test_worker_shape_stress,
+		# STAGE 3.
+		"column node parity": _test_column_node_parity,
+		"column node edit": _test_column_node_edit,
 	}
 	var failures := 0
 	for name in tests:
@@ -817,3 +820,141 @@ static func _spawn_world(cfg: WorldgenConfig, radius: int) -> World:
 		spins += 1
 	_drain_collision(world)
 	return world
+
+
+# --- Stage 3 ------------------------------------------------------------------
+
+## ONE NODE PER COLUMN DRAWS THE SAME WORLD AS ONE NODE PER CHUNK.
+##
+## The comparison has to be in WORLD SPACE and that is the whole subtlety of
+## this rung. Per chunk, the node sits at its chunk's origin and the arrays are
+## chunk-local; per column, the node sits at the column's origin and the arrays
+## were offset by the chunk's height on the worker. Two different pairs of
+## numbers that must add up to the same third one - so the test adds them up.
+##
+## Vertices and collision faces both, because both were offset, and a rung that
+## moved the mesh without the shape would put the ground somewhere you cannot
+## see it.
+static func _test_column_node_parity():
+	var bad := 0
+	var world_space := {}
+	var nodes := {}
+	var chunks := {}
+	for mode in [0, 1]:
+		var cfg := _config()
+		cfg.column_node = mode
+		var world := _spawn_world(cfg, 1)
+		var got := {}
+		var distinct := {}
+		for pos in world._chunk_nodes:
+			var node: ChunkNode = world._chunk_nodes[pos]
+			distinct[node] = true
+			var at: Vector3 = node.position
+			var verts := PackedVector3Array()
+			var arrays: Array = _surface_arrays(world, pos)
+			if not arrays.is_empty():
+				for v in (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array):
+					verts.append(v + at)
+			var faces := PackedVector3Array()
+			var shape := _shape_of(node, pos)
+			if shape != null:
+				for v in (shape as ConcavePolygonShape3D).get_faces():
+					faces.append(v + at)
+			got[pos] = [verts, faces]
+		world_space[mode] = got
+		nodes[mode] = distinct.size()
+		chunks[mode] = world._chunk_nodes.size()
+		world.free()
+
+	var a: Dictionary = world_space[0]
+	var b: Dictionary = world_space[1]
+	if a.size() != b.size():
+		print("  %d chunks per-chunk, %d per-column" % [a.size(), b.size()])
+		bad += 1
+	for pos in a:
+		if not b.has(pos):
+			print("  %s is missing from the column-node world" % pos)
+			bad += 1
+			continue
+		if (a[pos] as Array)[0] != (b[pos] as Array)[0]:
+			print("  %s draws different vertices in world space" % pos)
+			bad += 1
+		if (a[pos] as Array)[1] != (b[pos] as Array)[1]:
+			print("  %s has different collision faces in world space" % pos)
+			bad += 1
+	# AND THE RUNG ACTUALLY DID SOMETHING. A column-node world with as many
+	# nodes as a chunk-node one is the knob not being read, which is the exact
+	# failure `worldgen_config.gd` warns about twice.
+	if int(nodes[1]) >= int(nodes[0]):
+		print("  the column mode made %d nodes for %d chunks - no fewer than "
+			+ "the %d of chunk mode, so the knob is not reaching the world" % [
+			nodes[1], chunks[1], nodes[0]])
+		bad += 1
+	print("column node parity: %d chunks, %d nodes per-chunk -> %d per-column, %d bad" % [
+		chunks[0], nodes[0], nodes[1], bad])
+	return bad
+
+
+## AN EDIT REPLACES ONE SURFACE OF THE COLUMN AND LEAVES THE REST ALONE.
+##
+## The surface index map is the thing that can go wrong here and it can only go
+## wrong quietly: `ArrayMesh.surface_remove(i)` renumbers every surface after
+## `i`, so a map that is not fixed up in the same breath leaves one chunk
+## drawing another chunk's triangles - which looks like terrain, in the wrong
+## place, for one chunk in a column.
+##
+## So: break a block, and check that every OTHER chunk of the column still draws
+## exactly what it drew before, and that the edited one changed.
+static func _test_column_node_edit():
+	var bad := 0
+	var cfg := _config()
+	cfg.column_node = 1
+	var world := _spawn_world(cfg, 1)
+	var spawn: Vector2i = world.generator.spawn_block
+	var centre := Vector2i(
+		Chunk.floor_div(spawn.x, Chunk.SIZE), Chunk.floor_div(spawn.y, Chunk.SIZE))
+
+	var surface := int(floor(world.generator.surface_at(
+		float(spawn.x), float(spawn.y))))
+	var block_pos := Vector3i(spawn.x, surface, spawn.y)
+	var edited := Chunk.world_to_chunk(block_pos)
+	var col := Vector2i(edited.x, edited.z)
+	var node: ChunkNode = world._chunk_nodes.get(edited)
+	if node == null:
+		print("  the edited chunk %s has no node" % edited)
+		world.free()
+		print("column node edit: 1 checks failed")
+		return 1
+
+	var before := {}
+	for pos in world._chunk_nodes:
+		if Vector2i(pos.x, pos.z) != col:
+			continue
+		before[pos] = _surface_arrays(world, pos)
+	var siblings := before.size() - 1
+
+	world._cl_apply_block(block_pos, Block.AIR)
+
+	var changed := 0
+	for pos in before:
+		var now: Array = _surface_arrays(world, pos)
+		if pos == edited:
+			if now == before[pos]:
+				print("  the edited chunk %s did not change" % pos)
+				bad += 1
+			else:
+				changed += 1
+		elif now != before[pos]:
+			print("  %s changed and it was not edited - the surface index "
+				+ "map slipped" % pos)
+			bad += 1
+	# AND THE GROUND FOLLOWED THE MESH. The edit path derives the shape from the
+	# surface it just replaced, and in column mode that is one surface of many.
+	var shape := _shape_of(node, edited)
+	if shape == null:
+		print("  the edited chunk lost its collision shape")
+		bad += 1
+	world.free()
+	print("column node edit: %d siblings held, %d edited chunk changed, %d bad" % [
+		siblings, changed, bad])
+	return bad
