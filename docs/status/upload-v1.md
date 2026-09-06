@@ -567,6 +567,92 @@ None. `column_node` is added and stays at **0**.
 
 ---
 
+## Stage 4 - the mesh on the worker: NOT ATTEMPTED
+
+**`up_mesh_us` is 11.0% of the arrival and grill Q2 binds anything under 15%.**
+Plan § 4.0: "Only if Stage 0's split says `up_mesh_us` is over 15% of the
+arrival." It does not, so the rung was not written, `mesh_on_worker` does not
+exist, and no time was spent on it. Stage 0's split table is the evidence and
+it is reprinted there.
+
+The measurement that would change this answer is the one Stage 0 already flags:
+the split is taken with the C++ mesher, where `add_surface_from_arrays` is
+28 us of a 233 us column on the bench and 250 ms of a 60-second sprint. On the
+GDScript twin the arrays are the same arrays, so the share does not move
+either.
+
+---
+
+## Stage 5 - flora and bodies on the one pump: NOT ATTEMPTED
+
+**`up_flora_us` + `up_bodies_us` is 12.5% of the arrival** (11.9% and 0.6%) and
+plan § 5.0 asks for over 15%. Not attempted, for the same reason and by the
+same rule. `flora_on_pump` and `bodies_per_frame` do not exist.
+
+Worth recording for whoever picks this up: flora is the third largest share
+after the shape and the node, it is stable at 271 to 286 ms per sprint across
+every configuration measured tonight, and it did not move when anything else
+did - so it is a clean 12% sitting on its own, and it would be the next rung if
+the 15% line were ever lowered.
+
+---
+
+## Stage 6 - the render thread model, as an experiment
+
+**Measured, clean, mildly favourable, and it DOES NOT SHIP.** Grill Q9's rule
+is strict and one of its three legs is not met.
+
+### First, a correction to the plan
+
+Q7 says "`rendering/driver/threads/thread_model` is 1 (Single-Safe) in
+`project.godot`". **There is no `[rendering]` section in `project.godot` at
+all** and there never was; the engine's default is 1, so the statement is true
+in effect and false in the file. This stage adds the section with the line in
+it, **commented out**, and the comment carries the measurement - so the next
+person to wonder finds the answer beside the switch instead of in a status doc.
+
+### The runs
+
+Three pairs, ABAB, the branch at model 1 against the same branch at model 2,
+nothing else changed.
+
+| | over 25 ms | **median** | frame median |
+| --- | --- | --- | --- |
+| thread_model 1 | 3, 4, 1 | **3** | 6.90 ms |
+| thread_model 2 | 1, 2, 2 | **2** | 6.90 ms |
+
+### The ship rule, leg by leg
+
+| Q9's leg | result |
+| --- | --- |
+| every self-test green at model 2 | **YES.** `SELFTEST: all passed`, `SELFTEST-UPLOAD: all passed`, `SELFTEST-HORIZON: all passed`, character 36/36. |
+| the tour's terrain windows within noise of model 1 | **YES.** 27 shots compared, **25 identical** on primitives in frame, flora instances, triangles and chunks loaded. The two that differ are `31-horizon-far` (0.08 -> 0.06 M primitives, on the shot horizon v1 already recorded as an unstable sample) and `32-horizon-walk` (6.53 -> 6.50 M); flora and chunk counts are identical on both. |
+| **BOTH sprint numbers improve** | **NO.** The over-25 median improves, 3 -> 2. **The frame median does not: 6.90 ms either way.** |
+
+**So it does not ship**, which is also what the plan says the default is.
+
+### The recommendation, and it is the first "For Marcel" item
+
+Not now, and not because it looked bad - it looked slightly good. Three
+reasons, in order:
+
+1. **The one number it moved is a one-frame difference at n=3**, on a box
+   where this lane has seen the same quantity swing from 0 to 7 on an
+   untouched tree. It is not evidence yet.
+2. **The frame median is 6.90 ms with the model on or off**, and that is the
+   number the north star's rule is written against. There is nothing here for
+   it to buy.
+3. **`project.godot` is read by Marcel's Windows box and by CI**, and Godot's
+   own documentation calls the multi-threaded model buggy. That is a real risk
+   taken for a benefit that has not been demonstrated.
+
+**If the hitch count ever becomes the binding gate again, this is worth
+revisiting - and the first run should be on the RTX 5080 under Windows**, not
+here, because that is where the game is played and where a rendering-thread bug
+would show up differently.
+
+---
+
 ## Questions taken alone
 
 Plan § 5 item 9: where this file does not answer, the conservative reading -
@@ -675,6 +761,14 @@ down. In stage order.
 
 ## For Marcel
 
+0. **The render thread model: do not ship it, and here is the whole case.**
+   Stage 6 measured `thread_model` 2 against 1, three pairs ABAB: every
+   self-test green, 25 of 27 tour shots identical, the over-25 median 3 -> 2
+   and **the frame median unmoved at 6.90 ms**. Q9's rule needs both sprint
+   numbers to improve and one of them did not, so the line is in
+   `project.godot` commented out with the measurement beside it. Revisit only
+   if the hitch count becomes binding again, and test it on the Windows box
+   first.
 1. **The frame gate is very nearly met on `main` today, and the plan's premise
    number does not reproduce.** 6.90 ms median and one to three frames over
    25 ms of about 8,590, on a quiet box, at Ultra with the view at 32 km -

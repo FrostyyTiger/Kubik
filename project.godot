@@ -140,6 +140,24 @@ kubik_far_reach={
 "value": 32000.0
 }
 
+[rendering]
+
+; UPLOAD V1 STAGE 6 - AN EXPERIMENT, RECORDED, AND IT DOES NOT SHIP.
+;
+; This line is the multi-threaded rendering server (thread_model 2). It is
+; commented out and the engine's default of 1 (Single-Safe) is what the game
+; runs, which is also what it ran before this lane - there was no [rendering]
+; section at all, so the plan's Q7 statement that "thread_model is 1 in
+; project.godot" was true in effect and not in the file.
+;
+; Measured at 2, on ganymede, three sprints against the branch at 1: see
+; docs/status/upload-v1.md Stage 6. Grill Q9's ship rule is strict - every
+; self-test green, the tour within noise, and BOTH sprint numbers improved -
+; and it is not met. Godot's own documentation calls the multi-threaded model
+; buggy, and Marcel's Windows box and CI read this same file.
+;
+;rendering/driver/threads/thread_model=2
+
 [threading]
 
 ; Chunk generation and chunk meshing both run as LOW priority worker tasks, and
