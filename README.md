@@ -471,7 +471,9 @@ one summary:
 SPRINT label=mine seconds=60 frames=3340 median_ms=16.67 p99_ms=40.44
   worst_ms=84.44 over25=171 chunks=6535 far_rebuilds=67 far_ms_median=100
   tree_rebuilds=3 mem_mb=431 moved_m=543 jumps=10 tiles=172 tile_mb=25
-  rebases=0 jitter_mm=0.000
+  rebases=0 jitter_mm=0.000 up_node_ms=381.5 up_mesh_ms=274.4
+  up_shape_ms=1504.2 up_edit_ms=14.7 up_flora_ms=277.1 up_bodies_ms=12.1
+  up_col_max_ms=0.98 coll_peak=9 coll_urgent=13
 ```
 
 `moved_m` is the honesty check - a run that went nowhere warns and says so.
@@ -480,8 +482,59 @@ body drifted in a frame, which is 0.000 at thirty kilometres. The gate is
 **median under 16.7 ms and no frame over 25**; `docs/status/horizon-v1.md`
 carries the line and what is still over it.
 
+**The `up_*` fields are the upload split** (upload v1): what the frame thread
+spent installing arriving columns over the run, part by part - the node and its
+body, the mesh surface, the collision shape, an edit replayed into a chunk
+mid-flight, the flora buffers, the rigid bodies. `up_col_max_ms` is the single
+most expensive slice one frame was asked to swallow, and `coll_peak` is the
+deepest the collision queue ever got. The per-second line carries the same six
+as `up=<node>/<mesh>/<shape>/<edit>/<flora>/<bodies>` in microseconds. A sum is
+not a diagnosis: this split is what says WHICH part of the arrival a frame is
+paying for, and `docs/status/upload-v1.md` is what it said.
+
 Three flags exist for the shrink list and change nothing about the world:
 `--no-volumetric`, `--no-tree-shadows`, and `--set chunk_upload_budget_ms=N`.
+
+### The upload bench
+
+**What a column costs to ARRIVE**, as against `mesh_bench.gd`'s what a chunk
+costs to mesh. Generation and meshing happen once on the pool and are never
+timed; then every column of the spawn disc is installed one at a time through
+the real `World._collect_chunks`, with the collision pump drained and charged to
+the column that owed it.
+
+```
+godot --headless --path . scenes/upload_bench.tscn -- --seed 42 \
+    --radius 8 --passes 3 [--mesher gdscript] [--column-node 1] [--shape-on-worker 1]
+```
+
+```
+UPLOAD_BENCH mesher=cpp config=shipped columns=197 chunks=841 col_median_us=233
+  col_p99_us=949 col_max_us=1091 arrival_us=127 node_us=70 mesh_us=28
+  shape_us=102 per_chunk_us=54 passes=3 spread=+-2.1%
+```
+
+`col_median_us` is the whole arrival and stays comparable across epics;
+`arrival_us` is the part paid in the frame the column lands, the rest being
+owed to the collision queue. Naming a rung flag adds a second configuration and
+alternates the two pass by pass, so the comparison is ABAB on one box in one
+sitting. **It is headless**, so the dummy rendering driver packs the vertex
+format and never touches a GPU: the bench ranks rungs and the sprint judges
+them.
+
+### The upload knobs
+
+All LOCAL and unhashed - they change WHEN a chunk reaches the screen and never
+what is in it - and all on F4:
+
+| knob | default | what it does |
+| --- | --- | --- |
+| `chunk_upload_budget_ms` | 6.0 | how much of a frame the chunk pump may spend |
+| `collision_budget_ms` | 2.0 | and the collision pump, on top of it. **The two ADD**: hold their sum at 8 |
+| `collision_now_radius` | 2 | chunks around the streaming centre whose collision is never budgeted |
+| `upload_atom_chunk` | 1 | 1 stops the chunk pump at a CHUNK, 0 at a whole column |
+| `column_node` | 0 | 1 gives a column one node, one body and a surface per chunk. Measured, and it did not pay |
+| `shape_on_worker` | 0 | 1 builds the collision shape on the worker. Measured, and it did not pay |
 
 ### Getting somewhere, and switching the air off
 

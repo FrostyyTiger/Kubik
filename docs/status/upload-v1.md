@@ -2,7 +2,9 @@
 
 The run of `docs/plans/upload-v1.md`, on ganymede, in `~/Kubik-upload-v1` on
 `feat/upload-v1`, started 2026-09-05. Unattended, one night and the day after,
-in one session, with no other lane on the box.
+in one session. The plan says "no second lane runs these nights"; there was
+one - see Stage 2 - and every frame number here is an ABAB median with the
+contended runs separated out and printed.
 
 Written at the end of **every stage**, not at the end of the night, so a run
 that dies at 04:00 still leaves a record.
@@ -11,7 +13,22 @@ that dies at 04:00 still leaves a record.
 
 ## BLOCKING
 
-**THE PLAN'S PREMISE DOES NOT REPRODUCE, AND THE LANE IS SMALLER THAN IT WAS
+**THE HITCH HALF OF THE FRAME GATE IS STILL OPEN, AND IT IS ONE FRAME IN
+8,590.** At Ultra, seed 42, sixty seconds of sprint, 23 clean runs each side:
+the branch runs a **median of 1 frame over 25 ms** against `main`'s **2**, and
+the gate is 0. Six of the 23 meet it outright. The median frame is **6.90 ms**
+against a gate of 16.7, on both, and on every configuration measured tonight.
+
+**The residual is named in Stage 7 and the name is not "the upload".** Four per
+cent of the sprint is spent installing the world, and Stage 3 removed a ninth
+of that - 278 ms of frame thread - and the hitch count went UP. Every
+per-second number this lane can print is flat. **The next lane that wants this
+gate should trace what a hitch IS**, frame by frame, rather than make the
+arrival cheaper again.
+
+---
+
+**AND THE PLAN'S PREMISE DOES NOT REPRODUCE, AND THE LANE IS SMALLER THAN IT WAS
 WRITTEN TO BE.** `docs/plans/upload-v1.md` opens on horizon v1's measurement of
 `main` with both lanes merged: *"the median rises to 22.1 ms with 786 to 807
 hitches"*, and the whole work order is aimed at that. Measured tonight on the
@@ -878,6 +895,22 @@ down. In stage order.
 
 ---
 
+## What shipped, in one table
+
+| rung | knob | shipped? | the number that decided it |
+| --- | --- | --- | --- |
+| the split, the bench, the gate file | - | **yes** | it is the instrument; base and branch sprints identical |
+| the atom is a chunk | `upload_atom_chunk` **1** | **yes** | not worse on either number; bounds the slice by construction |
+| collision on its own budget | `collision_budget_ms` **2.0**, `collision_now_radius` **2** | **yes** | over-25 median 2 -> 1 with the budget held at 8 total |
+| the chunk budget held at 6 | `chunk_upload_budget_ms` **8 -> 6** | **yes** | two budgets add; at 8 + 2 the count was WORSE than base |
+| the shape on the worker | `shape_on_worker` **0** | no | 2% on the bench against Q5's 15%; worse on the sprint |
+| one node per column | `column_node` **0** | no | -278 ms of frame thread and the count went up (§ 5 item 4) |
+| the mesh on the worker | - | **not attempted** | 11.0% of the arrival, under Q2's 15% line |
+| flora and bodies on the one pump | - | **not attempted** | 12.5% together, under Q2's 15% line |
+| the render thread model | commented in `project.godot` | no | Q9 needs both sprint numbers to improve; the median did not move |
+
+---
+
 ## For Marcel
 
 0. **The render thread model: do not ship it, and here is the whole case.**
@@ -931,18 +964,51 @@ down. In stage order.
    independent constant-cost inserts. `up_shape_ms` is flat at ~1,500 ms either
    way, so if this is real it is in the distribution and not the sum. Nothing
    here measures the inside of the physics server.
-7. **Stages 4 and 5 will not be attempted, by the plan's own rule.** The mesh is
+7. **Stages 4 and 5 were not attempted, by the plan's own rule.** The mesh is
    11.0% of the arrival and flora plus bodies is 12.5%; grill Q2 binds anything
-   under 15%. Stage 2 (the shape, 58.9%) and Stage 3 (the node, 17.0%) are.
+   under 15%. Flora is the one to look at if that line is ever lowered: a clean
+   12%, stable at 271 to 286 ms across every configuration measured tonight.
+8. **`docs/plans/upload-v1.md` § 2 and § 3 give the bench a `--script` command
+   line that cannot work**, and it is copied from `horizon-v1.md`'s shape. The
+   rule is `selftest.gd`'s own header: a tool that instantiates `World` must be
+   a SCENE, because `--script` replaces the main loop and Godot only makes
+   autoloads for a real one. Worth fixing in the plan template so the next lane
+   does not spend twenty minutes on `World.new()` reporting that GDScript has no
+   function called `new()`.
+9. **Every upload knob is on F4 and none moves the config hash** - verified by
+   the `atom knob` gate rather than by inspection: five knobs, all in
+   `LOCAL_PROPERTIES`, none in `PROPERTIES`, hash `1d7c18c7` unmoved when all
+   five are changed at once.
 
 ---
 
 ## For the world-truth break
 
-- Nothing yet.
+- **A column's arrival is now two events, not one, and the break should know
+  it.** The mesh goes up when the column lands; the collision shape is owed and
+  paid on a later frame's budget. `is_chunk_collidable` is the truth for both
+  and every caller already asks it, but anything the break adds that wants to
+  put something ON the ground - a placed object, a spawn, a road pass - must ask
+  it rather than `has_chunk`.
+- **`ColumnJob` now has one thing in it that happens AFTER the arrays exist**
+  (the `shape_on_worker` shape, off by default, and the `column_node` offset,
+  also off). Both are dead code paths as shipped. If the break rewrites the
+  generator's truth in C++, they are two fewer things to carry across, and this
+  lane's measurements say neither is worth porting.
+- **The split is per column and the break changes what a column is.** Real
+  relief (D45) makes columns taller and the ceiling higher, so `up_shape_ms` -
+  61% of the arrival and proportional to drawn faces - is the share most likely
+  to move. The instrument is in the tree and will say so.
 
 ---
 
 ## For the bible
 
-- Nothing yet.
+- **Nothing wrong, and one number worth having.** D84's third sentence ("the
+  frame holds") is met on its median with a 2.4x margin on ganymede and open on
+  its hitch clause by one frame in 8,590. Nothing in the bible needs changing
+  for that; what the next plan against D84 should not do is assume the hitch
+  clause is an upload problem, because this lane measured that it is not. D85's
+  claim that the upload "changes nothing a seed produces" held exactly: the
+  canonical line is character-for-character identical after every one of eight
+  stages.
