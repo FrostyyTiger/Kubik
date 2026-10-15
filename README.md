@@ -1,8 +1,10 @@
 # Kubik
 
-Rewritten 2026-09-04 against the bible as of D84; where an older document
-disagrees, the bible wins. The § Running it section is owned by the horizon v1
-and mesher v1 lanes and was not touched by that rewrite.
+<!-- Rewritten 2026-09-04 against the bible as of D84; where an older document disagrees, the bible wins. The § Running it section is owned by the horizon v1 and mesher v1 lanes and was not touched by that rewrite. -->
+
+Kubik is a co-op voxel exploration game for two players, set in a fantasy Alps long after their fall, meant to feel huge. Two friends are building it in Godot 4, with the meshing and the far terrain in C++, to learn game development and how to design a game around a language model. Both machines generate identical terrain from a shared seed and config, so the terrain itself never crosses the network, and the view reaches 32 km to the horizon.
+
+Later there will be a director: a language model that reacts, at the campfire, to what the party did. It can only propose small actions from a fixed set of five, the host checks each one like a player's edit, and the game has to be complete and fun with it switched off.
 
 ## What is this
 
@@ -382,7 +384,7 @@ extension - all three classes - not the GDScript fallbacks.
 The game is played **and shot on Forward+, on a GPU, and on nothing else**.
 Light v1's grill Q1 retired the Compatibility branch outright: volumetric fog,
 SSAO, SSR, soft directional shadows and the colour adjustment do not exist
-there, and pillar 2 needs all of them. The overnight box, ganymede, has an
+there, and pillar 2 needs all of them. The overnight box has an
 RTX 3070 Ti and renders Vulkan Forward+ under a virtual display; every tour and
 gallery sheet since distance v1 was taken there, and that is where anything
 visual is checked (`CLAUDE.md` § Where work runs):
